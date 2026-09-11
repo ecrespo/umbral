@@ -31,6 +31,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The pr
 - The daemon never answered a program's query to the terminal, because libghostty's write-pty effect was never wired. Every fish session stalled for two seconds waiting for a Primary Device Attributes reply and then permanently disabled features.
 
 ### Changed
+- API Spec v1.3, Data Model v1.2, PRD v1.3 and Tech Design v1.3 fold the two deltas raised during F0. `session.unsubscribed` tells a client its subscription was dropped, `abandoned` now covers a block superseded without its end marker, `output_truncated` covers the plain-text cap as well as the raw one, a shell that announces itself after the five-second window is promoted rather than left marked as having no integration, and the zstd dependency is recorded.
 - API Spec v1.2: the runtime-directory fallback and its ownership rule, `trace_id` before tracing exists, `capabilities` derived from the method table, a required `protocol_version`, and a repeated handshake closing the connection.
 - The visual identity delta is folded: PRD §6.10 keeps the four requirements release 0.1 can satisfy, and the four that describe the F2 desktop client moved to `specs/prd/umbral-f2-desktop.md` (Analyze finding A-12).
 - Migration 0001 now creates `threads`, so `sessions` and `blocks` accept inserts with `foreign_keys=ON` (finding A-01).

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.2 |
+| **Version** | 1.3 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-09-11 |
@@ -138,7 +138,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 
 - **REQ-BLK-001** · MUST · event — WHEN the shell emits `OSC 133;C`, THE SYSTEM SHALL create a block in state `running` with the command (`OSC 633;E`), the cwd (`OSC 7`) and the start time.
 - **REQ-BLK-002** · MUST · event — WHEN the shell emits `OSC 133;D;<exit>`, THE SYSTEM SHALL close the block with its exit code and duration, and publish `block.closed`.
-- **REQ-BLK-003** · MUST · unwanted — IF a session emits no shell-integration sequences within the first 5 s, THEN THE SYSTEM SHALL mark it `integration: none` and keep delivering output without creating blocks.
+- **REQ-BLK-003** · MUST · unwanted — IF a session emits no shell-integration sequences within the first 5 s, THEN THE SYSTEM SHALL mark it `integration: none` and keep delivering output without creating blocks. WHEN a shell-integration sequence arrives after that window, THE SYSTEM SHALL set `integration: osc133` and record blocks from it; THE SYSTEM SHALL NOT move a session from `osc133` back to `none`. The window is a heuristic about silence, not a verdict about the shell: without the promotion a shell slower than five seconds is advertised as having no integration while its blocks are being recorded, and `session.get` and `block.list` disagree about the same session.
 - **REQ-BLK-004** · MUST · event — WHEN a `running` block enables the alternate screen, THE SYSTEM SHALL mark it `interactive` and exclude alternate-screen content from its stored output.
 - **REQ-BLK-005** · MUST · ubiquitous — THE SYSTEM SHALL provide shell-integration bootstrap scripts for bash, zsh and fish, injected when the session is created.
 - **REQ-BLK-006** · MUST · event — WHEN a client invokes `block.search`, THE SYSTEM SHALL return command and output matches in under 200 ms p95 with 100,000 stored blocks.
@@ -347,8 +347,9 @@ TUI as text:
 | Version | Date | Changes |
 |---|---|---|
 | 1.0 | 2026-09-11 | Initial version |
-| 1.2 | 2026-09-11 | delta `2026-09-visual-identity`: §6.10 with REQ-PKG-001, 002, 003 and 006; REQ-PKG-004, 005, 007 and 008 moved to the F2 PRD per finding A-12 |
 | 1.1 | 2026-09-11 | delta `2026-09-analyze-fixes`: REQ-SEC-008 (degraded start without a keyring, A-03) and REQ-AGT-015 (`thread.send` idempotency, A-04) |
+| 1.2 | 2026-09-11 | delta `2026-09-visual-identity`: §6.10 with REQ-PKG-001, 002, 003 and 006; REQ-PKG-004, 005, 007 and 008 moved to the F2 PRD per finding A-12 |
+| 1.3 | 2026-09-11 | delta `2026-09-block-lifecycle-decisions`: REQ-BLK-003 gains the late-marker promotion and the one-way rule |
 
 ## Approvals
 

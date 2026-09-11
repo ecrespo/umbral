@@ -2,14 +2,14 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `DRAFT — awaiting approval` |
+| **Status** | `APPROVED — folded into specs/ on 2026-09-11` |
 | **Date** | 2026-09-11 |
 | **Task** | T-F0-09 |
 | **Raised by** | `spec-guardian` review, verdict NEEDS A DELTA |
 
 Five decisions taken while implementing T-F0-09 narrow or extend sentences that are already
 written in the approved specs. Art. 9 says they belong here rather than in a code comment.
-The code implements what this proposes; nothing is committed as spec until this is approved.
+Approved on 2026-09-11 and folded: API Spec v1.3, Data Model v1.2, PRD v1.3, Tech Design v1.3.
 
 ## MODIFIED
 

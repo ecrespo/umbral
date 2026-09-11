@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.2 (`protocol_version = 1`; 1.1 and 1.2 are additive over 1.0) |
+| **API version** | v1.3 (`protocol_version = 1`; 1.1, 1.2 and 1.3 are additive over 1.0) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -159,7 +159,12 @@ stated otherwise.
  "duration_ms":4200,"output_bytes":1834,"output_truncated":false}
 ```
 - `origin`: `user` | `agent`
-- `state`: `running` | `interactive` | `finished` | `abandoned` (the session died with the block open)
+- `state`: `running` | `interactive` | `finished` | `abandoned`
+- `abandoned` means the block ended without reporting how. There are two ways: the session
+  died with the block open, or a second `OSC 133;C` arrived with no `OSC 133;D` in between,
+  which is a shell starting a command without saying how the last one finished. `exit_code`
+  is `null` on such a block: not knowing how a command ended and knowing it succeeded are
+  different facts, and the second one is what reaches the agent's context.
 
 ### Thread
 ```json
@@ -336,6 +341,7 @@ Errors: `VALIDATION_ERROR`, `CONFIG_INVALID`.
 | `session.exited` | `{session_id, exit_code, exited_at}` | REQ-TERM-005 |
 | `session.integration` | `{session_id, integration}` | REQ-BLK-003 |
 | `session.input_owner` | `{session_id, input_owner}` | REQ-TERM-008 |
+| `session.unsubscribed` | `{session_id, reason}` | REQ-TERM-004 |
 | `block.started` | `Block` | REQ-BLK-001 |
 | `block.updated` | `{block_id, state}` (e.g. `interactive`) | REQ-BLK-004 |
 | `block.closed` | `Block` | REQ-BLK-002 |
@@ -348,6 +354,14 @@ Errors: `VALIDATION_ERROR`, `CONFIG_INVALID`.
 | `mcp.server_state` | `{name, state, last_error}` | REQ-MCP-003 |
 
 `stop_reason`: `end_turn` | `cancelled` | `max_steps` | `budget` | `tool_error` | `provider_error`.
+
+`session.unsubscribed`'s `reason`: `slow_client`.
+
+WHEN THE SYSTEM drops a subscription for exceeding the per-client queue limit of §8, THE
+SYSTEM SHALL emit `session.unsubscribed` for that session before it stops delivering. A
+client that receives it and still wants the session SHALL call `session.subscribe` again.
+Nothing is lost by the drop: the fresh snapshot already contains everything the dropped
+subscription had not delivered, so the screen is re-sent rather than the backlog.
 
 ## 7. State machines
 
@@ -372,6 +386,8 @@ stateDiagram-v2
   interactive --> finished: OSC 133 D
   running --> abandoned: session.exited
   interactive --> abandoned: session.exited
+  running --> abandoned: OSC 133 C with no preceding D
+  interactive --> abandoned: OSC 133 C with no preceding D
 ```
 
 ## 8. Limits
@@ -382,7 +398,7 @@ stateDiagram-v2
 | `session.input` | 64 KiB per message |
 | Concurrent connections | 32 |
 | `session.output` notifications | batched every 4 ms or 32 KiB, whichever comes first |
-| Queue per slow client | 8 MiB; beyond that the daemon drops the subscription and the client re-subscribes (receiving a new snapshot) |
+| Queue per slow client | 8 MiB; beyond that the daemon drops the subscription, announces it with `session.unsubscribed` (§6), and the client re-subscribes (receiving a new snapshot) |
 
 ## 9. Versioning
 
@@ -407,3 +423,4 @@ printf '%s\n' \
 | 1.0 | 2026-09-11 | Initial version |
 | 1.1 | 2026-09-11 | delta `2026-09-analyze-fixes`: `client_msg_id` in `thread.send` (A-04), `owner_thread_id` in `Session` (A-05), `env_keyring_refs` → `env_refs` (A-06) |
 | 1.2 | 2026-09-11 | delta `2026-09-api-f0-decisions`: runtime-directory fallback and its ownership check, `trace_id` substitute until tracing exists, `capabilities` derived from the method table, `protocol_version` required, repeated handshake closes the connection, token compared before any other parameter |
+| 1.3 | 2026-09-11 | delta `2026-09-slow-client-notification`: `session.unsubscribed` in §6 and the pointer to it in §8. delta `2026-09-block-lifecycle-decisions`: `abandoned` widened in §4 and its two new edges in §7 |

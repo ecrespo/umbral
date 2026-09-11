@@ -3,7 +3,7 @@
 Conventions are those of `specs/tasks/umbral-f0-tasks.md`: `[ ]` pending, `[~]` in progress,
 `[!]` blocked, `[x] YYYY-MM-DD` done.
 
-### [ ] T-BLD-01 · Fold the delta into the specs
+### [x] 2026-09-11 T-BLD-01 · Fold the delta into the specs
 - **What:** apply the five MODIFIED sections of `delta-spec.md` to the four spec files, bump
   each file's version and change history, then archive this folder under `changes/_archive/`.
 - **REQ:** REQ-BLK-002, REQ-BLK-003, REQ-BLK-004, REQ-BLK-007
@@ -12,6 +12,10 @@ Conventions are those of `specs/tasks/umbral-f0-tasks.md`: `[ ]` pending, `[~]` 
 - **Depends on:** approval of this delta
 - **Done:** `python3 tools/sdd_check.py` exits 0 and `node tools/mermaid_check.mjs` accepts
   the amended §7 diagram.
+- **Result:** API Spec v1.3 (§4 gloss, §7 two new edges), Data Model v1.2 (§2.2 flag covers
+  both caps, §2.3 lists what the chunks drop), PRD v1.3 (REQ-BLK-003 late promotion and the
+  one-way rule), Tech Design v1.3 (§3.2 records `klauspost/compress/zstd`). Both checkers
+  green: 14/14 diagrams, 64/64 MUST REQs with a task.
 
 ## Traceability matrix
 

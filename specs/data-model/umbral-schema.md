@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.1 |
+| **Version** | 1.2 |
 | **Date** | 2026-09-11 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -109,10 +109,25 @@ CREATE INDEX idx_blocks_thread_started  ON blocks(thread_id, started_at DESC) WH
 CREATE INDEX idx_blocks_open            ON blocks(state) WHERE state IN ('running','interactive');
 ```
 
+`output_truncated` covers **both** caps: the 16 MiB raw chunk history of §2.3 and the 1 MiB
+`output_plain` transcript. A client that sees it `0` is promised the whole of what the
+command said, and a transcript cut at 1 MiB breaks that promise just as a cut chunk history
+does. REQ-BLK-007 names `output_plain` as the agent's context, so that is the reader the flag
+exists for.
+
 ### 2.3 `block_chunks`
 
 **Purpose:** raw output (with escapes) in zstd-compressed chunks, for faithful re-rendering and
 export.
+
+Two classes of sequence are **not** stored. The shell-integration sequences the daemon
+recognises, `OSC 133;A/B/C/D`, `OSC 633;E` and `OSC 7`, are the shell talking to the daemon
+rather than output: they are invisible on screen, so keeping them makes no replay more
+faithful and every consumer exporting a block would have to filter them. The alternate-screen
+mode sequences that bracket an `interactive` stretch are dropped for a different reason:
+REQ-BLK-004 already excludes what is painted between them, and an unbalanced `CSI ?1049h` or
+`CSI ?1049l` would switch the terminal of whoever replays the block into or out of a screen
+it never entered. Every other escape sequence is stored byte for byte.
 
 ```sql
 CREATE TABLE block_chunks (
@@ -397,3 +412,4 @@ In F0 the table stays empty; `store` only writes to it from T-F1-01 onwards.
 |---|---|---|
 | 1.0 | 2026-09-11 | Initial version |
 | 1.1 | 2026-09-11 | delta `2026-09-analyze-fixes`: `threads` moves to migration 0001 and §5.1 lists each migration (A-01), `blocks_fts` triggers written out (A-07), `client_msg_id` in `messages` (A-04) |
+| 1.2 | 2026-09-11 | delta `2026-09-block-lifecycle-decisions`: `output_truncated` covers both caps (§2.2), and §2.3 says which sequences the chunks do not keep |

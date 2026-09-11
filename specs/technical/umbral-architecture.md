@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.2 |
+| **Version** | 1.3 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -92,7 +92,7 @@ flowchart LR
 | Component | Technology | Responsibility | Main REQs |
 |---|---|---|---|
 | `api` | own JSON-RPC 2.0 over a Unix `net.Listener` | handshake, auth, dispatch, notification fan-out with a per-client queue | SEC-003, SEC-007 |
-| `sessions` | `creack/pty`, go-libghostty, `shell/` bootstrap | PTY, VT, blocks, input lock, snapshots | TERM-*, BLK-* |
+| `sessions` | `creack/pty`, go-libghostty, `shell/` bootstrap, `klauspost/compress/zstd` | PTY, VT, blocks, input lock, snapshots | TERM-*, BLK-* |
 | `agents` | own runtime over ports | per-turn loop, modes, limits, cancellation, persist-first | AGT-* |
 | `context` | `text/template`, tiktoken tokenizer in Go | rules, attachments, git, budget, compaction | CTX-* |
 | `tools` | microkernel registry | built-in tools and MCP adapter; JSON Schema validation | AGT-002/006, MCP-001 |
@@ -416,5 +416,6 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0 | 2026-09-11 | E. Crespo (assisted draft) | Initial version |
-| 1.2 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-visual-identity`: §9.3 visual identity and packaging |
 | 1.1 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-analyze-fixes`: appendix §8.1 with the VT conformance cases VT-01…VT-22 (A-02) |
+| 1.2 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-visual-identity`: §9.3 visual identity and packaging |
+| 1.3 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-block-lifecycle-decisions`: `klauspost/compress/zstd` recorded as a `sessions` dependency in §3.2 |

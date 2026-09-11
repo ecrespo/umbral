@@ -59,11 +59,10 @@ complete; the task file's `[x]` markers are the source of truth, not this paragr
 - A-01 … A-07 and A-13 are folded into `specs/`; the delta lives in `changes/_archive/2026-09-analyze-fixes/`.
 - Open findings, each attached to the task that first needs it: A-08 (reference machine, T-F0-13), A-09 (entropy and rules precedence, T-F1-04/T-F1-11), A-10 (SQLite write failure, T-F1-13), A-11 (`fetch_url` limits, T-F1-09), A-14 (glossary).
 - Closed while folding the visual identity: A-12 (the four desktop PKG requirements moved to `specs/prd/umbral-f2-desktop.md`), A-15 (checksums regenerated) and A-16 (Spanish duplicate deleted).
-- **Phase 0 is closed**, and its three deltas are archived. Two deltas are open and awaiting
-  approval: `changes/2026-09-slow-client-notification/` (from T-F0-06, adds
-  `session.unsubscribed` to API §6) and `changes/2026-09-block-lifecycle-decisions/` (from
-  T-F0-09, five decisions that narrow approved spec text). The code implements what both
-  propose; neither is folded into `specs/` yet.
+- **Phase 0 is closed** and `changes/` holds no pending delta: all five are archived. The two
+  raised during F0, `2026-09-slow-client-notification` (T-F0-06) and
+  `2026-09-block-lifecycle-decisions` (T-F0-09), were approved and folded on 2026-09-11 into
+  API Spec v1.3, Data Model v1.2, PRD v1.3 and Tech Design v1.3.
 - **Q-01 is resolved** (`docs/spikes/q01-snapshot.md`): the libghostty VT formatter produces replayable snapshots, so the bounded-replay fallback is not needed and DD-001 stands unchanged.
 - **Building needs libghostty-vt.** Run `task deps:ghostty` once; the Taskfile then points `PKG_CONFIG_PATH` at it, so no Go target needs you to export anything.
 - `python3 tools/sdd_check.py` exits 0. Keep it that way: it is the *Specs* gate in CI.

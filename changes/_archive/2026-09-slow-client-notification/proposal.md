@@ -1,6 +1,6 @@
 # Proposal — Tell the client when its subscription is dropped
 
-> **Status:** draft, awaiting approval
+> **Status:** approved 2026-09-11, folded into API Spec v1.3
 > **Affected base specs:** `specs/api/umbral-daemon-api-v1.md`
 > **Date:** 2026-09-11 · **Author:** Ernesto Crespo (assisted draft)
 > **Evidence:** T-F0-06 implementation
