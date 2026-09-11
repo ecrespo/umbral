@@ -10,12 +10,12 @@ default CI.
 
 ## Tasks
 
-### [ ] T-F1-01 · Migration 0002 (agent, models, audit, MCP)
+### [ ] T-F1-01 · Migration 0003 (agent, models, audit, MCP)
 - **What:** Data Model tables §2.6 to §2.13 with their indexes, plus recovery §6 steps 3-4.
   `threads` (§2.5) is **not** created here: migration 0001 already created it (§5.1, finding A-01).
   `messages` includes `client_msg_id` and its partial unique index `idx_messages_client_msg`.
 - **REQ:** REQ-AGT-011, REQ-LLM-005, REQ-SEC-002
-- **Files:** `internal/store/migrations/0002_agent.sql`, `internal/store/**`
+- **Files:** `internal/store/migrations/0003_agent.sql`, `internal/store/**`
 - **Depends on:** F0 complete
 - **Done:** `TestMigration0002Constraints` and `TestRecoveryExpiresPendingApprovals_REQ_AGT_011` green.
 

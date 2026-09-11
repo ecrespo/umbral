@@ -409,8 +409,15 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 
 | Migration | Phase | Objects it creates |
 |---|---|---|
-| `0001_terminal.sql` | F0 | `schema_migrations`, **`threads`** (§2.5) and `idx_threads_updated`, `sessions`, `blocks`, `block_chunks`, `blocks_fts` and its three triggers, plus every index in §2.1-2.5, `idx_blocks_started` among them |
-| `0002_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers` and their indexes (§2.6-2.13) |
+| `0001_terminal.sql` | F0 | `schema_migrations`, **`threads`** (§2.5) and `idx_threads_updated`, `sessions`, `blocks`, `block_chunks`, `blocks_fts` and its three triggers, plus every index in §2.1-2.5 except `idx_blocks_started` |
+| `0002_block_index.sql` | F0 | `idx_blocks_started` (§2.2) |
+| `0003_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers` and their indexes (§2.6-2.13) |
+
+`idx_blocks_started` is a migration of its own rather than a line added to 0001, because 0001
+had already been applied when the need for it was measured. Migrations are forward-only
+(Art. 6) and the runner records only the version a database reached, so editing an applied
+file changes nothing for the databases that ran it: they would have kept the 141 ms scan with
+nothing to report the divergence.
 
 `threads` is created in **0001**, not in 0002, even though the agent subdomain only starts in F1.
 Reason: `sessions.owner_thread_id` and `blocks.thread_id` declare `REFERENCES threads(id)` and,

@@ -156,7 +156,13 @@ func (s *Store) Raw(ctx context.Context, id string, limit int) ([]byte, bool, er
 		if room := limit - len(out); len(chunk) >= room {
 			out = append(out, chunk[:room]...)
 			// There is more, either in the rest of this chunk or in the ones after it.
+			// `rows.Next()` is also false when the iteration failed, so the error is
+			// checked before the answer is trusted: telling a caller it has the whole
+			// block because a read broke is the one wrong answer here.
 			truncated = len(chunk) > room || rows.Next()
+			if err := rows.Err(); err != nil {
+				return nil, false, fmt.Errorf("blockstore: read the chunks of %s: %w", id, err)
+			}
 			return out, truncated, nil
 		}
 		out = append(out, chunk...)

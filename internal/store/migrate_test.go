@@ -62,12 +62,20 @@ func TestMigrationsApplyAndAreIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
+	// The expected version is derived from the embedded files rather than written here,
+	// so adding a migration does not break a test that is about idempotency.
+	available, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations: %v", err)
+	}
+	latest := available[len(available)-1].version
+
 	version, err := first.SchemaVersion(t.Context())
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if version != 1 {
-		t.Errorf("schema version after first open = %d, want 1", version)
+	if version != latest {
+		t.Errorf("schema version after first open = %d, want %d", version, latest)
 	}
 	if err := first.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -84,8 +92,50 @@ func TestMigrationsApplyAndAreIdempotent(t *testing.T) {
 		"SELECT count(*) FROM schema_migrations").Scan(&applied); err != nil {
 		t.Fatalf("count schema_migrations: %v", err)
 	}
-	if applied != 1 {
-		t.Errorf("schema_migrations has %d rows after two opens, want 1", applied)
+	if applied != len(available) {
+		t.Errorf("schema_migrations has %d rows after two opens, want %d", applied, len(available))
+	}
+}
+
+// TestMigrationUpgradesAnExistingDatabase is the regression test for a mistake made in
+// T-F0-10: the index `block.list` is ordered by was first added by editing 0001, which had
+// already been applied everywhere. The runner records only the version a database reached,
+// so an edited file never runs again and those databases silently kept the full-table scan
+// the index exists to prevent. This pins the forward-only rule of Art. 6 from the other
+// side: a database left at an older version must pick up what came after it.
+func TestMigrationUpgradesAnExistingDatabase(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "umbral.db")
+	first, err := Open(t.Context(), Options{Path: path})
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+
+	// Rewind the database to the state a developer's copy was in before 0002 existed.
+	if _, err := first.DB().ExecContext(t.Context(), "DROP INDEX idx_blocks_started"); err != nil {
+		t.Fatalf("drop the index: %v", err)
+	}
+	if _, err := first.DB().ExecContext(t.Context(),
+		"DELETE FROM schema_migrations WHERE version > 1"); err != nil {
+		t.Fatalf("rewind schema_migrations: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second, err := Open(t.Context(), Options{Path: path})
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	defer func() { _ = second.Close() }()
+
+	var name string
+	err = second.DB().QueryRowContext(t.Context(),
+		"SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_blocks_started'").
+		Scan(&name)
+	if err != nil {
+		t.Fatalf("a database left at version 1 did not receive idx_blocks_started: %v", err)
 	}
 }
 

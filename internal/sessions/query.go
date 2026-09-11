@@ -82,12 +82,14 @@ func (r *Reader) Get(ctx context.Context, id, sessionID string, include domain.I
 	if err != nil {
 		return domain.Block{}, domain.BlockOutput{}, err
 	}
-	// A block id that exists but belongs to another session is not this session's last
-	// block, and answering with it would let one session read another's history through a
-	// parameter meant to narrow the search.
+	// A block id that exists but belongs to another session is not this session's block,
+	// and answering with it would let one session read another's history through a
+	// parameter meant to narrow the search. The id is deliberately left out of the error:
+	// "not found" and "found, but not yours" must be indistinguishable, or the refusal
+	// becomes a way to confirm that an id exists.
 	if sessionID != "" && block.SessionID != sessionID {
 		return domain.Block{}, domain.BlockOutput{},
-			fmt.Errorf("%w: block %s is not in session %s", domain.ErrNotFound, block.ID, sessionID)
+			fmt.Errorf("%w: no such block in this session", domain.ErrNotFound)
 	}
 
 	output, err := r.output(ctx, block.ID, include)

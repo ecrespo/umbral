@@ -110,7 +110,7 @@ and the other two need the F2 desktop client.
 
 | ID | Task | Estimate | Dependency | Status |
 |---|---|---|---|---|
-| T-F1-01 | Migration 0002 (agent, models, audit, MCP) | 1d | F0 | ☐ |
+| T-F1-01 | Migration 0003 (agent, models, audit, MCP) | 1d | F0 | ☐ |
 | T-F1-02 | Keyring and config loader that rejects plaintext secrets | 1d | T-F1-01 | ☐ |
 | T-F1-03 | Policy engine (pure function) | 2d | T-F1-01 | ☐ |
 | T-F1-04 | Secret redaction | 1.5d | T-F1-01 | ☐ |
