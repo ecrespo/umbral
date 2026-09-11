@@ -1,0 +1,278 @@
+# Tasks — Umbral F1 (Agent, models, MCP and security)
+
+> Source specs: `specs/prd/umbral-mvp.md` · `specs/api/umbral-daemon-api-v1.md` · `specs/technical/umbral-architecture.md` · `specs/data-model/umbral-schema.md` · `specs/plans/umbral-mvp-plan.md`
+> Plan phase covered: F1 · Generated: 2026-09-11
+
+## Conventions for this file
+
+Same as `umbral-f0-tasks.md`. Tests against real models use the `live` build tag and do not run in
+default CI.
+
+## Tasks
+
+### [ ] T-F1-01 · Migration 0002 (agent, models, audit, MCP)
+- **What:** Data Model tables §2.5 to §2.13 with their indexes, plus recovery §6 steps 3-4.
+- **REQ:** REQ-AGT-011, REQ-LLM-005, REQ-SEC-002
+- **Files:** `internal/store/migrations/0002_agent.sql`, `internal/store/**`
+- **Depends on:** F0 complete
+- **Done:** `TestMigration0002Constraints` and `TestRecoveryExpiresPendingApprovals_REQ_AGT_011` green.
+
+### [ ] T-F1-02 · Keyring and configuration loader
+- **What:**
+  - TOML loader with JSON Schema;
+  - resolution of `keyring:<path>` with go-keyring;
+  - rejection (`CONFIG_INVALID`) of plaintext API keys;
+  - `config.get` and `config.reload`.
+- **REQ:** REQ-SEC-004
+- **Files:** `internal/config/**`, `internal/security/adapters/keyring/**`
+- **Depends on:** T-F1-01
+- **Done:** `TestPlaintextKeyRejected_REQ_SEC_004` green.
+
+### [ ] T-F1-03 · [P] Policy engine
+- **What:** pure `Decide()` following DD-006 precedence and the Tech Design §5.3 table; destructive-pattern list; workspace computation; taint.
+- **REQ:** REQ-AGT-009, REQ-AGT-013, REQ-AGT-014, REQ-SEC-005, REQ-SEC-006
+- **Files:** `internal/security/domain/policy*.go`
+- **Depends on:** T-F1-01
+- **Done:** table tests `TestPolicy_*_REQ_AGT_009/013/014`, `TestDestructiveAlwaysAsk_REQ_SEC_005` and `TestTaintedRequiresAsk_REQ_SEC_006` green, with ≥ 90 % package coverage.
+
+### [ ] T-F1-04 · [P] Secret redaction
+- **What:** rules (AWS/GCP/GitHub/GitLab/OpenAI/Anthropic/HF keys, JWT, PEM private keys, `.env`) plus an entropy detector; replacement with `[REDACTED:<rule>]`.
+- **REQ:** REQ-SEC-001
+- **Files:** `internal/security/domain/redact*.go`, `testdata/redact/**`
+- **Depends on:** T-F1-01
+- **Done:** `TestRedactionCorpus_REQ_SEC_001` (corpus with ≥ 30 positives and ≥ 30 negatives) green.
+
+### [ ] T-F1-05 · Gateway: ports, catalog and openai-compat adapters
+- **What:**
+  - `Provider` port (architecture §6) with normalized events;
+  - `llamacpp`, `lmstudio`, `openrouter` and `openai-compat` adapters on top of Fantasy;
+  - discovery through `/v1/models`;
+  - `model.list` with `refresh`.
+- **REQ:** REQ-LLM-001, REQ-LLM-002
+- **Files:** `internal/llmgw/{ports,catalog,adapters/openaicompat,adapters/openrouter}/**`
+- **Depends on:** T-F1-02
+- **Done:** tests with a fake server `TestDiscoverModels_REQ_LLM_002` and `TestStreamNormalized_REQ_LLM_001` green.
+
+### [ ] T-F1-06 · Native Ollama adapter
+- **What:**
+  - `/api/chat` with streaming, tools, `think`, `format` and `num_ctx`;
+  - `keep_alive`;
+  - discovery through `/api/tags`.
+- **REQ:** REQ-LLM-001, REQ-LLM-006
+- **Files:** `internal/llmgw/adapters/ollama/**`
+- **Depends on:** T-F1-05
+- **Done:** `TestOllamaSendsNumCtx_REQ_LLM_006` (fake) green; `TestOllamaLive` (tag `live`) green against `gpt-oss:20b`.
+
+### [ ] T-F1-07 · Router, fallback, usage and egress hooks
+- **What:**
+  - candidates per class and offline filter;
+  - capability filter;
+  - health;
+  - fallback on 429, 5xx and first-token timeout (30 s remote / 120 s local);
+  - recording in `usage`;
+  - redaction before sending;
+  - `egress_log` for non-loopback hosts.
+- **REQ:** REQ-LLM-003, REQ-LLM-004, REQ-LLM-005, REQ-SEC-001, REQ-SEC-002
+- **Files:** `internal/llmgw/router/**`
+- **Depends on:** T-F1-04, T-F1-06
+- **Done:** tests `TestFallbackOn429_REQ_LLM_003`, `TestOfflineRejectsRemote_REQ_LLM_004`, `TestUsageRecorded_REQ_LLM_005` and `TestEgressLoggedForRemote_REQ_SEC_002` green.
+
+### [ ] T-F1-08 · [P] HF router and OmniRoute presets
+- **What:** commented configuration templates (`examples/models.toml`) and validation that both go through `openai-compat`.
+- **REQ:** REQ-LLM-007
+- **Files:** `examples/models.toml`, `internal/config/presets*.go`
+- **Depends on:** T-F1-05
+- **Done:** `TestPresetsLoad_REQ_LLM_007` green.
+
+### [ ] T-F1-09 · Tool registry and built-in tools
+- **What:**
+  - microkernel registry with JSON Schema validation;
+  - tools `read_file`, `write_file`, `edit_file` (with unified diff), `grep`, `glob`, `list_dir` and `fetch_url`;
+  - `fetch_url` marks taint.
+- **REQ:** REQ-AGT-002, REQ-AGT-012, REQ-SEC-006
+- **Files:** `internal/tools/{ports,builtin}/**`
+- **Depends on:** T-F1-03
+- **Done:** `TestToolSchemasDeclared_REQ_AGT_002`, `TestEditFileProducesDiff_REQ_AGT_012` and `TestFetchMarksTaint_REQ_SEC_006` green.
+
+### [ ] T-F1-10 · `run_command` in the thread PTY
+- **What:**
+  - dedicated PTY per thread (session with `owner_thread_id`), with the `agent` lock;
+  - block with `origin = agent`;
+  - process group so it can be terminated.
+- **REQ:** REQ-AGT-003, REQ-AGT-007
+- **Files:** `internal/tools/builtin/runcommand*.go`, `internal/sessions/**`
+- **Depends on:** T-F1-09
+- **Done:** `TestRunCommandCreatesAgentBlock_REQ_AGT_003` green.
+
+### [ ] T-F1-11 · [P] Context: rules, attachments and git
+- **What:**
+  - rules-file lookup from the repo root down to the cwd;
+  - `@file`, `@directory` and `@block:<id>` attachments with truncation at 256 KiB;
+  - git context;
+  - prompt templates.
+- **REQ:** REQ-CTX-001, REQ-CTX-002, REQ-CTX-003, REQ-CTX-005
+- **Files:** `internal/context/**`
+- **Depends on:** T-F1-01
+- **Done:** tests `…_REQ_CTX_001/002/003/005` green with fixture repos.
+
+### [ ] T-F1-12 · Token budget and compaction
+- **What:** token counting per family (Q-03), response reserve, compaction via summary with the `fast` class and the `context.compacted` notification.
+- **REQ:** REQ-CTX-004
+- **Files:** `internal/context/budget/**`
+- **Depends on:** T-F1-11
+- **Done:** `TestCompactionTriggeredOverWindow_REQ_CTX_004` green.
+
+### [ ] T-F1-13 · Agent runtime and `thread.*`
+- **What:**
+  - per-turn loop that persists before notifying (DD-007);
+  - methods `thread.create`, `send`, `get`, `list` and `update`;
+  - notifications `thread.delta`, `thread.tool_call` and `thread.turn_finished`;
+  - `max_steps` and budget;
+  - model change on the next turn;
+  - `ask` mode exposes only ReadOnly tools.
+- **REQ:** REQ-AGT-001, REQ-AGT-008, REQ-AGT-009, REQ-AGT-010, REQ-AGT-011
+- **Files:** `internal/agents/**`, `internal/api/threads.go`
+- **Depends on:** T-F1-07, T-F1-10, T-F1-12
+- **Done:** tests `…_REQ_AGT_001/008/009/010/011` green with a scripted fake provider.
+
+### [ ] T-F1-14 · Approval flow
+- **What:**
+  - `approval.requested` pauses the turn and `approval.respond` resumes it;
+  - rule persistence (`thread` / `always`); destructive patterns ignore `always`;
+  - denial returns `denied_by_user`;
+  - `approval.list`.
+- **REQ:** REQ-AGT-004, REQ-AGT-005, REQ-SEC-005
+- **Files:** `internal/agents/approval*.go`, `internal/api/approvals.go`
+- **Depends on:** T-F1-13
+- **Done:** `TestAskPausesTurn_REQ_AGT_004` and `TestDenyReturnsDeniedByUser_REQ_AGT_005` green.
+
+### [ ] T-F1-15 · Repair of invalid tool calls
+- **What:** one retry with a repair message; on the second failure, `stop_reason = tool_error`; increment `umbral_tool_calls_invalid_total{model}`.
+- **REQ:** REQ-AGT-006, REQ-OBS-002
+- **Files:** `internal/agents/repair*.go`, `internal/obs/metrics.go`
+- **Depends on:** T-F1-13
+- **Done:** `TestInvalidArgsRepairOnce_REQ_AGT_006` and `TestInvalidMetricIncrements_REQ_OBS_002` green.
+
+### [ ] T-F1-16 · Cancellation
+- **What:** `thread.cancel` cancels the turn's context; SIGTERM to the process group; SIGKILL after 300 ms.
+- **REQ:** REQ-AGT-007
+- **Files:** `internal/agents/cancel*.go`
+- **Depends on:** T-F1-13
+- **Done:** `TestCancelUnder500ms_REQ_AGT_007` (with `sleep 60` running) green.
+
+### [ ] T-F1-17 · MCP client
+- **What:**
+  - stdio and streamable HTTP connections with the official SDK;
+  - `mcp_<server>_<tool>` prefix;
+  - `mcp.server.add`/`remove`/`list`, with `trust = untrusted` by default;
+  - 10 s timeout and exponential backoff (at most 5 attempts);
+  - `ask` policy by default.
+- **REQ:** REQ-MCP-001, REQ-MCP-002, REQ-MCP-003, REQ-MCP-004
+- **Files:** `internal/mcp/client/**`, `internal/tools/mcptools/**`
+- **Depends on:** T-F1-09
+- **Done:** tests with a test MCP server written in Go `…_REQ_MCP_001/002/003/004` green.
+
+### [ ] T-F1-18 · OTel observability
+- **What:**
+  - root span `agent.turn` with children `llm.call` and `tool.*`, with GenAI attributes;
+  - `trace_id` in `slog` logs;
+  - optional OTLP exporter.
+- **REQ:** REQ-OBS-001, REQ-OBS-003
+- **Files:** `internal/obs/**`
+- **Depends on:** T-F1-13
+- **Done:** `TestTurnTraceHasSpans_REQ_OBS_001` (in-memory exporter) green.
+
+### [ ] T-F1-19 · `umb ai` with stdin
+- **What:** ephemeral thread in `ask` mode; stdin as an attachment (at most 1 MiB, truncation noted); streaming to stdout; non-zero exit code if the turn ends in error.
+- **REQ:** REQ-CLI-001
+- **Files:** `cmd/umb/ai.go`
+- **Depends on:** T-F1-13
+- **Done:** `TestUmbAiPipesStdin_REQ_CLI_001` green.
+
+### [ ] T-F1-20 · TUI: agent panel
+- **What:**
+  - thread panel with deltas;
+  - toggle input between shell and agent with `ctrl+space`;
+  - approval queue with `[a]pprove`, `[d]eny` and `a[l]ways`, plus a diff view;
+  - "attach to agent" action on a block.
+- **REQ:** REQ-TUI-001, REQ-TUI-002, REQ-TUI-003
+- **Files:** `internal/tui/agent/**`
+- **Depends on:** T-F1-14
+- **Done:** teatest tests `…_REQ_TUI_002/003` green; `docs/qa/f1-tui.md` completed.
+
+### [ ] T-F1-21 · Live US-003 E2E
+- **What:**
+  - Go fixture repo with a broken test;
+  - script that runs 20 times: create an `auto-edit` thread, attach the failed block, "fix it", auto-approve `run_command go test`, with `router.offline = true`;
+  - report with success rate, invalid tool call rate and latency.
+- **REQ:** REQ-AGT-001, REQ-LLM-004, REQ-SEC-002 (PRD §4.1 goal)
+- **Files:** `e2e/us003/**`, `docs/reports/us003-<date>.md`
+- **Depends on:** T-F1-20
+- **Done:** report with ≥ 14/20 successes and 0 rows in `egress_log` during the run.
+
+### [ ] T-F1-22 · Hardening
+- **What:** retention job (Data Model §4), E2E verification of recovery after `kill -9` of the daemon, user guide for provider configuration.
+- **REQ:** REQ-AGT-011, Art. 6
+- **Files:** `internal/store/retention*.go`, `docs/user/*.md`
+- **Depends on:** T-F1-21
+- **Done:** `TestRetentionPurgesRawChunks` and `TestCrashRecovery_REQ_AGT_011` green.
+
+## Traceability matrix (F1)
+
+| REQ | Tasks | Tests citing it |
+|---|---|---|
+| REQ-AGT-001 | T-F1-13, T-F1-21 | TestSendStreamsDeltas_REQ_AGT_001, e2e us003 |
+| REQ-AGT-002 | T-F1-09 | TestToolSchemasDeclared_REQ_AGT_002 |
+| REQ-AGT-003 | T-F1-10 | TestRunCommandCreatesAgentBlock_REQ_AGT_003 |
+| REQ-AGT-004 | T-F1-14 | TestAskPausesTurn_REQ_AGT_004 |
+| REQ-AGT-005 | T-F1-14 | TestDenyReturnsDeniedByUser_REQ_AGT_005 |
+| REQ-AGT-006 | T-F1-15 | TestInvalidArgsRepairOnce_REQ_AGT_006 |
+| REQ-AGT-007 | T-F1-10, T-F1-16 | TestCancelUnder500ms_REQ_AGT_007 |
+| REQ-AGT-008 | T-F1-13 | TestStopsAtMaxSteps_REQ_AGT_008 |
+| REQ-AGT-009 | T-F1-03, T-F1-13 | TestAskModeReadOnlyTools_REQ_AGT_009 |
+| REQ-AGT-010 | T-F1-13 | TestModelSwitchNextTurn_REQ_AGT_010 |
+| REQ-AGT-011 | T-F1-01, T-F1-13, T-F1-22 | TestPersistBeforeNotify_REQ_AGT_011, TestCrashRecovery_REQ_AGT_011 |
+| REQ-AGT-013 | T-F1-03 | TestPolicyAutoEditWorkspace_REQ_AGT_013 |
+| REQ-AGT-014 | T-F1-03 | TestPolicyNormalDefaultAsk_REQ_AGT_014 |
+| REQ-CTX-001 | T-F1-11 | TestRulesFilesPrecedence_REQ_CTX_001 |
+| REQ-CTX-002 | T-F1-11 | TestAttachments_REQ_CTX_002 |
+| REQ-CTX-003 | T-F1-11 | TestGitContext_REQ_CTX_003 |
+| REQ-CTX-004 | T-F1-12 | TestCompactionTriggeredOverWindow_REQ_CTX_004 |
+| REQ-CTX-005 | T-F1-11 | TestAttachmentTruncated_REQ_CTX_005 |
+| REQ-LLM-001 | T-F1-05, T-F1-06 | TestStreamNormalized_REQ_LLM_001 |
+| REQ-LLM-002 | T-F1-05 | TestDiscoverModels_REQ_LLM_002 |
+| REQ-LLM-003 | T-F1-07 | TestFallbackOn429_REQ_LLM_003 |
+| REQ-LLM-004 | T-F1-07, T-F1-21 | TestOfflineRejectsRemote_REQ_LLM_004 |
+| REQ-LLM-005 | T-F1-01, T-F1-07 | TestUsageRecorded_REQ_LLM_005 |
+| REQ-LLM-006 | T-F1-06 | TestOllamaSendsNumCtx_REQ_LLM_006 |
+| REQ-SEC-001 | T-F1-04, T-F1-07 | TestRedactionCorpus_REQ_SEC_001 |
+| REQ-SEC-002 | T-F1-01, T-F1-07, T-F1-21 | TestEgressLoggedForRemote_REQ_SEC_002 |
+| REQ-SEC-004 | T-F1-02 | TestPlaintextKeyRejected_REQ_SEC_004 |
+| REQ-SEC-005 | T-F1-03, T-F1-14 | TestDestructiveAlwaysAsk_REQ_SEC_005 |
+| REQ-SEC-006 | T-F1-03, T-F1-09 | TestTaintedRequiresAsk_REQ_SEC_006, TestFetchMarksTaint_REQ_SEC_006 |
+| REQ-MCP-001 | T-F1-17 | TestMcpToolsPrefixed_REQ_MCP_001 |
+| REQ-MCP-002 | T-F1-17 | TestMcpAddMidThread_REQ_MCP_002 |
+| REQ-MCP-003 | T-F1-17 | TestMcpReconnectBackoff_REQ_MCP_003 |
+| REQ-MCP-004 | T-F1-17 | TestMcpDefaultAsk_REQ_MCP_004 |
+| REQ-CLI-001 | T-F1-19 | TestUmbAiPipesStdin_REQ_CLI_001 |
+| REQ-TUI-001 | T-F1-20 (+ T-F0-12) | TestTUIAgentPanel_REQ_TUI_001 |
+| REQ-TUI-002 | T-F1-20 | TestModeToggle_REQ_TUI_002 |
+| REQ-TUI-003 | T-F1-20 | TestAttachBlock_REQ_TUI_003 |
+| REQ-OBS-001 | T-F1-18 | TestTurnTraceHasSpans_REQ_OBS_001 |
+| REQ-OBS-002 | T-F1-15 | TestInvalidMetricIncrements_REQ_OBS_002 |
+
+**SHOULD/COULD covered or deferred:**
+
+| REQ | Status |
+|---|---|
+| REQ-AGT-012 | SHOULD, covered by T-F1-09 |
+| REQ-LLM-007 | SHOULD, covered by T-F1-08 |
+| REQ-OBS-003 | SHOULD, covered by T-F1-18 |
+| REQ-LLM-008 | COULD, deferred to F2 |
+| REQ-BLK-008 | SHOULD, deferred to F2 |
+
+## Execution log
+
+| Date | Tasks | Result | Notes |
+|---|---|---|---|
+| — | — | — | — |

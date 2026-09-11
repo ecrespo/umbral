@@ -1,0 +1,365 @@
+# Umbral MVP — Technical Design Document
+
+## Metadata
+
+| Field | Value |
+|---|---|
+| **Author** | Ernesto Crespo · assisted draft |
+| **Status** | `DRAFT` |
+| **Version** | 1.0 |
+| **Date** | 2026-09-11 |
+| **Related PRD** | `specs/prd/umbral-mvp.md` |
+| **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
+| **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
+
+---
+
+## 1. Context
+
+Umbral is a local Go daemon (`umbrald`) that owns:
+
+- the PTYs and their VT emulation;
+- the blocks derived from shell integration;
+- the agent runtime;
+- the model gateway.
+
+The clients (TUI and CLI in the MVP) are thin and speak JSON-RPC over a Unix socket. Separating the
+lifecycle of shells and agents from the window's lifecycle is what enables durable sessions,
+multiple clients and, later, background agents.
+
+The style follows ADR-0001: local client-server, with the daemon as a **modular monolith**, a
+**hexagonal** interior, a **microkernel** for tools and providers, and an in-process **event bus**.
+
+## 2. Technical Goals
+
+- **Correctness:** VT conformance is the foundation; no block loses output; every agent action is
+  persisted before it is notified.
+- **Performance:** added latency < 5 ms p95; `session.create` < 300 ms p95; search < 200 ms p95 with
+  100,000 blocks.
+- **Maintainability:** boundaries verified by `go-arch-lint`; unit coverage ≥ 75 % in `domain` and in
+  the policy and router packages.
+- **Operability:** traces per turn, metrics per provider, `umb status` as the diagnostic entry point.
+
+## 3. Proposed Architecture
+
+### 3.1 High-Level Diagram (MVP)
+
+```mermaid
+flowchart LR
+  subgraph Clients
+    TUI["umbral-tui"]
+    CLI["umb"]
+  end
+  subgraph D["umbrald"]
+    API["api JSON-RPC"]
+    BUS(("bus"))
+    SES["sessions"]
+    AGT["agents"]
+    CTX["context"]
+    TOOLS["tools"]
+    GW["llmgw"]
+    MCPC["mcp client"]
+    SEC["security"]
+    STORE[("SQLite WAL + FTS5")]
+  end
+  subgraph Models
+    LOC["Ollama / llama.cpp / LM Studio"]
+    REM["OpenRouter / HF router / OmniRoute / openai-compat"]
+  end
+  EXT["MCP servers"]
+  TUI --> API
+  CLI --> API
+  API --> BUS
+  BUS --> SES
+  BUS --> AGT
+  AGT --> CTX
+  AGT --> TOOLS
+  AGT --> GW
+  AGT --> SEC
+  TOOLS --> SES
+  TOOLS --> MCPC
+  MCPC --> EXT
+  GW --> SEC
+  GW --> LOC
+  GW --> REM
+  SES --> STORE
+  AGT --> STORE
+  SEC --> STORE
+```
+
+### 3.2 Components
+
+| Component | Technology | Responsibility | Main REQs |
+|---|---|---|---|
+| `api` | own JSON-RPC 2.0 over a Unix `net.Listener` | handshake, auth, dispatch, notification fan-out with a per-client queue | SEC-003, SEC-007 |
+| `sessions` | `creack/pty`, go-libghostty, `shell/` bootstrap | PTY, VT, blocks, input lock, snapshots | TERM-*, BLK-* |
+| `agents` | own runtime over ports | per-turn loop, modes, limits, cancellation, persist-first | AGT-* |
+| `context` | `text/template`, tiktoken tokenizer in Go | rules, attachments, git, budget, compaction | CTX-* |
+| `tools` | microkernel registry | built-in tools and MCP adapter; JSON Schema validation | AGT-002/006, MCP-001 |
+| `llmgw` | `charm.land/fantasy` + native Ollama adapter | catalog, candidates per class, fallback, normalized streaming, usage | LLM-* |
+| `mcp` | `modelcontextprotocol/go-sdk` | connection, reconnection with backoff, prefixing | MCP-* |
+| `security` | own rules + `zalando/go-keyring` | policies, destructive patterns, taint, redaction, egress | SEC-*, AGT-004/009/013/014 |
+| `store` | `modernc.org/sqlite` | migrations, repositories, FTS5 | Data Model |
+| `obs` | OpenTelemetry Go, `log/slog` | traces, metrics | OBS-* |
+
+### 3.3 Main flow: US-003 scenario ("fix it")
+
+```mermaid
+sequenceDiagram
+  actor U as User
+  participant T as umbral-tui
+  participant A as agents
+  participant C as context
+  participant S as security
+  participant G as llmgw
+  participant X as tools
+  participant P as sessions
+
+  U->>T: attaches failed block and types "fix it"
+  T->>A: thread.send with @block
+  A->>C: assemble prompt
+  C->>S: redact content
+  S-->>C: redacted content
+  C-->>A: prompt within budget
+  A->>G: stream with tools
+  G-->>T: thread.delta
+  G-->>A: tool call edit_file
+  A->>S: decide policy
+  S-->>A: allow in auto-edit inside workspace
+  A->>X: edit_file
+  A->>G: continue turn
+  G-->>A: tool call run_command
+  A->>S: decide policy
+  S-->>T: approval.requested
+  U->>T: approve once
+  T->>A: approval.respond
+  A->>X: run_command
+  X->>P: run in the thread PTY
+  P-->>A: block.closed exit 0
+  A-->>T: thread.turn_finished end_turn
+```
+
+**Error and compensation flow:**
+
+1. Provider returns 429/5xx or no first token within the deadline → `llmgw` tries the next candidate
+   of the class (REQ-LLM-003). No candidates left → `PROVIDER_UNAVAILABLE` and the turn ends with
+   `stop_reason = provider_error`.
+2. Invalid arguments → one retry with a repair message; if it fails, `tool_error` (REQ-AGT-006).
+3. `thread.cancel` → the turn's `context.Context` is cancelled and the thread PTY's process group gets
+   `SIGTERM`; after 300 ms, `SIGKILL` (REQ-AGT-007).
+4. Daemon crash → messages and tool calls are already persisted (REQ-AGT-011). On restart, `running`
+   turns become `stopped` and `pending` approvals become `expired`.
+
+## 4. Design Decisions
+
+### DD-001: The daemon owns the VT state; clients render from bytes
+
+- **Decision:** `umbrald` keeps an authoritative libghostty emulator per session. It is used for
+  snapshots, block plain text and alt-screen detection. Clients receive raw bytes
+  (`session.output`) and process them with their own renderer.
+- **Alternatives:**
+
+| Option | Pros | Cons |
+|---|---|---|
+| **A: VT in the daemon + bytes to clients (chosen)** | snapshots and blocks independent of the client; simple clients | double parsing (daemon and client) |
+| B: the daemon sends cell diffs | single parse | complex custom protocol; couples clients to the cell model |
+| C: VT only in the client | simple | no durability and no blocks without a connected client |
+
+- **Consequences:** the snapshot sent on subscribe must be serialized in a format the client can
+  replay (**Q-01**).
+
+### DD-002: Blocks from OSC 133 / 633 / 7, with a degraded mode
+
+- **Decision:** blocks derive from OSC sequences emitted by an injected bootstrap
+  (`ENV`/`ZDOTDIR`/`--init-file` depending on the shell). No sequences within 5 s →
+  `integration: none` (REQ-BLK-003).
+- **Discarded alternative:** heuristics on the prompt; they are fragile with custom prompts
+  (Starship, p10k).
+
+### DD-003: Per-session input lock (`input_owner`)
+
+- **Decision:** the agent's `run_command` runs in a **PTY dedicated to the thread** (not in the user's
+  session). In the MVP the lock applies to that PTY and prepares the ground for Full Terminal Use (F2).
+- **Consequence:** REQ-TERM-008 applies to sessions created by the agent when the user tries to type
+  into them.
+
+### DD-004: Gateway with task classes and ordered candidates
+
+- **Decision:** the configuration declares classes (`fast`, `code`, `plan`, `embed`), each with an
+  ordered list of `provider/model`. The MVP router applies, in order:
+  1. offline filter (REQ-LLM-004);
+  2. capability filter (tools, window);
+  3. health;
+  4. declared order.
+
+  Cost and quality policies arrive in F2.
+- **Meta-providers** (OpenRouter, OmniRoute) are just another candidate; their internal fallback is
+  not duplicated.
+
+### DD-005: Native Ollama adapter in addition to openai-compat
+
+- **Decision:** Ollama uses the native `/api/chat` to send `num_ctx` (REQ-LLM-006), `keep_alive` and
+  `format` with a JSON Schema. llama.cpp and LM Studio use openai-compat through Fantasy.
+- **Consequence:** one more adapter to maintain, but it avoids Ollama's short default `num_ctx`.
+
+### DD-006: Policy engine as a pure function
+
+- **Decision:** `Decide(Action, Mode, Rules, Taint) → allow|ask|deny` with no I/O, tested with tables.
+  Precedence, highest first:
+  1. destructive patterns (always `ask`);
+  2. `deny` rules;
+  3. taint (`ask` for Exec/Network);
+  4. mode (`ask` exposes only ReadOnly; `auto-edit` allows WriteFS inside the workspace);
+  5. `allow` rules;
+  6. mode default.
+
+### DD-007: Persist before notifying
+
+- **Decision:** the runtime writes the message, tool call or approval to SQLite in the turn's own
+  goroutine, before publishing it on the bus (REQ-AGT-011). Accepted cost: ~0.2 ms per event with WAL.
+
+### DD-008: Redaction at the egress edge
+
+- **Decision:** redaction happens in `security` right before `llmgw` serializes the request. Local
+  providers also receive redacted content (defense in depth and consistent prompts).
+- **`egress_log`** only records non-loopback destinations.
+
+## 5. Patterns and Conventions
+
+### 5.1 Code Structure
+
+```
+cmd/umbrald/                 # composition root (the only place with wiring)
+cmd/umb/                     # CLI
+cmd/umbral-tui/              # Bubble Tea v2 client
+internal/<module>/domain/    # pure types and rules
+internal/<module>/ports/     # published interfaces
+internal/<module>/adapters/  # implementations
+internal/bus/                # typed pub/sub
+shell/                       # bash, zsh, fish bootstrap
+testdata/vt/                 # VT conformance suite
+```
+
+### 5.2 Dependency rules (Art. 3, verified by `go-arch-lint`)
+
+| From | May import |
+|---|---|
+| `*/domain` | stdlib and other `*/domain` |
+| `*/ports` | its own `domain` and other `*/domain` |
+| `*/adapters` | its own `ports`, its own `domain` and external libraries |
+| `agents` | `ports` of `sessions`, `tools`, `context`, `llmgw`, `security`, `store` |
+| `llmgw`, `sessions` | never `agents` |
+| `cmd/*` | everything |
+
+### 5.3 Default policies
+
+| Risk | `ask` mode | `normal` mode | `auto-edit` mode |
+|---|---|---|---|
+| ReadOnly | allow | allow | allow |
+| WriteFS (inside the workspace) | not exposed | ask (with diff) | allow |
+| WriteFS (outside the workspace) | not exposed | ask | ask (`outside_workspace`) |
+| Exec | not exposed | ask | ask |
+| Network | not exposed | ask | ask |
+| Destructive pattern | — | ask, ignores `always` | ask, ignores `always` |
+
+`workspace` = the git root of the thread's cwd or, when there is no repo, the cwd itself.
+
+### 5.4 Error Handling
+
+```go
+var (
+    ErrNotFound            = errors.New("not_found")             // -32002
+    ErrConflict            = errors.New("conflict")              // -32003
+    ErrPermissionDenied    = errors.New("permission_denied")     // -32004
+    ErrProviderUnavailable = errors.New("provider_unavailable")  // -32005
+    ErrBudgetExceeded      = errors.New("budget_exceeded")       // -32006
+    ErrInputLocked         = errors.New("input_locked")          // -32008
+    ErrConfigInvalid       = errors.New("config_invalid")        // -32009
+)
+// api translates with errors.Is → JSON-RPC code; every INTERNAL_ERROR includes trace_id.
+```
+
+## 6. Security
+
+### 6.1 Attack Surface
+
+| Vector | Mitigation | REQ |
+|---|---|---|
+| Another local process uses the socket | `0600` socket + per-installation token | SEC-003, SEC-007 |
+| Prompt injection from web output or MCP | context taint → ask for Exec/Network | SEC-006 |
+| Destructive commands | patterns always ask | SEC-005 |
+| Secret exfiltration | redaction + `egress_log` + offline mode | SEC-001, SEC-002, LLM-004 |
+| Keys on disk | only `keyring:<path>`; plaintext rejected | SEC-004 |
+| Malicious MCP server | `trust = untrusted` by default when added; ask by default | MCP-004 |
+
+### 6.2 Sensitive Data
+
+| Data | Classification | Storage | Access |
+|---|---|---|---|
+| API keys | secret | OS keyring | `llmgw`, in memory |
+| Block output | confidential | local SQLite, unredacted | local user |
+| Content sent to models | confidential | redacted; hash in `egress_log` | — |
+| Socket token | secret | `0600` file | local clients |
+
+## 7. Observability
+
+### 7.1 Logging
+
+`slog` JSON: `{time, level, msg, trace_id, span_id, module, thread_id?, session_id?, duration_ms?}`.
+Never prompt contents or output (only sizes and hashes).
+
+### 7.2 Metrics
+
+| Metric | Type | Description |
+|---|---|---|
+| `umbral_session_output_latency_seconds` | Histogram | PTY read → notification queued (REQ-TERM-006) |
+| `umbral_llm_first_token_seconds` | Histogram per provider/model | time to first token |
+| `umbral_llm_tokens_total` | Counter per direction/model | input and output tokens |
+| `umbral_tool_calls_invalid_total` | Counter per model | REQ-OBS-002 |
+| `umbral_approvals_total` | Counter per decision/reason | approvals |
+
+### 7.3 Traces
+One root span `agent.turn` per turn, with children `llm.call` (attributes `gen_ai.request.model`,
+`gen_ai.system`, `gen_ai.usage.*`) and `tool.<name>` (REQ-OBS-001).
+
+## 8. Testing Strategy
+
+| Level | Target | Tools | What it covers |
+|---|---|---|---|
+| Unit | ≥ 75 % in domain, policy and router | `go test`, tables | policies, router, redaction, OSC parser, budget |
+| VT conformance | 100 % of MUST cases | `testdata/vt/*.golden` + libghostty Formatter | alt-screen, truecolor, bracketed paste, reflow (REQ-TERM-002) |
+| Integration | critical flows | real PTY with bash/zsh/fish in CI; temporary SQLite | blocks, snapshots, cancellation |
+| API contract | every method | test JSON-RPC client | errors and notifications from the API Spec |
+| Providers | adapters | fake OpenAI-compat and Ollama servers; optionally real Ollama with `-tags live` | streaming, 429/5xx, timeouts |
+| E2E | US-003 | fixture repo with a broken test + `ollama/gpt-oss:20b` (`-tags live`) | 70 % target over 20 runs |
+| Performance | NFRs | `go test -bench`, 100,000-block fixture | TERM-006, BLK-006, TERM-001 |
+
+Convention: every test that verifies a REQ cites it, e.g. `TestBlockClosedOnOSC133D_REQ_BLK_002`.
+
+## 9. Migration / Rollout Plan
+
+- New project, no data migration.
+- 0.1 distribution:
+  - Linux binaries (tar.gz + `.deb`) and macOS (tar.gz, unsigned in 0.1);
+  - `umbrald` as a user service (`systemd --user` / `launchd`).
+- Compatibility: `protocol_version = 1`, N and N-1 supported (API Spec §9).
+
+## 10. Open Questions
+
+- [ ] **Q-01**: does libghostty's `Formatter` serialize the screen in a replayable VT format (with styles) for the snapshot? If not, fallback: replay the raw byte buffer, bounded to the last N lines. — Owner: Tech Lead, before T-F0-06.
+- [ ] **Q-02**: which local models meet the < 5 % invalid tool call threshold? Candidates: `gpt-oss:20b`, Qwen3-Coder. — Owner: Tech Lead, during F1.
+- [ ] **Q-03**: tokenizer per family (tiktoken for OpenAI/gpt-oss, ×1.1 approximation for the rest). Is it enough for REQ-CTX-004? — F1.
+
+## Constitution check
+
+- **Art. 3:** §5.2 rules encoded in `.go-arch-lint.yml` (T-F0-01).
+- **Art. 4 and 5:** DD-006 and DD-008 plus the §5.3 table.
+- **Art. 6:** prefixed ULIDs and UTC ms timestamps (Data Model).
+- **Art. 7:** §7.3.
+- **No exceptions.**
+
+## Change History
+
+| Version | Date | Author | Changes |
+|---|---|---|---|
+| 1.0 | 2026-09-11 | E. Crespo (assisted draft) | Initial version |

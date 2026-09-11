@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Umbral
+GenericName=Agentic Terminal
+Comment=Terminal with agents and local models
+Exec=umbral-desktop %U
+Icon=io.github.ecrespo.Umbral
+Terminal=false
+Categories=System;TerminalEmulator;Development;
+Keywords=terminal;shell;agent;ai;llm;ollama;
+StartupNotify=true
+StartupWMClass=io.github.ecrespo.Umbral

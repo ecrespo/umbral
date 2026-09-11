@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs><linearGradient id="spill" x1="0" y1="820" x2="0" y2="1024" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#6A63D0" stop-opacity="0.95"/><stop offset="1" stop-color="#3A34A0" stop-opacity="0"/></linearGradient></defs>
+
+<path d="M312 820 H712 L840 1024 H184 Z" fill="url(#spill)"/>
+<rect x="250" y="800" width="524" height="40" rx="14" fill="#FFD27A"/>
+
+</svg>
