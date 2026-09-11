@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ecrespo/umbral/internal/bus"
+	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
 )
 
 // ClientKind is the caller's role (API Spec §2). It decides which methods are reachable.
@@ -73,8 +74,12 @@ type Config struct {
 	// Status is called by system.status. A nil Status reports an empty daemon, which
 	// is what F0 has before sessions exist.
 	Status StatusFunc
-	Bus    *bus.Bus
-	Logger *slog.Logger
+	// Sessions is the terminal module's inbound port. A nil value leaves the session.*
+	// methods answering METHOD_NOT_FOUND, which is what the daemon does before T-F0-05
+	// is wired in.
+	Sessions sessports.Sessions
+	Bus      *bus.Bus
+	Logger   *slog.Logger
 }
 
 // Server accepts client connections on the Unix socket and dispatches JSON-RPC methods.

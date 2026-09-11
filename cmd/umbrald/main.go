@@ -5,8 +5,9 @@
 // modules together; every other package talks through ports or bus events.
 //
 // What works today: the daemon opens its database, applies migrations, runs the restart
-// recovery of Data Model §6 and serves system.hello and system.status over the 0600 Unix
-// socket. Sessions arrive in T-F0-05.
+// recovery of Data Model §6, owns PTY sessions with their emulators, and serves system.*
+// and session.* over the 0600 Unix socket. Output streaming to clients arrives in T-F0-06
+// and blocks in T-F0-09.
 package main
 
 import (
@@ -25,6 +26,10 @@ import (
 
 	"github.com/ecrespo/umbral/internal/api"
 	"github.com/ecrespo/umbral/internal/bus"
+	"github.com/ecrespo/umbral/internal/sessions"
+	"github.com/ecrespo/umbral/internal/sessions/adapters/ghostty"
+	"github.com/ecrespo/umbral/internal/sessions/adapters/pty"
+	"github.com/ecrespo/umbral/internal/sessions/adapters/shellinteg"
 	"github.com/ecrespo/umbral/internal/store"
 )
 
@@ -117,11 +122,31 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	eventBus := bus.New()
 	defer eventBus.Close()
 
+	// The sessions module gets its adapters here and nowhere else: the PTY, the emulator
+	// and the shell bootstrap are all injected, which is what keeps libghostty and
+	// creack/pty confined to one directory each (Art. 3).
+	sessionService, err := sessions.New(sessions.Config{
+		Store:     db,
+		Bus:       eventBus,
+		NewPTY:    pty.Open,
+		NewEmu:    ghostty.NewEmulator,
+		Bootstrap: shellinteg.Adapter{},
+		Logger:    logger,
+	})
+	if err != nil {
+		logger.Error("cannot build the sessions module", slog.Any("error", err))
+		return exitCantCreate
+	}
+	// Every PTY is closed on the way out so no shell is orphaned. The rows are repaired on
+	// the next start by store.Recover.
+	defer sessionService.Shutdown()
+
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
 		TokenPath:     tokenPath,
 		DaemonVersion: buildVersion(),
 		Status:        statusFromStore(db),
+		Sessions:      sessionService,
 		Bus:           eventBus,
 		Logger:        logger,
 	})
@@ -134,6 +159,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			logger.Error("cannot close the socket", slog.Any("error", err))
 		}
 	}()
+
+	// Forward module events to connected clients (API Spec §6).
+	go server.Notify(ctx)
 
 	logger.Info("umbrald listening",
 		slog.String("socket", server.SocketPath()),

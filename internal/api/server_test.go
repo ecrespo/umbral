@@ -9,6 +9,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -229,11 +231,11 @@ func TestHelloSucceedsAndReturnsAConnectionID(t *testing.T) {
 	if len(result.ConnectionID) < 5 || result.ConnectionID[:4] != "con_" {
 		t.Errorf("connection_id = %q, want a con_ prefixed ULID (Art. 6)", result.ConnectionID)
 	}
-	// F0 registers only system.* methods, so there is nothing to advertise. Announcing
-	// "sessions" before session.create exists would tell a client to take a branch that
-	// cannot work.
-	if len(result.Capabilities) != 0 {
-		t.Errorf("capabilities = %v, want empty until a non-system method is registered", result.Capabilities)
+	// Derived from the method table: session.* is registered, so "session" is advertised
+	// and nothing else is. Announcing a namespace whose methods do not exist would tell a
+	// client to take a branch that cannot work.
+	if len(result.Capabilities) != 1 || result.Capabilities[0] != "session" {
+		t.Errorf("capabilities = %v, want [session]", result.Capabilities)
 	}
 }
 
@@ -640,14 +642,31 @@ func TestCapabilitiesFollowTheMethodTable(t *testing.T) {
 	t.Parallel()
 
 	s := testServer(t, nil)
-	if got := s.capabilities(); len(got) != 0 {
-		t.Errorf("capabilities with only system.* registered = %v, want empty", got)
+
+	// system.* is never advertised: every client may always call it.
+	if slices.Contains(s.capabilities(), "system") {
+		t.Errorf("capabilities = %v, must not list system", s.capabilities())
 	}
 
-	s.methods["session.create"] = method{}
+	// The list follows the table rather than a hand-written constant, so registering a
+	// method in a new namespace is enough to advertise it.
 	s.methods["block.list"] = method{}
 	got := s.capabilities()
-	if len(got) != 2 || got[0] != "block" || got[1] != "session" {
-		t.Errorf("capabilities = %v, want [block session] sorted", got)
+	if !slices.Contains(got, "block") || !slices.Contains(got, "session") {
+		t.Errorf("capabilities = %v, want both block and session", got)
+	}
+	if !slices.IsSorted(got) {
+		t.Errorf("capabilities = %v, want them sorted so the handshake is stable", got)
+	}
+
+	// Removing every method of a namespace removes it from the advertisement.
+	for name := range s.methods {
+		if strings.HasPrefix(name, "session.") {
+			delete(s.methods, name)
+		}
+	}
+	if slices.Contains(s.capabilities(), "session") {
+		t.Errorf("capabilities = %v, still lists session with no session method registered",
+			s.capabilities())
 	}
 }

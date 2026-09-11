@@ -23,6 +23,18 @@ components:
   # them. It is a leaf: no package dependencies, so no module can hide logic in it.
   shellscripts: { in: shell }
 
+  # --- module application cores ------------------------------------------------
+  # The service that orchestrates a module's own ports. Tech Design §5.1 lists domain,
+  # ports and adapters; the orchestrator that uses them has to live somewhere, and putting
+  # it in the module root keeps it out of both domain, which must stay pure, and adapters,
+  # which must stay replaceable.
+  sessions-service: { in: internal/sessions }
+
+  # The module's integration tests wire the real adapters together, which is the job Art. 3
+  # reserves for a composition root. Naming it here keeps every file under the rules rather
+  # than excluding _test.go from them.
+  sessions-integration: { in: internal/sessions/integration }
+
   # --- cross-cutting modules (no hexagonal split) -----------------------------
   bus:    { in: internal/bus }
   api:    { in: internal/api }
@@ -110,6 +122,7 @@ deps:
   sessions-ports:
     anyVendorDeps: false
     mayDependOn:
+      - bus
       - sessions-domain
       - agents-domain
       - tools-domain
@@ -317,6 +330,24 @@ deps:
       - llmgw-domain
       - security-domain
 
+  sessions-service:
+    anyVendorDeps: true
+    mayDependOn:
+      - sessions-ports
+      - sessions-domain
+      - store
+      - bus
+
+  sessions-integration:
+    anyVendorDeps: true
+    mayDependOn:
+      - sessions-service
+      - sessions-ports
+      - sessions-domain
+      - sessions-adapters
+      - store
+      - bus
+
   # --- composition root: the only place that wires modules together (Art. 3) ---
   cmd:
     anyVendorDeps: true
@@ -327,6 +358,8 @@ deps:
       - config
       - client
       - tui
+      - sessions-service
+      - shellscripts
       - sessions-ports
       - sessions-adapters
       - agents-ports

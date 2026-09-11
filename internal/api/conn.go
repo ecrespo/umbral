@@ -199,6 +199,11 @@ func (c *conn) writeRaw(msg any) {
 	}
 }
 
+// notify sends a daemon-to-client notification (API Spec §6).
+func (c *conn) notify(method string, params any) {
+	c.writeRaw(notification{JSONRPC: jsonrpcVersion, Method: method, Params: params})
+}
+
 func (c *conn) close() error {
 	var err error
 	c.closeOnce.Do(func() { err = c.netConn.Close() })

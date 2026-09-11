@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ecrespo/umbral/internal/sessions/ports"
 	"github.com/ecrespo/umbral/shell"
 )
 
@@ -178,3 +179,19 @@ func userBashRC() string {
 	}
 	return rc
 }
+
+// Adapter implements ports.Bootstrapper by preparing a Bootstrap and flattening it into
+// the shape the sessions service wants.
+type Adapter struct{}
+
+// Prepare satisfies ports.Bootstrapper.
+func (Adapter) Prepare(shellPath string) (args, env []string, cleanup func() error, err error) {
+	b, err := Prepare(shellPath)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return b.Argv(), b.Env, b.Close, nil
+}
+
+// Compile-time proof that the adapter satisfies the port.
+var _ ports.Bootstrapper = Adapter{}

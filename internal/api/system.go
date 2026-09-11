@@ -9,12 +9,23 @@ import (
 	"github.com/ecrespo/umbral/internal/store"
 )
 
+// interactiveClients are the kinds allowed to drive a terminal.
+var interactiveClients = []ClientKind{ClientTUI, ClientDesktop}
+
 // registry is the method table. Adding a method here is the only way to expose one, and
 // the kinds field is where API Spec §2's per-client-kind allowlist lives.
 func (s *Server) registry() map[string]method {
 	return map[string]method{
 		"system.hello":  {handle: handleHello, beforeHello: true},
 		"system.status": {handle: handleStatus},
+
+		// session.* is not in the `cli` allowlist of API Spec §2: `umb` reads blocks and
+		// talks to threads, it does not drive terminals.
+		"session.create": {handle: handleSessionCreate, kinds: interactiveClients},
+		"session.list":   {handle: handleSessionList, kinds: interactiveClients},
+		"session.input":  {handle: handleSessionInput, kinds: interactiveClients},
+		"session.resize": {handle: handleSessionResize, kinds: interactiveClients},
+		"session.close":  {handle: handleSessionClose, kinds: interactiveClients},
 	}
 }
 

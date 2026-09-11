@@ -81,6 +81,13 @@ func toWire(err error, traceID string) *wireError {
 	var domainCode string
 	var code int
 
+	// Module sentinels first: they are more specific than the generic ones below, and a
+	// module error that also wrapped a generic sentinel must map to its own code.
+	if moduleCode, moduleDomain, ok := sessionDomainError(err); ok {
+		code, domainCode = moduleCode, moduleDomain
+		return finishWire(err, code, domainCode, traceID)
+	}
+
 	switch {
 	case errors.Is(err, errValidation):
 		code, domainCode = codeValidationError, "VALIDATION_ERROR"
@@ -108,24 +115,24 @@ func toWire(err error, traceID string) *wireError {
 		code, domainCode = codeInternalError, "INTERNAL_ERROR"
 	}
 
+	return finishWire(err, code, domainCode, traceID)
+}
+
+// finishWire assembles the protocol error once its code has been decided.
+func finishWire(err error, code int, domainCode, traceID string) *wireError {
 	data := &errorData{DomainCode: domainCode}
 	var detailed *apiError
 	if errors.As(err, &detailed) {
 		data.Details = detailed.details
-	}
-	if code == codeInternalError {
-		data.TraceID = traceID
+		data.Supported = detailed.supported
 	}
 
 	message := err.Error()
 	if code == codeInternalError {
+		data.TraceID = traceID
 		// The client gets the trace id, not the internals. Art. 7 also forbids leaking
 		// anything sensitive, and an arbitrary wrapped error is not vetted for that.
 		message = "internal error"
-	}
-
-	if detailed != nil {
-		data.Supported = detailed.supported
 	}
 	return &wireError{Code: code, Message: message, Data: data}
 }

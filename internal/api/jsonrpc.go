@@ -40,6 +40,13 @@ type response struct {
 	Error   *wireError      `json:"error,omitempty"`
 }
 
+// notification is a daemon-to-client message (API Spec §6). It carries no id.
+type notification struct {
+	JSONRPC string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Params  any    `json:"params,omitempty"`
+}
+
 // wireError is the error object of API Spec §3.
 type wireError struct {
 	Code    int        `json:"code"`
