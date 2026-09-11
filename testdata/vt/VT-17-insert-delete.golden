@@ -1,0 +1,15 @@
+# VT-17 insert-delete (MUST)
+# screen 30x8
+cursor: 1,2
+title: ""
+pwd: ""
+--- plain ---
+A   AAA
+
+BB
+CCCC
+--- vt ---
+\e[3g\e[9G\eH\e[17G\eH\e[25G\eH\e[HA   AAA\x0d\n
+\x0d\n
+BB\x0d\n
+CCCC\e[3;2H\e[0m

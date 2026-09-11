@@ -1,0 +1,15 @@
+# VT-02 erase (MUST)
+# screen 40x8
+cursor: 4,3
+title: ""
+pwd: ""
+--- plain ---
+AAAA
+     BBBBB
+
+DDDD
+--- vt ---
+\e[3g\e[9G\eH\e[17G\eH\e[25G\eH\e[33G\eH\e[HAAAA\x0d\n
+     BBBBB\x0d\n
+\x0d\n
+DDDD\e[4;5H\e[0m

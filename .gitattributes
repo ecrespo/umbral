@@ -1,7 +1,9 @@
-# Golden files for the VT suites are byte-exact recordings of terminal streams. They carry
-# real CR LF pairs as data, so Git must never normalise their line endings: doing so
-# rewrites the recording and the round-trip tests fail on the next checkout.
+# The VT suite's fixtures are byte-exact recordings of terminal streams: .in is the input
+# and .golden the expected result. Both carry real CR LF pairs as data, so Git must never
+# normalise their line endings. Doing so rewrites the recording, and the tests fail on the
+# next checkout on someone else's machine rather than on the one that committed them.
 *.golden -text
+*.in -text
 
 # The branding kit is pinned by SHA-256 in CHECKSUMS.sha256; any rewrite breaks the icons job.
 *.png binary

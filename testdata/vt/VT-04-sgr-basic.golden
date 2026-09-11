@@ -1,0 +1,15 @@
+# VT-04 sgr-basic (MUST)
+# screen 80x24
+cursor: 13,3
+title: ""
+pwd: ""
+--- plain ---
+bold italic underline inverse
+redgreenyellowblue
+bright-blackbright-white
+red-bg normal
+--- vt ---
+\e[3g\e[9G\eH\e[17G\eH\e[25G\eH\e[33G\eH\e[41G\eH\e[49G\eH\e[57G\eH\e[65G\eH\e[73G\eH\e[H\e[0m\e[1mbold\e[0m \e[0m\e[3mitalic\e[0m \e[0m\e[4munderline\e[0m \e[0m\e[7minverse\e[0m\x0d\n
+\e[0m\e[38;5;1mred\e[0m\e[38;5;2mgreen\e[0m\e[38;5;3myellow\e[0m\e[38;5;4mblue\e[0m\x0d\n
+\e[0m\e[38;5;8mbright-black\e[0m\e[38;5;15mbright-white\e[0m\x0d\n
+\e[0m\e[38;5;7m\e[48;5;1mred-bg\e[0m normal\e[4;14H\e[0m

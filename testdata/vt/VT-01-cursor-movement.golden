@@ -1,0 +1,57 @@
+# VT-01 cursor-movement (MUST)
+# screen 80x24
+cursor: 1,23
+title: ""
+pwd: ""
+--- plain ---
+top-left-clamped
+
+          up2
+
+    at-5-5
+
+             down4          righleft3
+
+
+                   anchor
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                               b
+r
+--- vt ---
+\e[3g\e[9G\eH\e[17G\eH\e[25G\eH\e[33G\eH\e[41G\eH\e[49G\eH\e[57G\eH\e[65G\eH\e[73G\eH\e[Htop-left-clamped\x0d\n
+\x0d\n
+          up2\x0d\n
+\x0d\n
+    at-5-5\x0d\n
+\x0d\n
+             down4          righleft3\x0d\n
+\x0d\n
+\x0d\n
+                   anchor\x0d\n
+\x0d\n
+\x0d\n
+\x0d\n
+\x0d\n
+\x0d\n
+\x0d\n
+\x0d\n
+\x0d\n
+\x0d\n
+\x0d\n
+\x0d\n
+\x0d\n
+\x0d\n
+                                                                               b\x0d\n
+r\e[24;2H\e[0m

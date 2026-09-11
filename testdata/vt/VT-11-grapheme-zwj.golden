@@ -1,0 +1,13 @@
+# VT-11 grapheme-zwj (MUST)
+# screen 20x4
+cursor: 8,2
+title: ""
+pwd: ""
+--- plain ---
+👨‍👩‍👧 family
+👩‍💻 dev
+🏴‍☠️ flag
+--- vt ---
+\e[3g\e[9G\eH\e[17G\eH\e[H👨‍👩‍👧 family\x0d\n
+👩‍💻 dev\x0d\n
+🏴‍☠️ flag\e[3;9H\e[0m

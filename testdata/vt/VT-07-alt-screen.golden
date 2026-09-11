@@ -1,0 +1,13 @@
+# VT-07 alt-screen (MUST)
+# screen 40x6
+cursor: 0,3
+title: ""
+pwd: ""
+--- plain ---
+
+
+alternate content
+--- vt ---
+\e[?1049h\e[3g\e[9G\eH\e[17G\eH\e[25G\eH\e[33G\eH\e[H\x0d\n
+\x0d\n
+alternate content\e[4;1H\e[0m

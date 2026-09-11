@@ -1,0 +1,15 @@
+# VT-10 wide-chars (MUST)
+# screen 20x4
+cursor: 2,3
+title: ""
+pwd: ""
+--- plain ---
+日本語テキスト
+ab日本cd
+漢字漢字漢字漢字漢字
+漢
+--- vt ---
+\e[3g\e[9G\eH\e[17G\eH\e[H日本語テキスト\x0d\n
+ab日本cd\x0d\n
+漢字漢字漢字漢字漢字\x0d\n
+漢\e[4;3H\e[0m

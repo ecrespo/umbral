@@ -1,0 +1,13 @@
+# VT-14 reflow-on-resize (MUST)
+# screen 20x6 resized to 40x6
+cursor: 0,3
+title: ""
+pwd: ""
+--- plain ---
+this line is long enough to wrap at twen
+ty columns
+short
+--- vt ---
+\e[3g\e[9G\eH\e[17G\eH\e[25G\eH\e[33G\eH\e[Hthis line is long enough to wrap at twen\x0d\n
+ty columns\x0d\n
+short\e[4;1H\e[0m

@@ -1,0 +1,13 @@
+# VT-16 cursor-save-restore (MUST)
+# screen 40x6
+cursor: 10,0
+title: ""
+pwd: ""
+--- plain ---
+liRESTORED
+line two
+moved and styled
+--- vt ---
+\e[3g\e[9G\eH\e[17G\eH\e[25G\eH\e[33G\eH\e[HliRESTORED\x0d\n
+line two\x0d\n
+\e[0m\e[1m\e[38;5;1mmoved and styled\e[0m\e[1;11H\e[0m
