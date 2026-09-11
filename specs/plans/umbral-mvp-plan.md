@@ -55,14 +55,21 @@ Spec-only work: no product code.
 | T-FIX-03 | Fold A-03 and A-04: REQ-SEC-008, REQ-AGT-015, `client_msg_id` | T-FIX-01 | ☑ 2026-09-11 |
 | T-FIX-04 | Fold A-05 and A-06: `owner_thread_id`, `env_refs` | — | ☑ 2026-09-11 |
 | T-FIX-05 | Re-run the Analyze and archive the delta | T-FIX-01…04 | ☑ 2026-09-11 |
-| T-PKG-01 | Visual identity: icon kit and pinned checksums | — | ☐ |
-| T-PKG-02 | Visual identity: `.desktop` file for release 0.1 | T-PKG-01 | ☐ |
+| T-PKG-01 | Visual identity: icon kit and pinned checksums | — | ☑ 2026-09-11 |
+| T-PKG-02 | Visual identity: `.desktop` file for release 0.1 | T-PKG-01 | ☑ 2026-09-11 |
 
-**Phase 0 "Done" criteria:**
-- `python3 tools/sdd_check.py` exits 0 (currently met).
-- `node tools/mermaid_check.mjs` green (currently met).
-- The visual-identity delta is folded honouring A-12 (REQ-PKG-004/005/007 move to the F2 PRD) and
-  A-16 (the Spanish duplicate is removed). **Still pending.**
+**Phase 0 "Done" criteria — all met on 2026-09-11:**
+- `python3 tools/sdd_check.py` exits 0: 69 REQs, 64/64 MUST with a task and a matrix row.
+- `node tools/mermaid_check.mjs` green.
+- The visual-identity delta is folded honouring A-12 (REQ-PKG-004, 005, 007 and 008 moved to
+  `specs/prd/umbral-f2-desktop.md` instead of becoming MVP MUSTs nothing could close),
+  A-15 (checksums regenerated after the `.desktop` change) and A-16 (the superseded Spanish
+  copy of the delta deleted).
+- `changes/` holds no pending delta; all three are in `changes/_archive/`.
+
+**Phase 0 is closed.** The remaining `changes/_archive/2026-09-visual-identity` tasks T-PKG-03,
+04 and 05 are marked blocked, not pending: T-PKG-03 needs a package to build (hardening phase)
+and the other two need the F2 desktop client.
 
 ---
 

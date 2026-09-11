@@ -37,3 +37,7 @@ tools/node_modules/
 
 # Build output (task build)
 /bin/
+
+# Python bytecode from the branding kit's build scripts
+__pycache__/
+*.py[cod]

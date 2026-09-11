@@ -142,6 +142,39 @@
 - **Depends on:** T-F0-06
 - **Done:** the perf job is green; an artificial regression (10 ms sleep) turns it red.
 
+### [x] 2026-09-11 T-PKG-01 · Branding kit and pinned checksums
+- **What:** carry the icon kit in `assets/branding/umbral-icons/`, pin every artifact in
+  `CHECKSUMS.sha256`, and add a CI job that regenerates the kit with `tools/build.py` and
+  compares it byte for byte.
+- **REQ:** REQ-PKG-001, REQ-PKG-006
+- **Files:** `assets/branding/umbral-icons/**`, `scripts/icons_check.sh`, `.github/workflows/ci.yml`, `Taskfile.yml`
+- **Depends on:** —
+- **Done:** the `icons` job is green; changing one pixel of a PNG turns it red.
+- **Result:** `scripts/icons_check.sh` does three things rather than one: verify the
+  checksums, regenerate with `build.py` and compare, then validate the `.desktop` file. The
+  regeneration step is what REQ-PKG-006 actually asks for, because checking the checksums
+  alone would pass a source edit committed together with its new checksum. Verified by
+  flipping one byte of the 48 px PNG: exit 1. The kit reproduces byte for byte from source,
+  so 55 of the 56 artifacts were already correct; only the `.desktop` file changed, in
+  T-PKG-02. The regeneration step degrades to a warning when `cairosvg` and `Pillow` are
+  missing, so a contributor without them still gets the checksum and `.desktop` checks; CI
+  installs both, so the full check always runs there.
+
+### [x] 2026-09-11 T-PKG-02 · `.desktop` file for release 0.1
+- **What:** set the `.desktop` file to `Exec=umbral-tui` and `Terminal=true`, validate it in
+  CI, and regenerate `CHECKSUMS.sha256` (finding A-15).
+- **REQ:** REQ-PKG-002, REQ-PKG-003
+- **Files:** `assets/branding/umbral-icons/tools/build.py`, `assets/branding/umbral-icons/linux/share/applications/io.github.ecrespo.Umbral.desktop`, `assets/branding/umbral-icons/CHECKSUMS.sha256`
+- **Depends on:** T-PKG-01
+- **Done:** `desktop-file-validate` without errors.
+- **Result:** the change went into the `DESKTOP` template in `build.py`, not into the
+  generated file, so the next regeneration keeps it. `desktop-file-validate` exits 0; it
+  emits one *hint* about `Categories` listing more than one main category, which is
+  pre-existing, is not an error, and is left for whoever revisits the kit's categories.
+  `scripts/icons_check.sh` additionally asserts the four lines REQ-PKG-002 and REQ-PKG-003
+  name, because the validator does not know which binary release 0.1 ships. Checksums
+  regenerated, closing A-15.
+
 ## Traceability matrix (F0)
 
 | REQ | Tasks | Tests citing it |
@@ -166,13 +199,20 @@
 | REQ-CLI-002 | T-F0-10, T-F0-11 | TestBlockGetLast_REQ_CLI_002 |
 | REQ-CLI-003 | T-F0-11 | TestUmbAutostartFailsWith69_REQ_CLI_003 |
 | REQ-TUI-001 | T-F0-12 (+ T-F1-20) | TestTUIBlockNavigation_REQ_TUI_001 |
+| REQ-PKG-001 | T-PKG-01 | `icons` job: checksums + byte-for-byte regeneration |
+| REQ-PKG-002 | T-PKG-01, T-PKG-02 | `desktop-file-validate`, asserted keys in `scripts/icons_check.sh` |
+| REQ-PKG-003 | T-PKG-02 | asserted `Exec=umbral-tui` and `Terminal=true` in `scripts/icons_check.sh` |
+| REQ-PKG-006 | T-PKG-01 | `icons` job regenerates with `build.py` and compares |
 
 **Deferred:** REQ-BLK-008 (SHOULD, PowerShell) moves to F2 together with Windows.
+REQ-PKG-004, 005, 007 and 008 are not MVP requirements; finding A-12 moved them to
+`specs/prd/umbral-f2-desktop.md`, and tasks T-PKG-04 and T-PKG-05 go with them.
 
 ## Execution log
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-11 | T-PKG-01, T-PKG-02 | done | Closes Phase 0. The kit reproduces byte for byte from `tools/build.py`, verified by regenerating it: 55 of 56 artifacts identical, the `.desktop` file the only intended change. Finding A-12 honoured: REQ-PKG-004, 005, 007 and 008 went to `specs/prd/umbral-f2-desktop.md` instead of becoming MVP MUSTs nothing could close. Finding A-15 closed: the checksums were regenerated after the `.desktop` change. Finding A-16 closed: the superseded Spanish copy of the delta was deleted. |
 | 2026-09-11 | T-F0-03 | done after a `spec-guardian` round | The review returned FIX FIRST with 1 CRITICAL and 5 HIGH. The critical was real and reproduced with a probe: a token file that existed but was empty kept its old mode, because `os.WriteFile` does not apply its mode argument to an existing file, so the token landed at 0664. It is now written through `OpenFile` with an explicit `Chmod` and the mode is read back. Also fixed: the handshake validated `client_kind` before the token, so a bad token plus a bad kind answered `VALIDATION_ERROR` and left the connection open, against REQ-SEC-003; the runtime-directory fallback trusted a world-writable parent; `trace_id` carried a freshly minted id that correlated to nothing; `capabilities` advertised `sessions` and `blocks` with no such method registered; `go.mod` recorded a direct dependency as indirect. Five decisions the spec does not cover went into `changes/_archive/2026-09-api-f0-decisions/` instead of staying in comments. |
 | 2026-09-11 | T-F0-02 | done | `internal/store` with migration 0001, pragma verification, forward-only migrations and restart recovery. Driver: `modernc.org/sqlite` (pure Go, no cgo). `threads` is created in 0001 per the folded delta, and the regression test for A-01 was checked by reverting the fix: it fails with `no such table: main.threads`, exactly as the Analyze described. Steps 3-4 of Data Model §6 wait for T-F1-01, which creates the tables they touch. |
 | 2026-09-11 | T-F0-01 | done | Go 1.27.1 installed under `~/.local/go` without root, since the machine had no Go at all. `task lint` (gofumpt, go vet, golangci-lint with gosec, govulncheck, gitleaks), `task arch`, `task arch:selftest` and `task test -race` all green. `gosec` G115 is excluded for now with a written reason: it fires on every epoch-ms and micro-USD conversion Art. 6 mandates, and it is re-enabled once the store layer exists. **Zig is still missing**, so T-F0-04 and T-F0-05 cannot build libghostty yet. |

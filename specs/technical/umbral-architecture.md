@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.1 |
+| **Version** | 1.2 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -385,6 +385,24 @@ Adding or removing a MUST case requires a Delta, because REQ-TERM-002 is measure
 - [ ] **Q-02**: which local models meet the < 5 % invalid tool call threshold? Candidates: `gpt-oss:20b`, Qwen3-Coder. — Owner: Tech Lead, during F1.
 - [ ] **Q-03**: tokenizer per family (tiktoken for OpenAI/gpt-oss, ×1.1 approximation for the rest). Is it enough for REQ-CTX-004? — F1.
 
+### 9.3 Visual identity and packaging
+
+Folded from `changes/_archive/2026-09-visual-identity/`.
+
+- **Single source:** `assets/branding/umbral-icons/tools/svgs.py` holds every shape and
+  `tools/build.py` renders every format. The 16 and 24 px sizes have their own hand-hinted
+  sources; 32 px and above come from the 128 master.
+- **Linux:** the `share/icons/hicolor` tree plus `io.github.ecrespo.Umbral.desktop`. The
+  Breeze variant is shipped in the kit but not installed by default.
+- **Windows (F2):** `umbral.ico` plus the MSIX `Assets/` set.
+- **macOS (F2):** the layers in `macos/icon-composer-layers/` are assembled in Icon Composer
+  into `appicon.icon`; `umbral.icns` is the fallback for macOS ≤ 15.
+- **Verification:** `scripts/icons_check.sh`, run by `task icons` and by the `icons` CI job.
+  It verifies `CHECKSUMS.sha256`, regenerates the kit with `build.py` and compares every
+  artifact byte for byte, then validates the `.desktop` file and asserts the release 0.1
+  launcher. The regeneration step is what REQ-PKG-006 needs: checking the checksums alone
+  would pass a source edit committed together with its new checksum.
+
 ## Constitution check
 
 - **Art. 3:** §5.2 rules encoded in `.go-arch-lint.yml` (T-F0-01).
@@ -398,4 +416,5 @@ Adding or removing a MUST case requires a Delta, because REQ-TERM-002 is measure
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0 | 2026-09-11 | E. Crespo (assisted draft) | Initial version |
+| 1.2 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-visual-identity`: §9.3 visual identity and packaging |
 | 1.1 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-analyze-fixes`: appendix §8.1 with the VT conformance cases VT-01…VT-22 (A-02) |

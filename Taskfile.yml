@@ -87,6 +87,17 @@ tasks:
       - test -d tools/node_modules || npm install --prefix tools
       - node tools/mermaid_check.mjs
 
+  # --- branding -----------------------------------------------------------------
+  icons:
+    desc: 'REQ-PKG-001/002/003/006: checksums, reproducible kit and a valid .desktop file'
+    cmds:
+      - ./scripts/icons_check.sh
+
+  icons:update:
+    desc: Rewrite CHECKSUMS.sha256 after a deliberate change to the branding kit
+    cmds:
+      - ./scripts/icons_check.sh --update
+
   # --- build ------------------------------------------------------------------
   build:
     desc: Build umbrald, umb and umbral-tui into ./bin
@@ -105,6 +116,7 @@ tasks:
     desc: Everything the pipeline runs
     cmds:
       - task: specs
+      - task: icons
       - task: lint
       - task: arch
       - task: arch:selftest

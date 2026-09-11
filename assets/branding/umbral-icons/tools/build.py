@@ -79,14 +79,17 @@ def padded(png: bytes, canvas: int, ratio: float) -> bytes:
     return buf.getvalue()
 
 
+# Release 0.1 ships only the TUI, so the entry launches umbral-tui inside a terminal
+# (REQ-PKG-003). It goes back to Exec=umbral-desktop with Terminal=false when the Wails
+# client lands in F2, through a new delta.
 DESKTOP = """[Desktop Entry]
 Type=Application
 Name=Umbral
 GenericName=Agentic Terminal
 Comment=Terminal with agents and local models
-Exec=umbral-desktop %U
+Exec=umbral-tui
 Icon={app_id}
-Terminal=false
+Terminal=true
 Categories=System;TerminalEmulator;Development;
 Keywords=terminal;shell;agent;ai;llm;ollama;
 StartupNotify=true

@@ -37,6 +37,21 @@ jobs:
           npm install --prefix tools
           node tools/mermaid_check.mjs
 
+  icons:
+    name: Branding kit (REQ-PKG-001, 002, 003, 006)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install the kit's render dependencies and the .desktop validator
+        run: |
+          python3 -m pip install --quiet cairosvg Pillow
+          sudo apt-get update && sudo apt-get install -y desktop-file-utils
+      - name: Checksums, reproducible regeneration and .desktop validation
+        run: ./scripts/icons_check.sh
+
   lint:
     name: Lint (Art. 1)
     runs-on: ubuntu-latest
