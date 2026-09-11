@@ -6,10 +6,10 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.1 (`protocol_version = 1`; 1.1 is additive over 1.0) |
+| **API version** | v1.2 (`protocol_version = 1`; 1.1 and 1.2 are additive over 1.0) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
-| **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`) |
+| **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
 
 ---
 
@@ -33,6 +33,27 @@ Framing: JSON messages delimited by `\n` (NDJSON). Maximum message size: 4 MiB.
 3. Any earlier call, or a call with an invalid token, receives `UNAUTHORIZED` and the connection is
    closed.
 4. The socket is created with permissions `0600` (REQ-SEC-007).
+5. THE SYSTEM SHALL compare the token before validating any other `system.hello` parameter.
+   REQ-SEC-003 admits no exception, so no validation error may answer first and leave the
+   connection open for another attempt.
+6. IF `system.hello` arrives on a connection that already completed the handshake, THEN THE SYSTEM
+   SHALL reply `UNAUTHORIZED` and close the connection. That check precedes the token comparison, so
+   an authenticated connection cannot be reused to test tokens.
+
+### Runtime directory
+
+The socket and the token live together in a directory only their owner can enter (`0700`):
+
+| Platform | Directory |
+|---|---|
+| Linux with `XDG_RUNTIME_DIR` | `$XDG_RUNTIME_DIR/umbral` |
+| macOS | `~/Library/Application Support/Umbral` |
+| Linux without `XDG_RUNTIME_DIR` (bare `su`, container without systemd) | `$TMPDIR/umbral-<uid>` |
+
+The third parent is world-writable, so THE SYSTEM SHALL refuse to use that directory when it
+already exists and is not a directory owned by the current user with permissions exactly `0700`.
+Without the check another local user could pre-create it and read the token, defeating REQ-SEC-003
+before the daemon starts.
 
 ### Client kinds
 
@@ -56,8 +77,15 @@ Framing: JSON messages delimited by `\n` (NDJSON). Maximum message size: 4 MiB.
   "connection_id":"con_01J9Z3K8T2QH6W4V5X7Y8Z9A0B"}}
 ```
 
-- IF `protocol_version` is not compatible → `UNSUPPORTED_PROTOCOL_VERSION` (the daemon reports the
-  accepted versions in `data.supported`).
+- `protocol_version` is **required**. IF it is missing or not compatible → `UNSUPPORTED_PROTOCOL_VERSION`
+  (the daemon reports the accepted versions in `data.supported`). Treating an absent field as
+  compatible would silently pair this daemon with a client built for a version it never declared.
+- Each entry of `capabilities` names a method namespace (`sessions`, `blocks`, `threads`, `mcp`,
+  `models`) whose methods the daemon serves **at that moment**. THE SYSTEM SHALL derive the list
+  from its method table rather than declaring it statically, and SHALL NOT advertise a namespace
+  whose methods are not registered: a client that branches on the advertisement must not be sent
+  down a path that cannot work. `system` is never listed, since every client may always call it.
+  An empty list is valid, and is what F0 returns until `session.*` lands.
 
 ## 3. General Conventions
 
@@ -77,6 +105,12 @@ Framing: JSON messages delimited by `\n` (NDJSON). Maximum message size: 4 MiB.
   "data":{"domain_code":"PERMISSION_DENIED","details":[{"field":"tool","issue":"deny rule rm-rf"}],
           "trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"}}}
 ```
+
+`trace_id` carries the OpenTelemetry trace id of the turn that produced the error. Until tracing
+exists (T-F1-18) THE SYSTEM SHALL put the `connection_id` there instead, and SHALL leave the field
+empty when the error precedes the handshake and there is no connection id yet. THE SYSTEM SHALL NOT
+mint an identifier that correlates to nothing: an id appearing in no other log line is worse than an
+absent one. The field is present on `INTERNAL_ERROR` only (Art. 7).
 
 ### Error codes
 
@@ -372,3 +406,4 @@ printf '%s\n' \
 |---|---|---|
 | 1.0 | 2026-09-11 | Initial version |
 | 1.1 | 2026-09-11 | delta `2026-09-analyze-fixes`: `client_msg_id` in `thread.send` (A-04), `owner_thread_id` in `Session` (A-05), `env_keyring_refs` → `env_refs` (A-06) |
+| 1.2 | 2026-09-11 | delta `2026-09-api-f0-decisions`: runtime-directory fallback and its ownership check, `trace_id` substitute until tracing exists, `capabilities` derived from the method table, `protocol_version` required, repeated handshake closes the connection, token compared before any other parameter |

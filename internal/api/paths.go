@@ -46,7 +46,7 @@ func RuntimeDir() (string, error) {
 	}
 	// A Linux session without XDG_RUNTIME_DIR, such as a bare `su`, still needs a
 	// private place to put a 0600 socket. The API Spec names no such fallback, so this
-	// is recorded in changes/2026-09-api-f0-decisions/.
+	// is recorded in changes/_archive/2026-09-api-f0-decisions/.
 	//
 	// The parent here is world-writable, so an existing directory is only accepted when
 	// the current user owns it and nobody else can enter it. Without that check another
