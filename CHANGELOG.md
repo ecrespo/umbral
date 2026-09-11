@@ -6,6 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The pr
 ## [Unreleased]
 
 ### Added
+- **T-F0-02**: `internal/store`, with migration 0001 of the terminal subdomain, the Data Model §5 pragmas verified after connecting, embedded forward-only migrations and the restart recovery of §6. The daemon runs all of it at startup.
 - **T-F0-01**: Go module `github.com/ecrespo/umbral`, the Tech Design §5.1 package skeleton and the three `cmd/` binaries.
 - Quality gate: `Taskfile.yml` (`task lint`, `task arch`, `task test`, `task specs`, `task ci`), `.golangci.yml` with gosec, `.pre-commit-config.yaml` and the GitHub Actions pipeline.
 - `.go-arch-lint.yml` encoding the Tech Design §5.2 dependency rules, plus `scripts/arch_selftest.sh`, which proves the rules reject a `sessions` → `agents` import instead of merely being present.

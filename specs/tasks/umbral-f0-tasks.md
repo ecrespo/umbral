@@ -28,7 +28,7 @@
 - **Done:** `task lint && task arch && task test` green in CI; a forbidden test import (e.g. `sessions` → `agents`) makes `task arch` fail.
 - **Result:** module `github.com/ecrespo/umbral` on Go 1.27.1. `task ci` runs specs, lint, arch, arch:selftest, test and build, all green locally. The forbidden-import criterion is automated in `scripts/arch_selftest.sh`, which injects `sessions` → `agents`, asserts that `go-arch-lint` rejects it and removes it again; CI runs it as its own step. `internal/` holds the §5.1 skeleton with one documented package per layer, and the three `cmd/` binaries build and run.
 
-### [ ] T-F0-02 · Store and migration 0001 (terminal)
+### [x] 2026-09-11 T-F0-02 · Store and migration 0001 (terminal)
 - **What:**
   - open SQLite with the Data Model §5 pragmas;
   - migration 0001 exactly as Data Model §5.1 lists it: `schema_migrations`, **`threads`**, `sessions`,
@@ -38,6 +38,7 @@
 - **Files:** `internal/store/**`, `internal/store/migrations/0001_terminal.sql`
 - **Depends on:** T-F0-01
 - **Done:** `go test ./internal/store/... -run 'Migrat|Recover'` green; `TestRecoveryMarksOpenBlocksAbandoned_REQ_TERM_005` passes; `TestMigration0001InsertsWithForeignKeysOn` inserts into `sessions` and `blocks` with `foreign_keys=ON` and an FTS `MATCH` returns the new block (A-01, A-07).
+- **Result:** `internal/store` opens the database with the §5 pragmas carried in the DSN, because `database/sql` pools connections and a pragma issued once would apply to one of them only. `Open` reads `foreign_keys` and `journal_mode` back instead of assuming the driver honoured them. Migrations are embedded, forward-only, one transaction each, contiguous from 0001, and a database from a newer daemon is refused with `ErrSchemaTooNew`. `Recover` applies §6 steps 1-2 in a single transaction and reports what it repaired. Ten tests green under `-race`, and removing `threads` from migration 0001 makes the A-01 regression test fail with the exact error the Analyze predicted. The daemon wires all of it at startup.
 
 ### [ ] T-F0-03 · JSON-RPC API, authentication and bus
 - **What:**
@@ -171,4 +172,5 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-11 | T-F0-02 | done | `internal/store` with migration 0001, pragma verification, forward-only migrations and restart recovery. Driver: `modernc.org/sqlite` (pure Go, no cgo). `threads` is created in 0001 per the folded delta, and the regression test for A-01 was checked by reverting the fix: it fails with `no such table: main.threads`, exactly as the Analyze described. Steps 3-4 of Data Model §6 wait for T-F1-01, which creates the tables they touch. |
 | 2026-09-11 | T-F0-01 | done | Go 1.27.1 installed under `~/.local/go` without root, since the machine had no Go at all. `task lint` (gofumpt, go vet, golangci-lint with gosec, govulncheck, gitleaks), `task arch`, `task arch:selftest` and `task test -race` all green. `gosec` G115 is excluded for now with a written reason: it fires on every epoch-ms and micro-USD conversion Art. 6 mandates, and it is re-enabled once the store layer exists. **Zig is still missing**, so T-F0-04 and T-F0-05 cannot build libghostty yet. |

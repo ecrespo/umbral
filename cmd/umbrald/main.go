@@ -4,32 +4,48 @@
 // This file is the composition root. Per Art. 3 it is the only place allowed to wire
 // modules together; every other package talks through ports or bus events.
 //
-// T-F0-01 leaves it as a runnable skeleton. The JSON-RPC listener arrives in T-F0-03.
+// What works today: the daemon opens its database, applies migrations and runs the
+// restart recovery of Data Model §6. The JSON-RPC listener arrives in T-F0-03.
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
 	"runtime/debug"
+	"syscall"
+	"time"
+
+	"github.com/ecrespo/umbral/internal/store"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=…".
 var version = "0.0.0-dev"
 
-// exitUsage is the sysexits.h EX_USAGE code, used for a bad command line.
-const exitUsage = 64
+// Exit codes from sysexits.h, so shell callers can tell the failures apart.
+const (
+	exitUsage     = 64 // EX_USAGE: a bad command line
+	exitDataErr   = 65 // EX_DATAERR: the database is unusable, for example a newer schema
+	exitCantCreat = 73 // EX_CANTCREAT: the data directory could not be created
+)
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("umbrald", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	showVersion := fs.Bool("version", false, "print the daemon version and exit")
+	dbPath := fs.String("db", "", "database file (default $XDG_DATA_HOME/umbral/umbral.db)")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -42,8 +58,43 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(stderr, nil))
-	logger.Info("umbrald is not implemented yet",
+
+	db, err := store.Open(ctx, store.Options{Path: *dbPath})
+	if err != nil {
+		logger.Error("cannot open the database", slog.Any("error", err))
+		if errors.Is(err, store.ErrSchemaTooNew) {
+			return exitDataErr
+		}
+		return exitCantCreat
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			logger.Error("cannot close the database", slog.Any("error", err))
+		}
+	}()
+
+	// Data Model §6: every PTY died with the previous process, so any session still
+	// marked alive is stale. Blocks that were open become abandoned, never deleted.
+	report, err := db.Recover(ctx, time.Now())
+	if err != nil {
+		logger.Error("recovery after restart failed", slog.Any("error", err))
+		return exitDataErr
+	}
+
+	schemaVersion, err := db.SchemaVersion(ctx)
+	if err != nil {
+		logger.Error("cannot read the schema version", slog.Any("error", err))
+		return exitDataErr
+	}
+
+	logger.Info("umbrald started",
 		slog.String("version", buildVersion()),
+		slog.String("database", db.Path()),
+		slog.Int("schema_version", schemaVersion),
+		slog.Int64("sessions_recovered", report.SessionsExited),
+		slog.Int64("blocks_abandoned", report.BlocksAbandoned))
+
+	logger.Info("there is nothing to serve yet",
 		slog.String("next_task", "T-F0-03: JSON-RPC listener, authentication and bus"))
 	return 0
 }
