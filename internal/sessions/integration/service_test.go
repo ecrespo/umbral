@@ -9,6 +9,7 @@ import (
 
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/sessions"
+	"github.com/ecrespo/umbral/internal/sessions/adapters/blockstore"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/ghostty"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/pty"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/shellinteg"
@@ -32,10 +33,20 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessForShell(t, "bash")
+}
 
-	shell, err := exec.LookPath("bash")
+// newHarnessForShell builds a harness around one shell, skipping when it is not installed.
+//
+// A missing shell is a skip rather than a failure because REQ-BLK-005 covers three shells
+// and a developer's machine rarely has all three; CI installs them all, so the coverage is
+// not lost where it counts.
+func newHarnessForShell(t *testing.T, name string) *harness {
+	t.Helper()
+
+	shell, err := exec.LookPath(name)
 	if err != nil {
-		t.Skipf("bash is not installed: %v", err)
+		t.Skipf("%s is not installed: %v", name, err)
 	}
 
 	db, err := store.Open(t.Context(), store.Options{Path: filepath.Join(t.TempDir(), "umbral.db")})
@@ -47,12 +58,21 @@ func newHarness(t *testing.T) *harness {
 	eventBus := bus.New()
 	t.Cleanup(eventBus.Close)
 
+	blocks, err := blockstore.New(db)
+	if err != nil {
+		t.Fatalf("blockstore.New: %v", err)
+	}
+	t.Cleanup(func() { _ = blocks.Close() })
+
 	service, err := sessions.New(sessions.Config{
-		Store:     db,
-		Bus:       eventBus,
-		NewPTY:    pty.Open,
-		NewEmu:    ghostty.NewEmulator,
-		Bootstrap: shellinteg.Adapter{},
+		Store:      db,
+		Bus:        eventBus,
+		NewPTY:     pty.Open,
+		NewEmu:     ghostty.NewEmulator,
+		Bootstrap:  shellinteg.Adapter{},
+		Blocks:     blocks,
+		NewScanner: func() ports.Scanner { return shellinteg.NewScanner() },
+		Host:       "test-host",
 	})
 	if err != nil {
 		t.Fatalf("sessions.New: %v", err)

@@ -8,9 +8,10 @@ Umbral is a local-first agentic terminal in Go. It consists of:
 - `umbrald`: a daemon with PTY, VT (libghostty), blocks, agent, model gateway and MCP;
 - thin clients: Bubble Tea v2 TUI, `umb` CLI and, from F2, a Wails v3 desktop app.
 
-The second-pass Analyze cleared F0 to start, and implementation has begun. `T-F0-01`
-(scaffolding and the quality gate) and `T-F0-02` (store and migration 0001) are done. The specs
-themselves are still `DRAFT`: the Analyze presents findings, it approves nothing. The execution
+The second-pass Analyze cleared F0 to start, and implementation has begun: T-F0-01 through
+T-F0-09 are done, so the daemon owns sessions, streams their output and records blocks.
+T-F0-10 (block query and search), T-F0-11 (`umb`), T-F0-12 (TUI) and T-F0-13 (performance
+gates) remain. The specs themselves are still `DRAFT`: the Analyze presents findings, it approves nothing. The execution
 log at the bottom of `specs/tasks/umbral-f0-tasks.md` is the only trustworthy record of what is
 complete; the task file's `[x]` markers are the source of truth, not this paragraph.
 
@@ -58,7 +59,11 @@ complete; the task file's `[x]` markers are the source of truth, not this paragr
 - A-01 … A-07 and A-13 are folded into `specs/`; the delta lives in `changes/_archive/2026-09-analyze-fixes/`.
 - Open findings, each attached to the task that first needs it: A-08 (reference machine, T-F0-13), A-09 (entropy and rules precedence, T-F1-04/T-F1-11), A-10 (SQLite write failure, T-F1-13), A-11 (`fetch_url` limits, T-F1-09), A-14 (glossary).
 - Closed while folding the visual identity: A-12 (the four desktop PKG requirements moved to `specs/prd/umbral-f2-desktop.md`), A-15 (checksums regenerated) and A-16 (Spanish duplicate deleted).
-- **Phase 0 is closed.** `changes/` holds no pending delta; all three are archived.
+- **Phase 0 is closed**, and its three deltas are archived. Two deltas are open and awaiting
+  approval: `changes/2026-09-slow-client-notification/` (from T-F0-06, adds
+  `session.unsubscribed` to API §6) and `changes/2026-09-block-lifecycle-decisions/` (from
+  T-F0-09, five decisions that narrow approved spec text). The code implements what both
+  propose; neither is folded into `specs/` yet.
 - **Q-01 is resolved** (`docs/spikes/q01-snapshot.md`): the libghostty VT formatter produces replayable snapshots, so the bounded-replay fallback is not needed and DD-001 stands unchanged.
 - **Building needs libghostty-vt.** Run `task deps:ghostty` once; the Taskfile then points `PKG_CONFIG_PATH` at it, so no Go target needs you to export anything.
 - `python3 tools/sdd_check.py` exits 0. Keep it that way: it is the *Specs* gate in CI.

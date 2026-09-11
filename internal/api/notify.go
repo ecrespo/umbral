@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/ecrespo/umbral/internal/bus"
+	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
 )
 
@@ -39,6 +40,10 @@ func (s *Server) Notify(ctx context.Context) {
 		sessports.KindSessionExited,
 		sessports.KindSessionResized,
 		sessports.KindSessionInputOwner,
+		sessports.KindSessionIntegration,
+		sessports.KindBlockStarted,
+		sessports.KindBlockUpdated,
+		sessports.KindBlockClosed,
 	)
 	defer sub.Close()
 
@@ -81,9 +86,63 @@ func toNotification(event bus.Event) (string, any) {
 		return "session.input_owner", map[string]any{
 			fieldSessionID: e.SessionID, "input_owner": string(e.InputOwner),
 		}
+	case sessports.SessionIntegration:
+		return "session.integration", map[string]any{
+			fieldSessionID: e.SessionID, "integration": string(e.Integration),
+		}
+	case sessports.BlockStarted:
+		return "block.started", blockPayload(e.Block)
+	case sessports.BlockUpdated:
+		return "block.updated", map[string]any{
+			"block_id": e.BlockID, "state": string(e.State),
+		}
+	case sessports.BlockClosed:
+		return "block.closed", blockPayload(e.Block)
 	default:
 		return "", nil
 	}
+}
+
+// blockPayload renders a block as API Spec §4 defines it.
+//
+// The nullable fields are written as explicit nulls rather than omitted, because a client
+// that distinguishes "not finished" from "finished with no exit code" needs the key to be
+// there either way.
+func blockPayload(block sessdomain.Block) map[string]any {
+	payload := map[string]any{
+		"id":               block.ID,
+		fieldSessionID:     block.SessionID,
+		"origin":           string(block.Origin),
+		"thread_id":        nullable(block.ThreadID),
+		"command":          block.Command,
+		"cwd":              block.CWD,
+		"host":             block.Host,
+		"state":            string(block.State),
+		"exit_code":        nil,
+		"started_at":       block.StartedAt.UTC().UnixMilli(),
+		"ended_at":         nil,
+		"duration_ms":      nil,
+		"output_bytes":     block.OutputBytes,
+		"output_truncated": block.OutputTruncated,
+	}
+	if block.ExitCode != nil {
+		payload["exit_code"] = *block.ExitCode
+	}
+	if block.EndedAt != nil {
+		payload["ended_at"] = block.EndedAt.UTC().UnixMilli()
+	}
+	if ms := block.DurationMs(); ms != nil {
+		payload["duration_ms"] = *ms
+	}
+	return payload
+}
+
+// nullable turns an empty optional string into a JSON null.
+func nullable(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 // dispatchOutput hands a chunk to every connection subscribed to that session.

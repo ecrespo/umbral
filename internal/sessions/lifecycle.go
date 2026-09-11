@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/ecrespo/umbral/internal/sessions/domain"
@@ -43,6 +44,44 @@ func environ(overrides map[string]string) []string {
 		env = append(env, key+"="+value)
 	}
 	return append(env, "UMBRAL_SESSION=1")
+}
+
+// replyTarget carries the emulator's answers to device queries back to the PTY.
+//
+// It exists because of an ordering problem: the emulator is built before the PTY, so it
+// needs somewhere to send replies at a moment when the PTY it should reach does not exist
+// yet. Replies that arrive before the PTY is attached are dropped, which is safe because
+// nothing has been written to the emulator by then and so nothing can have asked anything.
+type replyTarget struct {
+	mu        sync.RWMutex
+	pty       ports.PTY
+	logger    *slog.Logger
+	sessionID string
+}
+
+// attach names the PTY replies should go to.
+func (r *replyTarget) attach(pty ports.PTY, sessionID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pty = pty
+	r.sessionID = sessionID
+}
+
+// write sends one reply. It is called from inside the emulator, on the drain goroutine, so
+// it must not call back into the emulator and must not block for long: the replies are a
+// handful of bytes each and a PTY that cannot take them is a PTY that is going away.
+func (r *replyTarget) write(data []byte) {
+	r.mu.RLock()
+	pty, sessionID := r.pty, r.sessionID
+	r.mu.RUnlock()
+
+	if pty == nil {
+		return
+	}
+	if _, err := pty.Write(data); err != nil {
+		r.logger.Debug("could not answer a terminal query",
+			slog.String("session_id", sessionID), slog.Any("error", err))
+	}
 }
 
 // persistCreate writes the session row before the PTY is announced (DD-007).
@@ -92,6 +131,10 @@ func (s *Service) drain(live *liveSession) {
 			s.cfg.Bus.Publish(ports.SessionOutput{
 				SessionID: live.session.ID, Seq: seq, Data: chunk,
 			})
+
+			// Blocks are recorded after the chunk is on its way to the clients, so a
+			// slow database delays the history and never the screen.
+			s.recordOutput(live, chunk)
 		}
 		if err != nil {
 			return
@@ -118,6 +161,13 @@ func (s *Service) finish(live *liveSession) {
 				slog.String("session_id", live.session.ID), slog.Any("error", waitErr))
 		}
 		exitedAt := time.Now()
+
+		// The block the shell died under is closed before the session is, so a client
+		// that reacts to session.exited finds no block still claiming to be running.
+		s.abandonOpenBlock(live)
+		if live.integrationTimer != nil {
+			live.integrationTimer.Stop()
+		}
 
 		live.mu.Lock()
 		live.session.State = domain.StateExited
@@ -146,6 +196,7 @@ func (s *Service) finish(live *liveSession) {
 		_ = live.pty.Close()
 		_ = live.emu.Close()
 		runCleanup(live.cleanup)
+		live.cancel()
 
 		// The session stays in the map so session.list and a late session.get still find
 		// it with its exit code, rather than answering NOT_FOUND for something that

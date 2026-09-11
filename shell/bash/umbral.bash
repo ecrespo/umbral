@@ -72,10 +72,24 @@ __umbral_preexec() {
 	__umbral_esc "133;C"
 }
 
-# __umbral_precmd runs before each prompt. It closes the block the DEBUG trap opened, and
-# must be the first thing to read $?, before any other hook overwrites it.
+# __umbral_save_status captures $? before any other prompt hook can overwrite it.
+#
+# The work of the prompt hook has to be split in two, because its two halves want opposite
+# positions in PROMPT_COMMAND. The exit code must be read before a prompt framework's own
+# hook runs, since each element of PROMPT_COMMAND leaves $? set to its own result: with
+# Starship installed, a command that exited 3 was reported as 0. The prompt markers must be
+# applied after that framework has rewritten PS1, or they are lost. So this runs first and
+# __umbral_precmd runs last.
+__umbral_save_status() {
+	__umbral_status=$?
+	# Returning the status leaves $? as the next hook expects to find it.
+	return "${__umbral_status}"
+}
+
+# __umbral_precmd runs before each prompt. It closes the block the DEBUG trap opened, using
+# the exit code __umbral_save_status captured before the other hooks ran.
 __umbral_precmd() {
-	local exit_code=$?
+	local exit_code="${__umbral_status-$?}"
 	if [[ -n "${__umbral_in_command-}" ]]; then
 		__umbral_esc "133;D;${exit_code}"
 		unset __umbral_in_command
@@ -96,12 +110,13 @@ __umbral_mark_prompt() {
 	PS1="\[$(__umbral_esc '133;A')\]${PS1}\[$(__umbral_esc '133;B')\]"
 }
 
-# The hook goes last in PROMPT_COMMAND so a prompt framework has already rewritten PS1 by
-# the time the markers are applied.
+# The two hooks bracket whatever the user already had: the exit code is captured before
+# anything else can change it, and the prompt markers are applied after every framework has
+# finished rewriting PS1.
 if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
-	PROMPT_COMMAND+=(__umbral_precmd)
+	PROMPT_COMMAND=(__umbral_save_status "${PROMPT_COMMAND[@]}" __umbral_precmd)
 else
-	PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND};}__umbral_precmd"
+	PROMPT_COMMAND="__umbral_save_status${PROMPT_COMMAND:+;${PROMPT_COMMAND}};__umbral_precmd"
 fi
 
 # Announce the integration immediately. REQ-BLK-003 gives the daemon five seconds before it

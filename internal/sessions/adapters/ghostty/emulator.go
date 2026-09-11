@@ -21,13 +21,24 @@ type Emulator struct {
 }
 
 // NewEmulator builds an emulator for the given size. It satisfies ports.EmulatorFactory.
-func NewEmulator(size domain.Size) (ports.Emulator, error) {
+//
+// reply may be nil, in which case device queries go unanswered. That is only right for a
+// test or a one-shot render; a live session must pass one.
+func NewEmulator(size domain.Size, reply ports.ReplyFunc) (ports.Emulator, error) {
 	if err := size.Validate(); err != nil {
 		return nil, err
 	}
 	term, err := NewTerminal(size.Cols, size.Rows)
 	if err != nil {
 		return nil, err
+	}
+	if reply != nil {
+		// libghostty calls this from inside VTWrite, on the goroutine draining the PTY,
+		// while this emulator's mutex is held. The callback must therefore not touch the
+		// emulator again; writing the bytes straight to the PTY is all it does.
+		term.SetEffectWritePty(func(_ *libghostty.Terminal, data []byte) {
+			reply(append([]byte(nil), data...))
+		})
 	}
 	return &Emulator{term: term}, nil
 }

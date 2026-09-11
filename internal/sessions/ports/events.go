@@ -59,3 +59,50 @@ type SessionInputOwner struct {
 
 // EventKind implements bus.Event.
 func (SessionInputOwner) EventKind() bus.Kind { return KindSessionInputOwner }
+
+// Block event kinds (API Spec §6).
+const (
+	KindBlockStarted bus.Kind = "block.started"
+	KindBlockUpdated bus.Kind = "block.updated"
+	KindBlockClosed  bus.Kind = "block.closed"
+)
+
+// BlockStarted reports a command that began running (REQ-BLK-001).
+type BlockStarted struct {
+	Block domain.Block
+}
+
+// EventKind implements bus.Event.
+func (BlockStarted) EventKind() bus.Kind { return KindBlockStarted }
+
+// BlockUpdated reports a state change on an open block, which today means the alternate
+// screen going in or out (REQ-BLK-004).
+type BlockUpdated struct {
+	BlockID string
+	State   domain.BlockState
+}
+
+// EventKind implements bus.Event.
+func (BlockUpdated) EventKind() bus.Kind { return KindBlockUpdated }
+
+// BlockClosed reports a command that ended, whether it reported an exit code or its
+// session died under it (REQ-BLK-002).
+type BlockClosed struct {
+	Block domain.Block
+}
+
+// EventKind implements bus.Event.
+func (BlockClosed) EventKind() bus.Kind { return KindBlockClosed }
+
+// KindSessionIntegration reports that shell integration was detected, or given up on
+// (REQ-BLK-003).
+const KindSessionIntegration bus.Kind = "session.integration"
+
+// SessionIntegration carries a session's new integration state.
+type SessionIntegration struct {
+	SessionID   string
+	Integration domain.Integration
+}
+
+// EventKind implements bus.Event.
+func (SessionIntegration) EventKind() bus.Kind { return KindSessionIntegration }

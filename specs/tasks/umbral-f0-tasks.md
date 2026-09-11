@@ -103,7 +103,7 @@
 - **Done:** `TestBootstrapEmitsOSC133_REQ_BLK_005` in CI with real bash, zsh and fish.
 - **Result:** three scripts under `shell/`, embedded through `shell/shell.go` and materialised by `internal/sessions/adapters/shellinteg`. Each shell gets the only injection that both runs before the first prompt and keeps the user's own configuration: bash `--init-file` sourcing the rc back, zsh a temporary `ZDOTDIR` restoring the real one, fish `--init-command`, which runs after `config.fish` so nothing needs restoring. `Bootstrap.Argv` assembles the argument list because bash requires long options first: `bash -i --init-file F` exits 2. Tested under a real PTY, because every hook involved only runs in an interactive shell and a test on a pipe would pass against a bootstrap that emits nothing. Two real bugs were found this way and both now have a regression test: the bash DEBUG trap opened a phantom block for the prompt framework's own hook, recording `starship_precmd` as the first command of every session, and markers applied once are lost by any prompt that rewrites itself.
 
-### [ ] T-F0-09 · Block lifecycle
+### [x] 2026-09-11 T-F0-09 · Block lifecycle
 - **What:**
   - OSC parser (emulator callbacks) that drives the state machine in API Spec §7;
   - generation of `output_plain` (max 1 MiB) and zstd `block_chunks` (16 MiB cap);
@@ -111,9 +111,26 @@
   - alt-screen detection;
   - `integration: none` after 5 s without OSC.
 - **REQ:** REQ-BLK-001, REQ-BLK-002, REQ-BLK-003, REQ-BLK-004, REQ-BLK-007
-- **Files:** `internal/sessions/domain/block*.go`, `internal/sessions/adapters/shellinteg/**`, `internal/sessions/adapters/store/**`
+- **Files:** `internal/sessions/domain/{block,marker,plaintext,recorder}.go`,
+  `internal/sessions/adapters/shellinteg/scanner.go`,
+  `internal/sessions/adapters/blockstore/**`, `internal/sessions/blocks.go`
 - **Depends on:** T-F0-05, T-F0-08
 - **Done:** tests `…_REQ_BLK_001` … `…_REQ_BLK_004` and `TestPlainOutputHasNoEscapes_REQ_BLK_007` green.
+- **Result:** the OSC scanner lives in `internal/sessions/adapters/shellinteg/scanner.go`, not in
+  emulator callbacks: libghostty's Go bindings expose neither the OSC 133 payload nor OSC 633,
+  so the daemon cannot get the command line or the exit code from the emulator. The block state
+  machine is a pure `domain.Recorder`; persistence is `internal/sessions/adapters/blockstore`
+  with zstd chunks (`klauspost/compress`, the first compression dependency). Also fixed here
+  because blocks in fish and zsh depended on them: the bash and zsh bootstraps reported exit
+  code 0 for every command whenever another `PROMPT_COMMAND`/`precmd` hook ran first, and the
+  daemon never answered terminal device queries, which made every fish session hang for two
+  seconds and permanently lose features. Extra tests beyond the matrix:
+  `TestBlocksInEveryShell_REQ_BLK_005` (bash, zsh and fish), the `TestScanner…` suite and
+  `TestBlockNotificationsMatchTheSchema_REQ_BLK_001_REQ_BLK_002`. Five decisions that narrow
+  approved spec text went to `changes/2026-09-block-lifecycle-decisions/` rather than staying
+  in comments: what `abandoned` means, which sequences `block_chunks` keeps, what
+  `output_truncated` covers, whether a late marker promotes a session, and the zstd
+  dependency.
 
 ### [ ] T-F0-10 · Block query and search
 - **What:** `block.list`, `block.get` (including `"last"`) and `block.search` over FTS5, with cursor pagination; benchmark with a 100,000-block fixture.
@@ -217,6 +234,7 @@ REQ-PKG-004, 005, 007 and 008 are not MVP requirements; finding A-12 moved them 
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-11 | T-F0-09 | done | Two defects in already-"done" work surfaced only when a real shell was asked for a real exit code. First: the bash and zsh bootstraps read `$?` in a hook registered last, and every element of `PROMPT_COMMAND`/`precmd_functions` leaves `$?` set to its own result, so with Starship installed every command was recorded as exit 0. The work is now split in two, a capture hook first and the marker hook last, because the two halves want opposite positions. Second: the daemon never wired libghostty's write-pty effect, so no program's query to the terminal was ever answered; fish waits two seconds for a Primary Device Attributes reply and then permanently disables features, and under a retrying test it never timed out at all. Both were found by `TestBlocksInEveryShell_REQ_BLK_005`, which exists because REQ-BLK-005 covers three shells and only running all three proves they agree. A third, smaller one was found by the plain-text test: carriage return was treated as "erase the line", which is right for a progress bar and wrong for the CRLF a PTY ends every line with, so the decision is now deferred one byte. The scanner and the recorder were each checked for teeth by breaking three and four properties respectively. Deliberately not done: `block.list`/`get`/`search` are T-F0-10, and chunk writes sit on the drain goroutine, after the chunk has been published, so they delay the history and never the screen. |
 | 2026-09-11 | T-F0-07 | done | 22 cases: VT-01…VT-20 MUST plus VT-21 and VT-22 SHOULD. Everything passes against libghostty on the first run, which is expected rather than suspicious: the emulator is Ghostty's own and these are the sequences it exists to implement. The value is the regression net, not the discovery. Worth noting from the fixtures: VT-20 confirms the shell-integration OSC sequences leave no visible mark, which is what lets T-F0-09 read them without corrupting the screen. |
 | 2026-09-11 | T-F0-06 | done | All three tests were checked for teeth. Two bit immediately; the ordering test did **not**, because the fake published output after subscribe returned and the race window was never exercised. Making the fake publish *inside* the snapshot call still did not bite reliably, since whether the dispatch goroutine ran in the window was up to the scheduler. It now asserts the ordering where it happens, that a subscription exists at the moment the snapshot is taken, which fails deterministically when the order is reversed. Verified end to end against a real bash session: the snapshot carries the pre-subscribe output, the live stream carries only what came after, and the sequence numbers are strictly increasing and all above the snapshot's. |
 | 2026-09-11 | T-F0-05 | done | Both security-relevant tests were checked for teeth by breaking what they guard: writing the input before checking the lock fails REQ-TERM-008's canary check, and resizing only the bookkeeping fails REQ-TERM-007's `tput cols`. Verified end to end over the real socket: create, input, resize with its notification, list, close and the exited notification. One observation worth keeping: input written to a PTY before the shell's line editor is ready can be lost, so an end-to-end script that types immediately after `session.create` sees a wrong exit code. With the shell settled, bash, zsh and fish all report the real code. `session.*` is restricted to the `tui` and `desktop` client kinds, since API Spec §2 does not grant it to `cli`. |

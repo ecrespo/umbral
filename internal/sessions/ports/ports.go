@@ -124,5 +124,52 @@ type Emulator interface {
 	Close() error
 }
 
+// ReplyFunc carries a terminal's answer to a program's query back to the PTY.
+//
+// The emulator, not the program, is the one that knows the answer to "what terminal are
+// you" or "what is the cursor at", so the reply originates inside the emulator and has to
+// travel outwards. It bypasses the input lock deliberately: this is the terminal
+// answering, not a person typing, and REQ-TERM-008 is about people.
+type ReplyFunc func(data []byte)
+
 // EmulatorFactory builds an emulator for a given size.
-type EmulatorFactory func(size domain.Size) (Emulator, error)
+//
+// reply is how the emulator answers device queries. A session whose replies go nowhere
+// looks broken to any program that asks the terminal a question: fish waits two seconds
+// for a Primary Device Attributes answer and then permanently disables features, and a
+// program querying the cursor position waits forever.
+type EmulatorFactory func(size domain.Size, reply ReplyFunc) (Emulator, error)
+
+// Scanner reads shell-integration markers out of one session's output stream
+// (REQ-BLK-001, REQ-BLK-002, REQ-BLK-004).
+//
+// It is a port rather than a function in the service because the sequences it recognises
+// are the other half of the bootstrap scripts: the two have to change together, and both
+// live in the shellinteg adapter.
+//
+// The events it returns, and the bytes inside them, are only valid until the next call.
+type Scanner interface {
+	Scan(chunk []byte) []domain.Event
+}
+
+// ScannerFactory builds a scanner for one session. Each session needs its own, because a
+// scanner carries the state of a sequence split across two PTY reads.
+type ScannerFactory func() Scanner
+
+// BlockStore persists blocks and their output (Data Model §2.2 and §2.3).
+//
+// Every method takes a context, and the one it is given is the session's own lifetime
+// rather than any request's: a block outlives the call that started its command, and a
+// chunk written half way through a build belongs to no request at all.
+type BlockStore interface {
+	// Create writes a new block's row (REQ-BLK-001).
+	Create(ctx context.Context, block domain.Block) error
+	// AppendChunk stores one run of raw output, compressed (Data Model §2.3). seq orders
+	// the chunks within the block.
+	AppendChunk(ctx context.Context, blockID string, seq int64, raw []byte) error
+	// SetState records a state change on an open block (REQ-BLK-004).
+	SetState(ctx context.Context, blockID string, state domain.BlockState) error
+	// Finish closes the block, storing its exit code, its counters and the plain-text
+	// transcript the agent and FTS5 read (REQ-BLK-002, REQ-BLK-007).
+	Finish(ctx context.Context, block domain.Block, plain string) error
+}

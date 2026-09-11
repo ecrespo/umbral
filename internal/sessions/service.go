@@ -37,6 +37,14 @@ type Config struct {
 	NewEmu    ports.EmulatorFactory
 	Bootstrap ports.Bootstrapper
 	Logger    *slog.Logger
+	// Blocks and NewScanner turn PTY output into blocks (T-F0-09). Leaving either nil
+	// runs the session without block recording, which is what the older tests and the
+	// spike binaries do.
+	Blocks     ports.BlockStore
+	NewScanner ports.ScannerFactory
+	// Host is stored on every block so an exported history says where it ran. It
+	// defaults to the machine's hostname.
+	Host string
 	// DefaultShell and DefaultCWD fill in the optional create parameters (API Spec §5.3).
 	DefaultShell string
 	DefaultCWD   string
@@ -62,6 +70,23 @@ type liveSession struct {
 
 	seq     uint64
 	cleanup func() error
+
+	// ctx is the session's own lifetime, used by every block write. A block outlives the
+	// request that started its command, so the request's context is the wrong one.
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	// Block recording (T-F0-09). scanner and recorder are touched only by the drain
+	// goroutine and by finish, which runs after it.
+	scanner  ports.Scanner
+	recorder *domain.Recorder
+	// pendingRaw buffers output until it is worth a chunk; chunkSeq orders the chunks
+	// within the open block.
+	pendingRaw   []byte
+	chunkSeq     int64
+	chunkBlockID string
+
+	integrationTimer *time.Timer
 
 	// snapshotMu serialises a snapshot against the drain goroutine's write-then-count, so
 	// the screen and the sequence number describe the same instant.
@@ -92,6 +117,9 @@ func New(cfg Config) (*Service, error) {
 	if cfg.DefaultCWD == "" {
 		cfg.DefaultCWD, _ = os.UserHomeDir()
 	}
+	if cfg.Host == "" {
+		cfg.Host, _ = os.Hostname()
+	}
 	return &Service{cfg: cfg, live: make(map[string]*liveSession)}, nil
 }
 
@@ -115,7 +143,10 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 		return domain.Session{}, err
 	}
 
-	emu, err := s.cfg.NewEmu(params.Size)
+	// The emulator answers device queries, and its answers have to reach the PTY that
+	// does not exist yet. The target is handed over as soon as it does.
+	replies := &replyTarget{logger: s.cfg.Logger}
+	emu, err := s.cfg.NewEmu(params.Size, replies.write)
 	if err != nil {
 		runCleanup(cleanup)
 		return domain.Session{}, err
@@ -148,9 +179,23 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 		return domain.Session{}, err
 	}
 
+	replies.attach(pty, session.ID)
+
+	sessionCtx, cancel := blockContext()
 	live := &liveSession{
 		session: session, pty: pty, emu: emu, cleanup: cleanup, done: make(chan struct{}),
+		ctx: sessionCtx, cancel: cancel,
 	}
+	if s.cfg.Blocks != nil && s.cfg.NewScanner != nil {
+		live.scanner = s.cfg.NewScanner()
+		live.recorder = domain.NewRecorder(domain.RecorderConfig{
+			SessionID: session.ID,
+			Host:      s.cfg.Host,
+			NewID:     func() string { return store.NewID(store.PrefixBlock) },
+		})
+		s.startIntegrationTimer(live)
+	}
+
 	s.mu.Lock()
 	s.live[session.ID] = live
 	s.mu.Unlock()

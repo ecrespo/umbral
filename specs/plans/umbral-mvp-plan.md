@@ -34,9 +34,9 @@ There are two MVP phases in sequence (F0 Core → F1 Agentic) plus a hardening p
 | Prerequisite | Owner | Status | Deadline |
 |---|---|---|---|
 | Specs approved (this package) + Analyze without CRITICAL findings | Tech Lead | ☑ Met 2026-09-11 — `analyze-2026-09-11b.md`, 0 CRITICAL / 0 HIGH | before T-F0-01 |
-| Toolchain: Go ≥ 1.25, Zig (libghostty-vt build), golangci-lint, go-arch-lint, gitleaks | Tech Lead | ◐ Partial — Go 1.27.1, gofumpt, golangci-lint, go-arch-lint, govulncheck, gitleaks and Task installed; **Zig still missing** | T-F0-01 |
+| Toolchain: Go ≥ 1.25, Zig (libghostty-vt build), golangci-lint, go-arch-lint, gitleaks | Tech Lead | ☑ Met 2026-09-11 — Go 1.27.1, Zig 0.16.0, gofumpt, golangci-lint, go-arch-lint, govulncheck, gitleaks and Task; `task deps:ghostty` builds libghostty-vt | T-F0-01 |
 | Ollama with `gpt-oss:20b` and `num_ctx` ≥ 32k on the development machine | Tech Lead | ☐ Pending | start of F1 |
-| CI runner with bash, zsh and fish installed | Tech Lead | ☑ Met 2026-09-11 — the test job installs zsh and fish; the tests skip a shell that is absent rather than failing | T-F0-08 |
+| CI runner with bash, zsh and fish installed | Tech Lead | ☑ Met 2026-09-11 — the test job installs zsh and fish; the tests skip a shell that is absent rather than failing, so macOS runs bash only | T-F0-08 |
 | Q-01 decision (snapshot format) | Tech Lead | ☑ Resolved 2026-09-11 — `docs/spikes/q01-snapshot.md`: the VT formatter is replayable, no fallback needed | spike T-F0-04 |
 
 ## 3. Implementation Phases
@@ -88,15 +88,16 @@ and the other two need the F2 desktop client.
 | T-F0-06 | Subscription, snapshot, fan-out with batching and per-client queue | 2d | T-F0-04, T-F0-05 | ☑ 2026-09-11 |
 | T-F0-07 | VT conformance suite | 2d | T-F0-05 | ☑ 2026-09-11 |
 | T-F0-08 | Shell-integration bootstrap for bash/zsh/fish | 1.5d | T-F0-01 | ☑ 2026-09-11 |
-| T-F0-09 | Block lifecycle from OSC; plain text; chunks | 3d | T-F0-05, T-F0-08 | ☐ |
+| T-F0-09 | Block lifecycle from OSC; plain text; chunks | 3d | T-F0-05, T-F0-08 | ☑ 2026-09-11 |
 | T-F0-10 | `block.list`/`get`/`search` + 100k benchmark | 1.5d | T-F0-09 | ☐ |
 | T-F0-11 | `umb` CLI: autostart, `status`, `block last --json` | 1d | T-F0-10 | ☐ |
 | T-F0-12 | Base TUI: tabs, splits, rendering, block navigation | 4d | T-F0-06, T-F0-09 | ☐ |
 | T-F0-13 | TERM-001 and TERM-006 performance gates in CI | 1d | T-F0-06 | ☐ |
 
 **F0 "Done" criteria:**
-- VT conformance suite 100 % MUST green (REQ-TERM-002).
-- Correct blocks in bash, zsh and fish in CI.
+- VT conformance suite 100 % MUST green (REQ-TERM-002) — ☑ met by T-F0-07, 20 MUST cases.
+- Correct blocks in bash, zsh and fish in CI — ☑ met by T-F0-09,
+  `TestBlocksInEveryShell_REQ_BLK_005`; the Linux test job installs all three shells.
 - The TUI is used for one week as the main terminal without blocking regressions.
 - Benchmarks within the NFRs.
 
@@ -150,7 +151,7 @@ and the other two need the F2 desktop client.
 
 | Phase | Content | Artifacts it will require |
 |---|---|---|
-| F2 ADE | Wails v3 client, Full Terminal Use, Active AI + yzma, policy router, multi-thread worktrees, ACP client, durable SSH, Windows | F2 PRD + deltas on the API and Tech Design; **visual identity delta already proposed** (`changes/2026-09-visual-identity/`) |
+| F2 ADE | Wails v3 client, Full Terminal Use, Active AI + yzma, policy router, multi-thread worktrees, ACP client, durable SSH, Windows | F2 PRD + deltas on the API and Tech Design; **visual identity delta folded** (`changes/_archive/2026-09-visual-identity/`) |
 | F3 | background agents, MCP/ACP server, WASM plugins, workflows/notebooks | F3 PRD |
 
 ## 5. Execution strategy with agents

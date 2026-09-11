@@ -59,9 +59,20 @@ __umbral_preexec() {
 	__umbral_in_command=1
 }
 
-# precmd runs before each prompt and must read $? first, before any other hook sees it.
+# __umbral_save_status captures $? before any other precmd hook can overwrite it.
+#
+# zsh runs precmd_functions in order and each leaves $? set to its own result, so a hook
+# registered after Starship's sees Starship's status instead of the command's. The markers,
+# on the other hand, have to be applied after the framework has rewritten PROMPT. The two
+# halves therefore sit at opposite ends of precmd_functions.
+__umbral_save_status() {
+	__umbral_status=$?
+	return "${__umbral_status}"
+}
+
+# precmd runs before each prompt, using the exit code captured above.
 __umbral_precmd() {
-	local exit_code=$?
+	local exit_code="${__umbral_status-$?}"
 	if [[ -n "${__umbral_in_command-}" ]]; then
 		__umbral_esc "133;D;${exit_code}"
 		unset __umbral_in_command
@@ -81,6 +92,10 @@ __umbral_mark_prompt() {
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd __umbral_precmd
 add-zsh-hook preexec __umbral_preexec
+
+# add-zsh-hook only appends, so the capture half is placed by hand. The filter keeps a
+# second injection from registering it twice.
+precmd_functions=(__umbral_save_status ${precmd_functions:#__umbral_save_status})
 
 # Announce immediately, before the first prompt, so REQ-BLK-003's five-second window is not
 # spent waiting on a slow prompt framework.

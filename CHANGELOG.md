@@ -6,6 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The pr
 ## [Unreleased]
 
 ### Added
+- **T-F0-09**: the block lifecycle. The daemon now turns a shell's OSC 133, 633 and 7 sequences into blocks: a command, its working directory, its exit code and its duration, with the output stored twice, as a plain-text transcript for the agent and FTS5 and as zstd-compressed chunks for faithful re-rendering. Alternate-screen content is excluded from both. `block.started`, `block.updated`, `block.closed` and `session.integration` are published, and a session with no shell integration is marked `none` after five seconds and keeps delivering output.
 - **T-F0-07**: the VT conformance suite, 22 cases from Tech Design §8.1 with their fixtures under `testdata/vt/`. A missing fixture or a deleted MUST case fails the run rather than shrinking the suite.
 - **T-F0-06**: `session.subscribe` and `session.unsubscribe`, with the screen delivered before the first live chunk, per-subscription batching and an 8 MiB budget past which the subscription is dropped and announced. The daemon adds 12 µs at p95 between a PTY chunk and the notification.
 - **T-F0-05**: the sessions module. PTY sessions with their own libghostty emulator, the `session.create`, `list`, `input`, `resize` and `close` methods, the per-session input lock, and the `session.exited`, `session.resized` and `session.input_owner` notifications. `umbrald` now owns real terminals.
@@ -24,6 +25,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The pr
 - REQ-SEC-008 (degraded start when the OS keyring is unavailable) and REQ-AGT-015 (`thread.send` idempotency through `client_msg_id`).
 - Tech Design appendix §8.1 with the closed VT conformance case list (VT-01…VT-22).
 - Data Model §5.1: what each migration creates.
+
+### Fixed
+- The bash and zsh integration reported exit code 0 for every command on any machine with a prompt framework installed. Both read `$?` from a hook registered last, and each element of `PROMPT_COMMAND` and of zsh's `precmd_functions` leaves `$?` set to its own result. The capture is now a separate hook registered first.
+- The daemon never answered a program's query to the terminal, because libghostty's write-pty effect was never wired. Every fish session stalled for two seconds waiting for a Primary Device Attributes reply and then permanently disabled features.
 
 ### Changed
 - API Spec v1.2: the runtime-directory fallback and its ownership rule, `trace_id` before tracing exists, `capabilities` derived from the method table, a required `protocol_version`, and a repeated handshake closing the connection.

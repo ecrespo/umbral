@@ -27,9 +27,11 @@ import (
 	"github.com/ecrespo/umbral/internal/api"
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/sessions"
+	"github.com/ecrespo/umbral/internal/sessions/adapters/blockstore"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/ghostty"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/pty"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/shellinteg"
+	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
 	"github.com/ecrespo/umbral/internal/store"
 )
 
@@ -125,13 +127,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// The sessions module gets its adapters here and nowhere else: the PTY, the emulator
 	// and the shell bootstrap are all injected, which is what keeps libghostty and
 	// creack/pty confined to one directory each (Art. 3).
+	blocks, err := blockstore.New(db)
+	if err != nil {
+		logger.Error("cannot build the block store", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer func() { _ = blocks.Close() }()
+
 	sessionService, err := sessions.New(sessions.Config{
 		Store:     db,
 		Bus:       eventBus,
 		NewPTY:    pty.Open,
 		NewEmu:    ghostty.NewEmulator,
 		Bootstrap: shellinteg.Adapter{},
-		Logger:    logger,
+		Blocks:    blocks,
+		// A scanner per session: it carries the state of a sequence split across two
+		// PTY reads, so one shared between sessions would mix their streams.
+		NewScanner: func() sessports.Scanner { return shellinteg.NewScanner() },
+		Logger:     logger,
 	})
 	if err != nil {
 		logger.Error("cannot build the sessions module", slog.Any("error", err))
