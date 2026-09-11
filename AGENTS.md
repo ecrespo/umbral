@@ -8,7 +8,11 @@ Umbral is a local-first agentic terminal in Go. It consists of:
 - `umbrald`: a daemon with PTY, VT (libghostty), blocks, agent, model gateway and MCP;
 - thin clients: Bubble Tea v2 TUI, `umb` CLI and, from F2, a Wails v3 desktop app.
 
-Today the repo is in the **specification phase**; code starts with `T-F0-01`.
+The second-pass Analyze cleared F0 to start, and implementation has begun. `T-F0-01`
+(scaffolding and the quality gate) and `T-F0-02` (store and migration 0001) are done. The specs
+themselves are still `DRAFT`: the Analyze presents findings, it approves nothing. The execution
+log at the bottom of `specs/tasks/umbral-f0-tasks.md` is the only trustworthy record of what is
+complete; the task file's `[x]` markers are the source of truth, not this paragraph.
 
 ## Mandatory reading order
 1. `specs/constitution.md`: 9 non-negotiable articles. A violation blocks the merge.
