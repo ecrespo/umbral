@@ -34,8 +34,25 @@ type Sessions interface {
 	SetInputOwner(ctx context.Context, id string, owner domain.InputOwner) error
 	// Close sends SIGHUP and, after a grace period, SIGKILL (API Spec §5.9).
 	Close(ctx context.Context, id string) error
-	// Snapshot renders the current screen as replayable VT (REQ-TERM-004).
-	Snapshot(ctx context.Context, id string) ([]byte, error)
+	// Snapshot renders the current screen as replayable VT (REQ-TERM-004), and reports
+	// the cursor and the sequence number the snapshot is current as of.
+	//
+	// The sequence number is what makes the subscription gapless: the client is told the
+	// snapshot already contains everything up to `seq`, and live delivery starts at
+	// `seq + 1` (API Spec §5.5).
+	Snapshot(ctx context.Context, id string) (Snapshot, error)
+}
+
+// Snapshot is a session's screen at a moment, with the sequence number that anchors the
+// live stream to it.
+type Snapshot struct {
+	// Data is replayable VT (REQ-TERM-004).
+	Data []byte
+	// CursorX and CursorY are the cursor's cell.
+	CursorX uint16
+	CursorY uint16
+	// Seq is the last output chunk already reflected in Data.
+	Seq uint64
 }
 
 // Bootstrapper injects shell integration into a session's argv and environment
@@ -100,6 +117,9 @@ type Emulator interface {
 	Snapshot() ([]byte, error)
 	// PlainText renders the screen without escape sequences (REQ-BLK-007).
 	PlainText() (string, error)
+	// Cursor reports the cursor's cell, which `session.subscribe` returns alongside the
+	// snapshot so a client can place its own cursor without parsing the VT it just got.
+	Cursor() (x, y uint16, err error)
 	// Close releases the emulator.
 	Close() error
 }

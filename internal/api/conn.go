@@ -56,7 +56,66 @@ type conn struct {
 	clientKind    ClientKind
 	connectionID  string
 
+	// subsMu guards subs, which the read goroutine writes and the dispatch goroutine
+	// reads on every output chunk.
+	subsMu sync.Mutex
+	subs   map[string]*subscription
+
+	closed    chan struct{}
 	closeOnce sync.Once
+}
+
+// closedCh is closed when the connection goes away, which is how each subscription's
+// writer learns to stop.
+func (c *conn) closedCh() <-chan struct{} { return c.closed }
+
+// subscribe starts streaming a session to this connection, replacing any existing
+// subscription to the same session.
+func (c *conn) subscribe(sessionID string, startSeq uint64) {
+	c.subsMu.Lock()
+	defer c.subsMu.Unlock()
+
+	if existing, ok := c.subs[sessionID]; ok {
+		existing.close()
+	}
+	c.subs[sessionID] = newSubscription(c, sessionID, startSeq)
+}
+
+// unsubscribe stops streaming a session. It reports whether there was one.
+func (c *conn) unsubscribe(sessionID string) bool {
+	c.subsMu.Lock()
+	defer c.subsMu.Unlock()
+
+	sub, ok := c.subs[sessionID]
+	if !ok {
+		return false
+	}
+	sub.close()
+	delete(c.subs, sessionID)
+	return true
+}
+
+// deliver hands one output chunk to this connection's subscription, if it has one.
+func (c *conn) deliver(sessionID string, seq uint64, data []byte) {
+	c.subsMu.Lock()
+	sub := c.subs[sessionID]
+	c.subsMu.Unlock()
+
+	if sub != nil {
+		sub.enqueue(seq, data)
+	}
+}
+
+// closeSubscriptions stops every stream this connection holds.
+func (c *conn) closeSubscriptions() {
+	c.subsMu.Lock()
+	subs := c.subs
+	c.subs = make(map[string]*subscription)
+	c.subsMu.Unlock()
+
+	for _, sub := range subs {
+		sub.close()
+	}
 }
 
 func (s *Server) newConn(netConn net.Conn) *conn {
@@ -67,6 +126,8 @@ func (s *Server) newConn(netConn net.Conn) *conn {
 
 	return &conn{
 		server:  s,
+		subs:    make(map[string]*subscription),
+		closed:  make(chan struct{}),
 		netConn: netConn,
 		reader:  scanner,
 		logger:  s.cfg.Logger,
@@ -206,7 +267,11 @@ func (c *conn) notify(method string, params any) {
 
 func (c *conn) close() error {
 	var err error
-	c.closeOnce.Do(func() { err = c.netConn.Close() })
+	c.closeOnce.Do(func() {
+		close(c.closed)
+		c.closeSubscriptions()
+		err = c.netConn.Close()
+	})
 	return err
 }
 

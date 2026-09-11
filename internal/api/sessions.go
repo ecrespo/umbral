@@ -120,7 +120,7 @@ func handleSessionInput(ctx context.Context, c *conn, raw json.RawMessage) (any,
 	data, err := base64.StdEncoding.DecodeString(params.DataB64)
 	if err != nil {
 		return nil, ValidationError("data_b64 is not valid base64",
-			ErrorField{Field: "data_b64", Issue: err.Error()})
+			ErrorField{Field: fieldDataB64, Issue: err.Error()})
 	}
 
 	// A client always types as the human. The agent writes through the tools module, not
@@ -169,6 +169,70 @@ func handleSessionClose(ctx context.Context, c *conn, raw json.RawMessage) (any,
 	if err := c.server.cfg.Sessions.Close(ctx, params.SessionID); err != nil {
 		return nil, err
 	}
+	return map[string]any{}, nil
+}
+
+type sessionSubscribeParams struct {
+	SessionID       string `json:"session_id"`
+	ScrollbackLines *int   `json:"scrollback_lines"`
+}
+
+// handleSessionSubscribe sends the screen before the first live chunk (REQ-TERM-004).
+//
+// The order is the requirement. The subscription is registered *before* the snapshot is
+// taken, so a chunk arriving between the two is queued rather than lost; the snapshot's
+// sequence number then tells the subscription to discard anything it already contains.
+// Registering afterwards would open a window in which output vanishes, and a terminal that
+// silently loses a line is worse than one that repeats it.
+func handleSessionSubscribe(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
+	if c.server.cfg.Sessions == nil {
+		return nil, fmt.Errorf("%w: session.subscribe", ErrMethodNotFound)
+	}
+
+	var params sessionSubscribeParams
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil, ValidationError("session.subscribe parameters are not an object")
+	}
+	if params.ScrollbackLines != nil {
+		if *params.ScrollbackLines < 0 || *params.ScrollbackLines > sessdomain.MaxScrollbackLines {
+			return nil, ValidationError("scrollback_lines is out of range",
+				ErrorField{Field: "scrollback_lines", Issue: "must be between 0 and 10000"})
+		}
+	}
+
+	// Confirm the session exists before registering anything, so a typo does not leave a
+	// live subscription to nothing.
+	if _, err := c.server.cfg.Sessions.Get(ctx, params.SessionID); err != nil {
+		return nil, err
+	}
+
+	c.subscribe(params.SessionID, 0)
+
+	snapshot, err := c.server.cfg.Sessions.Snapshot(ctx, params.SessionID)
+	if err != nil {
+		c.unsubscribe(params.SessionID)
+		return nil, err
+	}
+	c.subscribe(params.SessionID, snapshot.Seq)
+
+	return map[string]any{
+		"snapshot": map[string]any{
+			"format":     "vt",
+			fieldDataB64: base64.StdEncoding.EncodeToString(snapshot.Data),
+			"cursor":     map[string]any{"x": snapshot.CursorX, "y": snapshot.CursorY},
+		},
+		"seq": snapshot.Seq,
+	}, nil
+}
+
+func handleSessionUnsubscribe(_ context.Context, c *conn, raw json.RawMessage) (any, error) {
+	var params sessionIDParams
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil, ValidationError("session.unsubscribe parameters are not an object")
+	}
+	c.unsubscribe(params.SessionID)
+	// Unsubscribing from something you were not subscribed to is not an error: the client
+	// wanted no subscription, and it has none.
 	return map[string]any{}, nil
 }
 

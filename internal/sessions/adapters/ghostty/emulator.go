@@ -83,6 +83,25 @@ func (e *Emulator) PlainText() (string, error) {
 	return PlainText(e.term)
 }
 
+// Cursor reports the cursor's cell.
+func (e *Emulator) Cursor() (x, y uint16, err error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.term == nil {
+		return 0, 0, fmt.Errorf("ghostty: read the cursor of a closed emulator")
+	}
+
+	x, err = e.term.CursorX()
+	if err != nil {
+		return 0, 0, fmt.Errorf("ghostty: cursor x: %w", err)
+	}
+	y, err = e.term.CursorY()
+	if err != nil {
+		return 0, 0, fmt.Errorf("ghostty: cursor y: %w", err)
+	}
+	return x, y, nil
+}
+
 // Close releases the terminal. It is safe to call more than once.
 func (e *Emulator) Close() error {
 	e.mu.Lock()

@@ -85,7 +85,7 @@ and the other two need the F2 desktop client.
 | T-F0-03 | JSON-RPC API: 0600 socket, token, `system.hello`/`status`, bus | 2d | T-F0-01 | ☑ 2026-09-11 |
 | T-F0-04 | Spike Q-01: VT snapshot with libghostty | 1d | T-F0-01 | ☑ 2026-09-11 |
 | T-F0-05 | Sessions: PTY, `Emulator` port, create/list/input/resize/close, lock | 3d | T-F0-02, T-F0-03 | ☑ 2026-09-11 |
-| T-F0-06 | Subscription, snapshot, fan-out with batching and per-client queue | 2d | T-F0-04, T-F0-05 | ☐ |
+| T-F0-06 | Subscription, snapshot, fan-out with batching and per-client queue | 2d | T-F0-04, T-F0-05 | ☑ 2026-09-11 |
 | T-F0-07 | VT conformance suite | 2d | T-F0-05 | ☐ |
 | T-F0-08 | Shell-integration bootstrap for bash/zsh/fish | 1.5d | T-F0-01 | ☑ 2026-09-11 |
 | T-F0-09 | Block lifecycle from OSC; plain text; chunks | 3d | T-F0-05, T-F0-08 | ☐ |

@@ -26,7 +26,7 @@ func eventuallyContains(t *testing.T, h *harness, sessionID, want string) bool {
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		snapshot, err := h.Snapshot(t.Context(), sessionID)
-		if err == nil && containsBytes(snapshot, want) {
+		if err == nil && containsBytes(snapshot.Data, want) {
 			return true
 		}
 		time.Sleep(50 * time.Millisecond)

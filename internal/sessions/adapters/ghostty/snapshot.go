@@ -15,10 +15,13 @@ import (
 	"fmt"
 
 	"go.mitchellh.com/libghostty"
+
+	"github.com/ecrespo/umbral/internal/sessions/domain"
 )
 
-// ScrollbackLines is the snapshot's history cap from REQ-TERM-004.
-const ScrollbackLines = 10_000
+// ScrollbackLines is the snapshot's history cap, taken from the domain so the emulator
+// cannot quietly disagree with the promise the API makes (REQ-TERM-004).
+const ScrollbackLines = domain.MaxScrollbackLines
 
 // ScrollbackBytes is the memory budget that must accompany ScrollbackLines.
 //

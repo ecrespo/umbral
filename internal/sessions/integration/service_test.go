@@ -276,11 +276,11 @@ func TestInputLockedRejected_REQ_TERM_008(t *testing.T) {
 
 	// Give the shell time to echo it if the bytes had leaked through.
 	time.Sleep(500 * time.Millisecond)
-	text, err := h.Snapshot(t.Context(), session.ID)
+	screen, err := h.Snapshot(t.Context(), session.ID)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if containsBytes(text, canary) {
+	if containsBytes(screen.Data, canary) {
 		t.Error("the refused input reached the PTY anyway; REQ-TERM-008 requires it never be written")
 	}
 

@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/base64"
 	"log/slog"
 
 	"github.com/ecrespo/umbral/internal/bus"
@@ -10,7 +9,17 @@ import (
 )
 
 // fieldSessionID is the parameter name every session notification carries (API Spec §6).
-const fieldSessionID = "session_id"
+const (
+	fieldSessionID = "session_id"
+	// fieldDataB64 is how every binary payload crosses the wire (API Spec §3).
+	fieldDataB64 = "data_b64"
+)
+
+// dispatchBuffer is how many events the daemon's single dispatch goroutine may fall behind
+// before the bus starts dropping. Output chunks are at most 32 KiB, so this bounds the
+// dispatch backlog at a few tens of megabytes in the worst case while giving the writer
+// goroutines room to drain.
+const dispatchBuffer = 2048
 
 // Notify forwards module events to connected clients as JSON-RPC notifications
 // (API Spec §6). It returns when ctx is cancelled.
@@ -21,7 +30,12 @@ const fieldSessionID = "session_id"
 // property that matters most: it never blocks the publisher, because the bus drops for a
 // subscriber that falls behind rather than waiting for it.
 func (s *Server) Notify(ctx context.Context) {
-	sub := s.cfg.Bus.Subscribe(
+	// A generous buffer: this is the daemon's single dispatch goroutine, and an event it
+	// drops here is output no client will ever see. The per-client budget that API Spec §8
+	// actually specifies lives in the subscription, where it can drop one slow client
+	// rather than everyone.
+	sub := s.cfg.Bus.SubscribeBuffered(dispatchBuffer,
+		sessports.KindSessionOutput,
 		sessports.KindSessionExited,
 		sessports.KindSessionResized,
 		sessports.KindSessionInputOwner,
@@ -36,6 +50,10 @@ func (s *Server) Notify(ctx context.Context) {
 		case event, open := <-sub.C():
 			if !open {
 				return
+			}
+			if output, ok := event.(sessports.SessionOutput); ok {
+				s.dispatchOutput(output)
+				continue
 			}
 			method, params := toNotification(event)
 			if method == "" {
@@ -63,13 +81,26 @@ func toNotification(event bus.Event) (string, any) {
 		return "session.input_owner", map[string]any{
 			fieldSessionID: e.SessionID, "input_owner": string(e.InputOwner),
 		}
-	case sessports.SessionOutput:
-		// T-F0-06 owns this path: it needs per-session subscription and batching, and
-		// broadcasting raw PTY output to every client would be both wrong and expensive.
-		_ = base64.StdEncoding
-		return "", nil
 	default:
 		return "", nil
+	}
+}
+
+// dispatchOutput hands a chunk to every connection subscribed to that session.
+//
+// Output goes only to subscribers, unlike the control notifications above: a client that
+// did not ask for a session's bytes has no use for them, and sending them anyway would put
+// every session's traffic through every connection's queue.
+func (s *Server) dispatchOutput(output sessports.SessionOutput) {
+	s.mu.Lock()
+	conns := make([]*conn, 0, len(s.conns))
+	for c := range s.conns {
+		conns = append(conns, c)
+	}
+	s.mu.Unlock()
+
+	for _, c := range conns {
+		c.deliver(output.SessionID, output.Seq, output.Data)
 	}
 }
 

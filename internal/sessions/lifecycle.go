@@ -75,15 +75,19 @@ func (s *Service) drain(live *liveSession) {
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
 
+			// The emulator write and the sequence increment are one step as far as a
+			// snapshot is concerned: a reader must never see the screen updated but the
+			// counter not, or it would ask for a chunk it already has.
+			live.snapshotMu.Lock()
 			if _, writeErr := live.emu.Write(chunk); writeErr != nil {
 				s.cfg.Logger.Error("emulator write failed",
 					slog.String("session_id", live.session.ID), slog.Any("error", writeErr))
 			}
-
 			live.mu.Lock()
 			live.seq++
 			seq := live.seq
 			live.mu.Unlock()
+			live.snapshotMu.Unlock()
 
 			s.cfg.Bus.Publish(ports.SessionOutput{
 				SessionID: live.session.ID, Seq: seq, Data: chunk,

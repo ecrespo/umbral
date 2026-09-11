@@ -69,6 +69,11 @@ const (
 	MaxRows = 500
 )
 
+// MaxScrollbackLines is how much history a snapshot may carry (REQ-TERM-004, API Spec
+// §5.5). It lives here because it is a promise the product makes, not a property of
+// whichever emulator happens to be behind the port.
+const MaxScrollbackLines = 10_000
+
 // MaxInputBytes is the per-message input limit from API Spec §5.7.
 const MaxInputBytes = 64 << 10
 

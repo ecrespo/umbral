@@ -26,6 +26,9 @@ func (s *Server) registry() map[string]method {
 		"session.input":  {handle: handleSessionInput, kinds: interactiveClients},
 		"session.resize": {handle: handleSessionResize, kinds: interactiveClients},
 		"session.close":  {handle: handleSessionClose, kinds: interactiveClients},
+
+		"session.subscribe":   {handle: handleSessionSubscribe, kinds: interactiveClients},
+		"session.unsubscribe": {handle: handleSessionUnsubscribe, kinds: interactiveClients},
 	}
 }
 

@@ -63,6 +63,10 @@ type liveSession struct {
 	seq     uint64
 	cleanup func() error
 
+	// snapshotMu serialises a snapshot against the drain goroutine's write-then-count, so
+	// the screen and the sequence number describe the same instant.
+	snapshotMu sync.Mutex
+
 	done     chan struct{}
 	doneOnce sync.Once
 }
@@ -291,13 +295,36 @@ func (s *Service) SetInputOwner(ctx context.Context, id string, owner domain.Inp
 	return nil
 }
 
-// Snapshot renders the session's current screen (REQ-TERM-004).
-func (s *Service) Snapshot(_ context.Context, id string) ([]byte, error) {
+// Snapshot renders the session's current screen with the sequence number it is current as
+// of (REQ-TERM-004).
+//
+// The sequence number is read under the same lock that the drain goroutine increments, so
+// the pair cannot drift: a snapshot taken while output is arriving is either before or
+// after a chunk, never half of one. That is what lets `session.subscribe` promise the
+// client a gapless stream starting at seq + 1.
+func (s *Service) Snapshot(_ context.Context, id string) (ports.Snapshot, error) {
 	live := s.lookup(id)
 	if live == nil {
-		return nil, fmt.Errorf("%w: %s", domain.ErrNotFound, id)
+		return ports.Snapshot{}, fmt.Errorf("%w: %s", domain.ErrNotFound, id)
 	}
-	return live.emu.Snapshot()
+
+	live.snapshotMu.Lock()
+	defer live.snapshotMu.Unlock()
+
+	data, err := live.emu.Snapshot()
+	if err != nil {
+		return ports.Snapshot{}, err
+	}
+	cursorX, cursorY, err := live.emu.Cursor()
+	if err != nil {
+		return ports.Snapshot{}, err
+	}
+
+	live.mu.RLock()
+	seq := live.seq
+	live.mu.RUnlock()
+
+	return ports.Snapshot{Data: data, CursorX: cursorX, CursorY: cursorY, Seq: seq}, nil
 }
 
 // Close asks the shell to exit, then insists (API Spec §5.9).

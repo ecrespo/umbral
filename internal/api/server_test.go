@@ -52,6 +52,8 @@ func testServer(t *testing.T, status StatusFunc) *Server {
 
 // client is a minimal NDJSON JSON-RPC peer for the tests.
 type client struct {
+	// t is nil when the client is driven by a benchmark, which has no *testing.T. Every
+	// helper that needs it is only called from tests.
 	t    *testing.T
 	conn net.Conn
 	dec  *json.Decoder
