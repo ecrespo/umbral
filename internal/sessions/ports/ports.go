@@ -173,3 +173,42 @@ type BlockStore interface {
 	// transcript the agent and FTS5 read (REQ-BLK-002, REQ-BLK-007).
 	Finish(ctx context.Context, block domain.Block, plain string) error
 }
+
+// Blocks is the module's second inbound port: reading the history back (API Spec §5.10
+// through §5.12).
+//
+// It is separate from Sessions because the two have different lifetimes and different
+// clients. A session is live state the daemon owns; a block is a row that outlives every
+// session, and `umb` is allowed to read blocks without being allowed to drive terminals
+// (API Spec §2).
+type Blocks interface {
+	// List pages through the history, newest first (API Spec §5.10).
+	List(ctx context.Context, filter domain.BlockFilter) (domain.BlockPage, error)
+	// Get returns one block, and optionally its output. The id may be domain.BlockLast,
+	// which resolves to the most recent closed block (REQ-CLI-002).
+	Get(ctx context.Context, id, sessionID string, include domain.Include) (domain.Block, domain.BlockOutput, error)
+	// Search runs an FTS5 query over commands and transcripts (REQ-BLK-006).
+	Search(ctx context.Context, query domain.SearchQuery) (domain.SearchPage, error)
+}
+
+// BlockReader is the outbound half: the queries the store knows how to answer.
+//
+// It is a separate interface from BlockStore so that the writing path and the reading path
+// can be substituted apart, and because everything here is safe to run concurrently with a
+// session that is still producing output.
+type BlockReader interface {
+	// List answers a filtered, paged query (API Spec §5.10).
+	List(ctx context.Context, filter domain.BlockFilter) (domain.BlockPage, error)
+	// Get returns one block by id.
+	Get(ctx context.Context, id string) (domain.Block, error)
+	// Last returns the most recent closed block, of one session when sessionID is set and
+	// of the whole history otherwise (REQ-CLI-002).
+	Last(ctx context.Context, sessionID string) (domain.Block, error)
+	// Plain returns a block's transcript (REQ-BLK-007).
+	Plain(ctx context.Context, id string) (string, error)
+	// Raw reassembles a block's stored chunks, stopping at limit bytes and reporting
+	// whether it stopped early.
+	Raw(ctx context.Context, id string, limit int) (data []byte, truncated bool, err error)
+	// Search runs the FTS5 query (REQ-BLK-006).
+	Search(ctx context.Context, query domain.SearchQuery) (domain.SearchPage, error)
+}

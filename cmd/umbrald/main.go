@@ -154,12 +154,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// the next start by store.Recover.
 	defer sessionService.Shutdown()
 
+	blockReader, err := sessions.NewReader(sessions.ReaderConfig{Blocks: blocks})
+	if err != nil {
+		logger.Error("cannot build the block reader", slog.Any("error", err))
+		return exitCantCreate
+	}
+
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
 		TokenPath:     tokenPath,
 		DaemonVersion: buildVersion(),
 		Status:        statusFromStore(db),
 		Sessions:      sessionService,
+		Blocks:        blockReader,
 		Bus:           eventBus,
 		Logger:        logger,
 	})

@@ -78,8 +78,11 @@ type Config struct {
 	// methods answering METHOD_NOT_FOUND, which is what the daemon does before T-F0-05
 	// is wired in.
 	Sessions sessports.Sessions
-	Bus      *bus.Bus
-	Logger   *slog.Logger
+	// Blocks is the history port. A nil value leaves the block.* methods answering
+	// METHOD_NOT_FOUND, which is what the daemon does before T-F0-10 is wired in.
+	Blocks sessports.Blocks
+	Bus    *bus.Bus
+	Logger *slog.Logger
 }
 
 // Server accepts client connections on the Unix socket and dispatches JSON-RPC methods.

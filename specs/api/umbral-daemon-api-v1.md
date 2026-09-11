@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.3 (`protocol_version = 1`; 1.1, 1.2 and 1.3 are additive over 1.0) |
+| **API version** | v1.4 (`protocol_version = 1`; 1.1 through 1.4 are additive over 1.0) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -136,6 +136,10 @@ absent one. The field is present on `INTERNAL_ERROR` only (Art. 7).
 Parameters `limit` (1-200, default 50) and `cursor` (opaque). Response:
 `{"items":[…],"next_cursor":"…|null"}`. Descending order by `started_at` or `created_at` unless
 stated otherwise.
+
+`block.search` is the one method that states otherwise: see §5.12. A cursor belongs to the
+method and the ordering that produced it, so one handed to a different method is refused with
+`VALIDATION_ERROR` rather than misread.
 
 ## 4. Schemas
 
@@ -279,6 +283,20 @@ Sends SIGHUP; after 3 s, SIGKILL.
 ### 5.12 `block.search` — REQ-BLK-006
 **Params:** `{query (FTS5, 1-256 chars), session_id?, limit, cursor}`.
 **Result:** page of `{block: Block, snippet}`.
+
+Hits come back in **descending insertion order**, not by `started_at` as §3 otherwise
+specifies, and not by relevance. The two orderings agree in practice, because a block's row is
+written when `OSC 133;C` opens it, so insertion order is start order by construction. The
+reason for the exception is cost: ordering by `started_at` puts a temporary B-tree over the
+whole match set, so a term matching half the history sorts fifty thousand rows to return
+fifty (139 ms at 100,000 blocks), and no index helps, because rows arrive from the full-text
+index in rowid order. Ordering by that rowid lets SQLite walk the index backwards and stop at
+the limit: 0.93 ms, which is how REQ-BLK-006's 200 ms budget is met.
+
+`query` is passed to SQLite as written, so it is FTS5 syntax and not free text: a bare path
+such as `internal/sessions` is a syntax error in that grammar, because an unquoted `/` is not
+a bareword character. A client offering a search box SHALL quote what the user typed when it
+is not already a valid expression. A malformed query returns `VALIDATION_ERROR`.
 
 ### 5.13 `thread.create`
 **Params:** `{mode?:"normal", model?, model_class?:"code", cwd, title?, ephemeral?:false, max_steps?:1-200, budget_tokens?}`.
@@ -424,3 +442,4 @@ printf '%s\n' \
 | 1.1 | 2026-09-11 | delta `2026-09-analyze-fixes`: `client_msg_id` in `thread.send` (A-04), `owner_thread_id` in `Session` (A-05), `env_keyring_refs` → `env_refs` (A-06) |
 | 1.2 | 2026-09-11 | delta `2026-09-api-f0-decisions`: runtime-directory fallback and its ownership check, `trace_id` substitute until tracing exists, `capabilities` derived from the method table, `protocol_version` required, repeated handshake closes the connection, token compared before any other parameter |
 | 1.3 | 2026-09-11 | delta `2026-09-slow-client-notification`: `session.unsubscribed` in §6 and the pointer to it in §8. delta `2026-09-block-lifecycle-decisions`: `abandoned` widened in §4 and its two new edges in §7 |
+| 1.4 | 2026-09-11 | delta `2026-09-block-query-performance`: `block.search` orders by insertion position (§3, §5.12), and §5.12 says what FTS5 syntax means for a client's search box |

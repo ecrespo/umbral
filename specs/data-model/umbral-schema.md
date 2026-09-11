@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.2 |
+| **Version** | 1.3 |
 | **Date** | 2026-09-11 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -104,10 +104,17 @@ CREATE TABLE blocks (
   output_plain     TEXT,                    -- text without escapes, max 1 MiB (REQ-BLK-007)
   CHECK (origin = 'user' OR thread_id IS NOT NULL)
 );
+CREATE INDEX idx_blocks_started         ON blocks(started_at DESC, id DESC);
 CREATE INDEX idx_blocks_session_started ON blocks(session_id, started_at DESC);
 CREATE INDEX idx_blocks_thread_started  ON blocks(thread_id, started_at DESC) WHERE thread_id IS NOT NULL;
 CREATE INDEX idx_blocks_open            ON blocks(state) WHERE state IN ('running','interactive');
 ```
+
+`idx_blocks_started` exists because `block.list` with no filter is the history pane and
+`umb block list`, and the other three indexes all begin with a column such a query does not
+name. Without it every page is a full scan and a sort of the table: 141 ms at 100,000 blocks
+against 0.18 ms with it. `id` is in the index because it is the tie-breaker the cursor pages
+on, and an index covering only the first column of the ordering still sorts.
 
 `output_truncated` covers **both** caps: the 16 MiB raw chunk history of §2.3 and the 1 MiB
 `output_plain` transcript. A client that sees it `0` is promised the whole of what the
@@ -169,6 +176,19 @@ CREATE TRIGGER blocks_fts_au AFTER UPDATE OF command, output_plain ON blocks BEG
   VALUES (new.rowid, new.command, new.output_plain);
 END;
 ```
+
+**`VACUUM` invalidates this index.** `blocks_fts` is keyed on `blocks.rowid`, and `blocks` has
+a `TEXT` primary key, so its rowids are implicit and SQLite may renumber them when the database
+is rewritten. Every row of the full-text index would then describe a different block, and
+`block.search` would return the wrong blocks rather than fail. THE SYSTEM SHALL rebuild the
+index after any `VACUUM`:
+
+```sql
+INSERT INTO blocks_fts(blocks_fts) VALUES('rebuild');
+```
+
+The retention job of T-F1-22 is the first thing that will want to reclaim space, and is where
+this has to be enforced.
 
 ### 2.5 `threads`
 
@@ -389,7 +409,7 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 
 | Migration | Phase | Objects it creates |
 |---|---|---|
-| `0001_terminal.sql` | F0 | `schema_migrations`, **`threads`** (§2.5) and `idx_threads_updated`, `sessions`, `blocks`, `block_chunks`, `blocks_fts` and its three triggers, plus every index in §2.1-2.5 |
+| `0001_terminal.sql` | F0 | `schema_migrations`, **`threads`** (§2.5) and `idx_threads_updated`, `sessions`, `blocks`, `block_chunks`, `blocks_fts` and its three triggers, plus every index in §2.1-2.5, `idx_blocks_started` among them |
 | `0002_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers` and their indexes (§2.6-2.13) |
 
 `threads` is created in **0001**, not in 0002, even though the agent subdomain only starts in F1.
@@ -413,3 +433,4 @@ In F0 the table stays empty; `store` only writes to it from T-F1-01 onwards.
 | 1.0 | 2026-09-11 | Initial version |
 | 1.1 | 2026-09-11 | delta `2026-09-analyze-fixes`: `threads` moves to migration 0001 and §5.1 lists each migration (A-01), `blocks_fts` triggers written out (A-07), `client_msg_id` in `messages` (A-04) |
 | 1.2 | 2026-09-11 | delta `2026-09-block-lifecycle-decisions`: `output_truncated` covers both caps (§2.2), and §2.3 says which sequences the chunks do not keep |
+| 1.3 | 2026-09-11 | delta `2026-09-block-query-performance`: `idx_blocks_started` in §2.2 and §5.1, and the `VACUUM` rebuild rule in §2.4 |

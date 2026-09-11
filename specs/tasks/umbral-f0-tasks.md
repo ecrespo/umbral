@@ -132,12 +132,25 @@
   `output_truncated` covers, whether a late marker promotes a session, and the zstd
   dependency.
 
-### [ ] T-F0-10 · Block query and search
+### [x] 2026-09-11 T-F0-10 · Block query and search
 - **What:** `block.list`, `block.get` (including `"last"`) and `block.search` over FTS5, with cursor pagination; benchmark with a 100,000-block fixture.
 - **REQ:** REQ-BLK-006, REQ-CLI-002
-- **Files:** `internal/sessions/adapters/store/**`, `internal/api/blocks.go`, `testdata/fixtures/blocks100k.sql.zst`
+- **Files:** `internal/sessions/domain/query.go`, `internal/sessions/query.go`,
+  `internal/sessions/adapters/blockstore/query.go`, `internal/api/blocks.go`
 - **Depends on:** T-F0-09
 - **Done:** `BenchmarkBlockSearch100k_REQ_BLK_006` with p95 < 200 ms; `TestBlockGetLast_REQ_CLI_002` green.
+- **Result:** measured p95 **0.93 ms** for search and **0.22 ms** for a list page over 100,000
+  blocks. Getting there needed two changes, folded into Data Model v1.3 and API Spec v1.4
+  (delta `2026-09-block-query-performance`, approved 2026-09-11): an index on `(started_at DESC, id DESC)`,
+  without which every unfiltered page was a full scan and a sort (141 ms), and ordering
+  `block.search` by insertion position rather than by start time, without which a common term
+  sorted its whole match set (139 ms, and no index helps). The 100,000-block corpus is
+  generated from a fixed seed in `bench_test.go` rather than committed as
+  `testdata/fixtures/blocks100k.sql.zst`: a binary of that size is unreviewable, and the
+  vocabulary that makes the queries match is readable in the file instead.
+  `TestBlockGetLast_REQ_CLI_002` exists twice on purpose, once in `internal/api` for the wire
+  shape the requirement names and once in `internal/sessions/integration` for the resolution,
+  because no package may see both.
 
 ### [ ] T-F0-11 · Base `umb` CLI
 - **What:** shared JSON-RPC client; `umbrald` autostart (3 s timeout → exit code 69); `umb status`; `umb block last --json`.
@@ -234,6 +247,7 @@ REQ-PKG-004, 005, 007 and 008 are not MVP requirements; finding A-12 moved them 
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-11 | T-F0-10 | done, with a delta open | The first task whose requirement was missed on the first measurement, by six times: `block.search` p95 was 1.23 s against a 200 ms budget, and a `LIMIT 50` list page took 129 ms. `EXPLAIN QUERY PLAN` named both causes. `blocks` had no index on its default ordering, only on `(session_id, started_at)`, so an unfiltered page scanned and sorted 100,000 rows. And ordering a full-text search by `started_at` puts a temporary B-tree over the whole match set, so a term matching half the history sorted fifty thousand rows to return fifty; no index helps, because the rows arrive from the full-text index in rowid order. Ordering by that rowid instead is 300 times faster and returns the same list, since a block's row is written when its command starts. Both changes needed spec text and were folded on approval into Data Model v1.3 and API Spec v1.4. Six properties were checked for teeth. Two things found while writing it: FTS5 rejects a bare path as a syntax error, so a client typing one has to quote it; and `blocks_fts` is keyed on implicit rowids, which `VACUUM` may renumber, silently desynchronising the index, which the delta records. |
 | 2026-09-11 | T-F0-09 | done | Two defects in already-"done" work surfaced only when a real shell was asked for a real exit code. First: the bash and zsh bootstraps read `$?` in a hook registered last, and every element of `PROMPT_COMMAND`/`precmd_functions` leaves `$?` set to its own result, so with Starship installed every command was recorded as exit 0. The work is now split in two, a capture hook first and the marker hook last, because the two halves want opposite positions. Second: the daemon never wired libghostty's write-pty effect, so no program's query to the terminal was ever answered; fish waits two seconds for a Primary Device Attributes reply and then permanently disables features, and under a retrying test it never timed out at all. Both were found by `TestBlocksInEveryShell_REQ_BLK_005`, which exists because REQ-BLK-005 covers three shells and only running all three proves they agree. A third, smaller one was found by the plain-text test: carriage return was treated as "erase the line", which is right for a progress bar and wrong for the CRLF a PTY ends every line with, so the decision is now deferred one byte. The scanner and the recorder were each checked for teeth by breaking three and four properties respectively. Deliberately not done: `block.list`/`get`/`search` are T-F0-10, and chunk writes sit on the drain goroutine, after the chunk has been published, so they delay the history and never the screen. |
 | 2026-09-11 | T-F0-07 | done | 22 cases: VT-01…VT-20 MUST plus VT-21 and VT-22 SHOULD. Everything passes against libghostty on the first run, which is expected rather than suspicious: the emulator is Ghostty's own and these are the sequences it exists to implement. The value is the regression net, not the discovery. Worth noting from the fixtures: VT-20 confirms the shell-integration OSC sequences leave no visible mark, which is what lets T-F0-09 read them without corrupting the screen. |
 | 2026-09-11 | T-F0-06 | done | All three tests were checked for teeth. Two bit immediately; the ordering test did **not**, because the fake published output after subscribe returned and the race window was never exercised. Making the fake publish *inside* the snapshot call still did not bite reliably, since whether the dispatch goroutine ran in the window was up to the scheduler. It now asserts the ordering where it happens, that a subscription exists at the moment the snapshot is taken, which fails deterministically when the order is reversed. Verified end to end against a real bash session: the snapshot carries the pre-subscribe output, the live stream carries only what came after, and the sequence numbers are strictly increasing and all above the snapshot's. |

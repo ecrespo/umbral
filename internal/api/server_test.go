@@ -233,11 +233,12 @@ func TestHelloSucceedsAndReturnsAConnectionID(t *testing.T) {
 	if len(result.ConnectionID) < 5 || result.ConnectionID[:4] != "con_" {
 		t.Errorf("connection_id = %q, want a con_ prefixed ULID (Art. 6)", result.ConnectionID)
 	}
-	// Derived from the method table: session.* is registered, so "session" is advertised
-	// and nothing else is. Announcing a namespace whose methods do not exist would tell a
-	// client to take a branch that cannot work.
-	if len(result.Capabilities) != 1 || result.Capabilities[0] != "session" {
-		t.Errorf("capabilities = %v, want [session]", result.Capabilities)
+	// Derived from the method table rather than written by hand: the namespaces advertised
+	// are exactly the ones with registered methods. Announcing one whose methods do not
+	// exist would tell a client to take a branch that cannot work, which is the mistake
+	// this assertion exists to catch, so it is updated when a namespace is really added.
+	if want := []string{"block", "session"}; !slices.Equal(result.Capabilities, want) {
+		t.Errorf("capabilities = %v, want %v", result.Capabilities, want)
 	}
 }
 

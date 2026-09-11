@@ -29,6 +29,12 @@ func (s *Server) registry() map[string]method {
 
 		"session.subscribe":   {handle: handleSessionSubscribe, kinds: interactiveClients},
 		"session.unsubscribe": {handle: handleSessionUnsubscribe, kinds: interactiveClients},
+
+		// block.* carries no kinds: API Spec §2 grants it to every client kind, and `umb`
+		// exists mostly to read it.
+		"block.list":   {handle: handleBlockList},
+		"block.get":    {handle: handleBlockGet},
+		"block.search": {handle: handleBlockSearch},
 	}
 }
 

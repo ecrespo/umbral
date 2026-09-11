@@ -89,7 +89,7 @@ and the other two need the F2 desktop client.
 | T-F0-07 | VT conformance suite | 2d | T-F0-05 | ☑ 2026-09-11 |
 | T-F0-08 | Shell-integration bootstrap for bash/zsh/fish | 1.5d | T-F0-01 | ☑ 2026-09-11 |
 | T-F0-09 | Block lifecycle from OSC; plain text; chunks | 3d | T-F0-05, T-F0-08 | ☑ 2026-09-11 |
-| T-F0-10 | `block.list`/`get`/`search` + 100k benchmark | 1.5d | T-F0-09 | ☐ |
+| T-F0-10 | `block.list`/`get`/`search` + 100k benchmark | 1.5d | T-F0-09 | ☑ 2026-09-11 |
 | T-F0-11 | `umb` CLI: autostart, `status`, `block last --json` | 1d | T-F0-10 | ☐ |
 | T-F0-12 | Base TUI: tabs, splits, rendering, block navigation | 4d | T-F0-06, T-F0-09 | ☐ |
 | T-F0-13 | TERM-001 and TERM-006 performance gates in CI | 1d | T-F0-06 | ☐ |

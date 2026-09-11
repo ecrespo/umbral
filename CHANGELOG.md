@@ -6,6 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The pr
 ## [Unreleased]
 
 ### Added
+- **T-F0-10**: `block.list`, `block.get` and `block.search`, with cursor pagination and FTS5 snippets. `block.get` accepts the reserved id `last`, which is what `umb block last` asks for. Over 100,000 blocks a search takes 0.93 ms and a list page 0.22 ms at p95, against the 200 ms REQ-BLK-006 budgets.
 - **T-F0-09**: the block lifecycle. The daemon now turns a shell's OSC 133, 633 and 7 sequences into blocks: a command, its working directory, its exit code and its duration, with the output stored twice, as a plain-text transcript for the agent and FTS5 and as zstd-compressed chunks for faithful re-rendering. Alternate-screen content is excluded from both. `block.started`, `block.updated`, `block.closed` and `session.integration` are published, and a session with no shell integration is marked `none` after five seconds and keeps delivering output.
 - **T-F0-07**: the VT conformance suite, 22 cases from Tech Design §8.1 with their fixtures under `testdata/vt/`. A missing fixture or a deleted MUST case fails the run rather than shrinking the suite.
 - **T-F0-06**: `session.subscribe` and `session.unsubscribe`, with the screen delivered before the first live chunk, per-subscription batching and an 8 MiB budget past which the subscription is dropped and announced. The daemon adds 12 µs at p95 between a PTY chunk and the notification.
@@ -27,11 +28,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The pr
 - Data Model §5.1: what each migration creates.
 
 ### Fixed
+- `block.list` was a full table scan and a sort of the whole history, 141 ms at 100,000 blocks, because the three indexes on `blocks` all begin with a column an unfiltered page does not name. It now has an index on the ordering it is listed by.
+- `block.search` sorted its entire match set to return one page, 1.23 seconds at 100,000 blocks against a 200 ms budget. It now orders by insertion position, which lets SQLite walk the full-text index backwards and stop at the limit.
 - The bash and zsh integration reported exit code 0 for every command on any machine with a prompt framework installed. Both read `$?` from a hook registered last, and each element of `PROMPT_COMMAND` and of zsh's `precmd_functions` leaves `$?` set to its own result. The capture is now a separate hook registered first.
 - The daemon never answered a program's query to the terminal, because libghostty's write-pty effect was never wired. Every fish session stalled for two seconds waiting for a Primary Device Attributes reply and then permanently disabled features.
 
 ### Changed
-- API Spec v1.3, Data Model v1.2, PRD v1.3 and Tech Design v1.3 fold the two deltas raised during F0. `session.unsubscribed` tells a client its subscription was dropped, `abandoned` now covers a block superseded without its end marker, `output_truncated` covers the plain-text cap as well as the raw one, a shell that announces itself after the five-second window is promoted rather than left marked as having no integration, and the zstd dependency is recorded.
+- API Spec v1.4, Data Model v1.3, PRD v1.3 and Tech Design v1.3 fold the three deltas raised during F0. `session.unsubscribed` tells a client its subscription was dropped, `abandoned` now covers a block superseded without its end marker, `output_truncated` covers the plain-text cap as well as the raw one, a shell that announces itself after the five-second window is promoted rather than left marked as having no integration, and the zstd dependency is recorded. Data Model §2.4 now warns that `VACUUM` renumbers the rowids the full-text index is keyed on, and must be followed by a rebuild.
 - API Spec v1.2: the runtime-directory fallback and its ownership rule, `trace_id` before tracing exists, `capabilities` derived from the method table, a required `protocol_version`, and a repeated handshake closing the connection.
 - The visual identity delta is folded: PRD §6.10 keeps the four requirements release 0.1 can satisfy, and the four that describe the F2 desktop client moved to `specs/prd/umbral-f2-desktop.md` (Analyze finding A-12).
 - Migration 0001 now creates `threads`, so `sessions` and `blocks` accept inserts with `foreign_keys=ON` (finding A-01).
