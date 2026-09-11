@@ -4,8 +4,9 @@
 // This file is the composition root. Per Art. 3 it is the only place allowed to wire
 // modules together; every other package talks through ports or bus events.
 //
-// What works today: the daemon opens its database, applies migrations and runs the
-// restart recovery of Data Model §6. The JSON-RPC listener arrives in T-F0-03.
+// What works today: the daemon opens its database, applies migrations, runs the restart
+// recovery of Data Model §6 and serves system.hello and system.status over the 0600 Unix
+// socket. Sessions arrive in T-F0-05.
 package main
 
 import (
@@ -17,10 +18,13 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"syscall"
 	"time"
 
+	"github.com/ecrespo/umbral/internal/api"
+	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/store"
 )
 
@@ -29,9 +33,10 @@ var version = "0.0.0-dev"
 
 // Exit codes from sysexits.h, so shell callers can tell the failures apart.
 const (
-	exitUsage     = 64 // EX_USAGE: a bad command line
-	exitDataErr   = 65 // EX_DATAERR: the database is unusable, for example a newer schema
-	exitCantCreat = 73 // EX_CANTCREAT: the data directory could not be created
+	exitUsage       = 64 // EX_USAGE: a bad command line
+	exitDataErr     = 65 // EX_DATAERR: the database is unusable, for example a newer schema
+	exitUnavailable = 69 // EX_UNAVAILABLE: the socket could not be served
+	exitCantCreate  = 73 // EX_CANTCREAT: a required file or directory could not be created
 )
 
 func main() {
@@ -46,6 +51,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	showVersion := fs.Bool("version", false, "print the daemon version and exit")
 	dbPath := fs.String("db", "", "database file (default $XDG_DATA_HOME/umbral/umbral.db)")
+	socketPath := fs.String("socket", "", "JSON-RPC socket (default $XDG_RUNTIME_DIR/umbral/umbral.sock)")
+	oneShot := fs.Bool("check", false, "open the database, recover and exit without serving")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -65,7 +72,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if errors.Is(err, store.ErrSchemaTooNew) {
 			return exitDataErr
 		}
-		return exitCantCreat
+		return exitCantCreate
 	}
 	defer func() {
 		if err := db.Close(); err != nil {
@@ -87,16 +94,86 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitDataErr
 	}
 
-	logger.Info("umbrald started",
+	logger.Info("database ready",
 		slog.String("version", buildVersion()),
 		slog.String("database", db.Path()),
 		slog.Int("schema_version", schemaVersion),
 		slog.Int64("sessions_recovered", report.SessionsExited),
 		slog.Int64("blocks_abandoned", report.BlocksAbandoned))
 
-	logger.Info("there is nothing to serve yet",
-		slog.String("next_task", "T-F0-03: JSON-RPC listener, authentication and bus"))
+	if *oneShot {
+		return 0
+	}
+
+	socket, err := resolveSocketPath(*socketPath)
+	if err != nil {
+		logger.Error("cannot locate the socket", slog.Any("error", err))
+		return exitCantCreate
+	}
+	tokenPath := filepath.Join(filepath.Dir(socket), api.TokenFileName)
+
+	// The bus is created here, in the composition root, and handed to whoever needs it.
+	// Art. 3 allows no other package to wire modules together.
+	eventBus := bus.New()
+	defer eventBus.Close()
+
+	server, err := api.Listen(ctx, api.Config{
+		SocketPath:    socket,
+		TokenPath:     tokenPath,
+		DaemonVersion: buildVersion(),
+		Status:        statusFromStore(db),
+		Bus:           eventBus,
+		Logger:        logger,
+	})
+	if err != nil {
+		logger.Error("cannot open the socket", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer func() {
+		if err := server.Close(); err != nil {
+			logger.Error("cannot close the socket", slog.Any("error", err))
+		}
+	}()
+
+	logger.Info("umbrald listening",
+		slog.String("socket", server.SocketPath()),
+		slog.String("token_file", tokenPath))
+
+	if err := server.Serve(ctx); err != nil {
+		logger.Error("the socket stopped serving", slog.Any("error", err))
+		return exitUnavailable
+	}
+
+	logger.Info("umbrald stopped")
 	return 0
+}
+
+// resolveSocketPath honours an explicit -socket flag and otherwise asks api for the
+// platform default.
+func resolveSocketPath(flagValue string) (string, error) {
+	if flagValue != "" {
+		return flagValue, nil
+	}
+	return api.DefaultSocketPath()
+}
+
+// statusFromStore answers system.status from the database. It is a closure rather than a
+// method so that api keeps knowing nothing about store, and so that T-F0-05 can replace
+// the counts with live ones without touching the api package.
+func statusFromStore(db *store.Store) api.StatusFunc {
+	return func(ctx context.Context) (api.StatusResult, error) {
+		var alive, running int
+		// threads exists from migration 0001, so the count is real rather than a
+		// placeholder, even though nothing writes to that table before T-F1-01.
+		err := db.DB().QueryRowContext(ctx, `
+			SELECT (SELECT count(*) FROM sessions WHERE state = 'alive'),
+			       (SELECT count(*) FROM threads  WHERE state = 'running')`).
+			Scan(&alive, &running)
+		if err != nil {
+			return api.StatusResult{}, fmt.Errorf("count sessions and threads: %w", err)
+		}
+		return api.StatusResult{SessionsAlive: alive, ThreadsRunning: running}, nil
+	}
 }
 
 // buildVersion reports the linker-provided version, falling back to the VCS revision

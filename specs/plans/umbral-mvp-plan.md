@@ -75,7 +75,7 @@ Spec-only work: no product code.
 |---|---|---|---|---|
 | T-F0-01 | Scaffolding, CI gate (Art. 1) and `go-arch-lint` rules (Art. 3) | 1d | — | ☑ 2026-09-11 |
 | T-F0-02 | Store: migration 0001 (terminal) and restart recovery | 1.5d | T-F0-01 | ☑ 2026-09-11 |
-| T-F0-03 | JSON-RPC API: 0600 socket, token, `system.hello`/`status`, bus | 2d | T-F0-01 | ☐ |
+| T-F0-03 | JSON-RPC API: 0600 socket, token, `system.hello`/`status`, bus | 2d | T-F0-01 | ☑ 2026-09-11 |
 | T-F0-04 | Spike Q-01: VT snapshot with libghostty | 1d | T-F0-01 | ☐ |
 | T-F0-05 | Sessions: PTY, `Emulator` port, create/list/input/resize/close, lock | 3d | T-F0-02, T-F0-03 | ☐ |
 | T-F0-06 | Subscription, snapshot, fan-out with batching and per-client queue | 2d | T-F0-04, T-F0-05 | ☐ |

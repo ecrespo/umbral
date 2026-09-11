@@ -2,7 +2,10 @@ module github.com/ecrespo/umbral
 
 go 1.27.1
 
-require modernc.org/sqlite v1.58.0
+require (
+	github.com/oklog/ulid/v2 v2.1.2
+	modernc.org/sqlite v1.58.0
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
