@@ -6,6 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The pr
 ## [Unreleased]
 
 ### Added
+- **T-F0-04**: `internal/sessions/adapters/ghostty`, the replayable VT snapshot behind `session.subscribe`, with eight golden round-trip cases. `scripts/build_libghostty.sh` and `task deps:ghostty` build the cgo dependency with Zig. The Q-01 decision is recorded in `docs/spikes/q01-snapshot.md`.
 - **T-PKG-01 and T-PKG-02**: `scripts/icons_check.sh` and the `icons` CI job, which verify the branding kit's checksums, regenerate it from source and compare byte for byte, then validate the `.desktop` file. The launcher now targets `umbral-tui` with `Terminal=true`, since release 0.1 ships no desktop client.
 - **T-F0-03**: `internal/bus`, a typed pub/sub that drops the oldest event under pressure instead of blocking a publisher, and `internal/api`, the JSON-RPC 2.0 server on a 0600 Unix socket with per-installation token, `system.hello`, `system.status` and the §5.4 error translation. Identifiers are type-prefixed ULIDs from `store.NewID`.
 - **T-F0-02**: `internal/store`, with migration 0001 of the terminal subdomain, the Data Model §5 pragmas verified after connecting, embedded forward-only migrations and the restart recovery of §6. The daemon runs all of it at startup.

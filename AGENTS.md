@@ -36,6 +36,7 @@ complete; the task file's `[x]` markers are the source of truth, not this paragr
 | Tests with the race detector | `task test` (≈ `go test -race ./...`) | now |
 | Everything the pipeline runs | `task ci` | now |
 | Install the Go tools the gate needs | `task tools:install` | now |
+| Build libghostty-vt, the cgo dependency (needs Zig ≥ 0.16) | `task deps:ghostty` | now |
 | Tests against real models | `go test -tags live ./...` | F1 |
 
 ## Working rules
@@ -58,4 +59,6 @@ complete; the task file's `[x]` markers are the source of truth, not this paragr
 - Open findings, each attached to the task that first needs it: A-08 (reference machine, T-F0-13), A-09 (entropy and rules precedence, T-F1-04/T-F1-11), A-10 (SQLite write failure, T-F1-13), A-11 (`fetch_url` limits, T-F1-09), A-14 (glossary).
 - Closed while folding the visual identity: A-12 (the four desktop PKG requirements moved to `specs/prd/umbral-f2-desktop.md`), A-15 (checksums regenerated) and A-16 (Spanish duplicate deleted).
 - **Phase 0 is closed.** `changes/` holds no pending delta; all three are archived.
+- **Q-01 is resolved** (`docs/spikes/q01-snapshot.md`): the libghostty VT formatter produces replayable snapshots, so the bounded-replay fallback is not needed and DD-001 stands unchanged.
+- **Building needs libghostty-vt.** Run `task deps:ghostty` once; the Taskfile then points `PKG_CONFIG_PATH` at it, so no Go target needs you to export anything.
 - `python3 tools/sdd_check.py` exits 0. Keep it that way: it is the *Specs* gate in CI.

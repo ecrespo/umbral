@@ -8,6 +8,12 @@
 # `task ci` runs all of them plus the spec checkers, which is what the pipeline does.
 version: '3'
 
+# libghostty-vt is linked through cgo and found with pkg-config. The default prefix that
+# scripts/build_libghostty.sh writes to is added here so every Go target works without the
+# caller exporting anything; an existing PKG_CONFIG_PATH still wins.
+env:
+  PKG_CONFIG_PATH: '{{.PKG_CONFIG_PATH | default (printf "%s/.local/ghostty-vt/share/pkgconfig" .HOME)}}'
+
 vars:
   BIN: '{{.ROOT_DIR}}/bin'
   # Every binary is stamped with the git description so `umbrald -version` is traceable.
@@ -122,6 +128,11 @@ tasks:
       - task: arch:selftest
       - task: test
       - task: build
+
+  deps:ghostty:
+    desc: Build libghostty-vt, which the sessions emulator links through cgo (needs Zig)
+    cmds:
+      - ./scripts/build_libghostty.sh
 
   tools:install:
     desc: Install the Go tools the gate needs into $(go env GOPATH)/bin

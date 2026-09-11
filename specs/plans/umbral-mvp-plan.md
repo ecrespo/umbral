@@ -37,7 +37,7 @@ There are two MVP phases in sequence (F0 Core → F1 Agentic) plus a hardening p
 | Toolchain: Go ≥ 1.25, Zig (libghostty-vt build), golangci-lint, go-arch-lint, gitleaks | Tech Lead | ◐ Partial — Go 1.27.1, gofumpt, golangci-lint, go-arch-lint, govulncheck, gitleaks and Task installed; **Zig still missing** | T-F0-01 |
 | Ollama with `gpt-oss:20b` and `num_ctx` ≥ 32k on the development machine | Tech Lead | ☐ Pending | start of F1 |
 | CI runner with bash, zsh and fish installed | Tech Lead | ☐ Pending | T-F0-08 |
-| Q-01 decision (snapshot format) | Tech Lead | ☐ Pending | spike T-F0-04 |
+| Q-01 decision (snapshot format) | Tech Lead | ☑ Resolved 2026-09-11 — `docs/spikes/q01-snapshot.md`: the VT formatter is replayable, no fallback needed | spike T-F0-04 |
 
 ## 3. Implementation Phases
 
@@ -83,7 +83,7 @@ and the other two need the F2 desktop client.
 | T-F0-01 | Scaffolding, CI gate (Art. 1) and `go-arch-lint` rules (Art. 3) | 1d | — | ☑ 2026-09-11 |
 | T-F0-02 | Store: migration 0001 (terminal) and restart recovery | 1.5d | T-F0-01 | ☑ 2026-09-11 |
 | T-F0-03 | JSON-RPC API: 0600 socket, token, `system.hello`/`status`, bus | 2d | T-F0-01 | ☑ 2026-09-11 |
-| T-F0-04 | Spike Q-01: VT snapshot with libghostty | 1d | T-F0-01 | ☐ |
+| T-F0-04 | Spike Q-01: VT snapshot with libghostty | 1d | T-F0-01 | ☑ 2026-09-11 |
 | T-F0-05 | Sessions: PTY, `Emulator` port, create/list/input/resize/close, lock | 3d | T-F0-02, T-F0-03 | ☐ |
 | T-F0-06 | Subscription, snapshot, fan-out with batching and per-client queue | 2d | T-F0-04, T-F0-05 | ☐ |
 | T-F0-07 | VT conformance suite | 2d | T-F0-05 | ☐ |
@@ -163,7 +163,7 @@ and the other two need the F2 desktop client.
 
 | Risk | Mitigation | Trigger |
 |---|---|---|
-| Q-01 negative (no VT snapshot) | Fallback: replay the last N lines of the raw buffer | result of spike T-F0-04 |
+| ~~Q-01 negative (no VT snapshot)~~ **Closed 2026-09-11**: the spike answered yes, the fallback is not needed | — | — |
 | Building libghostty with Zig in CI | CI image with pinned Zig; artifact cache | T-F0-01 failure |
 | Local models below 70 % on US-003 | Try Qwen3-Coder; tune system prompts; revisit the threshold through a Delta | T-F1-21 report |
 

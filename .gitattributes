@@ -1,0 +1,9 @@
+# Golden files for the VT suites are byte-exact recordings of terminal streams. They carry
+# real CR LF pairs as data, so Git must never normalise their line endings: doing so
+# rewrites the recording and the round-trip tests fail on the next checkout.
+*.golden -text
+
+# The branding kit is pinned by SHA-256 in CHECKSUMS.sha256; any rewrite breaks the icons job.
+*.png binary
+*.ico binary
+*.icns binary
