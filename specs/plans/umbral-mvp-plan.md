@@ -36,7 +36,7 @@ There are two MVP phases in sequence (F0 Core → F1 Agentic) plus a hardening p
 | Specs approved (this package) + Analyze without CRITICAL findings | Tech Lead | ☑ Met 2026-09-11 — `analyze-2026-09-11b.md`, 0 CRITICAL / 0 HIGH | before T-F0-01 |
 | Toolchain: Go ≥ 1.25, Zig (libghostty-vt build), golangci-lint, go-arch-lint, gitleaks | Tech Lead | ◐ Partial — Go 1.27.1, gofumpt, golangci-lint, go-arch-lint, govulncheck, gitleaks and Task installed; **Zig still missing** | T-F0-01 |
 | Ollama with `gpt-oss:20b` and `num_ctx` ≥ 32k on the development machine | Tech Lead | ☐ Pending | start of F1 |
-| CI runner with bash, zsh and fish installed | Tech Lead | ☐ Pending | T-F0-08 |
+| CI runner with bash, zsh and fish installed | Tech Lead | ☑ Met 2026-09-11 — the test job installs zsh and fish; the tests skip a shell that is absent rather than failing | T-F0-08 |
 | Q-01 decision (snapshot format) | Tech Lead | ☑ Resolved 2026-09-11 — `docs/spikes/q01-snapshot.md`: the VT formatter is replayable, no fallback needed | spike T-F0-04 |
 
 ## 3. Implementation Phases
@@ -87,7 +87,7 @@ and the other two need the F2 desktop client.
 | T-F0-05 | Sessions: PTY, `Emulator` port, create/list/input/resize/close, lock | 3d | T-F0-02, T-F0-03 | ☐ |
 | T-F0-06 | Subscription, snapshot, fan-out with batching and per-client queue | 2d | T-F0-04, T-F0-05 | ☐ |
 | T-F0-07 | VT conformance suite | 2d | T-F0-05 | ☐ |
-| T-F0-08 | Shell-integration bootstrap for bash/zsh/fish | 1.5d | T-F0-01 | ☐ |
+| T-F0-08 | Shell-integration bootstrap for bash/zsh/fish | 1.5d | T-F0-01 | ☑ 2026-09-11 |
 | T-F0-09 | Block lifecycle from OSC; plain text; chunks | 3d | T-F0-05, T-F0-08 | ☐ |
 | T-F0-10 | `block.list`/`get`/`search` + 100k benchmark | 1.5d | T-F0-09 | ☐ |
 | T-F0-11 | `umb` CLI: autostart, `status`, `block last --json` | 1d | T-F0-10 | ☐ |

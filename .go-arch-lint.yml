@@ -18,6 +18,11 @@ components:
   # --- composition root -------------------------------------------------------
   cmd: { in: cmd/** }
 
+  # --- embedded assets --------------------------------------------------------
+  # shell holds the integration bootstrap scripts and the embed directive that reaches
+  # them. It is a leaf: no package dependencies, so no module can hide logic in it.
+  shellscripts: { in: shell }
+
   # --- cross-cutting modules (no hexagonal split) -----------------------------
   bus:    { in: internal/bus }
   api:    { in: internal/api }
@@ -159,12 +164,18 @@ deps:
 
   # --- adapters: its own ports, infrastructure and external libraries ---------
   # sessions and llmgw never reach the agent runtime (Tech Design §5.2).
+  shellscripts:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+
   sessions-adapters:
     anyVendorDeps: true
     mayDependOn:
       - sessions-ports
       - store
       - bus
+      - shellscripts
       - sessions-domain
       - agents-domain
       - tools-domain

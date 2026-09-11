@@ -6,6 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The pr
 ## [Unreleased]
 
 ### Added
+- **T-F0-08**: shell-integration bootstrap scripts for bash, zsh and fish under `shell/`, injected by `internal/sessions/adapters/shellinteg`. They emit the OSC 133, 633 and 7 sequences the block lifecycle derives from, without dropping the user's own configuration or breaking a custom prompt.
 - **T-F0-04**: `internal/sessions/adapters/ghostty`, the replayable VT snapshot behind `session.subscribe`, with eight golden round-trip cases. `scripts/build_libghostty.sh` and `task deps:ghostty` build the cgo dependency with Zig. The Q-01 decision is recorded in `docs/spikes/q01-snapshot.md`.
 - **T-PKG-01 and T-PKG-02**: `scripts/icons_check.sh` and the `icons` CI job, which verify the branding kit's checksums, regenerate it from source and compare byte for byte, then validate the `.desktop` file. The launcher now targets `umbral-tui` with `Terminal=true`, since release 0.1 ships no desktop client.
 - **T-F0-03**: `internal/bus`, a typed pub/sub that drops the oldest event under pressure instead of blocking a publisher, and `internal/api`, the JSON-RPC 2.0 server on a 0600 Unix socket with per-installation token, `system.hello`, `system.status` and the §5.4 error translation. Identifiers are type-prefixed ULIDs from `store.NewID`.
