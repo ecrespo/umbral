@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.0 |
+| **Version** | 1.1 |
 | **Date** | 2026-09-11 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -134,10 +134,31 @@ CREATE VIRTUAL TABLE blocks_fts USING fts5(
   content='blocks', content_rowid='rowid',
   tokenize='unicode61 remove_diacritics 2'
 );
--- AFTER INSERT / UPDATE OF command, output_plain / DELETE triggers keep the index in sync
+```
+
+The three synchronisation triggers are part of migration 0001 (REQ-BLK-006 depends on them):
+
+```sql
+CREATE TRIGGER blocks_fts_ai AFTER INSERT ON blocks BEGIN
+  INSERT INTO blocks_fts(rowid, command, output_plain)
+  VALUES (new.rowid, new.command, new.output_plain);
+END;
+CREATE TRIGGER blocks_fts_ad AFTER DELETE ON blocks BEGIN
+  INSERT INTO blocks_fts(blocks_fts, rowid, command, output_plain)
+  VALUES ('delete', old.rowid, old.command, old.output_plain);
+END;
+CREATE TRIGGER blocks_fts_au AFTER UPDATE OF command, output_plain ON blocks BEGIN
+  INSERT INTO blocks_fts(blocks_fts, rowid, command, output_plain)
+  VALUES ('delete', old.rowid, old.command, old.output_plain);
+  INSERT INTO blocks_fts(rowid, command, output_plain)
+  VALUES (new.rowid, new.command, new.output_plain);
+END;
 ```
 
 ### 2.5 `threads`
+
+Created in migration **0001** (§5.1) even though it is only written from F1: `sessions` and
+`blocks` declare foreign keys against it.
 
 ```sql
 CREATE TABLE threads (
@@ -166,6 +187,7 @@ CREATE TABLE messages (
   id               TEXT PRIMARY KEY CHECK (id LIKE 'msg\_%' ESCAPE '\'),
   thread_id        TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
   turn_id          TEXT NOT NULL,
+  client_msg_id    TEXT,                          -- ULID sent by the client; idempotency key (REQ-AGT-015)
   role             TEXT NOT NULL CHECK (role IN ('user','assistant','tool','system_note')),
   content          TEXT NOT NULL,
   attachments_json TEXT NOT NULL DEFAULT '[]',   -- [{kind, ref, bytes, truncated_bytes}]
@@ -173,6 +195,8 @@ CREATE TABLE messages (
   created_at       INTEGER NOT NULL
 );
 CREATE INDEX idx_messages_thread_created ON messages(thread_id, created_at);
+CREATE UNIQUE INDEX idx_messages_client_msg ON messages(thread_id, client_msg_id)
+  WHERE client_msg_id IS NOT NULL;
 ```
 
 ### 2.7 `tool_calls`
@@ -311,12 +335,13 @@ CREATE TABLE mcp_servers (
 
 | Query (API / Tech Design) | Index |
 |---|---|
-| `block.get {block_id:"last", session_id}` y `block.list {session_id}` | `idx_blocks_session_started` |
+| `block.get {block_id:"last", session_id}` and `block.list {session_id}` | `idx_blocks_session_started` |
 | `block.list {thread_id}` | `idx_blocks_thread_started` |
 | Startup: mark open blocks as `abandoned` | `idx_blocks_open` |
 | `block.search` | `blocks_fts` |
 | Startup: mark `alive` sessions as `exited` | `idx_sessions_state` |
 | `thread.get {include_messages}` | `idx_messages_thread_created` |
+| `thread.send` idempotency lookup, REQ-AGT-015 | `idx_messages_client_msg` |
 | `thread.list` | `idx_threads_updated` |
 | `approval.list` (pending) | `idx_approvals_pending` |
 | `security.Decide` (rules per tool) | `idx_policy_rules_lookup` |
@@ -338,12 +363,26 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 
 ## 5. Migrations
 
-- Tabla `schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`.
+- Table `schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`.
 - Files `internal/store/migrations/NNNN_description.sql`, forward-only (Art. 6).
 - Each migration runs in a transaction, and the daemon refuses to start if the database has a
   higher version than it knows.
 - Pragmas on open: `journal_mode=WAL`, `foreign_keys=ON`, `busy_timeout=5000`,
   `synchronous=NORMAL`.
+
+### 5.1 Content of each migration
+
+| Migration | Phase | Objects it creates |
+|---|---|---|
+| `0001_terminal.sql` | F0 | `schema_migrations`, **`threads`** (§2.5) and `idx_threads_updated`, `sessions`, `blocks`, `block_chunks`, `blocks_fts` and its three triggers, plus every index in §2.1-2.5 |
+| `0002_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers` and their indexes (§2.6-2.13) |
+
+`threads` is created in **0001**, not in 0002, even though the agent subdomain only starts in F1.
+Reason: `sessions.owner_thread_id` and `blocks.thread_id` declare `REFERENCES threads(id)` and,
+with `PRAGMA foreign_keys=ON`, SQLite rejects **every** INSERT into a table whose FK points at a
+missing table, even when the value is NULL. Creating `threads` in 0001 is cheaper than rebuilding
+`sessions` and `blocks` in 0002, and `threads` itself depends on no other table.
+In F0 the table stays empty; `store` only writes to it from T-F1-01 onwards.
 
 ## 6. Recovery after a daemon restart
 
@@ -357,3 +396,4 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 | Version | Date | Changes |
 |---|---|---|
 | 1.0 | 2026-09-11 | Initial version |
+| 1.1 | 2026-09-11 | delta `2026-09-analyze-fixes`: `threads` moves to migration 0001 and §5.1 lists each migration (A-01), `blocks_fts` triggers written out (A-07), `client_msg_id` in `messages` (A-04) |

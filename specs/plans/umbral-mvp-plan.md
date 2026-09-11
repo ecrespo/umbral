@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.0 |
+| **Version** | 1.1 |
 | **Date** | 2026-09-11 |
 | **PRD** | `specs/prd/umbral-mvp.md` |
 | **Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -33,13 +33,36 @@ There are two MVP phases in sequence (F0 Core → F1 Agentic) plus a hardening p
 
 | Prerequisite | Owner | Status | Deadline |
 |---|---|---|---|
-| Specs approved (this package) + Analyze without CRITICAL findings | Tech Lead | ☐ Pending | before T-F0-01 |
+| Specs approved (this package) + Analyze without CRITICAL findings | Tech Lead | ☑ Met 2026-09-11 — `analyze-2026-09-11b.md`, 0 CRITICAL / 0 HIGH | before T-F0-01 |
 | Toolchain: Go ≥ 1.25, Zig (libghostty-vt build), golangci-lint, go-arch-lint, gitleaks | Tech Lead | ☐ Pending | T-F0-01 |
 | Ollama with `gpt-oss:20b` and `num_ctx` ≥ 32k on the development machine | Tech Lead | ☐ Pending | start of F1 |
 | CI runner with bash, zsh and fish installed | Tech Lead | ☐ Pending | T-F0-08 |
 | Q-01 decision (snapshot format) | Tech Lead | ☐ Pending | spike T-F0-04 |
 
 ## 3. Implementation Phases
+
+---
+
+### Phase 0: Fold the pending deltas
+
+**Duration:** < 1 day. **Goal:** `specs/` free of CRITICAL findings before the first line of Go.
+Spec-only work: no product code.
+
+| ID | Task | Dependency | Status |
+|---|---|---|---|
+| T-FIX-01 | Fold A-01 and A-07 into the Data Model (`threads` in migration 0001, FTS triggers) | — | ☑ 2026-09-11 |
+| T-FIX-02 | Fold A-02: Tech Design §8.1 with the VT conformance cases | — | ☑ 2026-09-11 |
+| T-FIX-03 | Fold A-03 and A-04: REQ-SEC-008, REQ-AGT-015, `client_msg_id` | T-FIX-01 | ☑ 2026-09-11 |
+| T-FIX-04 | Fold A-05 and A-06: `owner_thread_id`, `env_refs` | — | ☑ 2026-09-11 |
+| T-FIX-05 | Re-run the Analyze and archive the delta | T-FIX-01…04 | ☑ 2026-09-11 |
+| T-PKG-01 | Visual identity: icon kit and pinned checksums | — | ☐ |
+| T-PKG-02 | Visual identity: `.desktop` file for release 0.1 | T-PKG-01 | ☐ |
+
+**Phase 0 "Done" criteria:**
+- `python3 tools/sdd_check.py` exits 0 (currently met).
+- `node tools/mermaid_check.mjs` green (currently met).
+- The visual-identity delta is folded honouring A-12 (REQ-PKG-004/005/007 move to the F2 PRD) and
+  A-16 (the Spanish duplicate is removed). **Still pending.**
 
 ---
 
@@ -148,3 +171,4 @@ There are two MVP phases in sequence (F0 Core → F1 Agentic) plus a hardening p
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0 | 2026-09-11 | E. Crespo (assisted draft) | Initial version |
+| 1.1 | 2026-09-11 | E. Crespo (assisted draft) | Phase 0 added (delta folding); the Analyze prerequisite is met |

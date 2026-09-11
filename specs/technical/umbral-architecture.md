@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.0 |
+| **Version** | 1.1 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -327,7 +327,7 @@ One root span `agent.turn` per turn, with children `llm.call` (attributes `gen_a
 | Level | Target | Tools | What it covers |
 |---|---|---|---|
 | Unit | ≥ 75 % in domain, policy and router | `go test`, tables | policies, router, redaction, OSC parser, budget |
-| VT conformance | 100 % of MUST cases | `testdata/vt/*.golden` + libghostty Formatter | alt-screen, truecolor, bracketed paste, reflow (REQ-TERM-002) |
+| VT conformance | 100 % of the MUST cases in §8.1 | `testdata/vt/*.golden` + libghostty Formatter | VT-01 … VT-20: alt-screen, truecolor, bracketed paste, reflow, graphemes (REQ-TERM-002) |
 | Integration | critical flows | real PTY with bash/zsh/fish in CI; temporary SQLite | blocks, snapshots, cancellation |
 | API contract | every method | test JSON-RPC client | errors and notifications from the API Spec |
 | Providers | adapters | fake OpenAI-compat and Ollama servers; optionally real Ollama with `-tags live` | streaming, 429/5xx, timeouts |
@@ -335,6 +335,41 @@ One root span `agent.turn` per turn, with children `llm.call` (attributes `gen_a
 | Performance | NFRs | `go test -bench`, 100,000-block fixture | TERM-006, BLK-006, TERM-001 |
 
 Convention: every test that verifies a REQ cites it, e.g. `TestBlockClosedOnOSC133D_REQ_BLK_002`.
+
+### 8.1 Appendix: VT conformance cases
+
+Closed list that defines "100 % of the MUST cases" in REQ-TERM-002. Each case is a
+`testdata/vt/VT-NN-<slug>.in` / `.golden` pair: the `.in` file holds the byte stream fed to the
+emulator, the `.golden` file the expected screen as plain text plus the per-cell attributes.
+Sources: `vttest`, `esctest` and the Ghostty VT reference.
+
+| ID | Case | Priority |
+|---|---|---|
+| VT-01 | Cursor movement CUP/CUU/CUD/CUF/CUB and screen bounds | MUST |
+| VT-02 | Erase ED/EL (0, 1, 2) | MUST |
+| VT-03 | DECSTBM scroll region with IND/RI/NEL | MUST |
+| VT-04 | Basic SGR: 16 colors, bold, italic, underline, inverse, reset | MUST |
+| VT-05 | SGR 256 colors (38;5 / 48;5) | MUST |
+| VT-06 | SGR truecolor (38;2 / 48;2) | MUST |
+| VT-07 | Alternate screen 1049: enter, exit and restore content and cursor | MUST |
+| VT-08 | Bracketed paste 2004 | MUST |
+| VT-09 | SGR 1006 mouse reporting | MUST |
+| VT-10 | Wide characters (CJK) with width 2 | MUST |
+| VT-11 | Grapheme clusters (ZWJ emoji) as one logical cell | MUST |
+| VT-12 | Combining characters | MUST |
+| VT-13 | DECAWM autowrap at the right margin | MUST |
+| VT-14 | Reflow of wrapped lines on resize | MUST |
+| VT-15 | HT/HTS/TBC tabs with default stops | MUST |
+| VT-16 | DECSC/DECRC cursor save/restore | MUST |
+| VT-17 | IL/DL/ICH/DCH insert/delete | MUST |
+| VT-18 | OSC 0/2 (title) | MUST |
+| VT-19 | OSC 7 (cwd) | MUST |
+| VT-20 | OSC 133 A/B/C/D and OSC 633;E intercepted without visible effects | MUST |
+| VT-21 | Kitty keyboard protocol (push/pop of flags) | SHOULD |
+| VT-22 | OSC 8 hyperlinks | SHOULD |
+
+A MUST case with no `.in` / `.golden` pair on disk fails the suite; it is never skipped.
+Adding or removing a MUST case requires a Delta, because REQ-TERM-002 is measured against this list.
 
 ## 9. Migration / Rollout Plan
 
@@ -363,3 +398,4 @@ Convention: every test that verifies a REQ cites it, e.g. `TestBlockClosedOnOSC1
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0 | 2026-09-11 | E. Crespo (assisted draft) | Initial version |
+| 1.1 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-analyze-fixes`: appendix §8.1 with the VT conformance cases VT-01…VT-22 (A-02) |

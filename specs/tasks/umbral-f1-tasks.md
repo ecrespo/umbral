@@ -11,7 +11,9 @@ default CI.
 ## Tasks
 
 ### [ ] T-F1-01 · Migration 0002 (agent, models, audit, MCP)
-- **What:** Data Model tables §2.5 to §2.13 with their indexes, plus recovery §6 steps 3-4.
+- **What:** Data Model tables §2.6 to §2.13 with their indexes, plus recovery §6 steps 3-4.
+  `threads` (§2.5) is **not** created here: migration 0001 already created it (§5.1, finding A-01).
+  `messages` includes `client_msg_id` and its partial unique index `idx_messages_client_msg`.
 - **REQ:** REQ-AGT-011, REQ-LLM-005, REQ-SEC-002
 - **Files:** `internal/store/migrations/0002_agent.sql`, `internal/store/**`
 - **Depends on:** F0 complete
@@ -22,11 +24,14 @@ default CI.
   - TOML loader with JSON Schema;
   - resolution of `keyring:<path>` with go-keyring;
   - rejection (`CONFIG_INVALID`) of plaintext API keys;
+  - degraded start when the keyring is unavailable: the daemon does not abort, the providers whose
+    credential is `keyring:<path>` are disabled, their models get `health = down` with reason
+    `keyring_unavailable` and `umb status` shows that reason (REQ-SEC-008);
   - `config.get` and `config.reload`.
-- **REQ:** REQ-SEC-004
+- **REQ:** REQ-SEC-004, REQ-SEC-008
 - **Files:** `internal/config/**`, `internal/security/adapters/keyring/**`
 - **Depends on:** T-F1-01
-- **Done:** `TestPlaintextKeyRejected_REQ_SEC_004` green.
+- **Done:** `TestPlaintextKeyRejected_REQ_SEC_004` and `TestKeyringUnavailableDisablesProviders_REQ_SEC_008` green (the second one with a fake keyring that always fails).
 
 ### [ ] T-F1-03 · [P] Policy engine
 - **What:** pure `Decide()` following DD-006 precedence and the Tech Design §5.3 table; destructive-pattern list; workspace computation; taint.
@@ -129,11 +134,13 @@ default CI.
   - notifications `thread.delta`, `thread.tool_call` and `thread.turn_finished`;
   - `max_steps` and budget;
   - model change on the next turn;
-  - `ask` mode exposes only ReadOnly tools.
-- **REQ:** REQ-AGT-001, REQ-AGT-008, REQ-AGT-009, REQ-AGT-010, REQ-AGT-011
+  - `ask` mode exposes only ReadOnly tools;
+  - `thread.send` idempotency by `client_msg_id`: a repeated key returns the original
+    `{turn_id, message_id}` without creating a turn (REQ-AGT-015).
+- **REQ:** REQ-AGT-001, REQ-AGT-008, REQ-AGT-009, REQ-AGT-010, REQ-AGT-011, REQ-AGT-015
 - **Files:** `internal/agents/**`, `internal/api/threads.go`
 - **Depends on:** T-F1-07, T-F1-10, T-F1-12
-- **Done:** tests `…_REQ_AGT_001/008/009/010/011` green with a scripted fake provider.
+- **Done:** tests `…_REQ_AGT_001/008/009/010/011` green with a scripted fake provider; `TestSendIdempotentByClientMsgID_REQ_AGT_015` green (two identical sends → one turn).
 
 ### [ ] T-F1-14 · Approval flow
 - **What:**
@@ -234,6 +241,7 @@ default CI.
 | REQ-AGT-011 | T-F1-01, T-F1-13, T-F1-22 | TestPersistBeforeNotify_REQ_AGT_011, TestCrashRecovery_REQ_AGT_011 |
 | REQ-AGT-013 | T-F1-03 | TestPolicyAutoEditWorkspace_REQ_AGT_013 |
 | REQ-AGT-014 | T-F1-03 | TestPolicyNormalDefaultAsk_REQ_AGT_014 |
+| REQ-AGT-015 | T-F1-13 | TestSendIdempotentByClientMsgID_REQ_AGT_015 |
 | REQ-CTX-001 | T-F1-11 | TestRulesFilesPrecedence_REQ_CTX_001 |
 | REQ-CTX-002 | T-F1-11 | TestAttachments_REQ_CTX_002 |
 | REQ-CTX-003 | T-F1-11 | TestGitContext_REQ_CTX_003 |
@@ -250,6 +258,7 @@ default CI.
 | REQ-SEC-004 | T-F1-02 | TestPlaintextKeyRejected_REQ_SEC_004 |
 | REQ-SEC-005 | T-F1-03, T-F1-14 | TestDestructiveAlwaysAsk_REQ_SEC_005 |
 | REQ-SEC-006 | T-F1-03, T-F1-09 | TestTaintedRequiresAsk_REQ_SEC_006, TestFetchMarksTaint_REQ_SEC_006 |
+| REQ-SEC-008 | T-F1-02 | TestKeyringUnavailableDisablesProviders_REQ_SEC_008 |
 | REQ-MCP-001 | T-F1-17 | TestMcpToolsPrefixed_REQ_MCP_001 |
 | REQ-MCP-002 | T-F1-17 | TestMcpAddMidThread_REQ_MCP_002 |
 | REQ-MCP-003 | T-F1-17 | TestMcpReconnectBackoff_REQ_MCP_003 |

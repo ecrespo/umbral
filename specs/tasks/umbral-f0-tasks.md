@@ -30,12 +30,13 @@
 ### [ ] T-F0-02 · Store and migration 0001 (terminal)
 - **What:**
   - open SQLite with the Data Model §5 pragmas;
-  - migration 0001 with `schema_migrations`, `sessions`, `blocks`, `block_chunks`, `blocks_fts` and its triggers;
+  - migration 0001 exactly as Data Model §5.1 lists it: `schema_migrations`, **`threads`**, `sessions`,
+    `blocks`, `block_chunks`, `blocks_fts` and the three `blocks_fts_ai/ad/au` triggers (§2.4);
   - restart recovery (Data Model §6, steps 1-2).
-- **REQ:** REQ-BLK-007, REQ-TERM-005
+- **REQ:** REQ-BLK-007, REQ-TERM-005, REQ-BLK-006
 - **Files:** `internal/store/**`, `internal/store/migrations/0001_terminal.sql`
 - **Depends on:** T-F0-01
-- **Done:** `go test ./internal/store/... -run 'Migrat|Recover'` green; `TestRecoveryMarksOpenBlocksAbandoned_REQ_TERM_005` passes.
+- **Done:** `go test ./internal/store/... -run 'Migrat|Recover'` green; `TestRecoveryMarksOpenBlocksAbandoned_REQ_TERM_005` passes; `TestMigration0001InsertsWithForeignKeysOn` inserts into `sessions` and `blocks` with `foreign_keys=ON` and an FTS `MATCH` returns the new block (A-01, A-07).
 
 ### [ ] T-F0-03 · JSON-RPC API, authentication and bus
 - **What:**
@@ -81,11 +82,11 @@
 - **Done:** `TestSessionSurvivesNoClients_REQ_TERM_003`, `TestSubscribeSnapshotBeforeLive_REQ_TERM_004` and `BenchmarkOutputLatency_REQ_TERM_006` (p95 < 5 ms) green.
 
 ### [ ] T-F0-07 · [P] VT conformance suite
-- **What:** golden cases in `testdata/vt/` (alt-screen, truecolor, bracketed paste, reflow on resize, wide chars, CJK graphemes) and a runner that feeds bytes into the emulator and compares plain text and attributes.
+- **What:** the closed case list is Tech Design §8.1: implement **VT-01 … VT-20 (MUST)** and, if time allows, VT-21 and VT-22 (SHOULD). Each case is a `testdata/vt/VT-NN-<slug>.in` / `.golden` pair (plain text + attributes), plus a runner that feeds the bytes into the emulator and compares the result.
 - **REQ:** REQ-TERM-002
 - **Files:** `testdata/vt/**`, `internal/sessions/adapters/ghostty/conformance_test.go`
 - **Depends on:** T-F0-05
-- **Done:** `go test -run Conformance_REQ_TERM_002 ./...` with 100 % of MUST cases green.
+- **Done:** `go test -run Conformance_REQ_TERM_002 ./...` green with the 20 MUST cases of §8.1 present; a missing `.golden` fails the run instead of skipping it.
 
 ### [ ] T-F0-08 · [P] Shell-integration bootstrap
 - **What:** scripts for bash (`--init-file` that loads the user's rc), zsh (temporary `ZDOTDIR`) and fish (`--init-command`) that emit OSC 133 A/B/C/D, 633;E and 7 without breaking the user's prompt (Starship, p10k).
@@ -102,7 +103,7 @@
   - alt-screen detection;
   - `integration: none` after 5 s without OSC.
 - **REQ:** REQ-BLK-001, REQ-BLK-002, REQ-BLK-003, REQ-BLK-004, REQ-BLK-007
-- **Files:** `internal/sessions/domain/block*.go`, `internal/sessions/adapters/**`
+- **Files:** `internal/sessions/domain/block*.go`, `internal/sessions/adapters/shellinteg/**`, `internal/sessions/adapters/store/**`
 - **Depends on:** T-F0-05, T-F0-08
 - **Done:** tests `…_REQ_BLK_001` … `…_REQ_BLK_004` and `TestPlainOutputHasNoEscapes_REQ_BLK_007` green.
 

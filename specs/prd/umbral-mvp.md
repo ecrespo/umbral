@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.0 |
+| **Version** | 1.1 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-09-11 |
@@ -160,6 +160,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-AGT-011** · MUST · ubiquitous — THE SYSTEM SHALL persist every message, tool call, result and approval decision of a thread before sending it to the client.
 - **REQ-AGT-013** · MUST · state — WHILE a thread is in `auto-edit` mode, THE SYSTEM SHALL allow without approval the `WriteFS` tools whose path is inside the thread's workspace and SHALL request approval (`ask`) for those pointing outside it.
 - **REQ-AGT-014** · MUST · state — WHILE a thread is in `normal` mode (the default), THE SYSTEM SHALL apply `ask` to every tool that is not `ReadOnly`, unless the user has persisted `allow` rules.
+- **REQ-AGT-015** · MUST · unwanted — IF `thread.send` arrives with a `client_msg_id` already processed in the same thread, THEN THE SYSTEM SHALL reply with the original `turn_id` and `message_id` without creating a new turn or running any tool again.
 - **REQ-AGT-012** · SHOULD · event — WHEN `edit_file` or `write_file` requires approval, THE SYSTEM SHOULD include the unified diff of the proposed change in `approval.requested`.
 
 ### 6.4 Context (CTX)
@@ -190,6 +191,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-SEC-005** · MUST · ubiquitous — THE SYSTEM SHALL require approval for commands matching the destructive-pattern list (`rm -rf`, `git push --force`, `mkfs`, `dd of=`, `kubectl delete`, …), regardless of `allow` rules and the thread mode.
 - **REQ-SEC-006** · MUST · state — WHILE a turn's context contains content marked as untrusted (results from `fetch_url` or from MCP servers with `trust = untrusted`), THE SYSTEM SHALL require approval for tools with risk `Exec` and `Network`.
 - **REQ-SEC-007** · MUST · ubiquitous — THE SYSTEM SHALL create the socket with permissions `0600` in `$XDG_RUNTIME_DIR/umbral/`.
+- **REQ-SEC-008** · MUST · unwanted — IF the operating system keyring is unavailable when the daemon starts (headless Linux without Secret Service, locked keychain), THEN THE SYSTEM SHALL start without aborting, disable every provider whose credential is `keyring:<path>`, mark its models `health = down` with reason `keyring_unavailable`, and show that reason in `umb status`.
 
 ### 6.7 MCP
 
@@ -327,6 +329,13 @@ TUI as text:
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0 | 2026-09-11 | E. Crespo (assisted draft) | Initial version from ARCHITECTURE v0.1 |
+
+## Change History
+
+| Version | Date | Changes |
+|---|---|---|
+| 1.0 | 2026-09-11 | Initial version |
+| 1.1 | 2026-09-11 | delta `2026-09-analyze-fixes`: REQ-SEC-008 (degraded start without a keyring, A-03) and REQ-AGT-015 (`thread.send` idempotency, A-04) |
 
 ## Approvals
 

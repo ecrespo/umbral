@@ -45,6 +45,8 @@ Today the repo is in the **specification phase**; code starts with `T-F0-01`.
 - **Checkpoint:** after multi-step work, verify against the filesystem what is actually complete (`docs/checkpoints/`).
 
 ## Known status (update it when findings are closed)
-- The 2026-09-11 Analyze has **1 CRITICAL** (A-01: FK to `threads` before its migration) and 3 HIGH (A-02 VT suite, A-03 missing keyring, A-04 `thread.send` idempotency).
-- A draft Delta fixes them: `changes/2026-09-analyze-fixes/`. **It is approved and folded before T-F0-02.**
-- Visual identity Delta (`changes/2026-09-visual-identity/`): in review; it is folded respecting finding A-12.
+- The second-pass Analyze (`specs/analyze/analyze-2026-09-11b.md`, 2026-09-11) has **0 CRITICAL and 0 HIGH**. Verdict: **READY TO IMPLEMENT (F0)**.
+- A-01 … A-07 and A-13 are folded into `specs/`; the delta lives in `changes/_archive/2026-09-analyze-fixes/`.
+- Open findings, each attached to the task that first needs it: A-08 (reference machine, T-F0-13), A-09 (entropy and rules precedence, T-F1-04/T-F1-11), A-10 (SQLite write failure, T-F1-13), A-11 (`fetch_url` limits, T-F1-09), A-12 (PKG MUSTs that belong to F2), A-14, A-15, A-16.
+- Visual identity Delta (`changes/2026-09-visual-identity/`): in review; it is folded respecting findings A-12 and A-16.
+- `python3 tools/sdd_check.py` exits 0. Keep it that way: it is the *Specs* gate in CI.

@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REQ_DEF = re.compile(r"\*\*(REQ-[A-Z]+-\d{3})\*\* · (MUST|SHOULD|COULD|WONT)")
 REQ_REF = re.compile(r"REQ-[A-Z]+-\d{3}")
+ART_REF = re.compile(r"Art\. ?\d+")
 
 
 def defined(paths):
@@ -31,7 +32,11 @@ def tasks(path):
         if not m:
             continue
         req_line = re.search(r"\*\*REQ:\*\* (.*)", block)
-        out[m.group(1)] = REQ_REF.findall(req_line.group(1)) if req_line else []
+        raw = req_line.group(1) if req_line else ""
+        reqs = REQ_REF.findall(raw)
+        # Infrastructure tasks may cite a constitution article instead of a functional REQ
+        # (documented exception in the tasks files' conventions section).
+        out[m.group(1)] = reqs if reqs else (["Art."] if ART_REF.search(raw) else [])
     matrix = {}
     if "## Traceability matrix" in text:
         sect = text.split("## Traceability matrix", 1)[1]
@@ -48,12 +53,15 @@ def main():
     findings = []
 
     task_files = sorted((ROOT / "specs/tasks").glob("*.md")) + [p.with_name("tasks.md") for p in delta_files if p.with_name("tasks.md").exists()]
-    cited, matrix, orphan = {}, {}, []
+    cited, matrix, orphan, by_article = {}, {}, [], []
     for tf in task_files:
         t, m = tasks(tf)
         for tid, reqs in t.items():
             if not reqs:
                 orphan.append((tid, tf.name))
+            elif reqs == ["Art."]:
+                by_article.append((tid, tf.name))
+                continue
             for r in reqs:
                 cited.setdefault(r, []).append(tid)
         matrix.update(m)
@@ -73,7 +81,7 @@ def main():
         if tests and suffix not in tests and "e2e" not in tests and "deferred" not in tests.lower():
             findings.append(("MEDIUM", f"{rid}: no test in the matrix cites the ID in its name ({tests[:60]})", "tasks"))
     for tid, tf in orphan:
-        findings.append(("LOW", f"{tid} has no REQ (must cite a constitution Art.)", tf))
+        findings.append(("LOW", f"{tid} has no REQ and no constitution Art. cited", tf))
 
     # SQL DDL executability
     dm = (ROOT / "specs/data-model/umbral-schema.md").read_text(encoding="utf-8")
@@ -87,22 +95,31 @@ def main():
         sql_ok = f"DDL ERROR: {e}"
         findings.append(("CRITICAL", sql_ok, "data-model"))
 
-    # Migration 0001 (F0) alone: tables planned in T-F0-02 must accept inserts with FKs on
-    f0_tables = ("sessions", "blocks", "block_chunks", "blocks_fts")
+    # Migration 0001 (F0) alone: objects planned in T-F0-02 must accept inserts with FKs on.
+    # `threads` belongs to 0001 (Data Model §5.1) because sessions/blocks hold FKs against it.
+    f0_tables = ("threads", "sessions", "blocks", "block_chunks", "blocks_fts")
     f0_ddl = [b for b in re.findall(r"```sql\n(.*?)```", dm, re.S)
-              if re.search(r"CREATE (VIRTUAL )?TABLE (%s)\b" % "|".join(f0_tables), b)]
+              if re.search(r"CREATE (VIRTUAL )?TABLE (%s)\b" % "|".join(f0_tables), b)
+              or re.search(r"CREATE TRIGGER blocks_fts_", b)]
     con0 = sqlite3.connect(":memory:")
     try:
         con0.executescript("PRAGMA foreign_keys=ON;\n" + "\n".join(f0_ddl))
         con0.execute("INSERT INTO sessions(id,shell,cwd,cols,rows,state,created_at) "
                      "VALUES ('ses_x','/bin/sh','/',80,24,'alive',0)")
-        sql_ok += " · migration 0001 in isolation OK"
+        con0.execute("INSERT INTO blocks(id,session_id,origin,command,state,started_at,output_plain) "
+                     "VALUES ('blk_x','ses_x','user','go test ./...','finished',0,'ok 1 passed')")
+        hits = con0.execute("SELECT count(*) FROM blocks_fts WHERE blocks_fts MATCH 'passed'").fetchone()[0]
+        if hits != 1:
+            findings.append(("CRITICAL", f"blocks_fts triggers do not index new blocks (MATCH hits={hits})", "data-model"))
+        sql_ok += " · migration 0001 in isolation OK (INSERT + FTS MATCH)"
     except sqlite3.Error as e:
         findings.append(("CRITICAL", f"migration 0001 in isolation rejects INSERT into sessions: {e}", "data-model"))
 
     must = [r for r, (p, _) in all_defined.items() if p == "MUST"]
     print(f"REQs defined: {len(all_defined)} (MUST {len(must)}) · with task: {sum(1 for r in must if r in cited)}/{len(must)}")
-    print(f"Tasks: {sum(len(tasks(tf)[0]) for tf in task_files)} · without functional REQ: {len(orphan)}")
+    print(f"Tasks: {sum(len(tasks(tf)[0]) for tf in task_files)} · "
+          f"infrastructure tasks citing a constitution Art.: {len(by_article)} "
+          f"({', '.join(t for t, _ in by_article) or 'none'}) · uncited: {len(orphan)}")
     print(sql_ok)
     for sev, msg, src in findings:
         print(f"[{sev}] {msg} — {src}")

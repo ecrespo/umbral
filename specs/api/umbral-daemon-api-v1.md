@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.0 (`protocol_version = 1`) |
+| **API version** | v1.1 (`protocol_version = 1`; 1.1 is additive over 1.0) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`) |
@@ -108,12 +108,14 @@ stated otherwise.
 ### Session
 ```json
 {"id":"ses_…","shell":"/usr/bin/zsh","cwd":"/home/u/repo","cols":120,"rows":40,
- "state":"alive","integration":"osc133","input_owner":"human",
+ "state":"alive","integration":"osc133","input_owner":"human","owner_thread_id":null,
  "exit_code":null,"created_at":1757592000000,"exited_at":null}
 ```
 - `state`: `alive` | `exited`
 - `integration`: `pending` | `osc133` | `none`
 - `input_owner`: `human` | `agent`
+- `owner_thread_id`: `string | null`; the thread that owns this PTY, so a client can tell agent
+  sessions from human ones. `null` for a session created by the user.
 
 ### Block
 ```json
@@ -243,16 +245,21 @@ Sends SIGHUP; after 3 s, SIGKILL.
 **Params:** `{mode?:"normal", model?, model_class?:"code", cwd, title?, ephemeral?:false, max_steps?:1-200, budget_tokens?}`.
 **Result:** `Thread`.
 
-### 5.14 `thread.send` — REQ-AGT-001, REQ-CTX-002, REQ-CLI-001
-**Params:** `{thread_id, text (1-100000 chars), attachments?:[{kind, ref | data_b64}]}`.
+### 5.14 `thread.send` — REQ-AGT-001, REQ-AGT-015, REQ-CTX-002, REQ-CLI-001
+**Params:** `{thread_id, text (1-100000 chars), attachments?:[{kind, ref | data_b64}], client_msg_id?}`.
+
+- `client_msg_id`: optional ULID chosen by the client, unique per thread. `umbral-tui` and `umb`
+  always send it, so that a retry after a disconnect does not duplicate the turn or re-run its
+  commands. A repeated `client_msg_id` in the same thread returns the original `{turn_id, message_id}`
+  with no new turn (REQ-AGT-015), including while that first turn is still running.
 
 **Result:** `{turn_id, message_id}`. The content arrives through notifications.
 
 **Errors:**
-- `CONFLICT`: a turn is already running.
+- `CONFLICT`: a turn is already running (not raised for a duplicate `client_msg_id`).
 - `BUDGET_EXCEEDED`.
 - `PROVIDER_UNAVAILABLE`.
-- `VALIDATION_ERROR`: unknown attachment.
+- `VALIDATION_ERROR`: unknown attachment, or `client_msg_id` that is not a ULID.
 
 ### 5.15 `thread.cancel` — REQ-AGT-007 → `{stopped_at}`
 
@@ -278,7 +285,8 @@ Rules:
 **Params:** `{refresh?: false}`. **Result:** `{items: Model[]}`.
 
 ### 5.21 `mcp.server.list` / `mcp.server.add` / `mcp.server.remove` — REQ-MCP-001, REQ-MCP-002
-`add` params: `{name, transport, command? , args?, url?, env_keyring_refs?, trust?:"untrusted"}`.
+`add` params: `{name, transport, command?, args?, url?, env_refs?, trust?:"untrusted"}`.
+`env_refs` maps environment variable names to `keyring:<path>` references (column `mcp_servers.env_refs_json`); plaintext values are rejected with `CONFIG_INVALID` (REQ-SEC-004).
 Errors: `VALIDATION_ERROR`, `CONFIG_INVALID`.
 
 ### 5.22 `config.get` / `config.reload`
@@ -363,3 +371,4 @@ printf '%s\n' \
 | Version | Date | Changes |
 |---|---|---|
 | 1.0 | 2026-09-11 | Initial version |
+| 1.1 | 2026-09-11 | delta `2026-09-analyze-fixes`: `client_msg_id` in `thread.send` (A-04), `owner_thread_id` in `Session` (A-05), `env_keyring_refs` → `env_refs` (A-06) |
