@@ -25,9 +25,13 @@ Today the repo is in the **specification phase**; code starts with `T-F0-01`.
 |---|---|---|
 | REQ → task coverage, ghost REQs, per-migration DDL | `python3 tools/sdd_check.py` | now |
 | Validate Mermaid diagrams | `npm install --prefix tools && node tools/mermaid_check.mjs` | now |
-| Lint + format + gosec | `task lint` | after T-F0-01 |
-| Architecture boundaries | `task arch` | after T-F0-01 |
-| Tests with the race detector | `task test` (≈ `go test -race ./...`) | after T-F0-01 |
+| Both spec checkers at once | `task specs` | now |
+| Lint + format + gosec | `task lint` | now |
+| Architecture boundaries | `task arch` | now |
+| Prove the boundaries reject a violation | `task arch:selftest` | now |
+| Tests with the race detector | `task test` (≈ `go test -race ./...`) | now |
+| Everything the pipeline runs | `task ci` | now |
+| Install the Go tools the gate needs | `task tools:install` | now |
 | Tests against real models | `go test -tags live ./...` | F1 |
 
 ## Working rules

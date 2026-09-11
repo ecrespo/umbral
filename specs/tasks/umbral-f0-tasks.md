@@ -16,16 +16,17 @@
 
 ## Tasks
 
-### [ ] T-F0-01 · Scaffolding and quality gate
+### [x] 2026-09-11 T-F0-01 · Scaffolding and quality gate
 - **What:** set up the repository and its quality gate:
   - `go mod init`, Tech Design §5.1 layout and a Taskfile (`task lint`, `task test`, `task arch`);
   - pre-commit with gofumpt, go vet, golangci-lint (+gosec), govulncheck and gitleaks;
   - `.go-arch-lint.yml` with the Tech Design §5.2 rules;
   - CI pipeline.
 - **REQ:** Art. 1, Art. 3
-- **Files:** `go.mod`, `Taskfile.yml`, `.pre-commit-config.yaml`, `.golangci.yml`, `.go-arch-lint.yml`, `.github/workflows/ci.yml` (or `.gitlab-ci.yml`), `AGENTS.md`
+- **Files:** `go.mod`, `Taskfile.yml`, `.pre-commit-config.yaml`, `.golangci.yml`, `.go-arch-lint.yml`, `.github/workflows/ci.yml`, `scripts/arch_selftest.sh`, `cmd/**`, `internal/**/doc.go`, `AGENTS.md`
 - **Depends on:** —
 - **Done:** `task lint && task arch && task test` green in CI; a forbidden test import (e.g. `sessions` → `agents`) makes `task arch` fail.
+- **Result:** module `github.com/ecrespo/umbral` on Go 1.27.1. `task ci` runs specs, lint, arch, arch:selftest, test and build, all green locally. The forbidden-import criterion is automated in `scripts/arch_selftest.sh`, which injects `sessions` → `agents`, asserts that `go-arch-lint` rejects it and removes it again; CI runs it as its own step. `internal/` holds the §5.1 skeleton with one documented package per layer, and the three `cmd/` binaries build and run.
 
 ### [ ] T-F0-02 · Store and migration 0001 (terminal)
 - **What:**
@@ -170,4 +171,4 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
-| — | — | — | — |
+| 2026-09-11 | T-F0-01 | done | Go 1.27.1 installed under `~/.local/go` without root, since the machine had no Go at all. `task lint` (gofumpt, go vet, golangci-lint with gosec, govulncheck, gitleaks), `task arch`, `task arch:selftest` and `task test -race` all green. `gosec` G115 is excluded for now with a written reason: it fires on every epoch-ms and micro-USD conversion Art. 6 mandates, and it is re-enabled once the store layer exists. **Zig is still missing**, so T-F0-04 and T-F0-05 cannot build libghostty yet. |

@@ -1,0 +1,336 @@
+# Architecture boundaries for Umbral (Constitution Art. 3, Tech Design §5.2).
+# CI runs `task arch`; a new layer violation or import cycle breaks the build.
+#
+# The rules, restated from Tech Design §5.2:
+#   */domain        -> the standard library and other */domain
+#   */ports         -> its own domain and other */domain
+#   */adapters      -> its own ports, its own domain and external libraries
+#   agents          -> ports of sessions, tools, context, llmgw, security, store
+#   llmgw, sessions -> never agents
+#   cmd/*           -> everything
+#
+# Domain packages are listed explicitly instead of through commonComponents so that
+# this file reads as the whole rule, with no implicit permissions.
+version: 3
+workdir: .
+
+components:
+  # --- composition root -------------------------------------------------------
+  cmd: { in: cmd/** }
+
+  # --- cross-cutting modules (no hexagonal split) -----------------------------
+  bus:    { in: internal/bus }
+  api:    { in: internal/api }
+  store:  { in: internal/store }
+  config: { in: internal/config }
+  client: { in: internal/client }
+  tui:    { in: internal/tui }
+
+  # --- hexagonal modules ------------------------------------------------------
+  sessions-domain:   { in: internal/sessions/domain }
+  sessions-ports:    { in: internal/sessions/ports }
+  sessions-adapters: { in: internal/sessions/adapters/** }
+
+  agents-domain:   { in: internal/agents/domain }
+  agents-ports:    { in: internal/agents/ports }
+  agents-adapters: { in: internal/agents/adapters/** }
+
+  tools-domain:   { in: internal/tools/domain }
+  tools-ports:    { in: internal/tools/ports }
+  tools-adapters: { in: internal/tools/adapters/** }
+
+  context-domain:   { in: internal/context/domain }
+  context-ports:    { in: internal/context/ports }
+  context-adapters: { in: internal/context/adapters/** }
+
+  llmgw-domain:   { in: internal/llmgw/domain }
+  llmgw-ports:    { in: internal/llmgw/ports }
+  llmgw-adapters: { in: internal/llmgw/adapters/** }
+
+  security-domain:   { in: internal/security/domain }
+  security-ports:    { in: internal/security/ports }
+  security-adapters: { in: internal/security/adapters/** }
+deps:
+  # --- domain: the standard library and other domains, nothing else -----------
+  sessions-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  agents-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  tools-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  context-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - llmgw-domain
+      - security-domain
+  llmgw-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - security-domain
+  security-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+
+  # --- ports: domain types only; no infrastructure, no external libraries -----
+  sessions-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  agents-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  tools-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  context-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  llmgw-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  security-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+
+  # --- adapters: its own ports, infrastructure and external libraries ---------
+  # sessions and llmgw never reach the agent runtime (Tech Design §5.2).
+  sessions-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - sessions-ports
+      - store
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  llmgw-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - llmgw-ports
+      - store
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  tools-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - tools-ports
+      - sessions-ports
+      - security-ports
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  context-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - context-ports
+      - store
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  security-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - security-ports
+      - store
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+
+  # agents is the only module allowed to reach the other modules' ports.
+  agents-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - agents-ports
+      - sessions-ports
+      - tools-ports
+      - context-ports
+      - llmgw-ports
+      - security-ports
+      - store
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+
+  # --- cross-cutting ----------------------------------------------------------
+  bus:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  config:
+    anyVendorDeps: true
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  store:
+    anyVendorDeps: true
+    mayDependOn:
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  api:
+    anyVendorDeps: true
+    mayDependOn:
+      - bus
+      - store
+      - config
+      - sessions-ports
+      - agents-ports
+      - llmgw-ports
+      - security-ports
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  client:
+    anyVendorDeps: true
+    mayDependOn:
+      - config
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  tui:
+    anyVendorDeps: true
+    mayDependOn:
+      - client
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+
+  # --- composition root: the only place that wires modules together (Art. 3) ---
+  cmd:
+    anyVendorDeps: true
+    mayDependOn:
+      - api
+      - bus
+      - store
+      - config
+      - client
+      - tui
+      - sessions-ports
+      - sessions-adapters
+      - agents-ports
+      - agents-adapters
+      - tools-ports
+      - tools-adapters
+      - context-ports
+      - context-adapters
+      - llmgw-ports
+      - llmgw-adapters
+      - security-ports
+      - security-adapters
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain

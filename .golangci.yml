@@ -1,0 +1,64 @@
+# Lint configuration for Umbral (Constitution Art. 1).
+# The gate is gofumpt + go vet + golangci-lint (with gosec) + govulncheck + gitleaks.
+# A //nolint directive without a justification comment is itself a lint error.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - gosec # Art. 1 requires it explicitly
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - durationcheck
+    - errorlint
+    - goconst
+    - misspell
+    - nilerr
+    - noctx
+    - nolintlint
+    - prealloc
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+    - wastedassign
+  settings:
+    gosec:
+      excludes:
+        # G115 (integer overflow on conversion) fires on every int64 epoch-ms and
+        # micro-USD conversion the data model mandates (Art. 6). Re-enable it once
+        # the store layer exists and the real conversions can be audited one by one.
+        - G115
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+        - name: package-comments
+          disabled: false
+  exclusions:
+    generated: lax
+    rules:
+      # Test helpers legitimately ignore errors and run subprocesses.
+      - path: _test\.go$
+        linters: [gosec, errcheck, goconst]
+
+formatters:
+  enable:
+    - gofumpt
+  settings:
+    gofumpt:
+      extra:
+        group-params: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

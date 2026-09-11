@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The pr
 ## [Unreleased]
 
 ### Added
+- **T-F0-01**: Go module `github.com/ecrespo/umbral`, the Tech Design §5.1 package skeleton and the three `cmd/` binaries.
+- Quality gate: `Taskfile.yml` (`task lint`, `task arch`, `task test`, `task specs`, `task ci`), `.golangci.yml` with gosec, `.pre-commit-config.yaml` and the GitHub Actions pipeline.
+- `.go-arch-lint.yml` encoding the Tech Design §5.2 dependency rules, plus `scripts/arch_selftest.sh`, which proves the rules reject a `sessions` → `agents` import instead of merely being present.
 - Research and conceptual architecture (`docs/ARCHITECTURE.md`), ADR-0001.
 - Architecture infographic (`docs/diagrams/umbral-architecture.excalidraw` + PNG/SVG render).
 - SDD artifacts: constitution, PRD with EARS, JSON-RPC API v1, technical design, data model, plan, F0/F1 tasks and Analyze.

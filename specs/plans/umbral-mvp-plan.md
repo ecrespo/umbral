@@ -34,7 +34,7 @@ There are two MVP phases in sequence (F0 Core → F1 Agentic) plus a hardening p
 | Prerequisite | Owner | Status | Deadline |
 |---|---|---|---|
 | Specs approved (this package) + Analyze without CRITICAL findings | Tech Lead | ☑ Met 2026-09-11 — `analyze-2026-09-11b.md`, 0 CRITICAL / 0 HIGH | before T-F0-01 |
-| Toolchain: Go ≥ 1.25, Zig (libghostty-vt build), golangci-lint, go-arch-lint, gitleaks | Tech Lead | ☐ Pending | T-F0-01 |
+| Toolchain: Go ≥ 1.25, Zig (libghostty-vt build), golangci-lint, go-arch-lint, gitleaks | Tech Lead | ◐ Partial — Go 1.27.1, gofumpt, golangci-lint, go-arch-lint, govulncheck, gitleaks and Task installed; **Zig still missing** | T-F0-01 |
 | Ollama with `gpt-oss:20b` and `num_ctx` ≥ 32k on the development machine | Tech Lead | ☐ Pending | start of F1 |
 | CI runner with bash, zsh and fish installed | Tech Lead | ☐ Pending | T-F0-08 |
 | Q-01 decision (snapshot format) | Tech Lead | ☐ Pending | spike T-F0-04 |
@@ -73,7 +73,7 @@ Spec-only work: no product code.
 
 | ID | Task | Estimate | Dependency | Status |
 |---|---|---|---|---|
-| T-F0-01 | Scaffolding, CI gate (Art. 1) and `go-arch-lint` rules (Art. 3) | 1d | — | ☐ |
+| T-F0-01 | Scaffolding, CI gate (Art. 1) and `go-arch-lint` rules (Art. 3) | 1d | — | ☑ 2026-09-11 |
 | T-F0-02 | Store: migration 0001 (terminal) and restart recovery | 1.5d | T-F0-01 | ☐ |
 | T-F0-03 | JSON-RPC API: 0600 socket, token, `system.hello`/`status`, bus | 2d | T-F0-01 | ☐ |
 | T-F0-04 | Spike Q-01: VT snapshot with libghostty | 1d | T-F0-01 | ☐ |

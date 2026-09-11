@@ -28,7 +28,9 @@ def tasks(path):
     text = path.read_text(encoding="utf-8")
     out = {}
     for block in re.split(r"\n### ", text)[1:]:
-        m = re.match(r"\[.\] (T-[A-Z0-9]+-\d{2})", block)
+        # States are "[ ] T-…", "[~] T-…", "[!] T-…" and, once done, "[x] YYYY-MM-DD T-…"
+        # (see the conventions section of each tasks file).
+        m = re.match(r"\[.\](?: \d{4}-\d{2}-\d{2})? (T-[A-Z0-9]+-\d{2})", block)
         if not m:
             continue
         req_line = re.search(r"\*\*REQ:\*\* (.*)", block)

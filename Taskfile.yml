@@ -1,0 +1,121 @@
+# Task runner for Umbral. See https://taskfile.dev
+#
+# The three gates named in AGENTS.md and in the constitution:
+#   task lint  -> Art. 1, code quality
+#   task arch  -> Art. 3, architecture boundaries
+#   task test  -> Art. 2, tests with the race detector
+#
+# `task ci` runs all of them plus the spec checkers, which is what the pipeline does.
+version: '3'
+
+vars:
+  BIN: '{{.ROOT_DIR}}/bin'
+  # Every binary is stamped with the git description so `umbrald -version` is traceable.
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev"
+  LDFLAGS: -s -w -X main.version={{.VERSION}}
+
+tasks:
+  default:
+    desc: List the available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  # --- Art. 1: code quality ---------------------------------------------------
+  fmt:
+    desc: Format the code with gofumpt
+    cmds:
+      - gofumpt -l -w .
+
+  fmt:check:
+    desc: Fail if any file is not gofumpt-formatted
+    cmds:
+      - |
+        unformatted="$(gofumpt -l .)"
+        if [ -n "$unformatted" ]; then
+          echo "not gofumpt-formatted:"; echo "$unformatted"; exit 1
+        fi
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: 'Art. 1 gate: gofumpt, go vet, golangci-lint (+gosec), govulncheck and gitleaks'
+    cmds:
+      - task: fmt:check
+      - task: vet
+      - golangci-lint run ./...
+      - govulncheck ./...
+      - gitleaks detect --no-banner --redact --source .
+
+  # --- Art. 3: architecture boundaries ----------------------------------------
+  arch:
+    desc: 'Art. 3 gate: verify the Tech Design §5.2 dependency rules'
+    cmds:
+      - go-arch-lint check
+
+  arch:selftest:
+    desc: Prove that a forbidden import actually breaks `task arch` (T-F0-01 done criterion)
+    cmds:
+      - ./scripts/arch_selftest.sh
+
+  # --- Art. 2: tests ----------------------------------------------------------
+  test:
+    desc: 'Art. 2 gate: go test with the race detector'
+    cmds:
+      - go test -race ./...
+
+  test:cover:
+    desc: Tests with a coverage profile (target ≥ 75 % in domain, policy and router)
+    cmds:
+      - go test -race -coverprofile=coverage.out -covermode=atomic ./...
+      - go tool cover -func=coverage.out | tail -1
+
+  bench:
+    desc: Run the benchmarks that back the NFRs (REQ-TERM-001, TERM-006, BLK-006)
+    cmds:
+      - go test -run '^$' -bench . -benchmem ./...
+
+  # --- specifications ---------------------------------------------------------
+  specs:
+    desc: 'Art. 9 gate: REQ coverage, DDL executability and Mermaid diagrams'
+    cmds:
+      - python3 tools/sdd_check.py
+      - test -d tools/node_modules || npm install --prefix tools
+      - node tools/mermaid_check.mjs
+
+  # --- build ------------------------------------------------------------------
+  build:
+    desc: Build umbrald, umb and umbral-tui into ./bin
+    cmds:
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BIN}}/umbrald ./cmd/umbrald
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BIN}}/umb ./cmd/umb
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BIN}}/umbral-tui ./cmd/umbral-tui
+
+  clean:
+    desc: Remove build and coverage artifacts
+    cmds:
+      - rm -rf {{.BIN}} coverage.out
+
+  # --- everything -------------------------------------------------------------
+  ci:
+    desc: Everything the pipeline runs
+    cmds:
+      - task: specs
+      - task: lint
+      - task: arch
+      - task: arch:selftest
+      - task: test
+      - task: build
+
+  tools:install:
+    desc: Install the Go tools the gate needs into $(go env GOPATH)/bin
+    cmds:
+      - go install mvdan.cc/gofumpt@latest
+      - go install golang.org/x/vuln/cmd/govulncheck@latest
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+      - go install github.com/fe3dback/go-arch-lint@latest
+      - echo "gitleaks is not go-installable under that path; see https://github.com/gitleaks/gitleaks"

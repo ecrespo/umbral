@@ -34,3 +34,6 @@ go.work.sum
 # Mermaid checker dependencies (tools/package.json)
 tools/node_modules/
 .idea/
+
+# Build output (task build)
+/bin/
