@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.8 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.9 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -724,3 +724,4 @@ printf '%s\n' \
 | 1.6 | 2026-09-20 | Closes the Analyze findings: `wait.list`/`wait.cancel`, the `rules.*` family, `thread.stalled`, `rules.update_rejected` and `CANCELLED` |
 | 1.7 | 2026-09-20 | delta `2026-09-art6-structural-ids`: §3 documents the structural identifier grammar as the Art. 6 exception (C-05) |
 | 1.8 | 2026-09-20 | delta `2026-09-cli-surface`: §5.17 says what the reserved id `"last"` means with and without a `session_id` |
+| 1.9 | 2026-09-20 | delta `2026-09-notification-sequencing`: §1 shows the notification envelope with `seq`; §6 states its scope, that it counts events rather than notifications, that it is ordered in assignment and not in arrival, and names the two other numbers called `seq`; §5.3 types `focused` nullable throughout, says which notifications the discard rule covers, pins the read order against DD-007, and replaces the `events.subscribe` bootstrap step with a second connection |

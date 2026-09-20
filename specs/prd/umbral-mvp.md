@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.7 |
+| **Version** | 1.8 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-09-20 |
@@ -450,6 +450,7 @@ TUI as text:
 | 1.2 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-visual-identity`: §6.10 with REQ-PKG-001, 002, 003 and 006; REQ-PKG-004, 005, 007 and 008 moved to the F2 PRD per finding A-12 |
 | 1.3 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-block-lifecycle-decisions`: REQ-BLK-003 gains the late-marker promotion and the one-way rule |
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds the WS, API, AUT, INT and NTF areas, REQ-TERM-009/010, REQ-AGT-016/017 and REQ-SEC-009/010/011, plus the glossary. Rationale in `docs/adr/ADR-0002-orchestration-surface.md` |
+| 1.8 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-notification-sequencing`: REQ-API-002 counts per daemon run, shared by every connection, instead of "per session" — a word that in this system already names a PTY |
 | 1.7 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-cli-surface`: REQ-CLI-002 says what the current session is and what happens without one; REQ-CLI-004 fixes the `umb` exit codes |
 | 1.6 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-art6-structural-ids`: the Constitution check names the Art. 6 exception for structural identifiers (C-05) |
 | 1.5 | 2026-09-20 | E. Crespo (assisted draft) | Closes the Analyze findings: folds the two pending deltas (REQ-SEC-008, REQ-AGT-015, PKG area), adds signing and key management (SEC-011/013/014/015/016), the environment fallback (SEC-012), wait monitoring (AUT-005…008), `fetch_url` limits (AGT-018), authority for its own agent (INT-006), metrics (OBS-004), reference hardware and redaction thresholds |
