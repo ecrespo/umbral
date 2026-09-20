@@ -187,6 +187,7 @@ method and the ordering that produced it, so one handed to a different method is
 ```json
 {"id":"w1:p2","tab_id":"w1:t1","workspace_id":"w1","session_id":"ses_…","thread_id":null,
  "label":"tests","cwd":"/home/u/repo","aliases":["w1:p2"],
+ "command":["sh","-c","go test ./..."],"env":{"UMBRAL_ROLE":"tests"},
  "attention_state":"working","state_source":"umbral:agent",
  "metadata":{"title":"go test","tokens":{"summary":"unit"}},
  "created_at":1757592000000,"closed_at":null}
@@ -196,6 +197,13 @@ method and the ordering that produced it, so one handed to a different method is
   a report, not a report of nothing. F0 has no producer at all — `pane_state_reports` arrives with
   migration 0004 and threads with F1 — so every F0 pane is `unknown` with a `null` `state_source`
 - `state_source`: who owns the state — `umbral:agent` for Umbral's own agent, `umbral:shell` when it is derived from the block lifecycle, or the `source` of an external integration (REQ-INT-002). `null` while nothing has reported. The `umbral:shell` derivation is named here but specified nowhere: which block state maps to which attention state is deferred to the task that owns REQ-INT-002
+- `command` and `env`: what the pane runs instead of a shell, and the environment overrides it
+  runs with. They arrive through `pane.split` or `layout.apply`, are stored, and are what
+  `layout.export` carries into a portable tree (REQ-WS-004, REQ-WS-005). **Both are omitted when
+  empty**, which is the common case: a pane running a plain shell has neither, and a client should
+  read their absence as "a shell" rather than as a field the daemon forgot. A pane with a `command`
+  gets no shell integration and therefore no blocks — there is nothing to inject a bootstrap into —
+  so it settles on `integration: none` (REQ-BLK-003)
 - `metadata` is display-only (REQ-INT-004)
 
 ### Layout

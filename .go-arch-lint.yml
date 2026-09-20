@@ -308,6 +308,11 @@ deps:
       - context-domain
       - llmgw-domain
       - security-domain
+  # Tech Design §5.2: bus, store, config, and the ports AND domain of the modules it
+  # serves. The pair is not separable — a port's signatures are written in domain types —
+  # but the grant is per module: this list held every *-domain in the tree until 2026-09-20,
+  # which would have let api reach into a module it does not serve with nothing to notice.
+  # A task that wires a new module into api adds its two rows here, deliberately.
   api:
     anyVendorDeps: true
     mayDependOn:
@@ -315,17 +320,9 @@ deps:
       - store
       - config
       - sessions-ports
-      - workspaces-ports
-      - agents-ports
-      - llmgw-ports
-      - security-ports
       - sessions-domain
+      - workspaces-ports
       - workspaces-domain
-      - agents-domain
-      - tools-domain
-      - context-domain
-      - llmgw-domain
-      - security-domain
   client:
     anyVendorDeps: true
     mayDependOn:

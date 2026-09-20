@@ -677,3 +677,41 @@ func TestListResultsUseItems(t *testing.T) {
 		}
 	}
 }
+
+// TestPaneCarriesItsCommandAndEnv pins the two fields API Spec §4 did not list until the
+// `2026-09-pane-fields-and-api-imports` delta.
+//
+// They are what says a pane runs something other than a shell, and `layout.apply`'s
+// `panes[]` result is where a client first reads them back. Both are omitted when empty,
+// which is the common case and is the part worth a test: a client must be able to read the
+// absence as "a plain shell" rather than as a field the daemon dropped, and an `omitempty`
+// that quietly became a zero value would look identical from the other side.
+func TestPaneCarriesItsCommandAndEnv(t *testing.T) {
+	t.Parallel()
+
+	sample := sampleTree()
+	withCommand := sample.RootPane
+	withCommand.Command = []string{"sh", "-c", "go test ./..."}
+	withCommand.Env = map[string]string{"UMBRAL_ROLE": "tests"}
+
+	tree := &fakeTree{tree: sample, pane: withCommand}
+	c := dialTree(t, testServerWithTree(t, tree))
+
+	pane := field(t, resultOf(t, c.call(2, "pane.get", map[string]any{"pane_id": "w1:p1"})), "pane")
+	if string(pane["command"]) != `["sh","-c","go test ./..."]` {
+		t.Errorf("command = %s, want the argv the pane runs", pane["command"])
+	}
+	if string(pane["env"]) != `{"UMBRAL_ROLE":"tests"}` {
+		t.Errorf("env = %s, want the overrides the pane runs with", pane["env"])
+	}
+
+	// A pane running a plain shell has neither, and the keys are absent rather than empty.
+	tree.pane = sample.RootPane
+	plain := field(t, resultOf(t, c.call(3, "pane.get", map[string]any{"pane_id": "w1:p1"})), "pane")
+	for _, key := range []string{"command", "env"} {
+		if raw, present := plain[key]; present {
+			t.Errorf("a pane with no command carries %q = %s; §4 says both are omitted when empty",
+				key, raw)
+		}
+	}
+}

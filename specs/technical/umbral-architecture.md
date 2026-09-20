@@ -361,7 +361,7 @@ testdata/vt/                 # VT conformance suite
 | `*/adapters` | its own `ports`, its own `domain` and external libraries |
 | `agents` | `ports` of `sessions`, `tools`, `context`, `llmgw`, `security`, `store` |
 | `llmgw`, `sessions` | never `agents` |
-| `api` | `bus`, `store`, `config` and the `ports` of the modules it serves |
+| `api` | `bus`, `store`, `config`, and the `ports` **and `domain`** of the modules it serves. The two arrive together and cannot be separated: a port's method signatures are written in domain types, so importing `sessions/ports` without `sessions/domain` does not compile. The grant is per module, not blanket — `api` may not reach the `domain` of a module whose ports it does not hold |
 | `client` | `config` only, and never `api`: the client and the server of one protocol must not depend on each other, so what they share — where the socket and the token live — lives in `config` |
 | `tui` | `client`, its own `ports`, and the `domain` packages; never `api`, and never its own adapters — `cmd/umbral-tui` wires those, as `cmd/umbrald` does for the daemon |
 | `tui/ports` | `sessions/domain`, for the size and cursor types the daemon already defines |
