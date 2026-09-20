@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.7 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.8 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -361,6 +361,13 @@ Sends SIGHUP; after 3 s, SIGKILL.
 **Params:** `{block_id | "last", session_id?, include:"none"|"plain"|"raw"}`.
 **Result:** `Block` plus `output_plain` or `output_raw_b64`.
 
+The reserved id `"last"` means the most recent **closed** block: `finished` or `abandoned`,
+never one still running. With `session_id` it is that session's last closed block; without
+one it is the last closed block of the whole history. Both are useful and they are not
+interchangeable, so a client that means "this terminal" has to say which session it is in:
+`umb` reads `UMBRAL_SESSION_ID` for exactly that (REQ-CLI-002, REQ-INT-001). `NOT_FOUND`
+when there is no closed block to return.
+
 ### 5.18 `block.search` — REQ-BLK-006
 **Params:** `{query (FTS5, 1-256 chars), session_id?, limit, cursor}`.
 **Result:** page of `{block: Block, snippet}`.
@@ -646,3 +653,4 @@ printf '%s\n' \
 | 1.5 | 2026-09-20 | Adds workspaces, tabs, panes, layouts, snapshot with `seq`, waits, integration reports, notifications, `policy.explain` and `api.schema` (ADR-0002). Additive change: `protocol_version` stays at 1 |
 | 1.6 | 2026-09-20 | Closes the Analyze findings: `wait.list`/`wait.cancel`, the `rules.*` family, `thread.stalled`, `rules.update_rejected` and `CANCELLED` |
 | 1.7 | 2026-09-20 | delta `2026-09-art6-structural-ids`: §3 documents the structural identifier grammar as the Art. 6 exception (C-05) |
+| 1.8 | 2026-09-20 | delta `2026-09-cli-surface`: §5.17 says what the reserved id `"last"` means with and without a `session_id` |

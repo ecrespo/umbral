@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.6 |
+| **Version** | 1.7 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-09-20 |
@@ -229,7 +229,8 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 ### 6.8 CLI and TUI
 
 - **REQ-CLI-001** · MUST · event — WHEN `umb ai "<prompt>"` runs with data on stdin, THE SYSTEM SHALL create an ephemeral thread in `ask` mode with stdin as an attachment (at most 1 MiB) and stream the response to stdout.
-- **REQ-CLI-002** · MUST · event — WHEN `umb block last --json` runs, THE SYSTEM SHALL print the last closed block of the current session as JSON, following the API `Block` schema.
+- **REQ-CLI-002** · MUST · event — WHEN `umb block last --json` runs, THE SYSTEM SHALL print the last closed block of the current session as JSON, following the API `Block` schema. The current session is the one named by `UMBRAL_SESSION_ID`, the variable the daemon injects into every managed pane (REQ-INT-001). WHERE that variable is absent, because the command was run outside a managed pane, THE SYSTEM SHALL print the last closed block of the whole history instead, which is what "the last thing that ran" means to someone in a plain terminal; THE SYSTEM SHALL NOT fail for want of a session.
+- **REQ-CLI-004** · MUST · ubiquitous — THE SYSTEM SHALL use these exit codes in `umb`, so that a script can tell the three outcomes apart: `0` the command answered, `1` the daemon reported an error or the request was rejected, `69` (`EX_UNAVAILABLE`) the daemon is unavailable and could not be started. A command whose output could not be written SHALL exit `1` rather than `0`, except when the failure is a closed pipe, which is what `| head` does deliberately.
 - **REQ-CLI-003** · MUST · unwanted — IF the daemon is not running, THEN `umb` SHALL try to start it and, if that fails within 3 s, exit with code 69 and an actionable message.
 - **REQ-TUI-001** · MUST · ubiquitous — THE SYSTEM SHALL provide in the TUI tabs, splits, jumping between blocks and an agent panel with pending approvals.
 - **REQ-TUI-002** · MUST · event — WHEN the user presses the mode shortcut (`ctrl+space` by default), the TUI SHALL toggle input between shell and agent.
@@ -449,6 +450,7 @@ TUI as text:
 | 1.2 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-visual-identity`: §6.10 with REQ-PKG-001, 002, 003 and 006; REQ-PKG-004, 005, 007 and 008 moved to the F2 PRD per finding A-12 |
 | 1.3 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-block-lifecycle-decisions`: REQ-BLK-003 gains the late-marker promotion and the one-way rule |
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds the WS, API, AUT, INT and NTF areas, REQ-TERM-009/010, REQ-AGT-016/017 and REQ-SEC-009/010/011, plus the glossary. Rationale in `docs/adr/ADR-0002-orchestration-surface.md` |
+| 1.7 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-cli-surface`: REQ-CLI-002 says what the current session is and what happens without one; REQ-CLI-004 fixes the `umb` exit codes |
 | 1.6 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-art6-structural-ids`: the Constitution check names the Art. 6 exception for structural identifiers (C-05) |
 | 1.5 | 2026-09-20 | E. Crespo (assisted draft) | Closes the Analyze findings: folds the two pending deltas (REQ-SEC-008, REQ-AGT-015, PKG area), adds signing and key management (SEC-011/013/014/015/016), the environment fallback (SEC-012), wait monitoring (AUT-005…008), `fetch_url` limits (AGT-018), authority for its own agent (INT-006), metrics (OBS-004), reference hardware and redaction thresholds |
 

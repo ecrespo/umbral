@@ -54,8 +54,8 @@ status" at the end of this file for what is and is not written.
 ## Known status (update it when findings are closed)
 
 - **Implementation: T-F0-01 … T-F0-10 and T-PKG-01/02 are done** (see the execution log in `specs/tasks/umbral-f0-tasks.md`). `umbrald` owns real PTY sessions, streams them, records blocks and serves `block.list`/`get`/`search`. Not yet written: the `umb` CLI (T-F0-11), the TUI (T-F0-12), the performance gates (T-F0-13) and the whole orchestration surface (T-F0-14…18).
-- Specs at PRD 1.6 / API 1.7 / Tech 1.6 / Data Model 1.6 / Plan 1.4, constitution 1.2. Eight deltas are folded and archived under `changes/_archive/`.
-- **One delta is pending ratification:** `changes/2026-09-structure-migration/`, which renumbers the structure and agent migrations. It blocks T-F0-14 and nothing else.
+- Specs at PRD 1.7 / API 1.8 / Tech 1.7 / Data Model 1.6 / Plan 1.4, constitution 1.2. Eight deltas are folded and archived under `changes/_archive/`.
+- **Two deltas are pending ratification:** `changes/2026-09-structure-migration/` (renumbers the structure and agent migrations; blocks T-F0-14) and `changes/2026-09-cli-surface/` (the `umb` surface, `block.get "last"` semantics, and the §5.1/§5.2 rows for `api`, `client`, `config`, `store` and `tui`). Both are already applied to `specs/`.
 - Migrations are `0001_terminal`, `0002_block_index`, `0003_structure` (T-F0-14, not written yet) and `0004_agent` (T-F1-01). 0001 and 0002 are applied; nothing already applied is ever edited (Art. 6).
 - `python3 tools/sdd_check.py` passes with no CRITICAL findings: 106/106 MUST with a task, and migration 0001 works in isolation.
 - Building the tests needs libghostty-vt: run `task deps:ghostty` once, then use `task test` (it injects `PKG_CONFIG_PATH`). A bare `go test ./...` fails to build the cgo packages.

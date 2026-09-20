@@ -22,9 +22,9 @@
 
 ## Status
 
-🚧 **Phase F0 in progress.** The quality gate passes with no critical findings; one change proposal
-is pending ratification ([`changes/2026-09-structure-migration`](changes/2026-09-structure-migration/)),
-and it blocks only T-F0-14. Alongside the full SDD package (constitution, PRD with EARS, API, technical
+🚧 **Phase F0 in progress.** The quality gate passes with no critical findings; two change proposals
+are pending ratification under [`changes/`](changes/), and only one of them blocks anything
+(T-F0-14). Alongside the full SDD package (constitution, PRD with EARS, API, technical
 design, data model, plan, tasks and Analyze), `umbrald` already exists: it owns durable PTY sessions
 with a libghostty emulator, streams them over a 0600 JSON-RPC socket, records a block per command
 from the shell integration, and searches 100,000 blocks in under a millisecond. Tasks
@@ -97,7 +97,7 @@ flowchart LR
 | [`docs/adr/`](docs/adr/) | architectural style (ADR-0001) and orchestration surface (ADR-0002) |
 | [`specs/constitution.md`](specs/constitution.md) | non-negotiable principles |
 | [`specs/`](specs/README.md) | PRD, API, technical design, data model, plan, tasks and Analyze |
-| [`changes/`](changes/) | change proposals; one is pending ratification (`2026-09-structure-migration`) |
+| [`changes/`](changes/) | change proposals; two are pending ratification (`2026-09-structure-migration`, `2026-09-cli-surface`) |
 | [`changes/_archive/`](changes/_archive/) | the eight folded proposals, kept as history |
 | [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) | how to start development with Claude Code |
 | [`assets/branding/umbral-icons/`](assets/branding/umbral-icons/README.md) | icons for Linux, Windows and macOS |

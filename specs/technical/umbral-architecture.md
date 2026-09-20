@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.6 |
+| **Version** | 1.7 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -333,6 +333,11 @@ cmd/umbral-tui/              # Bubble Tea v2 client
 internal/<module>/domain/    # pure types and rules
 internal/<module>/ports/     # published interfaces
 internal/<module>/adapters/  # implementations
+internal/api/                # JSON-RPC server: the only package that knows the wire format
+internal/client/             # JSON-RPC client, daemon autostart; used by cmd/umb and the TUI
+internal/config/             # runtime file locations and the TOML configuration
+internal/store/              # SQLite, migrations, restart recovery
+internal/tui/                # Bubble Tea v2 model and views
 internal/bus/                # typed pub/sub
 internal/workspaces/         # tree, identifiers, layout, restore
 internal/waits/              # pinned waits
@@ -350,6 +355,9 @@ testdata/vt/                 # VT conformance suite
 | `*/adapters` | its own `ports`, its own `domain` and external libraries |
 | `agents` | `ports` of `sessions`, `tools`, `context`, `llmgw`, `security`, `store` |
 | `llmgw`, `sessions` | never `agents` |
+| `api` | `bus`, `store`, `config` and the `ports` of the modules it serves |
+| `client` | `config` only, and never `api`: the client and the server of one protocol must not depend on each other, so what they share — where the socket and the token live — lives in `config` |
+| `tui` | `client` and the `domain` packages; never `api` |
 | `workspaces` | `ports` of `sessions` and `store`; never `agents`, `api` or `waits` |
 | `waits` | `ports` of `agents`, `sessions` and `store`, plus `bus`; never `api` |
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api` |
@@ -511,6 +519,29 @@ enforces both rules, with `mustCases` pinned to the 20 MUST rows above.
   - `umbrald` as a user service (`systemd --user` / `launchd`).
 - Compatibility: `protocol_version = 1`, N and N-1 supported (API Spec §9).
 
+### 9.4 The `umb` surface
+
+Commands: `umb status`, `umb block last`, `umb version`, `umb help`. Flags shared by every
+command: `--socket PATH` (default: the runtime directory of API Spec §2), `--daemon-path
+PATH` (default: `PATH`, then the directory holding `umb`), `--no-autostart`, and `--json`.
+
+Exit codes are REQ-CLI-004. Two output rules go with them: `--json` prints one object per
+line, so the output composes with a shell loop and with `jq`; and a write that fails is
+exit 1 rather than a silent 0, except for `EPIPE`, which is what `| head` does on purpose.
+
+An autostarted daemon is detached (`setsid`) so it outlives the `umb` that started it, and
+its stdout and stderr are appended to `umbrald.log` in the runtime directory. They cannot
+come back to the terminal, where they would corrupt `--json` output, and they must not go
+to the null device, which would discard the structured log Art. 7 requires from every
+daemon started the ordinary way.
+
+Before it recovers the database or binds the socket, a daemon takes an exclusive advisory
+lock on `umbrald.lock` in the runtime directory, and a daemon that cannot take it exits 0
+without serving. Startup recovery (Data Model §6) rewrites live rows on the premise that
+the previous process is gone; a second daemon running it over a first one's sessions would
+destroy state that is not stale, and autostart makes two daemons starting at once ordinary.
+`flock` rather than a pid file, so a killed daemon leaves nothing to clean up.
+
 ### 9.3 Visual identity and packaging
 
 Folded from `changes/_archive/2026-09-visual-identity/`.
@@ -552,5 +583,6 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.2 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-visual-identity`: §9.3 visual identity and packaging |
 | 1.3 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-block-lifecycle-decisions`: `klauspost/compress/zstd` recorded as a `sessions` dependency in §3.2 |
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds the `workspaces`, `waits`, `integrations` and `notify` modules, DD-009 to DD-015, the injected environment and the new test levels |
+| 1.7 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-cli-surface`: §5.1 lists the packages that existed but were unlisted, §5.2 gains the `api`, `client` and `tui` rows, and §9.4 records the `umb` surface, the daemon log and the instance lock |
 | 1.6 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-art6-structural-ids`: the Constitution check records the Art. 6 exception behind DD-009 (C-05) |
 | 1.5 | 2026-09-20 | E. Crespo (assisted draft) | Closes the Analyze findings: DD-016 (signing and recovery), DD-017 (wait observability), renames the agent's boundary to "write root" (B-09) and adds two test levels. §8.1 was already folded in 1.1 |

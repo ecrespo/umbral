@@ -112,9 +112,16 @@ build, run `task deps:ghostty` once: it builds libghostty-vt with Zig, and witho
 packages do not compile. `task test` injects the `PKG_CONFIG_PATH` it needs; a bare
 `go test ./...` does not.
 
+`umb` exists from T-F0-11, so the daemon is already usable by hand:
+
+```bash
+umb status              # starts umbrald if nothing is listening
+umb block last --json   # the last closed block, as the API Spec §4 Block schema
+```
+
 What is left in F0, one task per session or per branch:
 
-- **T-F0-11** (`umb` CLI) and **T-F0-12** (TUI) turn the daemon into something usable by hand.
+- **T-F0-12** (TUI) is what makes Umbral usable as a terminal rather than as a daemon.
 - **T-F0-13** adds the performance gates to CI.
 - **T-F0-14 to T-F0-18** are the structure tasks — workspaces, panes, portable layouts, sequenced
   snapshots and restore — and they are what make the daemon scriptable. T-F0-14 comes first; the

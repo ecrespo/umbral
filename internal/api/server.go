@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ecrespo/umbral/internal/bus"
+	"github.com/ecrespo/umbral/internal/config"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
 )
 
@@ -117,11 +118,15 @@ func Listen(ctx context.Context, cfg Config) (*Server, error) {
 		return nil, err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(cfg.SocketPath), runtimeDirMode); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfg.SocketPath), config.RuntimeDirMode); err != nil {
 		return nil, fmt.Errorf("api: create the runtime directory: %w", err)
 	}
-	// A socket left behind by a crashed daemon would make Listen fail with EADDRINUSE.
-	// Removing it is safe here because a live daemon holds a lock on the database.
+	// A socket left behind by a crashed daemon would make Listen fail with EADDRINUSE,
+	// so it is removed. What makes that safe is the instance lock `cmd/umbrald` takes on
+	// the runtime directory before it gets here: a live daemon holds it, so anything
+	// still on disk belongs to a daemon that is gone. Nothing else may call New without
+	// holding that lock — an earlier comment here claimed a database lock did the job,
+	// and there is no such lock.
 	if err := removeStaleSocket(cfg.SocketPath); err != nil {
 		return nil, err
 	}

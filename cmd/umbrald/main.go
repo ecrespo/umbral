@@ -26,6 +26,7 @@ import (
 
 	"github.com/ecrespo/umbral/internal/api"
 	"github.com/ecrespo/umbral/internal/bus"
+	"github.com/ecrespo/umbral/internal/config"
 	"github.com/ecrespo/umbral/internal/sessions"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/blockstore"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/ghostty"
@@ -40,6 +41,7 @@ var version = "0.0.0-dev"
 
 // Exit codes from sysexits.h, so shell callers can tell the failures apart.
 const (
+	exitOK          = 0  // served, or another daemon already owns this installation
 	exitUsage       = 64 // EX_USAGE: a bad command line
 	exitDataErr     = 65 // EX_DATAERR: the database is unusable, for example a newer schema
 	exitUnavailable = 69 // EX_UNAVAILABLE: the socket could not be served
@@ -72,6 +74,34 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+
+	socket, err := resolveSocketPath(*socketPath)
+	if err != nil {
+		logger.Error("cannot locate the socket", slog.Any("error", err))
+		return exitCantCreate
+	}
+
+	// Before the database, and before recovery above all. Recovery rewrites live rows on
+	// the premise that the previous process is gone (Data Model §6); a second daemon
+	// running it over a first one's sessions destroys state that is not stale. `umb`
+	// autostarts, so two daemons starting at once is ordinary rather than exotic.
+	lock, err := config.AcquireInstanceLock(filepath.Dir(socket))
+	if err != nil {
+		if errors.Is(err, config.ErrAlreadyRunning) {
+			// Not a failure: whoever holds the lock is serving this installation, which
+			// is what the caller wanted. An autostarting `umb` retries and finds them.
+			logger.Info("another umbrald already owns this installation; exiting",
+				slog.String("socket", socket))
+			return exitOK
+		}
+		logger.Error("cannot take the instance lock", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer func() {
+		if err := lock.Release(); err != nil {
+			logger.Error("cannot release the instance lock", slog.Any("error", err))
+		}
+	}()
 
 	db, err := store.Open(ctx, store.Options{Path: *dbPath})
 	if err != nil {
@@ -112,12 +142,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	socket, err := resolveSocketPath(*socketPath)
-	if err != nil {
-		logger.Error("cannot locate the socket", slog.Any("error", err))
-		return exitCantCreate
-	}
-	tokenPath := filepath.Join(filepath.Dir(socket), api.TokenFileName)
+	tokenPath := filepath.Join(filepath.Dir(socket), config.TokenFileName)
 
 	// The bus is created here, in the composition root, and handed to whoever needs it.
 	// Art. 3 allows no other package to wire modules together.
@@ -196,13 +221,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// resolveSocketPath honours an explicit -socket flag and otherwise asks api for the
-// platform default.
+// resolveSocketPath honours an explicit -socket flag and otherwise asks config for the
+// platform default, which is the same answer `umb` gets.
 func resolveSocketPath(flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
-	return api.DefaultSocketPath()
+	return config.DefaultSocketPath()
 }
 
 // statusFromStore answers system.status from the database. It is a closure rather than a
