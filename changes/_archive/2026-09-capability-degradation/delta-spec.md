@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PENDING APPROVAL — applied to specs/ on 2026-09-20, awaiting ratification` |
+| **Status** | `RATIFIED 2026-09-20 — applied to specs/ and archived` |
 | **Date** | 2026-09-20 |
 | **Task** | T-F0-17 |
 | **Raised by** | T-F0-17: §2 derives capabilities from "registered methods", and REQ-API-003 needs the unserved ones to stay registered |
