@@ -327,11 +327,18 @@ func runShellInHome(t *testing.T, bin string, extraArgs []string, home, input st
 		t.Logf("write exit: %v", err)
 	}
 
+	// Generous on purpose. This bound exists to stop a wedged shell hanging the suite, not
+	// to measure anything: three real shells fork in parallel here, and under
+	// `go test -race ./...` on a loaded machine bash, zsh and fish have taken past fifteen
+	// seconds between them — a red build that says nothing about the code. A timeout that
+	// fires on load is a worse signal than no timeout at all, because it is read as a
+	// finding.
+	const exitBudget = 60 * time.Second
 	select {
 	case <-done:
-	case <-time.After(15 * time.Second):
+	case <-time.After(exitBudget):
 		_ = cmd.Process.Kill()
-		t.Fatal("the shell did not exit within 15s")
+		t.Fatalf("the shell did not exit within %v", exitBudget)
 	}
 	_ = cmd.Wait()
 

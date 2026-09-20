@@ -31,6 +31,10 @@ const (
 	ClientDesktop ClientKind = "desktop"
 )
 
+// allClientKinds is every kind §2 defines, which is what a method with no restriction is
+// published as.
+var allClientKinds = []ClientKind{ClientTUI, ClientCLI, ClientDesktop}
+
 // valid reports whether the handshake named a kind the daemon knows.
 func (k ClientKind) valid() bool {
 	switch k {
@@ -152,6 +156,9 @@ type Server struct {
 
 	mu    sync.Mutex
 	conns map[*conn]struct{}
+
+	// observeResult is nil except under test; see resultObserver.
+	observeResult resultObserver
 }
 
 // nextSeq hands out the next notification number. Every notification the daemon emits goes

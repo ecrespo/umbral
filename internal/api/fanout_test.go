@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/base64"
 	"slices"
 	"strings"
@@ -11,46 +12,73 @@ import (
 // collectNotifications reads notifications whose method matches, returning once the stream
 // has gone quiet or `until` has elapsed.
 //
-// The idle gap is what makes it both quick and dependable. Spending the whole budget on
-// every call made the budget a tax on the suite, so it was short — and a short fixed budget
-// is a flake: under `go test -race ./...` on a loaded machine the first notification can
-// take longer than two seconds to arrive, and the test failed for the one reason it is not
-// about. Waiting for quiet instead means the common case returns in one gap and a slow
-// machine gets the whole budget.
+// **A read deadline poisons a json.Decoder permanently.** `Decode` stores the first error it
+// hits and returns that same error to every later call, instantly, even once the message has
+// arrived — measured at about a microsecond per call. So a loop that treats a timeout as
+// "nothing yet, try again" does not wait: it burns a core until its budget runs out and then
+// reports that nothing came. This helper did exactly that, and raising its budget from two
+// seconds to fifteen turned a short spin into a long one; `TestSubscribeSnapshotBeforeLive`
+// failed under `-race` for that reason and no other.
+//
+// So a timeout ends the collection rather than continuing it, and the waits are sized for
+// what each one is for: the first read waits the whole budget, because on a loaded machine
+// the first notification is the one that can take seconds to arrive, and every read after it
+// waits only `idleGap`, because by then the stream is flowing and a gap means the end.
 func (c *client) collectNotifications(method string, until time.Duration) []map[string]any {
 	c.t.Helper()
+	return c.collectNotificationsUntil(method, until, nil)
+}
 
+// collectNotificationsUntil collects until `enough` is satisfied, then to the first gap.
+//
+// The predicate is what a test that knows its own expectation should use. "Stop at the first
+// quiet moment" is right for a test that will take whatever arrives, and wrong for one that
+// sent a known quantity: under `-race` a burst can stall mid-stream for longer than a gap,
+// and the collector would return half of it and call the stream finished.
+// TestBatchingCoalescesABurst failed that way — 78 of 200 bytes, reported as lost output —
+// which is a false accusation against the daemon, the worst kind of flake.
+//
+// So while `enough` is unmet every read waits the whole remaining budget. Once it is met the
+// reads shorten to `idleGap`, to sweep up anything extra that a test may want to assert is
+// *not* there.
+func (c *client) collectNotificationsUntil(
+	method string, until time.Duration, enough func([]map[string]any) bool,
+) []map[string]any {
+	c.t.Helper()
+
+	// Long enough that a batch arriving in pieces is not cut in half, short enough that a
+	// test which collects nothing more does not pay for it.
 	const idleGap = 300 * time.Millisecond
 
 	var out []map[string]any
 	deadline := time.Now().Add(until)
-	for time.Now().Before(deadline) {
-		if len(out) > 0 {
-			// Something arrived: stop at the first gap rather than at the deadline.
-			deadline = minTime(deadline, time.Now().Add(idleGap))
+	for {
+		wait := time.Until(deadline)
+		if enough != nil && enough(out) {
+			wait = idleGap
+		} else if len(out) > 0 && enough == nil {
+			wait = idleGap
 		}
-		if err := c.conn.SetReadDeadline(time.Now().Add(idleGap)); err != nil {
+		if wait <= 0 {
 			return out
 		}
+		if err := c.conn.SetReadDeadline(time.Now().Add(wait)); err != nil {
+			return out
+		}
+
 		var msg struct {
 			Method string         `json:"method"`
 			Params map[string]any `json:"params"`
 		}
 		if err := c.dec.Decode(&msg); err != nil {
-			continue
+			// Whether this is a timeout or a closed connection, the decoder is finished:
+			// nothing further can be read from it. Returning is the only honest move.
+			return out
 		}
 		if msg.Method == method {
 			out = append(out, msg.Params)
 		}
 	}
-	return out
-}
-
-func minTime(a, b time.Time) time.Time {
-	if b.Before(a) {
-		return b
-	}
-	return a
 }
 
 // TestSubscribeSnapshotBeforeLive_REQ_TERM_004 is the ordering promise: a client that
@@ -127,7 +155,8 @@ func TestSubscribeSnapshotBeforeLive_REQ_TERM_004(t *testing.T) {
 	s.dispatchTestOutput(fakeSessionID, 7, []byte("already on screen"))
 	s.dispatchTestOutput(fakeSessionID, 9, []byte("live output"))
 
-	notifications := c.collectNotifications("session.output", 15*time.Second)
+	notifications := c.collectNotificationsUntil("session.output", 15*time.Second,
+		func(got []map[string]any) bool { return bytes.Contains(payload(got), []byte("live output")) })
 	if len(notifications) == 0 {
 		t.Fatal("no session.output notification arrived after subscribing")
 	}
@@ -181,9 +210,13 @@ func TestSessionSurvivesNoClients_REQ_TERM_003(t *testing.T) {
 	}
 
 	s.dispatchTestOutput(fakeSessionID, 101, []byte("after attaching"))
-	notifications := c.collectNotifications("session.output", 15*time.Second)
+	notifications := c.collectNotificationsUntil("session.output", 15*time.Second,
+		func(got []map[string]any) bool { return bytes.Contains(payload(got), []byte("after attaching")) })
 	if len(notifications) == 0 {
 		t.Fatal("a client that attached to a session with history received nothing")
+	}
+	if !bytes.Contains(payload(notifications), []byte("after attaching")) {
+		t.Errorf("the chunk sent after attaching never arrived; got %q", payload(notifications))
 	}
 }
 
@@ -321,7 +354,8 @@ func TestBatchingCoalescesABurst(t *testing.T) {
 		s.dispatchTestOutput(fakeSessionID, seq, []byte("x"))
 	}
 
-	notifications := c.collectNotifications("session.output", 15*time.Second)
+	notifications := c.collectNotificationsUntil("session.output", 15*time.Second,
+		func(got []map[string]any) bool { return payloadBytes(got) >= chunks })
 	if len(notifications) == 0 {
 		t.Fatal("the burst produced no notifications")
 	}
@@ -362,7 +396,8 @@ func TestNotificationSeqIsMonotonic(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	notifications := c.collectNotifications("session.output", 15*time.Second)
+	notifications := c.collectNotificationsUntil("session.output", 15*time.Second,
+		func(got []map[string]any) bool { return payloadBytes(got) >= 50*len("line\n") })
 	seqs := make([]float64, 0, len(notifications))
 	for _, n := range notifications {
 		seqs = append(seqs, n["seq"].(float64))
@@ -491,3 +526,67 @@ func TestABatchNeverSplitsAChunk_REQ_TERM_004(t *testing.T) {
 		t.Errorf("the final batch reports seq %d, want %d: it carries the last chunk", last, chunks)
 	}
 }
+
+// TestTheCollectorWaitsForASlowFirstNotification guards the helper every fan-out test
+// depends on.
+//
+// A read deadline poisons a `json.Decoder` for good, so the obvious shape — a short deadline
+// in a loop, `continue` on timeout — does not retry. It spins at roughly a microsecond a turn
+// and then reports an empty stream, which reads as "the daemon sent nothing" when what
+// happened is "the helper stopped listening". That is how `TestSubscribeSnapshotBeforeLive`
+// failed under load, and the bug was invisible because on an idle machine the first
+// notification always arrived inside the first window.
+//
+// Here the output is deliberately delayed past the idle gap. The old shape returns nothing;
+// this one waits.
+func TestTheCollectorWaitsForASlowFirstNotification(t *testing.T) {
+	t.Parallel()
+
+	sessions := newFakeSessions()
+	s := testServerWithSessions(t, sessions)
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+	if resp := c.call(2, "session.subscribe", map[string]any{"session_id": fakeSessionID}); resp.Error != nil {
+		t.Fatalf("subscribe: %+v", resp.Error)
+	}
+
+	// Well past the 300 ms gap a flowing stream is measured by, and well inside the budget.
+	const delay = 1500 * time.Millisecond
+	go func() {
+		time.Sleep(delay)
+		s.dispatchTestOutput(fakeSessionID, 1, []byte("late but not lost"))
+	}()
+
+	start := time.Now()
+	notifications := c.collectNotifications("session.output", 10*time.Second)
+	elapsed := time.Since(start)
+
+	if len(notifications) == 0 {
+		t.Fatalf("the collector gave up after %v on output sent at %v; a slow first "+
+			"notification must not read as an empty stream", elapsed, delay)
+	}
+	if elapsed < delay {
+		t.Errorf("collected after %v, before the output was even sent at %v", elapsed, delay)
+	}
+}
+
+// payload concatenates the bytes a set of session.output notifications carried.
+func payload(notifications []map[string]any) []byte {
+	var out []byte
+	for _, n := range notifications {
+		encoded, ok := n["data_b64"].(string)
+		if !ok {
+			continue
+		}
+		chunk, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			continue
+		}
+		out = append(out, chunk...)
+	}
+	return out
+}
+
+func payloadBytes(notifications []map[string]any) int { return len(payload(notifications)) }

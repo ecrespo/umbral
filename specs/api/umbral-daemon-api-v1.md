@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.10 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.11 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -71,7 +71,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `block.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list` |
+| `cli` | `umb` | `system.*`, `api.*`, `block.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list` |
 
 ### Handshake
 
@@ -313,10 +313,11 @@ method and the ordering that produced it, so one handed to a different method is
 ## 5. Methods
 
 ### 5.1 `system.hello`
-See §2. REQ-SEC-003.
+**Params:** `{token, client_kind, client_version, protocol_version}`. See §2 for what each one means
+and for the order they are validated in. REQ-SEC-003.
 
 ### 5.2 `system.status`
-Returns `{daemon_version, uptime_ms, sessions_alive, threads_running, providers:[{id, health}], mcp:[{name, state}]}`.
+**Params:** `{}`. Returns `{daemon_version, uptime_ms, sessions_alive, threads_running, providers:[{id, health}], mcp:[{name, state}]}`.
 Used by `umb status` (REQ-CLI-003).
 
 ### 5.3 `session.snapshot` — REQ-API-001, REQ-API-002
@@ -352,15 +353,21 @@ Bootstrap without gaps, for clients that keep their own cache:
 `create` params: `{cwd, label?, tab_label?, focus?: true}`.
 `create` result: `{workspace: Workspace, tab: Tab, root_pane: Pane}` — the three objects in one response.
 `close` params: `{workspace_id, close_panes?: true}`; it fails with `CONFLICT` if a thread of that workspace is `running`.
+`list` params: `{}`. `focus` params: `{workspace_id}`. `rename` params: `{workspace_id, label}`.
 
 ### 5.5 `tab.create` / `list` / `focus` / `rename` / `close` — REQ-WS-001
 `create` params: `{workspace_id, label?, focus?: true}`. `create` result: `{tab: Tab, root_pane: Pane}`.
+`list` params: `{workspace_id}`. `focus` params: `{tab_id}`. `rename` params: `{tab_id, label}`.
+`close` params: `{tab_id}`.
 
 ### 5.6 `pane.split` / `list` / `get` / `focus` / `rename` / `move` / `close` — REQ-WS-003, REQ-WS-007
 `split` params: `{pane_id, direction:"right"|"down", ratio?: 0.1-0.9 (default 0.5), cwd?, command?: string[], env?: object, focus?: true}`.
 `split` result: `{pane: Pane, layout: Layout}`.
 
 `move` params: `{pane_id, destination:{type:"tab"|"new_tab"|"new_workspace", …}}`. The pane keeps its terminal and its process; it receives a new identifier and the previous one remains a resolvable alias while that terminal lives (REQ-WS-007). The daemon emits `pane.moved`, never a `pane.closed` / `pane.created` pair.
+
+`list` params: `{tab_id}`. `get` params: `{pane_id}`. `focus` params: `{pane_id}`.
+`rename` params: `{pane_id, label}`. `close` params: `{pane_id}`.
 
 `close` terminates the pane's session following the `session.close` rules.
 
@@ -386,6 +393,7 @@ Bootstrap without gaps, for clients that keep their own cache:
 **Errors:** `VALIDATION_ERROR` (invalid shell/cwd), `INTERNAL_ERROR` (`forkpty` failure).
 
 ### 5.10 `session.list` → `{items: Session[]}`
+**Params:** `{}`.
 
 ### 5.11 `session.subscribe` — REQ-TERM-003, REQ-TERM-004
 **Params:** `{session_id, scrollback_lines?: 0-10000 (default 10000)}`.
@@ -397,6 +405,8 @@ After the response, the daemon emits `session.output` starting at `seq + 1`.
 **Errors:** `NOT_FOUND`.
 
 ### 5.12 `session.unsubscribe` → `{}`
+**Params:** `{session_id}`. Unsubscribing from a session with no subscription is not an error: the
+caller wanted none and has none.
 
 ### 5.13 `session.input` — REQ-TERM-008
 **Params:** `{session_id, data_b64}` (at most 64 KiB per message).
@@ -407,14 +417,15 @@ After the response, the daemon emits `session.output` starting at `seq + 1`.
 **Params:** `{session_id, cols, rows}`. Notifies `session.resized`.
 
 ### 5.15 `session.close` → `{}`
+**Params:** `{session_id}`.
 Sends SIGHUP; after 3 s, SIGKILL.
 
 ### 5.16 `block.list`
-**Params:** `{session_id?, thread_id?, origin?, state?, exit_code?, limit, cursor}`.
+**Params:** `{session_id?, thread_id?, origin?, state?, exit_code?, limit?, cursor?}`.
 **Result:** page of `Block`.
 
 ### 5.17 `block.get` — REQ-CLI-002, REQ-BLK-007
-**Params:** `{block_id | "last", session_id?, include:"none"|"plain"|"raw"}`.
+**Params:** `{block_id | "last", session_id?, include?:"none"|"plain"|"raw"}`.
 **Result:** `Block` plus `output_plain` or `output_raw_b64`.
 
 The reserved id `"last"` means the most recent **closed** block: `finished` or `abandoned`,
@@ -425,7 +436,7 @@ interchangeable, so a client that means "this terminal" has to say which session
 when there is no closed block to return.
 
 ### 5.18 `block.search` — REQ-BLK-006
-**Params:** `{query (FTS5, 1-256 chars), session_id?, limit, cursor}`.
+**Params:** `{query (FTS5, 1-256 chars), session_id?, limit?, cursor?}`.
 **Result:** page of `{block: Block, snippet}`.
 
 Hits come back in **descending insertion order**, not by `started_at` as §3 otherwise
@@ -573,11 +584,24 @@ It is a read-only evaluation: it neither runs the tool nor creates approvals.
 the CLI as `umb api schema --json`, which needs no running daemon: the document describes the build,
 so a client can read it before it has anywhere to connect.
 
-The document carries `protocol_version`; `methods`, each with its name, the `client_kinds` of §2
-allowed to call it, whether this build `served` it (§9), and the object schemas of its parameters
-and result; `notifications`, the §6 table with each payload's schema; and `errors`, the whole §3
-code table rather than the subset this build can currently raise — a client switching on
-`domain_code` needs the complete set to be exhaustive.
+Every `params` and `result` in it, and every notification payload, is a **JSON Schema (draft
+2020-12)** and declares the dialect in its own `$schema`, so a client or a test can take the one it
+cares about and hand it straight to a validator — which is what REQ-API-004 asks for. Nullability is
+written as JSON Schema spells it, `"type": ["string", "null"]`, and not with OpenAPI's `nullable`
+keyword, which a JSON Schema validator ignores: a member ignored that way would be rejected on every
+fresh daemon, since §5.3's `focused` is null until something is focused. A member whose shape is not
+yet constrained — `threads` until F1 — carries no `type` at all, which is the schema `{}`. CI
+validates all of them against the metaschema, because a schema nothing validates is a description
+with a misleading name.
+
+The document itself is an index, not a schema: it carries `protocol_version` and the four lists
+below.
+
+`methods`, each with its name, the `client_kinds` of §2 allowed to call it — written out in full,
+never an empty list standing for "everyone" — whether this build `served` it (§9), and the schemas
+of its parameters and result; `notifications`, the §6 table with each payload's schema; and
+`errors`, the whole §3 code table rather than the subset this build can currently raise, because a
+client switching on `domain_code` needs the complete set to be exhaustive.
 
 THE SYSTEM SHALL generate the document from the types it serves with rather than from a written
 copy, and CI SHALL compare it against this specification. The comparison is blocking for method
@@ -712,22 +736,31 @@ stateDiagram-v2
 - `protocol_version` is an integer. Additive changes (optional fields, new methods) do not bump it.
 - Removing a field or changing its meaning bumps the major version. The daemon supports N and N-1
   for 6 months.
-- **Optional capabilities:** `system.hello` returns the namespaces the daemon serves at that
-  moment, derived from its method table (§2). Today that is `sessions`, `blocks`, `threads`, `mcp`,
-  `models`, `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`,
-  `wait_admin` and `rules`; `worktrees`, `graphics`, `plugins` and `federation` are reserved for
-  later. The §2 example shows the full list and is illustrative: what a given daemon returns is
-  whatever its method table holds.
+- **Optional capabilities:** `system.hello` returns the namespaces the daemon **serves** at that
+  moment (§2). The protocol's namespaces are `sessions`, `blocks`, `threads`, `mcp`, `models`,
+  `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`, `wait_admin`
+  and `rules`; `worktrees`, `graphics`, `plugins` and `federation` are reserved for later. The §2
+  example shows the full list and is illustrative: what a given daemon returns is whatever it can
+  actually do, which is narrower than what its method table holds whenever a module is absent.
 - **Which error a missing method gets.** A name this build does not know receives
   `METHOD_NOT_FOUND`; a name it knows whose capability is switched off in this build receives
   `NOT_IMPLEMENTED`. Both keep the connection open and disable only that action, so neither client
   nor daemon need to be on the same build (REQ-API-003). `TestUnknownMethodKeepsConnection_REQ_API_003`
   and `TestUnservedMethodIsNotImplemented_REQ_API_003` cover the two cases.
-- **The mechanism the second case needs.** THE SYSTEM SHALL keep every method of the protocol in its
-  table whether or not this build serves it. Dropping the unserved ones would make their names
-  unknown, and the only honest answer to an unknown name is `METHOD_NOT_FOUND` — which would leave
-  the two codes indistinguishable and the client unable to tell an old daemon from a partial one.
-  `api.schema` reports `served` per method for a client that wants the whole picture at once.
+- **The mechanism the second case needs.** THE SYSTEM SHALL keep in its method table every method
+  **it implements**, whether or not the module behind it is wired into this build. Dropping the
+  unwired ones would make their names unknown, and the only honest answer to an unknown name is
+  `METHOD_NOT_FOUND` — which would leave the two codes indistinguishable and the client unable to
+  tell an old daemon from a partial one.
+- **A method a build does not implement at all is a different case, and `METHOD_NOT_FOUND` is right
+  for it.** A daemon built before a phase landed genuinely does not know `thread.send`, which is
+  exactly what REQ-API-003's first sentence describes: "a method name that this daemon version does
+  not know". `NOT_IMPLEMENTED` is narrower — it says "this version has the method and this build was
+  assembled without what it needs" — and claiming it for a method that was never written would tell
+  a client to retry against a differently-configured daemon of the same version, which cannot help.
+  So the two codes divide by *version* and by *build*, not by whether a name appears in some
+  document. `api.schema` reports `served` per method for a client that wants the whole picture at
+  once, and lists only what this version implements.
 - **Published schema:** the binary can print the JSON Schema of the protocol (`umb api schema --json`).
   CI checks it against this document, so the spec and the implementation cannot drift silently
   (REQ-API-004).
@@ -757,3 +790,4 @@ printf '%s\n' \
 | 1.8 | 2026-09-20 | delta `2026-09-cli-surface`: §5.17 says what the reserved id `"last"` means with and without a `session_id` |
 | 1.9 | 2026-09-20 | delta `2026-09-notification-sequencing`: §1 shows the notification envelope with `seq`; §6 states its scope, that it counts events rather than notifications, that it is ordered in assignment and not in arrival, and names the two other numbers called `seq`; §5.3 types `focused` nullable throughout, says which notifications the discard rule covers, pins the read order against DD-007, and replaces the `events.subscribe` bootstrap step with a second connection |
 | 1.10 | 2026-09-20 | delta `2026-09-capability-degradation`: §2 derives `capabilities` from the methods a build *serves* and excludes `system` and `api`; §9 states that an unserved method keeps its name, which is what makes `NOT_IMPLEMENTED` reachable; §5.37 describes `api.schema`'s document and the blocking CI comparison |
+| 1.11 | 2026-09-20 | delta `2026-09-schema-and-degradation-corrections`: §9 scopes the registration rule to what a build *implements* and says when `METHOD_NOT_FOUND` is the right answer; §9's capability bullet matches §2; §2's `cli` row grants `api.*`; `limit`, `cursor` and `include` become optional in §5.12, §5.13 and §5.18; §5.37 states the JSON Schema dialect, the nullability spelling and the full `client_kinds` list; seventeen methods gain the request shapes they never had |

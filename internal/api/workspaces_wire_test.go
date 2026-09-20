@@ -228,6 +228,7 @@ func testServerWithTree(t *testing.T, tree wsports.Workspaces) *Server {
 			t.Error("Serve did not return after Close")
 		}
 	})
+	installResultObserver(t, s)
 	return s
 }
 

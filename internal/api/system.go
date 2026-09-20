@@ -49,7 +49,7 @@ func (s *Server) registry() map[string]method {
 		// exists mostly to read it.
 		"block.list":   {handle: handleBlockList, available: hasBlocks, params: listBlocksParams{}, result: blockPage{}},
 		"block.get":    {handle: handleBlockGet, available: hasBlocks, params: getBlockParams{}, result: blockResult{}},
-		"block.search": {handle: handleBlockSearch, available: hasBlocks, params: searchBlocksParams{}, result: blockPage{}},
+		"block.search": {handle: handleBlockSearch, available: hasBlocks, params: searchBlocksParams{}, result: searchPage{}},
 	}
 
 	for name, m := range workspaceMethods() {

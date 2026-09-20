@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The pr
 ## [Unreleased]
 
 ### Fixed
+- `block.search` published the response shape of `block.list`: the schema described a reply the daemon never sends. Nothing connected a method's declared result to the type its handler returns, so the dispatcher now checks it under test and every wire test in the package enforces it.
+- `block.list` and `block.search` published `limit` and `cursor` as required, and `block.get` published `include` — all three have defaults the daemon honours, and `umbral-tui` makes one of those calls. The published schema declared invalid a request the daemon serves.
+- The published document was not valid JSON Schema: it carried no `$schema`, expressed nullability with OpenAPI's `nullable` keyword, which a JSON Schema validator ignores, and emitted an empty type name. Every embedded schema is now draft 2020-12 and CI validates all 88 of them against the metaschema.
 - `workspace.close` accepted a `label` and `tab.create` a `tab_id` that neither method reads: seven methods shared one parameter struct with their whole namespace. Each has its own now, so the published schema describes what the method actually takes.
 - `block.started` and `block.closed` were rendered by a second copy of the `Block` conversion, agreeing with the one every other response uses only by inspection. There is one copy.
 - A burst of terminal output longer than one batch lost everything after the first 32 KiB. The fan-out split a chunk at the batch boundary and reported the same sequence number for both halves, and a client drops anything not greater than the sequence it last applied — so the remainder arrived looking like a duplicate and was discarded, leaving a hole in the screen with nothing reporting a loss. A batch now stops on a chunk boundary, and the numbers it reports strictly increase.

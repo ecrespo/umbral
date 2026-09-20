@@ -47,6 +47,7 @@ func testServer(t *testing.T, status StatusFunc) *Server {
 			t.Error("Serve did not return after Close")
 		}
 	})
+	installResultObserver(t, s)
 	return s
 }
 

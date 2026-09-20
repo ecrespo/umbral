@@ -213,9 +213,15 @@ func TestSchemaPublishesTheNonBusNotifications_REQ_API_004(t *testing.T) {
 func TestSchemaMatchesSpec_REQ_API_004(t *testing.T) {
 	t.Parallel()
 
+	// A skip, not a failure: `task test` must stay usable on a machine without Python. The
+	// comparison is not lost by it — CI's `Specs` job runs `tools/api_schema_check.py`
+	// directly and that job has Python — but on such a machine this package is green with
+	// REQ-API-004's comparison never having run, which is worth knowing rather than
+	// assuming.
 	python, err := exec.LookPath("python3")
 	if err != nil {
-		t.Skipf("python3 is not installed: %v", err)
+		t.Skipf("python3 is not installed, so the comparison with the specification did "+
+			"not run here; CI's Specs job runs it: %v", err)
 	}
 
 	doc := Schema(Config{})
@@ -296,6 +302,121 @@ func TestSchemaReportsWhatThisBuildServes_REQ_API_003(t *testing.T) {
 	for _, m := range wired.Methods {
 		if m.Name == "workspace.create" && !m.Served {
 			t.Error("workspace.create reports itself unserved on a daemon with a tree")
+		}
+	}
+}
+
+// TestDeclaredResultsMatchTheHandlers_REQ_API_004 drives one call per result shape and
+// compares what came back with what the registry declares.
+//
+// `block.search` is the reason this exists: it declared `blockPage` — the shape of
+// `block.list` — and returned `searchPage`, which is what §5.18 specifies. The published
+// document described a response the daemon never sends, and nothing could see it, because
+// the wire tests assert on JSON and the schema tests only assert the declaration is not nil.
+func TestDeclaredResultsMatchTheHandlers_REQ_API_004(t *testing.T) {
+	t.Parallel()
+
+	sessions := newFakeSessions()
+	s := testServerWithSessions(t, sessions)
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+
+	// One call per distinct result shape the sessions surface can reach.
+	for id, call := range map[int]struct {
+		method string
+		params map[string]any
+	}{
+		2: {"system.status", map[string]any{}},
+		3: {"api.schema", map[string]any{}},
+		4: {"session.list", map[string]any{}},
+		5: {"session.subscribe", map[string]any{"session_id": fakeSessionID}},
+		6: {"session.resize", map[string]any{"session_id": fakeSessionID, "cols": 80, "rows": 24}},
+		7: {"session.unsubscribe", map[string]any{"session_id": fakeSessionID}},
+	} {
+		if resp := c.call(id, call.method, call.params); resp.Error != nil {
+			t.Fatalf("%s: %+v", call.method, resp.Error)
+		}
+	}
+}
+
+// TestSchemaEmbedsValidJSONSchema_REQ_API_004 pins what REQ-API-004 asks for by name: a
+// document a validator accepts.
+//
+// The generator failed all three of these before the review. `nullable` is OpenAPI 3.0, which
+// a JSON Schema validator ignores — so `focused.workspace_id` would have been rejected on
+// every fresh daemon, since §5.3 makes it null until something is focused. `{"type": ""}`
+// names a type that does not exist. And without `$schema` a validator has no dialect to read
+// the document in. `tools/api_schema_check.py` runs the real metaschema; this test states the
+// three properties in the package that produces them, so a regression is named rather than
+// reported as "not valid JSON Schema" from a Python traceback.
+func TestSchemaEmbedsValidJSONSchema_REQ_API_004(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := json.Marshal(Schema(Config{}))
+	if err != nil {
+		t.Fatalf("marshal the schema: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(encoded, &raw); err != nil {
+		t.Fatalf("unmarshal the schema: %v", err)
+	}
+
+	if strings.Contains(string(encoded), `"nullable"`) {
+		t.Error("the document uses the OpenAPI `nullable` keyword, which a JSON Schema " +
+			"validator ignores; nullability is a type union")
+	}
+	if strings.Contains(string(encoded), `"type":""`) {
+		t.Error(`the document emits "type":"", which names no JSON Schema type; an ` +
+			"unconstrained member carries no type at all")
+	}
+
+	// Every top-level schema declares its dialect, so a client can validate against one
+	// without being told which draft the document was written in.
+	var objects int
+	for _, m := range Schema(Config{}).Methods {
+		for _, half := range []*SchemaObject{m.Params, m.Result} {
+			objects++
+			if half.Schema == "" {
+				t.Errorf("%s: an embedded schema declares no $schema", m.Name)
+			}
+		}
+	}
+	if objects == 0 {
+		t.Fatal("the document embeds no schemas at all")
+	}
+
+	// The nullable member §5.3 is built around, spelled the way JSON Schema spells it.
+	for _, m := range Schema(Config{}).Methods {
+		if m.Name != "session.snapshot" {
+			continue
+		}
+		focused := m.Result.Properties["focused"]
+		workspaceID := focused.Properties["workspace_id"]
+		if !slices.Contains(workspaceID.Type, "null") || !slices.Contains(workspaceID.Type, "string") {
+			t.Errorf("session.snapshot's focused.workspace_id has type %v, want a union of "+
+				"string and null (§5.3)", workspaceID.Type)
+		}
+	}
+}
+
+// installResultObserver makes every call through this server check that the value its
+// handler returned is the type `api.schema` publishes for that method (REQ-API-004).
+//
+// It lives in one place and every test helper calls it, because copying it into four helpers
+// is four chances to leave one out — and leaving one out is exactly how `block.search`
+// declared the wrong result shape without a single test noticing.
+func installResultObserver(t *testing.T, s *Server) {
+	t.Helper()
+	s.observeResult = func(method string, declared, actual any) {
+		if declared == nil || actual == nil {
+			return
+		}
+		if reflect.TypeOf(declared) != reflect.TypeOf(actual) {
+			t.Errorf("api.schema publishes %s as the result of %q and the handler returned "+
+				"%s: a client validating the response against the published schema would "+
+				"reject a reply the daemon really sends", typeName(declared), method, typeName(actual))
 		}
 	}
 }

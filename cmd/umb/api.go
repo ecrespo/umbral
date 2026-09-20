@@ -8,6 +8,13 @@ import (
 
 // cmdAPI serves `umb api schema` (REQ-API-004, API Spec §5.37).
 //
+// `cmd/umb` imports `internal/api`, which `internal/client` may not. That is the boundary
+// rules working rather than being routed around: Tech Design §5.2 keeps the *client library*
+// off the server's package so the two sides of the protocol cannot quietly share a type and
+// drift together, and it lets `cmd/*` wire anything because a composition root is the one
+// place allowed to. This command wires nothing into the client path — it reads a document and
+// prints it — so the rule it would have broken is not one it comes near.
+//
 // It prints the protocol compiled into this binary and never opens the socket. That is not
 // a shortcut: the schema describes what this build speaks, so asking a daemon for it would
 // answer a different question — and a client that cannot find out what the protocol is

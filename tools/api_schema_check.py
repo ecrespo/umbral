@@ -26,10 +26,6 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SPEC = ROOT / "specs" / "api" / "umbral-daemon-api-v1.md"
 
-# Methods the specification documents but no build serves yet. Being in the spec and not in
-# the code is not drift — it is the backlog — so it is reported and does not fail.
-NOT_BLOCKING_MISSING_FROM_CODE = True
-
 
 def load_schema(argv: list[str]) -> dict:
     if len(argv) > 1:
@@ -167,14 +163,15 @@ def parse_spec() -> tuple[dict[str, dict], dict[str, int], set[str]]:
         # ``create` params: `{...}``. §5.4, §5.5 and §5.6 are all written this way, and a
         # parser that only knew form one compared none of the seventeen tree methods.
         for line in body:
-            m2 = re.match(r"^`(\w+)`\s+params:\s*`(\{.*?\})`", line.strip())
-            if not m2:
-                continue
-            verb, shape = m2.group(1), m2.group(2)
-            target = verb if "." in verb else f"{namespace}.{verb}"
-            if target in methods:
-                found = parse_inline_params(shape)
-                methods[target] = {"required": found[0], "optional": found[1]}
+            # Several per line: §5.4 writes "`list` params: `{}`. `focus` params:
+            # `{workspace_id}`." on one. A regex anchored at the start of the line read the
+            # first and silently left the rest uncompared.
+            for m2 in re.finditer(r"`(\w+)`\s+params:\s*`(\{.*?\})`", line):
+                verb, shape = m2.group(1), m2.group(2)
+                target = verb if "." in verb else f"{namespace}.{verb}"
+                if target in methods:
+                    found = parse_inline_params(shape)
+                    methods[target] = {"required": found[0], "optional": found[1]}
         i = j
 
     # §3's error table.
@@ -208,12 +205,51 @@ def parse_spec() -> tuple[dict[str, dict], dict[str, int], set[str]]:
     return methods, errors, notifications
 
 
+def validate_embedded_schemas(schema: dict) -> list[str]:
+    """Check every params/result against the JSON Schema metaschema.
+
+    REQ-API-004 asks for a document clients and tests can *validate against*, so a document
+    a validator rejects does not meet it however well it reads. The generator emitted
+    `{"type": ""}` and OpenAPI's `nullable` keyword until this check was added.
+    """
+    try:
+        from jsonschema import Draft202012Validator
+    except ImportError:
+        print(
+            "  info: the jsonschema package is not installed; the embedded schemas were "
+            "not validated against the metaschema"
+        )
+        return []
+
+    problems = []
+    for method in schema["methods"]:
+        for half in ("params", "result"):
+            try:
+                Draft202012Validator.check_schema(method[half])
+            except Exception as err:
+                problems.append(
+                    f"`{method['name']}`'s {half} is not valid JSON Schema 2020-12: "
+                    f"{str(err).splitlines()[0]}"
+                )
+    for notification in schema["notifications"]:
+        try:
+            Draft202012Validator.check_schema(notification["params"])
+        except Exception as err:
+            problems.append(
+                f"notification `{notification['method']}`'s params is not valid JSON "
+                f"Schema 2020-12: {str(err).splitlines()[0]}"
+            )
+    return problems
+
+
 def main() -> int:
     schema = load_schema(sys.argv)
     spec_methods, spec_errors, spec_notifications = parse_spec()
 
     blocking: list[str] = []
     info: list[str] = []
+
+    blocking.extend(validate_embedded_schemas(schema))
 
     # --- methods -----------------------------------------------------------------
     code_methods = {m["name"]: m for m in schema["methods"]}
@@ -234,10 +270,15 @@ def main() -> int:
         if spec_entry is None:
             continue
         if spec_entry["required"] is None:
-            # Not drift, but not checked either. Saying so is the difference between "these
-            # agree" and "nobody looked": §5.1 defers the handshake's parameters to §2, and
-            # several methods take none worth a line.
-            info.append(f"`{name}`: §5 documents no parameters; not compared")
+            # Blocking, not informational. A served method whose §5 section documents no
+            # parameters is not "agreed" — it is unexamined, and an unexamined method is how
+            # a gate turns into a green tick over nothing. Seventeen of thirty-three were in
+            # this state when the check was written, which is why it is now an error: a
+            # method takes no parameters only when §5 says `{}`, and saying so is one line.
+            blocking.append(
+                f"`{name}`: §5 documents no parameters for it, so its request shape is not "
+                f"compared with anything. Write `**Params:** `{{}}`` if it takes none"
+            )
             continue
         code_required = set(entry["params"].get("required") or [])
         spec_required = spec_entry["required"]

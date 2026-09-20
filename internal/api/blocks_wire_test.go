@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -113,6 +114,7 @@ func testServerWithBlocks(t *testing.T, blocks sessports.Blocks) *Server {
 			t.Error("Serve did not return after Close")
 		}
 	})
+	installResultObserver(t, s)
 	return s
 }
 
@@ -389,5 +391,55 @@ func TestBlockMethodsAreAdvertised(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("capabilities is %v, want it to advertise blocks", capabilities)
+	}
+}
+
+// TestBlockListAcceptsNoCursor_REQ_BLK_006 is the request `umbral-tui` actually sends.
+//
+// §3 gives `limit` and `cursor` defaults and the handler honours them, but `api.schema`
+// published both as required — so the document declared invalid a call the daemon serves,
+// and the daemon's own TUI makes it. The specification's shorthand omitted the `?` in the
+// same place, so the comparison agreed with itself and neither side caught it: two
+// derivations of one contract cannot find a mistake they both make.
+func TestBlockListAcceptsNoCursor_REQ_BLK_006(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeBlocks{blocks: []sessdomain.Block{sampleBlock()}}
+	s := testServerWithBlocks(t, fake)
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientCLI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+
+	// Exactly what internal/tui/adapters/daemon sends: a session and a limit, no cursor.
+	if resp := c.call(2, "block.list", map[string]any{"session_id": fakeSessionID, "limit": 10}); resp.Error != nil {
+		t.Errorf("block.list without a cursor: %+v", resp.Error)
+	}
+	// And with nothing at all, which §5's `{}` params and the handler both allow.
+	if resp := c.call(3, "block.list", map[string]any{}); resp.Error != nil {
+		t.Errorf("block.list with no parameters: %+v", resp.Error)
+	}
+	// block.get takes a block_id and nothing else is required.
+	if resp := c.call(4, "block.get", map[string]any{"block_id": "last"}); resp.Error != nil {
+		t.Errorf("block.get without an include: %+v", resp.Error)
+	}
+
+	// The published schema has to agree, which is the half that was wrong.
+	for _, m := range Schema(Config{}).Methods {
+		switch m.Name {
+		case "block.list", "block.search":
+			for _, name := range []string{"limit", "cursor"} {
+				if slices.Contains(m.Params.Required, name) {
+					t.Errorf("%s publishes %q as required; §3 gives it a default", m.Name, name)
+				}
+			}
+		case "block.get":
+			if slices.Contains(m.Params.Required, "include") {
+				t.Errorf("block.get publishes include as required; an absent one means \"none\"")
+			}
+			if !slices.Contains(m.Params.Required, "block_id") {
+				t.Error("block.get does not publish block_id as required, and the handler refuses without it")
+			}
+		}
 	}
 }

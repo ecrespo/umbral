@@ -152,6 +152,7 @@ func testServerWithSessions(t *testing.T, sessions sessports.Sessions) *Server {
 			t.Error("Serve did not return after Close")
 		}
 	})
+	installResultObserver(t, s)
 	return s
 }
 

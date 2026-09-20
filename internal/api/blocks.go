@@ -60,8 +60,11 @@ type listBlocksParams struct {
 	Origin    string `json:"origin" api:"optional"`
 	State     string `json:"state" api:"optional"`
 	ExitCode  *int   `json:"exit_code"`
-	Limit     int    `json:"limit"`
-	Cursor    string `json:"cursor"`
+	// §3 gives both a default, and the handlers honour it: an absent limit becomes 50
+	// and an absent cursor is the first page. Publishing them as required would declare
+	// invalid a request this daemon serves — `umbral-tui` sends exactly one of those.
+	Limit  int    `json:"limit" api:"optional"`
+	Cursor string `json:"cursor" api:"optional"`
 }
 
 // blockPage is the paged response of API Spec §3. next_cursor is null on the last page, not
@@ -108,7 +111,9 @@ func handleBlockList(ctx context.Context, c *conn, raw json.RawMessage) (any, er
 type getBlockParams struct {
 	BlockID   string `json:"block_id"`
 	SessionID string `json:"session_id" api:"optional"`
-	Include   string `json:"include"`
+	// An absent include returns the block with no output section, which is what §5.13
+	// means by "none".
+	Include string `json:"include" api:"optional"`
 }
 
 // blockResult is `block.get`'s response: the block, plus whichever output was asked for.
@@ -164,8 +169,8 @@ func handleBlockGet(ctx context.Context, c *conn, raw json.RawMessage) (any, err
 type searchBlocksParams struct {
 	Query     string `json:"query"`
 	SessionID string `json:"session_id" api:"optional"`
-	Limit     int    `json:"limit"`
-	Cursor    string `json:"cursor"`
+	Limit     int    `json:"limit" api:"optional"`
+	Cursor    string `json:"cursor" api:"optional"`
 }
 
 type searchHit struct {

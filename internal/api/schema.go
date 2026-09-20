@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -57,8 +58,15 @@ type SchemaError struct {
 // SchemaObject is a JSON Schema object: the subset the protocol uses. Nothing here needs
 // `oneOf` or `$ref`, and a generator that emitted them would be describing a language
 // rather than this contract.
+//
+// Each one carries `$schema`, so a client can hand a single method's `params` or `result`
+// straight to a validator. That is what REQ-API-004 asks for — "so that clients and tests
+// can validate against it" — and `tools/api_schema_check.py` checks every one of them
+// against the 2020-12 metaschema, because a schema nothing validates is a description with
+// a misleading name.
 type SchemaObject struct {
-	Type       string                `json:"type"`
+	Schema     string                `json:"$schema,omitempty"`
+	Type       jsonType              `json:"type,omitempty"`
 	Properties map[string]SchemaProp `json:"properties,omitempty"`
 	Required   []string              `json:"required"`
 	Items      *SchemaObject         `json:"items,omitempty"`
@@ -66,16 +74,56 @@ type SchemaObject struct {
 
 // SchemaProp is one member of an object.
 type SchemaProp struct {
-	Type string `json:"type"`
+	Type jsonType `json:"type,omitempty"`
 	// Items describes the element of an array member.
 	Items *SchemaObject `json:"items,omitempty"`
 	// Properties describes a nested object member.
 	Properties map[string]SchemaProp `json:"properties,omitempty"`
 	Required   []string              `json:"required,omitempty"`
-	// Nullable marks a member the daemon may send as null. §5.3's `focused` is the
-	// reason this exists: a member that is present and null is not an absent member.
-	Nullable bool `json:"nullable,omitempty"`
 }
+
+// jsonType is a JSON Schema `type`: one name, or several when a member may also be null.
+//
+// Nullability is expressed here rather than as a `nullable` flag because `nullable` is an
+// OpenAPI 3.0 keyword that JSON Schema ignores — a validator reading it would accept null
+// nowhere and reject `focused.workspace_id` on every fresh daemon (§5.3). An empty jsonType
+// is omitted, which is the schema `{}`: "anything", the honest description of §5.3's
+// `threads` until F1 gives it a shape.
+type jsonType []string
+
+// nullable returns the type with "null" admitted.
+func (t jsonType) nullable() jsonType {
+	if len(t) == 0 {
+		// `{}` already admits null. Writing ["null"] would narrow it to only null.
+		return t
+	}
+	if slices.Contains(t, jsonNull) {
+		return t
+	}
+	return append(slices.Clone(t), jsonNull)
+}
+
+// MarshalJSON writes one name as a string and several as an array, which is how JSON Schema
+// spells both.
+func (t jsonType) MarshalJSON() ([]byte, error) {
+	if len(t) == 1 {
+		return json.Marshal(t[0])
+	}
+	return json.Marshal([]string(t))
+}
+
+// The JSON Schema type names this generator emits.
+const (
+	jsonNull   = "null"
+	jsonString = "string"
+	jsonBool   = "boolean"
+	jsonInt    = "integer"
+	jsonNumber = "number"
+	jsonArray  = "array"
+)
+
+// metaschema is the dialect every emitted schema declares.
+const metaschema = "https://json-schema.org/draft/2020-12/schema"
 
 // optionalTag marks a parameter the caller may omit.
 //
@@ -183,7 +231,16 @@ func schemaNotifications() []SchemaNotification {
 	return out
 }
 
+// kindNames writes out the §2 allowlist.
+//
+// An empty `kinds` in the registry means "every kind may call it", and publishing that as
+// `[]` would tell a client filtering on the list that `block.list` is callable by nobody —
+// the exact inversion of what it means. The list is expanded instead, so the published
+// document says what it appears to say without a sentinel to look up.
 func kindNames(kinds []ClientKind) []string {
+	if len(kinds) == 0 {
+		kinds = allClientKinds
+	}
 	out := make([]string, 0, len(kinds))
 	for _, k := range kinds {
 		out = append(out, string(k))
@@ -197,7 +254,7 @@ func kindNames(kinds []ClientKind) []string {
 // A nil shape means the method takes or returns `{}` — §5 types every params and every
 // result as an object, so the schema says so rather than emitting null.
 func objectSchema(shape any) *SchemaObject {
-	obj := &SchemaObject{Type: typeObject, Required: []string{}}
+	obj := &SchemaObject{Schema: metaschema, Type: jsonType{typeObject}, Required: []string{}}
 	if shape == nil {
 		return obj
 	}
@@ -257,9 +314,7 @@ func structProps(t reflect.Type, open map[reflect.Type]bool) (map[string]SchemaP
 			continue
 		}
 
-		prop, nullable := propSchema(field.Type, open)
-		prop.Nullable = nullable
-		props[name] = prop
+		props[name] = propSchema(field.Type, open)
 
 		if !optional(field, opts) {
 			required = append(required, name)
@@ -302,47 +357,59 @@ func optional(field reflect.StructField, jsonOpts string) bool {
 	return strings.Contains(jsonOpts, "omitempty")
 }
 
-// propSchema maps a Go type onto a JSON type. The second return says whether the daemon may
-// send the member as null.
-func propSchema(t reflect.Type, open map[reflect.Type]bool) (SchemaProp, bool) {
+// propSchema maps a Go type onto a JSON Schema type.
+//
+// A pointer, a slice and a map are all written as nullable, because that is what Go's
+// encoder does with a nil one — §5.3's `focused` members and §4's `thread_id` are the cases
+// a client actually meets.
+func propSchema(t reflect.Type, open map[reflect.Type]bool) SchemaProp {
 	nullable := false
 	for t.Kind() == reflect.Pointer {
-		// A pointer member is one the daemon may write as null — §5.3's `focused` members
-		// and §4's `thread_id` are the cases that matter.
 		nullable = true
 		t = t.Elem()
 	}
 
+	prop := SchemaProp{}
 	switch t.Kind() {
 	case reflect.String:
-		return SchemaProp{Type: "string"}, nullable
+		prop.Type = jsonType{jsonString}
 	case reflect.Bool:
-		return SchemaProp{Type: "boolean"}, nullable
+		prop.Type = jsonType{jsonBool}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		// Art. 6: every timestamp is epoch ms and every cost micro-USD, both integers.
 		// Nothing on this wire is a float.
-		return SchemaProp{Type: "integer"}, nullable
+		prop.Type = jsonType{jsonInt}
 	case reflect.Float32, reflect.Float64:
-		return SchemaProp{Type: "number"}, nullable
+		prop.Type = jsonType{jsonNumber}
 	case reflect.Slice, reflect.Array:
 		if t.Elem().Kind() == reflect.Uint8 {
 			// []byte marshals as a base64 string, never as an array of numbers.
-			return SchemaProp{Type: "string"}, nullable
+			prop.Type = jsonType{jsonString}
+			break
 		}
-		elem := elementSchema(t.Elem(), open)
-		return SchemaProp{Type: "array", Items: elem}, true
+		prop.Type = jsonType{jsonArray}
+		prop.Items = elementSchema(t.Elem(), open)
+		nullable = true
 	case reflect.Map:
-		return SchemaProp{Type: typeObject}, nullable
+		prop.Type = jsonType{typeObject}
+		nullable = true
 	case reflect.Struct:
 		props, required := structProps(t, open)
-		return SchemaProp{Type: typeObject, Properties: props, Required: required}, nullable
+		prop.Type = jsonType{typeObject}
+		prop.Properties = props
+		prop.Required = required
 	case reflect.Interface:
-		// `threads: []any` until F1. The member's type is deliberately unconstrained.
-		return SchemaProp{}, nullable
+		// `threads: []any` until F1. Left with no `type` at all, which is the schema `{}`:
+		// anything. Writing `"type": ""` instead would name a type that does not exist and
+		// fail the metaschema, which is what this generator used to do.
 	default:
-		return SchemaProp{}, nullable
 	}
+
+	if nullable {
+		prop.Type = prop.Type.nullable()
+	}
+	return prop
 }
 
 func elementSchema(t reflect.Type, open map[reflect.Type]bool) *SchemaObject {
@@ -350,11 +417,10 @@ func elementSchema(t reflect.Type, open map[reflect.Type]bool) *SchemaObject {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {
-		prop, _ := propSchema(t, open)
-		return &SchemaObject{Type: prop.Type, Required: []string{}}
+		return &SchemaObject{Type: propSchema(t, open).Type, Required: []string{}}
 	}
 	props, required := structProps(t, open)
-	return &SchemaObject{Type: typeObject, Properties: props, Required: required}
+	return &SchemaObject{Type: jsonType{typeObject}, Properties: props, Required: required}
 }
 
 // schemaResult is `api.schema`'s response (§5.37).

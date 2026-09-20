@@ -17,8 +17,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | NFR benchmarks, the whole picture | `task bench` |
 | Only the benchmarks that gate, plus their selftest | `task perf` |
 
-- **`task ci` is the gate, in the pipeline's own order:** specs, icons, lint, arch, arch:selftest,
-  test, perf, build. Run it before every commit; a green `go test` alone is not the gate.
+- **`task ci` is the gate, in the pipeline's own order:** specs, schema, icons, lint, arch,
+  arch:selftest, test, perf, build. Run it before every commit; a green `go test` alone is not
+  the gate. `task schema` is REQ-API-004's: it generates the protocol from the Go types and
+  compares it with `specs/api/umbral-daemon-api-v1.md`, so a method or an error code that
+  exists on one side and not the other fails the build.
 - Test names carry their requirement id, so `-run REQ_XXX_NNN` is the fastest way to check
   one criterion. That naming is Art. 2, not a convention.
 - `task tools:install` installs gofumpt, govulncheck, golangci-lint and go-arch-lint into

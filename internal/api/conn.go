@@ -47,6 +47,21 @@ func (m method) served(cfg Config) bool {
 	return m.available == nil || m.available(cfg)
 }
 
+// resultObserver is notified of each method's declared and actual result type. It is nil in
+// a running daemon and installed by this package's test helpers.
+//
+// It exists because nothing else connects a method's declared `result` to the value its
+// handler returns. `api.schema` publishes the declaration, so a declaration naming the wrong
+// type publishes a response shape the daemon never sends — and no test could see it: the
+// wire tests assert on JSON, the schema tests assert the declaration is not nil, and the
+// specification comparison does not read results at all. `block.search` declared `blockPage`
+// and returned `searchPage` for exactly that reason.
+//
+// Hooking the dispatcher rather than writing a test per method is what makes it thorough:
+// every wire test in the package becomes a check on the declaration it happens to exercise,
+// and the cost in the daemon is one nil comparison per call.
+type resultObserver func(method string, declared, actual any)
+
 // allows reports whether a client of this kind may call the method. A method the caller
 // is not allowed to use answers METHOD_NOT_FOUND rather than PERMISSION_DENIED, as the
 // spec's error table says: the CLI has no business learning that session.create exists.
@@ -258,6 +273,9 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 	}
 
 	result, err := m.handle(ctx, c, req.Params)
+	if err == nil && c.server.observeResult != nil {
+		c.server.observeResult(req.Method, m.result, result)
+	}
 	// A failed handshake closes the connection, same rule as calling too early.
 	if err != nil && errors.Is(err, ErrUnauthorized) {
 		c.reply(req, nil, err)
