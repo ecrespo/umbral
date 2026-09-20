@@ -31,9 +31,8 @@ from the shell integration, and searches 100,000 blocks in a few milliseconds ag
 `umb block last --json` work from any terminal. `umbral-tui` — tabs, a split and a block
 list — passes its tests and its
 [manual checklist](docs/qa/f0-tui.md), walked end to end on a real terminal. Three of the four performance NFRs are
-gates rather than prose — `task perf` fails on a regression and proves, on the same run,
-that it still would — though the CI job wrapping them has yet to run. Next: the
-workspace/pane orchestration surface.
+gates rather than prose: CI fails on a regression and proves, on the same run, that it
+still would. Next: the workspace/pane orchestration surface.
 
 ## What Umbral will be
 
