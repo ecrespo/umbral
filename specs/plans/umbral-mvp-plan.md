@@ -72,7 +72,7 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 | T-F0-09 | Block lifecycle from OSC; plain text; chunks | 3d | T-F0-05, T-F0-08 | ✅ 2026-09-11 |
 | T-F0-10 | `block.list`/`get`/`search` + 100k benchmark | 1.5d | T-F0-09 | ✅ 2026-09-11 |
 | T-F0-11 | `umb` CLI: autostart, `status`, `block last --json` | 1d | T-F0-10 | ✅ 2026-09-20 |
-| T-F0-12 | Base TUI: tabs, splits, rendering, block navigation | 4d | T-F0-06, T-F0-09 | 🔄 code done; the manual QA checklist is unwalked |
+| T-F0-12 | Base TUI: tabs, splits, rendering, block navigation | 4d | T-F0-06, T-F0-09 | ✅ 2026-09-20 |
 | T-F0-13 | TERM-001 and TERM-006 performance gates in CI | 1d | T-F0-06 | 🔄 gates written and self-tested locally; the CI job has not run yet |
 | T-F0-14 | Workspace, tab and pane model with identifiers and rollup | 3d | T-F0-03, T-F0-05 | ☐ |
 | T-F0-15 | Portable layouts (`layout.export` / `apply`) | 1.5d | T-F0-14 | ☐ |

@@ -29,8 +29,8 @@ with a libghostty emulator, streams them over a 0600 JSON-RPC socket, records a 
 from the shell integration, and searches 100,000 blocks in a few milliseconds against a 200 ms budget. Tasks
 [`T-F0-01` … `T-F0-11`](specs/tasks/umbral-f0-tasks.md) are done, so `umb status` and
 `umb block last --json` work from any terminal. `umbral-tui` — tabs, a split and a block
-list — is written and passing its tests, and closes once its
-[manual checklist](docs/qa/f0-tui.md) has been walked. Three of the four performance NFRs are
+list — passes its tests and its
+[manual checklist](docs/qa/f0-tui.md), walked end to end on a real terminal. Three of the four performance NFRs are
 gates rather than prose — `task perf` fails on a regression and proves, on the same run,
 that it still would — though the CI job wrapping them has yet to run. Next: the
 workspace/pane orchestration surface.
