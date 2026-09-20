@@ -2,9 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PENDING APPROVAL — applied to specs/ on 2026-09-20, awaiting ratification` |
+| **Status** | `APPROVED 2026-09-20 — folded into specs/` |
 | **Date** | 2026-09-20 |
 | **Task** | T-F0-15 |
+| **Approved by** | Ernesto Crespo |
 | **Raised by** | `spec-guardian` review of T-F0-15, findings 12 and its second half |
 
 Both are the specification having fallen behind code that is already correct. Neither

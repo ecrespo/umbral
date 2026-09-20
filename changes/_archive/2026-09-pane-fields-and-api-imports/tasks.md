@@ -1,6 +1,6 @@
 # Tasks — delta `2026-09-pane-fields-and-api-imports`
 
-### [ ] T-PF-01 · Write the two `Pane` fields and `api`'s domain imports into the specs
+### [x] 2026-09-20 T-PF-01 · Write the two `Pane` fields and `api`'s domain imports into the specs
 - **What:** API Spec §4's `Pane` gains `command` and `env`; Tech Design §5.2's `api` row
   admits the `domain` packages of the modules it serves; `.go-arch-lint.yml` narrows `api`
   to what it actually imports.
