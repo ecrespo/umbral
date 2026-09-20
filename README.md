@@ -98,7 +98,7 @@ flowchart LR
 | [`specs/constitution.md`](specs/constitution.md) | non-negotiable principles |
 | [`specs/`](specs/README.md) | PRD, API, technical design, data model, plan, tasks and Analyze |
 | [`changes/`](changes/) | change proposals; one is pending ratification (`2026-09-structure-migration`) |
-| [`changes/_archive/`](changes/_archive/) | the seven folded proposals, kept as history |
+| [`changes/_archive/`](changes/_archive/) | the eight folded proposals, kept as history |
 | [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) | how to start development with Claude Code |
 | [`assets/branding/umbral-icons/`](assets/branding/umbral-icons/README.md) | icons for Linux, Windows and macOS |
 

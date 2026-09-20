@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.5 |
+| **Version** | 1.6 |
 | **Date** | 2026-09-11 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -35,7 +35,7 @@ Conventions (Constitution Art. 6):
 
 - `*_at` = `INTEGER` UTC epoch ms;
 - costs = `INTEGER` micro-USD;
-- IDs = `TEXT` prefixed ULID;
+- IDs = `TEXT` prefixed ULID, except the workspace tree, whose structural identifiers are `w<n>`, `w<n>:t<m>` and `w<n>:p<m>` (Art. 6 amendment of 2026-09-20);
 - JSON in `*_json` columns (validated in the `store` layer).
 
 ### Relationship Diagram
@@ -191,7 +191,7 @@ most one live session; `pane_aliases` keeps previous identifiers resolvable afte
 
 ```sql
 CREATE TABLE workspaces (
-  id          TEXT PRIMARY KEY CHECK (id LIKE 'w%'),
+  id          TEXT PRIMARY KEY CHECK (id GLOB 'w[0-9]*' AND id NOT GLOB '*[^w0-9]*'),
   label       TEXT NOT NULL,
   cwd         TEXT NOT NULL,
   order_index INTEGER NOT NULL DEFAULT 0,
@@ -200,7 +200,7 @@ CREATE TABLE workspaces (
 );
 
 CREATE TABLE tabs (
-  id           TEXT PRIMARY KEY,
+  id           TEXT PRIMARY KEY CHECK (id GLOB 'w[0-9]*:t[0-9]*'),
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   label        TEXT NOT NULL,
   order_index  INTEGER NOT NULL DEFAULT 0,
@@ -211,7 +211,7 @@ CREATE TABLE tabs (
 CREATE INDEX idx_tabs_workspace ON tabs(workspace_id, order_index);
 
 CREATE TABLE panes (
-  id          TEXT PRIMARY KEY,
+  id          TEXT PRIMARY KEY CHECK (id GLOB 'w[0-9]*:p[0-9]*'),
   tab_id      TEXT NOT NULL REFERENCES tabs(id) ON DELETE CASCADE,
   session_id  TEXT REFERENCES sessions(id),   -- NULL while the pane has no live session
   label       TEXT,
@@ -226,7 +226,7 @@ CREATE INDEX idx_panes_tab ON panes(tab_id, order_index);
 CREATE UNIQUE INDEX idx_panes_session ON panes(session_id) WHERE session_id IS NOT NULL;
 
 CREATE TABLE pane_aliases (
-  alias_id   TEXT PRIMARY KEY,
+  alias_id   TEXT PRIMARY KEY CHECK (alias_id GLOB 'w[0-9]*:p[0-9]*'),
   pane_id    TEXT NOT NULL REFERENCES panes(id) ON DELETE CASCADE,
   created_at INTEGER NOT NULL
 );
@@ -592,3 +592,4 @@ earlier drafts named.
 | 1.3 | 2026-09-11 | delta `2026-09-block-query-performance`: `idx_blocks_started` in §2.2 and §5, the `VACUUM` rebuild rule in §2.4, and `idx_blocks_started` given migration `0002` of its own |
 | 1.4 | 2026-09-20 | Adds `workspaces`, `tabs`, `panes`, `pane_aliases`, `pane_state_reports`, `pane_metadata` and `pane_history`; attention columns on `threads`; per-migration table list and restore steps 5-8. The structure tables take migration `0003` and the agent subdomain moves to `0004` (delta `2026-09-structure-migration`) |
 | 1.5 | 2026-09-20 | Closes the Analyze findings: `client_msg_id` gains its unique index (A-04) and the `trust_keys` / `rule_bundles` tables arrive |
+| 1.6 | 2026-09-20 | delta `2026-09-art6-structural-ids`: `workspaces`, `tabs`, `panes` and `pane_aliases` enforce the structural identifier grammar with a `CHECK` (C-05) |

@@ -54,10 +54,10 @@ status" at the end of this file for what is and is not written.
 ## Known status (update it when findings are closed)
 
 - **Implementation: T-F0-01 … T-F0-10 and T-PKG-01/02 are done** (see the execution log in `specs/tasks/umbral-f0-tasks.md`). `umbrald` owns real PTY sessions, streams them, records blocks and serves `block.list`/`get`/`search`. Not yet written: the `umb` CLI (T-F0-11), the TUI (T-F0-12), the performance gates (T-F0-13) and the whole orchestration surface (T-F0-14…18).
-- Specs at PRD 1.5 / API 1.6 / Tech 1.5 / Data Model 1.5 / Plan 1.4, constitution 1.1. The seven deltas raised so far are folded and archived under `changes/_archive/`.
+- Specs at PRD 1.6 / API 1.7 / Tech 1.6 / Data Model 1.6 / Plan 1.4, constitution 1.2. Eight deltas are folded and archived under `changes/_archive/`.
 - **One delta is pending ratification:** `changes/2026-09-structure-migration/`, which renumbers the structure and agent migrations. It blocks T-F0-14 and nothing else.
 - Migrations are `0001_terminal`, `0002_block_index`, `0003_structure` (T-F0-14, not written yet) and `0004_agent` (T-F1-01). 0001 and 0002 are applied; nothing already applied is ever edited (Art. 6).
 - `python3 tools/sdd_check.py` passes with no CRITICAL findings: 106/106 MUST with a task, and migration 0001 works in isolation.
 - Building the tests needs libghostty-vt: run `task deps:ghostty` once, then use `task test` (it injects `PKG_CONFIG_PATH`). A bare `go test ./...` fails to build the cgo packages.
-- Current Analyze: `specs/analyze/analyze-2026-09-20b.md`. Open: **C-05 (HIGH)**, the `w1:t1:p2` identifiers of REQ-WS-002 against Art. 6's type-prefixed ULIDs — a decision needed before T-F0-14; C-01 (SQLite write failure under persist-first, blocks T-F1-13); C-02 (custody of the rule-signing key, blocks T-F1-30); and two LOW items.
-- The constitution carries two amendments to Art. 5 dated 2026-09-20: environment fallback for secrets and mandatory signatures for rule material.
+- Current Analyze: `specs/analyze/analyze-2026-09-20b.md`. Open: C-01 (SQLite write failure under persist-first, blocks T-F1-13); C-02 (custody of the rule-signing key, blocks T-F1-30); and two LOW items. C-05 is closed.
+- The constitution carries three amendments dated 2026-09-20: two to Art. 5 (environment fallback for secrets, mandatory signatures for rule material) and one to Art. 6 (the workspace tree uses `w<n>`, `w<n>:t<m>` and `w<n>:p<m>` instead of prefixed ULIDs).

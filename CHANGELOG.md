@@ -48,6 +48,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The pr
 - New Analyze against specs 1.1 (`specs/analyze/analyze-2026-09-20.md`) with findings B-01…B-10; REQ-TERM-011 added so a restart never re-runs stored commands.
 - GitHub bootstrap: area labels for the new modules and support for Analyze finding IDs beyond `A-*`.
 - Every blocking Analyze finding closed, and the quality gate passes with no CRITICAL findings.
+- Constitution 1.2 amends Art. 6 so the workspace tree uses the structural identifiers `w<n>`, `w<n>:t<m>` and `w<n>:p<m>` instead of type-prefixed ULIDs. The collision risk ULIDs answer belongs to identifiers that travel; these never leave the daemon that allocated them, and the command line is this design's addressing surface. `workspaces`, `tabs`, `panes` and `pane_aliases` now enforce the grammar with a `CHECK`, so a malformed identifier cannot be written (Analyze finding C-05).
 - Constitution amended twice (Art. 5): `env:<VAR>` accepted as a secret source when the keyring is unavailable and the fallback is enabled explicitly, and network-delivered rule material must be signed.
 - Signed rule bundles with a trust store, key lifecycle (add, list, remove, rotate with fingerprint confirmation), fail-closed behaviour and offline recovery through `rules.rollback` and `rules.reset`.
 - Wait monitoring: inventory with age and stall flag, safe cancellation, stalled-turn detection and orchestration metrics.

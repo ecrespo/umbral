@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.5 |
+| **Version** | 1.6 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-09-20 |
@@ -433,7 +433,7 @@ TUI as text:
 - **Art. 2:** every MUST REQ has a task and a test in `specs/tasks/`.
 - **Art. 4:** REQ-LLM-004, REQ-SEC-001 and REQ-SEC-002 make offline mode and egress auditing verifiable.
 - **Art. 5:** REQ-AGT-004/005/009 and REQ-SEC-005/006 cover permissions and sandboxing.
-- **Art. 6:** cost in micro-USD (REQ-LLM-005).
+- **Art. 6:** cost in micro-USD (REQ-LLM-005). REQ-WS-002's structural identifiers are the exception the Art. 6 amendment of 2026-09-20 authorises; every other public identifier is a prefixed ULID.
 - **Art. 8:** REQ-API-002/003/004 make the contract explicit: sequenced events, a missing method degrades one action instead of the connection, and the schema is published from the binary itself.
 - **Art. 4 check on REQ-SEC-011:** remote rule updates are disabled by default, are configured explicitly by the user, and every fetch is recorded in `egress_log`, so offline operation and egress auditing are preserved. No amendment is required.
 - **Art. 5 check on REQ-INT-002:** an external report changes the *displayed and awaited* state of a pane; it never grants tool permissions, which keep flowing through the policy engine.
@@ -449,6 +449,7 @@ TUI as text:
 | 1.2 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-visual-identity`: §6.10 with REQ-PKG-001, 002, 003 and 006; REQ-PKG-004, 005, 007 and 008 moved to the F2 PRD per finding A-12 |
 | 1.3 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-block-lifecycle-decisions`: REQ-BLK-003 gains the late-marker promotion and the one-way rule |
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds the WS, API, AUT, INT and NTF areas, REQ-TERM-009/010, REQ-AGT-016/017 and REQ-SEC-009/010/011, plus the glossary. Rationale in `docs/adr/ADR-0002-orchestration-surface.md` |
+| 1.6 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-art6-structural-ids`: the Constitution check names the Art. 6 exception for structural identifiers (C-05) |
 | 1.5 | 2026-09-20 | E. Crespo (assisted draft) | Closes the Analyze findings: folds the two pending deltas (REQ-SEC-008, REQ-AGT-015, PKG area), adds signing and key management (SEC-011/013/014/015/016), the environment fallback (SEC-012), wait monitoring (AUT-005…008), `fetch_url` limits (AGT-018), authority for its own agent (INT-006), metrics (OBS-004), reference hardware and redaction thresholds |
 
 ## Approvals

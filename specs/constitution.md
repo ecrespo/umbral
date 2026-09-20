@@ -1,6 +1,6 @@
 # Constitution — Umbral
 
-> Version 1.1 · Ratified: pending (proposed 2026-09-11) · Last amendment: 2026-09-20 (Art. 5)
+> Version 1.2 · Ratified: pending (proposed 2026-09-11) · Last amendment: 2026-09-20 (Art. 5, Art. 6)
 > Scope: the `umbral` repository (daemon `umbrald`, clients `umbral-tui`, `umbral-desktop`, CLI `umb`)
 > SDD rigor level: **spec-anchored** — `specs/` is the current truth; changes enter through `changes/`.
 
@@ -55,9 +55,19 @@ THE SYSTEM SHALL apply these data rules:
 - timestamps as **UTC epoch milliseconds** (`INTEGER`);
 - monetary costs as **micro-USD in `int64`** (never `float`);
 - public identifiers as **type-prefixed ULIDs** (`ses_`, `blk_`, `thr_`, …);
+- **exception (amendment of 2026-09-20):** the structural identifiers of the workspace tree —
+  workspaces, tabs and panes — are short addressable names of the form `w<n>`, `w<n>:t<m>` and
+  `w<n>:p<m>` instead. THE SYSTEM SHALL allocate them in the daemon, SHALL keep them unique and
+  stable within a session while the object exists, and SHALL NOT reuse one while its object lives.
+  The exception covers those three kinds and nothing else;
 - versioned, forward-only SQLite migrations.
 
-*Rationale: no rounding errors in costs, no time-zone ambiguity and no ID collisions.*
+*Rationale: no rounding errors in costs, no time-zone ambiguity and no ID collisions. ULIDs exist
+here for the last of those, which is a risk for identifiers that travel between machines, into
+logs and across merges. A structural identifier does none of that: it is allocated by one daemon
+and never leaves its installation. What it must be instead is typeable, because the command line
+is this design's addressing surface — `umb pane split w1:t1` is the feature, and the same command
+with a 26-character ULID is that feature with its usability removed.*
 
 ### Art. 7 — Observability
 THE SYSTEM SHALL emit one OpenTelemetry trace per agent turn, with spans for each model call and
@@ -110,6 +120,7 @@ THE TEAM SHALL follow these process rules:
 |---|---|---|---|---|
 | 2026-09-20 | 5 | Secrets may come from an environment variable when the keyring is unavailable, the fallback is enabled explicitly and the state is reported as degraded | Headless Linux, SSH sessions and containers have no Secret Service; without this, remote providers are unusable there and the workaround would be plaintext configuration, which is worse | Ernesto Crespo |
 | 2026-09-20 | 5 | Rule material fetched over the network must carry a valid signature | The redaction rules and the destructive-pattern list are the product's security control; an unsigned update can silently disable it | Ernesto Crespo |
+| 2026-09-20 | 6 | Workspace, tab and pane identifiers are short addressable names (`w1`, `w1:t1`, `w1:p2`) rather than type-prefixed ULIDs | The collision risk ULIDs answer applies to identifiers that travel; these never leave the daemon that allocated them. The CLI is the addressing surface, and a 26-character id there is unusable. Raised as Analyze finding C-05; delta `2026-09-art6-structural-ids` | Ernesto Crespo |
 
 ## Constitution check (use in every artifact)
 
