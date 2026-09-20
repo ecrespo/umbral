@@ -171,7 +171,11 @@ method and the ordering that produced it, so one handed to a different method is
 {"id":"w1","label":"api","cwd":"/home/u/repo","order_index":0,
  "rollup_state":"blocked","tab_ids":["w1:t1"],"created_at":1757592000000,"closed_at":null}
 ```
-- `rollup_state`: `blocked` | `working` | `done` | `idle` (REQ-WS-006)
+- `rollup_state`: `blocked` | `working` | `done` | `idle` | `unknown` (REQ-WS-006). `unknown` is
+  what the requirement's last clause propagates: it appears when every pane and thread of the
+  workspace is `unknown`, and a client must render it rather than treat it as `idle`. An *empty*
+  workspace is `idle`, not `unknown`. In F0 the two are easy to tell apart, because nothing
+  reports a pane state yet and so every workspace holding a pane is `unknown`
 
 ### Tab
 ```json
@@ -187,8 +191,11 @@ method and the ordering that produced it, so one handed to a different method is
  "metadata":{"title":"go test","tokens":{"summary":"unit"}},
  "created_at":1757592000000,"closed_at":null}
 ```
-- `attention_state`: `blocked` | `working` | `done` | `idle` | `unknown`
-- `state_source`: who owns the state — `umbral:agent` for Umbral's own agent, `umbral:shell` when it is derived from the block lifecycle, or the `source` of an external integration (REQ-INT-002)
+- `attention_state`: `blocked` | `working` | `done` | `idle` | `unknown`. `unknown` is the
+  starting value and the one that survives until some source reports another: it is the absence of
+  a report, not a report of nothing. F0 has no producer at all — `pane_state_reports` arrives with
+  migration 0004 and threads with F1 — so every F0 pane is `unknown` with a `null` `state_source`
+- `state_source`: who owns the state — `umbral:agent` for Umbral's own agent, `umbral:shell` when it is derived from the block lifecycle, or the `source` of an external integration (REQ-INT-002). `null` while nothing has reported. The `umbral:shell` derivation is named here but specified nowhere: which block state maps to which attention state is deferred to the task that owns REQ-INT-002
 - `metadata` is display-only (REQ-INT-004)
 
 ### Layout

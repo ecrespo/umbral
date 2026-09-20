@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -106,22 +107,36 @@ func TestMigrationsApplyAndAreIdempotent(t *testing.T) {
 func TestMigrationUpgradesAnExistingDatabase(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "umbral.db")
-	first, err := Open(t.Context(), Options{Path: path})
+	available, err := loadMigrations()
 	if err != nil {
-		t.Fatalf("first Open: %v", err)
+		t.Fatalf("loadMigrations: %v", err)
 	}
+	if len(available) < 2 {
+		t.Skip("only one migration exists, so there is no upgrade to make")
+	}
+	latest := available[len(available)-1].version
 
-	// Rewind the database to the state a developer's copy was in before 0002 existed.
-	if _, err := first.DB().ExecContext(t.Context(), "DROP INDEX idx_blocks_started"); err != nil {
-		t.Fatalf("drop the index: %v", err)
+	// A database that stopped at version 1 is *built* here rather than rewound from a
+	// migrated one. Rewinding means dropping whatever every later migration created, which
+	// is a list that would have to be maintained in this test forever and would be wrong
+	// exactly once — the first time someone added a migration and did not think of it.
+	// Applying the first migration and nothing else stays correct however many follow.
+	path := filepath.Join(t.TempDir(), "umbral.db")
+	raw, err := sql.Open("sqlite", dsn(path))
+	if err != nil {
+		t.Fatalf("open the raw database: %v", err)
 	}
-	if _, err := first.DB().ExecContext(t.Context(),
-		"DELETE FROM schema_migrations WHERE version > 1"); err != nil {
-		t.Fatalf("rewind schema_migrations: %v", err)
+	if _, err := raw.ExecContext(t.Context(), available[0].sql); err != nil {
+		t.Fatalf("apply %s: %v", available[0].name, err)
 	}
-	if err := first.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	// 0001 creates schema_migrations itself, so only the row recording it is missing.
+	if _, err := raw.ExecContext(t.Context(),
+		"INSERT INTO schema_migrations(version, applied_at) VALUES (?, 0)",
+		available[0].version); err != nil {
+		t.Fatalf("record %s: %v", available[0].name, err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close the raw database: %v", err)
 	}
 
 	second, err := Open(t.Context(), Options{Path: path})
@@ -136,6 +151,16 @@ func TestMigrationUpgradesAnExistingDatabase(t *testing.T) {
 		Scan(&name)
 	if err != nil {
 		t.Fatalf("a database left at version 1 did not receive idx_blocks_started: %v", err)
+	}
+
+	// Every later migration ran, not just 0002. This is what proves a migration added after
+	// this test was written still reaches a database that predates it.
+	version, err := second.SchemaVersion(t.Context())
+	if err != nil {
+		t.Fatalf("SchemaVersion: %v", err)
+	}
+	if version != latest {
+		t.Errorf("schema version is %d after upgrading from 1, want %d", version, latest)
 	}
 }
 

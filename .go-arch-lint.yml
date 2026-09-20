@@ -30,6 +30,11 @@ components:
   # which must stay replaceable.
   sessions-service: { in: internal/sessions }
 
+  # The workspace tree's own core, the same shape and the same reason as
+  # sessions-service: the orchestrator has to live outside domain, which must stay pure,
+  # and outside adapters, which must stay replaceable.
+  workspaces-service: { in: internal/workspaces }
+
   # The module's integration tests wire the real adapters together, which is the job Art. 3
   # reserves for a composition root. Naming it here keeps every file under the rules rather
   # than excluding _test.go from them.
@@ -49,6 +54,10 @@ components:
   sessions-domain:   { in: internal/sessions/domain }
   sessions-ports:    { in: internal/sessions/ports }
   sessions-adapters: { in: internal/sessions/adapters/** }
+
+  workspaces-domain:   { in: internal/workspaces/domain }
+  workspaces-ports:    { in: internal/workspaces/ports }
+  workspaces-adapters: { in: internal/workspaces/adapters/** }
 
   agents-domain:   { in: internal/agents/domain }
   agents-ports:    { in: internal/agents/ports }
@@ -393,3 +402,42 @@ deps:
       - context-domain
       - llmgw-domain
       - security-domain
+
+
+  # --- the workspace tree (Tech Design §5.2) ----------------------------------
+  # `workspaces` -> ports of `sessions` and `store`; never `agents`, `api` or `waits`.
+  # The sessions-ports allowance is what lets a pane own a terminal without the tree
+  # knowing what a PTY is; the absence of sessions-adapters is what stops it reaching for
+  # one directly, and the absence of api is what keeps the wire format out of the model.
+  # The standard domain rule and nothing more. The allowance is unused today — identifiers,
+  # states and a rollup are arithmetic over strings — but go-arch-lint requires every
+  # component to name at least one permission, so it names the one the rule already grants
+  # rather than a wider one. `shellscripts` carries the same allowance for the same reason.
+  workspaces-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+
+  workspaces-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - workspaces-domain
+      - sessions-domain
+
+  workspaces-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - workspaces-ports
+      - workspaces-domain
+      - sessions-domain
+      - store
+
+  workspaces-service:
+    anyVendorDeps: true
+    mayDependOn:
+      - workspaces-ports
+      - workspaces-domain
+      - sessions-ports
+      - sessions-domain
+      - store
+      - bus
