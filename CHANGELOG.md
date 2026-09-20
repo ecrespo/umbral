@@ -6,6 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The pr
 ## [Unreleased]
 
 ### Added
+- The `2026-09-tui-renderer` delta is ratified and archived: reusing the daemon's libghostty in the client is now a decision the specs carry, not one a code comment argues for. `changes/` holds only `_archive/` again.
 - **T-F0-12** (code complete; its manual checklist is unwalked): `umbral-tui`, the terminal client. Tabs, a two-pane split, a block list with previous/next jumping, and sessions rendered from `session.output` by the client's own libghostty — the daemon's, so the screen cannot drift from the block history recorded off the same bytes. `internal/client` gains `Stream`, which reads continuously so calls and notifications work at once. Bubble Tea v2 is a new dependency, as Technical Design §5.1 has always said it would be.
 - **T-F0-11**: the `umb` CLI and the `internal/client` JSON-RPC client behind it. `umb status` and `umb block last --json` work, and either one starts `umbrald` when nothing is listening, giving up after 3 s with exit code 69 and a message naming the socket and the daemon's log. The runtime-directory resolution moved to `internal/config`, which is the one package both sides of the socket may import.
 - **T-F0-10**: `block.list`, `block.get` and `block.search`, with cursor pagination and FTS5 snippets. `block.get` accepts the reserved id `last`, which is what `umb block last` asks for. Over 100,000 blocks a search takes 0.93 ms and a list page 0.22 ms at p95, against the 200 ms REQ-BLK-006 budgets.

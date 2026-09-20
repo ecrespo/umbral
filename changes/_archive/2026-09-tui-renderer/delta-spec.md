@@ -2,9 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PENDING APPROVAL — applied to specs/ on 2026-09-20, awaiting ratification` |
+| **Status** | `APPROVED 2026-09-20 — folded into specs/` |
 | **Date** | 2026-09-20 |
 | **Task** | T-F0-12 |
+| **Approved by** | Ernesto Crespo |
 | **Raised by** | T-F0-12: the boundary rules have no room for the renderer DD-001 requires |
 
 ## Evidence
