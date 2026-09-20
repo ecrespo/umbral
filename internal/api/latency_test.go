@@ -2,10 +2,55 @@ package api
 
 import (
 	"encoding/base64"
+	"os"
 	"slices"
 	"testing"
 	"time"
 )
+
+// outputLatencyBudget is what REQ-TERM-006 allows the daemon to add between a PTY chunk
+// and the notification reaching a subscribed client.
+const outputLatencyBudget = 5 * time.Millisecond
+
+// perfProbeEnv names the environment variable scripts/perf_selftest.sh sets to inject an
+// artificial regression into the timed region.
+//
+// It exists for the same reason scripts/arch_selftest.sh does: a budget check that stopped
+// checking would pass silently forever, and nothing else in the suite would notice. The
+// selftest sets it, asserts the benchmark turns red, and unsets it.
+const perfProbeEnv = "UMBRAL_PERF_PROBE_DELAY"
+
+// perfProbe reports the injected regression, or zero when there is none. A malformed value
+// is a fatal setup error rather than a silent zero: a selftest whose injection quietly did
+// nothing would report the gate as broken when it is fine, or as fine when it is broken.
+func perfProbe(tb testing.TB) time.Duration {
+	tb.Helper()
+
+	raw := os.Getenv(perfProbeEnv)
+	if raw == "" {
+		return 0
+	}
+	delay, err := time.ParseDuration(raw)
+	if err != nil {
+		tb.Fatalf("%s=%q is not a duration: %v", perfProbeEnv, raw, err)
+	}
+	if delay > 0 {
+		tb.Logf("artificial regression injected: %v per sample (%s)", delay, perfProbeEnv)
+	}
+	return delay
+}
+
+// percentile returns the sample at the given fraction. REQ-TERM-001 and REQ-TERM-006 are
+// both written as percentiles, and the mean of a path that is usually fast and
+// occasionally slow describes neither half.
+func percentile(samples []time.Duration, fraction float64) time.Duration {
+	if len(samples) == 0 {
+		return 0
+	}
+	sorted := slices.Clone(samples)
+	slices.Sort(sorted)
+	return sorted[int(float64(len(sorted)-1)*fraction)]
+}
 
 // BenchmarkOutputLatency_REQ_TERM_006 measures what the requirement measures: the latency
 // the daemon itself adds between a PTY chunk being published and the corresponding
@@ -15,12 +60,13 @@ import (
 // than relying on ns/op, because REQ-TERM-006 is a percentile and an average would hide
 // exactly the tail the budget exists to bound.
 func BenchmarkOutputLatency_REQ_TERM_006(b *testing.B) {
+	probe := perfProbe(b)
 	sessions := newFakeSessions()
 	s := benchServer(b, sessions)
 	c := benchClient(b, s)
 
 	chunk := []byte("the quick brown fox jumps over the lazy dog\r\n")
-	latencies := make([]time.Duration, 0, b.N)
+	var latencies []time.Duration
 
 	b.ResetTimer()
 	var seq uint64
@@ -31,6 +77,9 @@ func BenchmarkOutputLatency_REQ_TERM_006(b *testing.B) {
 		if !c.awaitOutput(b, 5*time.Second) {
 			b.Fatalf("no notification arrived for seq %d", seq)
 		}
+		if probe > 0 {
+			time.Sleep(probe)
+		}
 		latencies = append(latencies, time.Since(start))
 	}
 	b.StopTimer()
@@ -38,19 +87,15 @@ func BenchmarkOutputLatency_REQ_TERM_006(b *testing.B) {
 	if len(latencies) == 0 {
 		b.Skip("no samples")
 	}
-	slices.Sort(latencies)
-	p95 := latencies[int(float64(len(latencies))*0.95)]
-	if p95 >= time.Duration(len(latencies)) {
-		p95 = latencies[len(latencies)-1]
-	}
-	p50 := latencies[len(latencies)/2]
+	p95 := percentile(latencies, 0.95)
 
 	b.ReportMetric(float64(p95.Microseconds()), "p95_us")
-	b.ReportMetric(float64(p50.Microseconds()), "p50_us")
-	b.ReportMetric(float64(latencies[len(latencies)-1].Microseconds()), "max_us")
+	b.ReportMetric(float64(percentile(latencies, 0.50).Microseconds()), "p50_us")
+	b.ReportMetric(float64(percentile(latencies, 1.0).Microseconds()), "max_us")
 
-	if p95 > 5*time.Millisecond {
-		b.Errorf("added latency p95 = %v over %d samples, want under 5ms (REQ-TERM-006)", p95, len(latencies))
+	if p95 > outputLatencyBudget {
+		b.Errorf("added latency p95 = %v over %d samples, want under %v (REQ-TERM-006)",
+			p95, len(latencies), outputLatencyBudget)
 	}
 }
 
@@ -82,13 +127,12 @@ func TestOutputLatencyUnder5ms_REQ_TERM_006(t *testing.T) {
 		latencies = append(latencies, time.Since(start))
 	}
 
-	slices.Sort(latencies)
-	p95 := latencies[int(float64(samples)*0.95)]
+	p95 := percentile(latencies, 0.95)
 	t.Logf("added latency: p50 %v, p95 %v, max %v over %d samples",
-		latencies[samples/2], p95, latencies[samples-1], samples)
+		percentile(latencies, 0.50), p95, percentile(latencies, 1.0), samples)
 
-	if p95 > 5*time.Millisecond {
-		t.Errorf("added latency p95 = %v, want under 5ms (REQ-TERM-006)", p95)
+	if p95 > outputLatencyBudget {
+		t.Errorf("added latency p95 = %v, want under %v (REQ-TERM-006)", p95, outputLatencyBudget)
 	}
 }
 

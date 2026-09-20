@@ -91,6 +91,26 @@ tasks:
       # compute the p95 REQ-BLK-006 is written in.
       - go test -run '^$' -bench . -benchtime 300x -benchmem ./internal/sessions/adapters/blockstore/
 
+  perf:
+    desc: Run the NFR budget gates and prove they reject a regression (T-F0-13)
+    cmds:
+      - task: bench:gates
+      - task: bench:selftest
+
+  bench:gates:
+    desc: Fail if any benchmark with an NFR budget misses it (REQ-TERM-001, TERM-006, BLK-006)
+    cmds:
+      # The budgets live in the benchmarks, which report p95 and fail themselves. The
+      # script only picks which benchmarks are gates and how many samples each gets.
+      - ./scripts/perf_gates.sh
+
+  bench:selftest:
+    desc: Prove the NFR gates reject an injected regression
+    cmds:
+      # The sibling of arch:selftest, and there for the same reason: a budget check that
+      # stopped checking passes silently forever.
+      - ./scripts/perf_selftest.sh
+
   # --- specifications ---------------------------------------------------------
   specs:
     desc: 'Art. 9 gate: REQ coverage, DDL executability and Mermaid diagrams'
@@ -133,6 +153,7 @@ tasks:
       - task: arch
       - task: arch:selftest
       - task: test
+      - task: perf
       - task: build
 
   deps:ghostty:

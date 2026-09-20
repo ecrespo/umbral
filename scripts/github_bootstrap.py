@@ -280,9 +280,22 @@ def main() -> int:
     # 8. Branch protection (solo maintainer: checks required, no mandatory reviews)
     if args.protect_main:
         payload = {
+            # These strings must match the `name:` of each job exactly, because that is what
+            # GitHub reports as the status context. A name that matches no job is not an
+            # error: the check is simply never required, and the protection silently
+            # weakens. They drifted once already, which is why they are listed against
+            # their workflow here.
+            #
+            #   .github/workflows/ci.yml
             "required_status_checks": {"strict": True, "contexts": [
-                "Specs (SDD coverage + Mermaid)", "Secrets (gitleaks)", "Icon kit integrity",
-                "Go (vet, test -race, govulncheck)"]},
+                "Specs (Art. 9)",
+                "Branding kit (REQ-PKG-001, 002, 003, 006)",
+                "Lint (Art. 1)",
+                "Architecture boundaries (Art. 3)",
+                "Tests with the race detector (Art. 2) (ubuntu-latest)",
+                "Tests with the race detector (Art. 2) (macos-latest)",
+            #   .github/workflows/perf.yml
+                "NFR budgets (REQ-TERM-001, REQ-TERM-006, REQ-BLK-006)"]},
             "enforce_admins": False,
             "required_pull_request_reviews": None,
             "restrictions": None,

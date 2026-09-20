@@ -31,6 +31,7 @@ status" at the end of this file for what is and is not written.
 | Lint + format + gosec | `task lint` | now |
 | Architecture boundaries | `task arch` | now |
 | Prove the boundaries reject a violation | `task arch:selftest` | now |
+| NFR budget gates, and the proof they still bite | `task perf` | now |
 | Tests with the race detector | `task test` (≈ `go test -race ./...`) | now |
 | Everything the pipeline runs | `task ci` | now |
 | Install the Go tools the gate needs | `task tools:install` | now |
@@ -53,7 +54,7 @@ status" at the end of this file for what is and is not written.
 
 ## Known status (update it when findings are closed)
 
-- **Implementation: T-F0-01 … T-F0-11 and T-PKG-01/02 are done**; **T-F0-12 is `[~]`** — the TUI is written and the gate is green, but its Done line also requires the manual checklist in `docs/qa/f0-tui.md`, which nobody has walked. `umbrald` owns real PTY sessions, streams them, records blocks and serves `block.list`/`get`/`search`; `umb` talks to it and autostarts it; `umbral-tui` renders it with tabs, a split and a block list. Not yet written: the performance gates (T-F0-13) and the whole orchestration surface (T-F0-14…18).
+- **Implementation: T-F0-01 … T-F0-11 and T-PKG-01/02 are done**; **T-F0-12 and T-F0-13 are `[~]`** — the TUI is written and the gate is green, but its Done line also requires the manual checklist in `docs/qa/f0-tui.md`, which nobody has walked. `umbrald` owns real PTY sessions, streams them, records blocks and serves `block.list`/`get`/`search`; `umb` talks to it and autostarts it; `umbral-tui` renders it with tabs, a split and a block list. Three of the four NFR budgets are gates: `task perf` runs them, fails on a regression and proves it still would; `.github/workflows/perf.yml` wraps the same scripts but has never run, which is why T-F0-13 is `[~]`. Idle daemon memory is the ungated one. Not yet written: the whole orchestration surface (T-F0-14…18).
 - Specs at PRD 1.7 / API 1.8 / Tech 1.8 / Data Model 1.6 / Plan 1.4, constitution 1.2. Eleven deltas are archived under `changes/_archive/` and none is pending; the last of them, `2026-09-tui-renderer`, gives the client's VT renderer a place in the boundary rules.
 - Migrations are `0001_terminal`, `0002_block_index`, `0003_structure` (T-F0-14, not written yet) and `0004_agent` (T-F1-01). 0001 and 0002 are applied; nothing already applied is ever edited (Art. 6).
 - `python3 tools/sdd_check.py` passes with no CRITICAL findings: 106/106 MUST with a task, and migration 0001 works in isolation.

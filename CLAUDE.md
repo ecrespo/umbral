@@ -14,10 +14,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | One test | `go test -race ./internal/api/ -run TestHelloRejectsBadToken_REQ_SEC_003 -v` |
 | Every test covering one requirement | `go test -race ./... -run REQ_SEC_003` |
 | Coverage (target ≥ 75 % in domain, policy and router) | `task test:cover` |
-| NFR benchmarks | `task bench` |
+| NFR benchmarks, the whole picture | `task bench` |
+| Only the benchmarks that gate, plus their selftest | `task perf` |
 
-- **`task ci` is the gate, in the pipeline's own order:** specs, lint, arch, arch:selftest,
-  test, build. Run it before every commit; a green `go test` alone is not the gate.
+- **`task ci` is the gate, in the pipeline's own order:** specs, icons, lint, arch, arch:selftest,
+  test, perf, build. Run it before every commit; a green `go test` alone is not the gate.
 - Test names carry their requirement id, so `-run REQ_XXX_NNN` is the fastest way to check
   one criterion. That naming is Art. 2, not a convention.
 - `task tools:install` installs gofumpt, govulncheck, golangci-lint and go-arch-lint into

@@ -62,11 +62,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
-      - name: Build libghostty-vt (cgo dependency of the sessions emulator)
+      - name: Zig, which builds libghostty-vt
         uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
-      - run: ./scripts/build_libghostty.sh
+      - name: Build libghostty-vt (cgo dependency of the sessions emulator)
+        run: ./scripts/build_libghostty.sh
       - run: echo "PKG_CONFIG_PATH=$HOME/.local/ghostty-vt/share/pkgconfig" >> "$GITHUB_ENV"
       - name: gofumpt
         run: |
@@ -116,11 +117,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
-      - name: Build libghostty-vt (cgo dependency of the sessions emulator)
+      - name: Zig, which builds libghostty-vt
         uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
-      - run: ./scripts/build_libghostty.sh
+      - name: Build libghostty-vt (cgo dependency of the sessions emulator)
+        run: ./scripts/build_libghostty.sh
       - run: echo "PKG_CONFIG_PATH=$HOME/.local/ghostty-vt/share/pkgconfig" >> "$GITHUB_ENV"
       - name: Install the shells the block tests need (T-F0-08)
         if: runner.os == 'Linux'

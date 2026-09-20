@@ -26,11 +26,13 @@
 proposal raised so far is ratified and archived. Alongside the full SDD package (constitution, PRD with EARS, API, technical
 design, data model, plan, tasks and Analyze), `umbrald` already exists: it owns durable PTY sessions
 with a libghostty emulator, streams them over a 0600 JSON-RPC socket, records a block per command
-from the shell integration, and searches 100,000 blocks in under a millisecond. Tasks
+from the shell integration, and searches 100,000 blocks in a few milliseconds against a 200 ms budget. Tasks
 [`T-F0-01` … `T-F0-11`](specs/tasks/umbral-f0-tasks.md) are done, so `umb status` and
 `umb block last --json` work from any terminal. `umbral-tui` — tabs, a split and a block
 list — is written and passing its tests, and closes once its
-[manual checklist](docs/qa/f0-tui.md) has been walked. Next: the performance gates and the
+[manual checklist](docs/qa/f0-tui.md) has been walked. Three of the four performance NFRs are
+gates rather than prose — `task perf` fails on a regression and proves, on the same run,
+that it still would — though the CI job wrapping them has yet to run. Next: the
 workspace/pane orchestration surface.
 
 ## What Umbral will be
