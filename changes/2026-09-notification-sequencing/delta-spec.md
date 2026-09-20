@@ -21,7 +21,12 @@ right or the bootstrap of REQ-API-002 silently loses events.
 the screen to the byte stream (REQ-TERM-004). The counter §6 describes cannot be that one: a
 `session.snapshot` covers the whole tree and reports **one** number, which would be
 meaningless against a per-PTY-session count, and `workspace.created` belongs to no session at
-all. So there are two numbers called `seq`, and nothing says so.
+all.
+
+And there is a third. §5.15 `report_state` and §5.16 `report_progress` take a `seq` *parameter*
+that counts per `source` and exists to drop a stale report: "a `seq` lower than or equal to the
+last accepted one for that `source` returns `ok` and changes nothing". Those are F1 methods, but
+the name is already spoken for three times over and nothing says so.
 
 **2. Nowhere to put it.** §1 frames messages as NDJSON and §6 says the payloads are the
 objects themselves — `workspace.created` carries a `Workspace`, `block.started` a `Block`.
@@ -75,6 +80,26 @@ is in the snapshot; the snapshot may additionally contain a few events *above* i
 makes the client apply an event it already has. That direction is safe — every tree
 notification carries the whole record — and the other is not.
 
+**5. "Monotonic" is a property of assignment, not of arrival.** The number is taken when the
+daemon dispatches the event. Output then travels through the per-client queue of §8, where it
+waits and may be batched; control notifications are written to the socket directly. So a
+connection subscribed to a session can be handed a higher `seq` before a lower one, and the
+daemon does not promise otherwise.
+
+This matters because it rules out the reading a client would most naturally reach for. "Monotonic"
+invites "discard anything at or below the last number I applied", and a client that did that would
+drop live tree events whenever output was in flight. The only comparison the protocol supports is
+against the `seq` that `session.snapshot` reported — a fixed number, taken once — and decision 3
+already limits which notifications it applies to. THE SYSTEM SHALL NOT be assumed to deliver `seq`
+in order on a connection, and a client SHALL NOT compare a notification's `seq` against the
+previous notification's.
+
+**6. `focused` is nullable in all three members.** §5.3 typed only `thread_id` that way, but a
+daemon that has just started has no focused workspace and no focused tab either, and that is the
+state every client meets before the first `workspace.create`. Null means "nothing is focused". It
+is not an error and not "unknown": the daemon always knows what is focused, and sometimes the
+answer is nothing.
+
 ## MODIFIED
 
 ### specs/api/umbral-daemon-api-v1.md → §6, the `seq` paragraph
@@ -84,6 +109,11 @@ notification carries the whole record — and the other is not.
 - **After:** the same intent, said precisely: the envelope member, the daemon-run scope, the
   reconnect rule, gaps, and the sentence naming `session.output`'s `params.seq` as a
   different number so nobody conflates them.
+- **After:** "increases by one per notification" is corrected to "per event the daemon
+  dispatches" — a number is burnt whether or not anyone is listening, and a batched delivery
+  carries only the highest of the numbers it collapses.
+- **After:** the paragraph of decision 5, stating that the counter is ordered in assignment
+  only, and the clause naming `report_state`/`report_progress`'s `seq` as the third one.
 
 ### specs/api/umbral-daemon-api-v1.md → §1, framing
 
@@ -93,6 +123,12 @@ notification carries the whole record — and the other is not.
 
 - **After:** the bootstrap list says which notifications the discard rule covers and which it
   does not, and the ordering guarantee of decision 4.
+- **After:** the result types all three members of `focused` as nullable (decision 6).
+- **Before:** bootstrap step 1 read "open `events.subscribe` on a second connection and wait for
+  its acknowledgement".
+- **After:** "open a second connection and complete `system.hello`". `events.subscribe` appeared
+  in that one line and nowhere else in the specification or the code: there is no such method,
+  and none is needed, because tree notifications go to every authenticated connection.
 
 ### specs/prd/umbral-mvp.md → REQ-API-002
 
@@ -116,3 +152,11 @@ under §9.
   the reconstructed tree equals the daemon's.
 - `TestOutputIsNotDiscardedOnTheEnvelopeSeq` pins decision 3, which is the one a reasonable
   reading of the old sentence would have got wrong.
+- `TestSeqIsNotOrderedPerConnection_REQ_API_002` pins decision 5 by constructing the interleaving
+  — output queued, a tree notification dispatched behind it — and asserting the client sees the
+  numbers out of order. It is written to fail if the daemon ever starts promising ordering, so the
+  documented weakness and the code cannot drift apart.
+- `TestSnapshotFocusIsNullOnAFreshDaemon_REQ_API_001` pins decision 6 against a daemon with no
+  workspace.
+- `TestSnapshotReturnsEveryPaneAndLayout_REQ_API_001` covers the half of §5.3's result that was
+  only ever asserted against a fake: it runs over real SQLite.

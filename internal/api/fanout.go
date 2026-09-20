@@ -36,11 +36,15 @@ type subscription struct {
 	conn      *conn
 	logger    *slog.Logger
 
-	mu           sync.Mutex
-	pending      []queuedChunk
-	queued       int
+	mu      sync.Mutex
+	pending []queuedChunk
+	queued  int
+	// lastSeq is the floor for accepting chunks: the highest session seq ever queued.
+	// sentSeq is the highest one actually written to the socket. They differ whenever
+	// something is still waiting, and only the second one may be reported to the client.
 	lastSeq      uint64
-	lastEnvelope uint64
+	sentSeq      uint64
+	sentEnvelope uint64
 	closed       bool
 	overflow     bool
 
@@ -55,7 +59,8 @@ type subscription struct {
 type queuedChunk struct {
 	seq uint64
 	// envelope is the daemon-run counter of API Spec §6, carried alongside the session's
-	// own seq because a batch has to report the highest one it contains.
+	// own seq because a batch reports the numbers of the last chunk it carries, and that
+	// chunk is not known until the batch is drained.
 	envelope uint64
 	data     []byte
 }
@@ -66,6 +71,7 @@ func newSubscription(c *conn, sessionID string, startSeq uint64) *subscription {
 		conn:      c,
 		logger:    c.logger,
 		lastSeq:   startSeq,
+		sentSeq:   startSeq,
 		wake:      make(chan struct{}, 1),
 		done:      make(chan struct{}),
 	}
@@ -90,7 +96,6 @@ func (s *subscription) enqueue(seq, envelope uint64, data []byte) {
 		return
 	}
 	s.lastSeq = seq
-	s.lastEnvelope = envelope
 
 	if s.queued+len(data) > ClientQueueBytes {
 		// API Spec §8: past the queue limit the daemon drops the subscription. Keeping
@@ -131,6 +136,11 @@ func (s *subscription) rebase(startSeq uint64) {
 	s.pending = s.pending[drop:]
 	if startSeq > s.lastSeq {
 		s.lastSeq = startSeq
+	}
+	if startSeq > s.sentSeq {
+		// What the snapshot contains counts as delivered: the client has those bytes
+		// on its screen and will reject anything at or below this number.
+		s.sentSeq = startSeq
 	}
 	if len(s.pending) > 0 {
 		s.signal()
@@ -200,29 +210,36 @@ func (s *subscription) take() ([]byte, uint64, uint64) {
 	defer s.mu.Unlock()
 
 	if len(s.pending) == 0 {
-		return nil, s.lastSeq, s.lastEnvelope
+		return nil, s.sentSeq, s.sentEnvelope
 	}
 
 	out := make([]byte, 0, min(s.queued, BatchBytes))
-	for len(s.pending) > 0 && len(out) < BatchBytes {
-		chunk := s.pending[0].data
-		room := BatchBytes - len(out)
-		if len(chunk) > room {
-			out = append(out, chunk[:room]...)
-			s.pending[0].data = chunk[room:]
-			s.queued -= room
+	for len(s.pending) > 0 {
+		chunk := s.pending[0]
+		// Whole chunks only, and the boundary is the point. A notification reports the
+		// session seq of the last chunk it carries, and the client drops anything at or
+		// below the seq it last applied (§5.11) — so emitting half a chunk and then its
+		// other half, both under the same number, gets the remainder discarded as a
+		// duplicate and leaves a hole in the screen. Stopping on a chunk boundary is
+		// what keeps the reported seq strictly increasing.
+		//
+		// `len(out) > 0` guarantees progress: a chunk bigger than BatchBytes on its own
+		// still goes out, as one notification. The PTY reads 32 KiB at a time, the same
+		// as BatchBytes, so this is the ordinary case and not an edge.
+		if len(out) > 0 && len(out)+len(chunk.data) > BatchBytes {
 			break
 		}
-		out = append(out, chunk...)
+		out = append(out, chunk.data...)
+		s.sentSeq, s.sentEnvelope = chunk.seq, chunk.envelope
 		s.pending = s.pending[1:]
-		s.queued -= len(chunk)
+		s.queued -= len(chunk.data)
 	}
 
 	// More is waiting, so wake ourselves rather than rely on the next enqueue.
 	if len(s.pending) > 0 {
 		s.signal()
 	}
-	return out, s.lastSeq, s.lastEnvelope
+	return out, s.sentSeq, s.sentEnvelope
 }
 
 func (s *subscription) takeOverflow() bool {

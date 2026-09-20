@@ -397,3 +397,77 @@ func TestNoChunkWaitsLongerThanTheBatchInterval(t *testing.T) {
 			median, BatchInterval)
 	}
 }
+
+// TestABatchNeverSplitsAChunk_REQ_TERM_004 pins the rule that keeps a long burst intact.
+//
+// A notification reports the session seq of the last chunk it carries, and the client
+// discards anything at or below the seq it last applied (§5.11, and `internal/tui`'s screen
+// writer does exactly that). So a batch that emitted half a chunk under seq N and the rest
+// under seq N again would have the remainder thrown away as a duplicate: bytes gone from the
+// middle of the screen, with nothing reporting a loss. `take` therefore stops on a chunk
+// boundary, and the numbers it reports are strictly increasing.
+//
+// The sizes matter. The PTY reads 32 KiB, the same as BatchBytes, so a batch that already
+// holds anything at all cannot fit a full chunk — this is the ordinary path under load, not
+// an edge case.
+func TestABatchNeverSplitsAChunk_REQ_TERM_004(t *testing.T) {
+	t.Parallel()
+
+	sub := &subscription{
+		sessionID: fakeSessionID,
+		wake:      make(chan struct{}, 1),
+		done:      make(chan struct{}),
+	}
+
+	// Three chunks that cannot be coalesced into one batch without splitting one.
+	const chunks = 3
+	for seq := uint64(1); seq <= chunks; seq++ {
+		data := make([]byte, (BatchBytes*2)/3)
+		for i := range data {
+			data[i] = byte('a' + seq - 1)
+		}
+		sub.enqueue(seq, 100+seq, data)
+	}
+
+	var (
+		assembled []byte
+		seqs      []uint64
+		envelopes []uint64
+	)
+	for {
+		batch, seq, envelope := sub.take()
+		if len(batch) == 0 {
+			break
+		}
+		assembled = append(assembled, batch...)
+		seqs = append(seqs, seq)
+		envelopes = append(envelopes, envelope)
+	}
+
+	if len(seqs) < 2 {
+		t.Fatalf("the queue came out in %d batch(es); this test needs it split to mean anything", len(seqs))
+	}
+
+	// Every byte, in order, and no chunk cut in half: each batch is a whole number of
+	// chunks, so every run of identical bytes is exactly one chunk long.
+	want := make([]byte, 0, chunks*((BatchBytes*2)/3))
+	for seq := range uint64(chunks) {
+		want = append(want, slices.Repeat([]byte{byte('a' + seq)}, (BatchBytes*2)/3)...)
+	}
+	if !slices.Equal(assembled, want) {
+		t.Errorf("the reassembled stream is %d bytes, want %d", len(assembled), len(want))
+	}
+
+	for i, seq := range seqs {
+		if i > 0 && seq <= seqs[i-1] {
+			t.Errorf("batch %d reports seq %d after %d; the client drops anything not greater "+
+				"than the last one it applied, so those bytes would vanish", i, seq, seqs[i-1])
+		}
+		if i > 0 && envelopes[i] <= envelopes[i-1] {
+			t.Errorf("batch %d reports envelope %d after %d", i, envelopes[i], envelopes[i-1])
+		}
+	}
+	if last := seqs[len(seqs)-1]; last != chunks {
+		t.Errorf("the final batch reports seq %d, want %d: it carries the last chunk", last, chunks)
+	}
+}

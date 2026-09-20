@@ -308,7 +308,11 @@ Used by `umb status` (REQ-CLI-003).
 
 ### 5.3 `session.snapshot` — REQ-API-001, REQ-API-002
 **Params:** `{}`.
-**Result:** `{seq, focused:{workspace_id, tab_id, thread_id|null}, workspaces: Workspace[], tabs: Tab[], panes: Pane[], layouts: Layout[], threads: Thread[]}`.
+**Result:** `{seq, focused:{workspace_id|null, tab_id|null, thread_id|null}, workspaces: Workspace[], tabs: Tab[], panes: Pane[], layouts: Layout[], threads: Thread[]}`.
+
+All three members of `focused` are nullable, and all three are null on a daemon that has nothing
+focused yet — the state every client meets on a fresh daemon, before the first `workspace.create`.
+Null means "nothing is focused", never "unknown".
 
 The `seq` is the envelope counter of §6, read **before** the tree: the daemon persists before it
 notifies (DD-007), so an event whose `seq` has been assigned is already stored, and reading the
@@ -325,7 +329,8 @@ bytes with nothing to notice.
 
 Bootstrap without gaps, for clients that keep their own cache:
 
-1. open `events.subscribe` on a second connection and wait for its acknowledgement;
+1. open a second connection and complete `system.hello` on it; tree notifications go to every
+   authenticated connection and need no subscription, so from that point nothing is missed;
 2. buffer the stream while calling `session.snapshot`;
 3. install the snapshot and apply the buffered events whose `seq` is greater than the snapshot's `seq`;
 4. keep streaming. Call `session.snapshot` again after reconnecting.
@@ -583,11 +588,19 @@ It is a read-only evaluation: it neither runs the tool nor creates approvals.
 | `thread.stalled` | `{thread_id, turn_id, idle_ms, last_event}` | REQ-AUT-008 |
 | `rules.update_rejected` | `{reason, version, source}` | REQ-SEC-013 |
 
-Every notification carries `seq` in its envelope (§1): a counter that increases by one per
-notification, scoped to **one daemon run** and shared by every connection, so the same event carries
-the same number for everyone (REQ-API-002). It starts at 0 when the daemon starts, and a client
-SHALL NOT carry one across a reconnect — the connection dies with the daemon, and a number from the
-previous run names nothing in this one.
+Every notification carries `seq` in its envelope (§1): a counter that increases by one per **event
+the daemon dispatches**, scoped to **one daemon run** and shared by every connection, so the same
+event carries the same number for everyone (REQ-API-002). It starts at 0 when the daemon starts, and
+a client SHALL NOT carry one across a reconnect — the connection dies with the daemon, and a number
+from the previous run names nothing in this one.
+
+**The counter is monotonic in assignment, not in arrival.** A number is taken when the daemon
+dispatches the event; output then travels through the per-client queue of §8, where it may be
+batched, while control notifications are written directly. A connection subscribed to a session can
+therefore see a higher number before a lower one. The only comparison a client may make is against
+the `seq` reported by `session.snapshot`; comparing against the last number it saw would discard
+live events. THE SYSTEM does not promise per-connection ordering of `seq`, and a client SHALL NOT
+assume it.
 
 **Gaps are expected and are not loss.** A client receives only the notifications it is eligible for
 — output for the sessions it subscribed to, nothing for a subscription that was dropped — so its
@@ -598,6 +611,10 @@ Loss has its own signal, `session.unsubscribed`.
 and anchors the screen to the byte stream (§5.11, REQ-TERM-004). The two are different numbers with
 the same name in different places: the envelope one orders events across the whole daemon, the
 parameter one orders bytes within one terminal.
+
+**Nor is it the `seq` of `report_state` and `report_progress`.** That third one is a request
+*parameter*, counts per `source`, and exists to drop a stale report (§5.15, §5.16). Three numbers
+share the name; only the envelope one is the subject of REQ-API-002.
 
 `session.snapshot` reports the envelope `seq` it contains, and a client applies only the events
 above it — for the notifications that snapshot actually carries. §5.3 says which.

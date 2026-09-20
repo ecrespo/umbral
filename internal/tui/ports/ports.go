@@ -96,7 +96,10 @@ type Event struct {
 	SessionID string
 	// Data is the output bytes, for EventOutput.
 	Data []byte
-	// Seq is the sequence number of an output chunk (REQ-API-002).
+	// Seq is the sequence number of an output chunk: the session's own, from
+	// `session.output`'s params (REQ-TERM-004, API Spec §5.11). It is not the envelope
+	// counter of §6 — that one numbers notifications across the whole daemon, and a client
+	// that anchored a screen to it would place bytes against the wrong ruler.
 	Seq uint64
 	// Err is why the connection ended, for EventDisconnected.
 	Err error

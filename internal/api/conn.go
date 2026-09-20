@@ -108,13 +108,12 @@ func (c *conn) rebaseSubscription(sessionID string, startSeq uint64) {
 	}
 }
 
-// deliver hands one output chunk to this connection's subscription, if it has one.
 // deliver hands one chunk to this connection's subscription, if it has one.
 //
 // Two sequence numbers travel together here and they are not interchangeable: `seq` is the
 // session's own, which the client uses to place bytes on a screen (§5.11), and `envelope` is
 // the daemon-run counter §6 puts on every notification. A batch coalesces several chunks, so
-// the notification it eventually emits carries the highest envelope number it contains.
+// the notification it eventually emits carries the numbers of the last chunk it contains.
 func (c *conn) deliver(sessionID string, seq, envelope uint64, data []byte) {
 	c.subsMu.Lock()
 	sub := c.subs[sessionID]

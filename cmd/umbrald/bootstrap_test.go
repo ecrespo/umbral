@@ -133,8 +133,11 @@ func TestNoGapBetweenSnapshotAndStream_REQ_API_002(t *testing.T) {
 	for _, tab := range snapshot.Tabs {
 		tabs[tab.ID] = true
 	}
+	// One lock for both copies: `seqs` is indexed against `replay` below, and taking them
+	// separately would let a notification land in between and turn a failure into a panic.
 	mu.Lock()
 	replay := append([]client.Notification(nil), buffered...)
+	replaySeqs := append([]uint64(nil), seqs...)
 	mu.Unlock()
 	for _, n := range replay {
 		if n.Method != "tab.created" || n.Seq <= snapshot.Seq {
@@ -169,18 +172,21 @@ func TestNoGapBetweenSnapshotAndStream_REQ_API_002(t *testing.T) {
 		t.Errorf("the client reconstructed %d tabs, the daemon has %d", len(tabs), len(settled.Tabs))
 	}
 
-	// Every notification carried a number, and they only went up on this connection.
-	mu.Lock()
-	defer mu.Unlock()
-	if len(seqs) == 0 {
+	// Every notification carried a number.
+	//
+	// Their order is deliberately not asserted. This observer never subscribes to a session,
+	// so everything it receives took the direct write path and does arrive in assignment
+	// order — but that is a property of this connection, not of the protocol: decision 5 of
+	// the `2026-09-notification-sequencing` delta says the counter is monotonic in assignment
+	// only, because output waits in the queue of §8 and control notifications do not.
+	// Asserting ordering here would pass for a reason the daemon does not promise, and would
+	// make the test a trap for anyone who later gave the observer a subscription.
+	if len(replaySeqs) == 0 {
 		t.Fatal("the observer received no notifications at all")
 	}
-	for i, seq := range seqs {
+	for i, seq := range replaySeqs {
 		if seq == 0 {
 			t.Errorf("notification %d (%s) carried seq 0", i, replay[i].Method)
-		}
-		if i > 0 && seq <= seqs[i-1] {
-			t.Errorf("seq went %d then %d on one connection", seqs[i-1], seq)
 		}
 	}
 }
