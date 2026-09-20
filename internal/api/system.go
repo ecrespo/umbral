@@ -78,6 +78,11 @@ func workspaceMethods() map[string]method {
 		"pane.rename": {handle: handlePaneRename, kinds: interactiveClients},
 		"pane.move":   {handle: handlePaneMove, kinds: interactiveClients},
 		"pane.close":  {handle: handlePaneClose, kinds: interactiveClients},
+
+		// §2 lists `layouts` as a capability of its own, which is why these two are not
+		// folded into the workspace surface above.
+		"layout.export": {handle: handleLayoutExport, kinds: interactiveClients},
+		"layout.apply":  {handle: handleLayoutApply, kinds: interactiveClients},
 	}
 }
 

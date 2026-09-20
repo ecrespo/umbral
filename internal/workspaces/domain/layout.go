@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 )
 
 // The layout is a binary tree of splits and panes (API Spec §4 `Layout`). A tab holds one.
@@ -232,4 +234,95 @@ func ClampRatio(ratio float64) float64 {
 		return MaxSplitRatio
 	}
 	return ratio
+}
+
+// ApplyWarning is the sentence REQ-WS-005 requires `layout.apply` to state in its response,
+// word for word as API Spec §5.8 writes it.
+//
+// It is a constant because it is a contract, not a message: the requirement says the system
+// "SHALL state in the response that live processes and scrollback are not reproduced", and a
+// client showing it to a user is entitled to the same words every time.
+const ApplyWarning = "live processes and scrollback are not reproduced"
+
+// ApplyLayoutParams is what `layout.apply` takes (API Spec §5.8).
+type ApplyLayoutParams struct {
+	WorkspaceID string
+	TabLabel    string
+	Root        *Node
+	Focus       bool
+}
+
+// Applied is what `layout.apply` returns: the tab it built, its panes in tree order, and
+// the warnings REQ-WS-005 requires.
+type Applied struct {
+	Tab      Tab
+	Panes    []Pane
+	Warnings []string
+}
+
+// Validate checks a tree a client sent before anything is created from it.
+//
+// A layout arrives from outside — exported months ago, edited by hand, written by another
+// tool — so it is the one tree in this package that cannot be assumed well formed. An
+// invalid one must be refused whole: half a tab is worse than none, because the client
+// believes its layout was applied.
+func (n *Node) Validate(depth int) error {
+	if n == nil {
+		return fmt.Errorf("%w: the layout has no root", ErrValidation)
+	}
+	if depth > MaxLayoutDepth {
+		return fmt.Errorf("%w: the layout nests deeper than %d splits", ErrValidation, MaxLayoutDepth)
+	}
+	switch n.Type {
+	case NodePane:
+		if len(n.Command) > MaxCommandArgs {
+			return fmt.Errorf("%w: a pane's command has %d arguments, at most %d are allowed",
+				ErrValidation, len(n.Command), MaxCommandArgs)
+		}
+		if len(n.Command) > 0 && n.Command[0] == "" {
+			return fmt.Errorf("%w: a pane's command names no program", ErrValidation)
+		}
+		if len(n.Label) > MaxLabelLength {
+			return fmt.Errorf("%w: a pane label is %d characters, the cap is %d",
+				ErrValidation, len(n.Label), MaxLabelLength)
+		}
+		return nil
+	case NodeSplit:
+		if !n.Direction.Valid() {
+			return fmt.Errorf("%w: split direction %q is not \"right\" or \"down\"",
+				ErrValidation, n.Direction)
+		}
+		if n.First == nil || n.Second == nil {
+			return fmt.Errorf("%w: a split node needs both children", ErrValidation)
+		}
+		if err := n.First.Validate(depth + 1); err != nil {
+			return err
+		}
+		return n.Second.Validate(depth + 1)
+	}
+	return fmt.Errorf("%w: layout node of unknown type %q", ErrValidation, n.Type)
+}
+
+// MaxLayoutDepth bounds how deeply a layout may nest. A tab is a screen; a hundred nested
+// splits is not a layout anyone drew, and recursion over an attacker-supplied tree is the
+// one place in this package where depth is not self-limiting.
+const MaxLayoutDepth = 32
+
+// MaxCommandArgs caps a pane's launch argv.
+//
+// It is the sessions module's own cap, taken rather than copied: a layout that passed this
+// check and then failed the identical one a layer down would be refused after its tab had
+// been built, which is the failure `ApplyLayout` goes to some length to avoid.
+const MaxCommandArgs = sessdomain.MaxCommandArgs
+
+// PaneLeaves lists the tree's pane nodes left to right, which is the order `layout.apply`
+// creates them in and the order `pane.list` returns them.
+func (n *Node) PaneLeaves() []*Node {
+	if n == nil {
+		return nil
+	}
+	if n.Type == NodePane {
+		return []*Node{n}
+	}
+	return append(n.First.PaneLeaves(), n.Second.PaneLeaves()...)
 }

@@ -23,6 +23,8 @@ const (
 	KindPaneClosed  bus.Kind = "pane.closed"
 	KindPaneFocused bus.Kind = "pane.focused"
 	KindPaneMoved   bus.Kind = "pane.moved"
+
+	KindLayoutUpdated bus.Kind = "layout.updated"
 )
 
 // These live in ports rather than domain because they carry a bus.Kind, and domain may
@@ -71,3 +73,13 @@ type PaneMoved struct {
 
 // EventKind implements bus.Event.
 func (PaneMoved) EventKind() bus.Kind { return KindPaneMoved }
+
+// LayoutUpdated is §6's `layout.updated`, whose payload is a `Layout`. It is published
+// whenever a tab's tree changes shape — a split, a close, a move in or out, an apply — so a
+// client that draws from the tree does not have to reconstruct it from the pane events.
+type LayoutUpdated struct {
+	Layout domain.Layout
+}
+
+// EventKind implements bus.Event.
+func (LayoutUpdated) EventKind() bus.Kind { return KindLayoutUpdated }

@@ -2,17 +2,19 @@ package integration_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
 
+	"github.com/ecrespo/umbral/internal/bus"
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 	"github.com/ecrespo/umbral/internal/store"
 	"github.com/ecrespo/umbral/internal/workspaces"
 	"github.com/ecrespo/umbral/internal/workspaces/adapters/treestore"
 	"github.com/ecrespo/umbral/internal/workspaces/domain"
-	"github.com/ecrespo/umbral/internal/workspaces/ports"
+	wsports "github.com/ecrespo/umbral/internal/workspaces/ports"
 )
 
 // fakeTerminals stands in for the sessions module.
@@ -26,14 +28,19 @@ type fakeTerminals struct {
 	mu      sync.Mutex
 	created []string
 	closed  []string
-	failOn  int
-	n       int
+	// launched records the parameters each session was started with, because "the command
+	// was stored" and "the command was run" are different claims and REQ-WS-005 makes the
+	// second one.
+	launched []sessdomain.CreateParams
+	failOn   int
+	n        int
 }
 
-func (f *fakeTerminals) Create(_ context.Context, _ sessdomain.CreateParams) (sessdomain.Session, error) {
+func (f *fakeTerminals) Create(_ context.Context, params sessdomain.CreateParams) (sessdomain.Session, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.n++
+	f.launched = append(f.launched, params)
 	if f.failOn != 0 && f.n == f.failOn {
 		return sessdomain.Session{}, fmt.Errorf("fake: refusing to start terminal %d", f.n)
 	}
@@ -49,6 +56,14 @@ func (f *fakeTerminals) Close(_ context.Context, id string) error {
 	defer f.mu.Unlock()
 	f.closed = append(f.closed, id)
 	return nil
+}
+
+// failAfter makes the terminal after the nth refuse to start, which is how a test reaches
+// the one failure `treestore.ApplyLayout`'s transaction cannot cover.
+func (f *fakeTerminals) failAfter(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failOn = f.n + n + 1
 }
 
 func (f *fakeTerminals) createdIDs() []string {
@@ -68,6 +83,7 @@ type harness struct {
 	*workspaces.Service
 	terminals *fakeTerminals
 	store     *store.Store
+	events    *bus.Subscription
 }
 
 func newHarness(t *testing.T) *harness {
@@ -93,20 +109,37 @@ func newHarness(t *testing.T) *harness {
 		t.Fatalf("treestore.New: %v", err)
 	}
 	terminals := &fakeTerminals{}
+	// A real bus, subscribed to every kind the tree publishes. The §6 notifications are
+	// part of what this module does, and a service that changed the tree correctly while
+	// telling nobody would pass every other test here.
+	eventBus := bus.New()
+	t.Cleanup(eventBus.Close)
+	events := eventBus.SubscribeBuffered(256,
+		wsports.KindWorkspaceCreated, wsports.KindWorkspaceUpdated,
+		wsports.KindWorkspaceClosed, wsports.KindWorkspaceFocused,
+		wsports.KindTabCreated, wsports.KindTabClosed, wsports.KindTabFocused,
+		wsports.KindPaneCreated, wsports.KindPaneUpdated, wsports.KindPaneClosed,
+		wsports.KindPaneFocused, wsports.KindPaneMoved, wsports.KindLayoutUpdated)
+	t.Cleanup(events.Close)
+
 	service, err := workspaces.New(workspaces.Config{
 		Tree: &sessionRegistering{Tree: tree, db: db, t: t}, Terminals: terminals,
+		Bus: eventBus,
 	})
 	if err != nil {
 		t.Fatalf("workspaces.New: %v", err)
 	}
-	return &harness{Service: service, terminals: terminals, store: db}
+	return &harness{Service: service, terminals: terminals, store: db, events: events}
 }
 
 // newWorkspace creates a workspace and fails the test if it cannot.
 func (h *harness) newWorkspace(t *testing.T, label string) domain.Tree {
 	t.Helper()
+	// Focus is passed explicitly because the `focus?: true` default of API Spec §5.4 is
+	// applied at the wire layer, not here: the service honours what it is given, and a
+	// test that relied on the default would be testing `internal/api` from the wrong side.
 	tree, err := h.CreateWorkspace(t.Context(), domain.CreateWorkspaceParams{
-		CWD: t.TempDir(), Label: label, TabLabel: label,
+		CWD: t.TempDir(), Label: label, TabLabel: label, Focus: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateWorkspace: %v", err)
@@ -123,7 +156,7 @@ func (h *harness) newWorkspace(t *testing.T, label string) domain.Tree {
 // terminal that does not exist — a guarantee worth keeping under test rather than under a
 // comment.
 type sessionRegistering struct {
-	ports.Tree
+	wsports.Tree
 	db *store.Store
 	t  *testing.T
 }
@@ -136,4 +169,59 @@ func (s *sessionRegistering) AttachSession(ctx context.Context, paneID, sessionI
 		s.t.Fatalf("register the fake session %s: %v", sessionID, err)
 	}
 	return s.Tree.AttachSession(ctx, paneID, sessionID)
+}
+
+// isValidation reports whether an error is the module's validation sentinel.
+func isValidation(err error) bool { return errors.Is(err, domain.ErrValidation) }
+
+// sprintf keeps the shape comparison's formatting in one place.
+func sprintf(format string, args ...any) string { return fmt.Sprintf(format, args...) }
+
+// launchedWith reports the parameters a session was started with.
+func (f *fakeTerminals) launchedWith(sessionID string) (sessdomain.CreateParams, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, id := range f.created {
+		if id == sessionID {
+			return f.launched[i], true
+		}
+	}
+	return sessdomain.CreateParams{}, false
+}
+
+// drain collects the events published so far, without waiting: everything the service
+// publishes it publishes synchronously, before the call it belongs to returns.
+func (h *harness) drain() []bus.Event {
+	var out []bus.Event
+	for {
+		select {
+		case ev, open := <-h.events.C():
+			if !open {
+				return out
+			}
+			out = append(out, ev)
+		default:
+			return out
+		}
+	}
+}
+
+// kindsOf names the events drained, for an assertion that reads like the sequence it checks.
+func kindsOf(events []bus.Event) []string {
+	out := make([]string, 0, len(events))
+	for _, ev := range events {
+		out = append(out, string(ev.EventKind()))
+	}
+	return out
+}
+
+// countKind counts one kind among the drained events.
+func countKind(events []bus.Event, kind bus.Kind) int {
+	n := 0
+	for _, ev := range events {
+		if ev.EventKind() == kind {
+			n++
+		}
+	}
+	return n
 }

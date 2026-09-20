@@ -132,12 +132,26 @@ func (s Session) CanAcceptInputFrom(writer InputOwner) error {
 
 // CreateParams is a validated `session.create` request (API Spec §5.3).
 type CreateParams struct {
-	Shell            string
-	CWD              string
-	Env              map[string]string
-	Size             Size
+	Shell string
+	CWD   string
+	Env   map[string]string
+	Size  Size
+	// Command is a program to run instead of the shell, as argv (API Spec §4's `Layout`
+	// carries one per pane, e.g. `["sh","-c","go test ./..."]`). It is what REQ-WS-005
+	// means by "reproduces … commands".
+	//
+	// A session with a command gets no shell integration and therefore no blocks: the
+	// bootstrap works by sourcing a file into bash, zsh or fish, and there is nothing to
+	// source into an arbitrary program. That is a property of what was asked for, not a
+	// failure, and REQ-BLK-003 already describes the resulting `integration: none`.
+	Command          []string
 	ShellIntegration bool
 }
+
+// MaxCommandArgs caps a pane's launch argv. The API sets no number; one is set here because
+// the argv crosses the socket, is stored in `panes.command_json` and is replayed by
+// `layout.apply`, and an unbounded list is three places to put an unbounded string.
+const MaxCommandArgs = 64
 
 // Validate checks the parameters the daemon can judge without touching the filesystem.
 // Whether the shell is executable and the directory exists is an adapter's job, since
@@ -154,6 +168,13 @@ func (p CreateParams) Validate() error {
 		if key == "" {
 			return fmt.Errorf("%w: env contains an empty key", ErrValidation)
 		}
+	}
+	if len(p.Command) > MaxCommandArgs {
+		return fmt.Errorf("%w: command has %d arguments, at most %d are allowed",
+			ErrValidation, len(p.Command), MaxCommandArgs)
+	}
+	if len(p.Command) > 0 && p.Command[0] == "" {
+		return fmt.Errorf("%w: command names no program", ErrValidation)
 	}
 	return nil
 }

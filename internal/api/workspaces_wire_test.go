@@ -23,15 +23,19 @@ import (
 // whatever the test set. The tree's behaviour is tested against real SQLite elsewhere; what
 // is tested here is the wire, which nothing else can reach.
 type fakeTree struct {
-	tree     wsdomain.Tree
-	pane     wsdomain.Pane
-	layout   wsdomain.Layout
-	moved    wsports.Moved
-	err      error
-	lastCall struct {
+	tree       wsdomain.Tree
+	pane       wsdomain.Pane
+	layout     wsdomain.Layout
+	moved      wsports.Moved
+	applied    wsdomain.Applied
+	focusedWS  string
+	focusedTab string
+	err        error
+	lastCall   struct {
 		createParams wsdomain.CreateWorkspaceParams
 		splitParams  wsdomain.SplitParams
 		moveParams   wsdomain.MoveParams
+		applyParams  wsdomain.ApplyLayoutParams
 		id           string
 		label        string
 		focus        bool
@@ -136,6 +140,18 @@ func (f *fakeTree) Layout(_ context.Context, tabID string) (wsdomain.Layout, err
 	f.lastCall.id = tabID
 	return f.layout, f.err
 }
+
+func (f *fakeTree) ExportLayout(_ context.Context, tabID string) (wsdomain.Layout, error) {
+	f.lastCall.id = tabID
+	return f.layout, f.err
+}
+
+func (f *fakeTree) ApplyLayout(_ context.Context, p wsdomain.ApplyLayoutParams) (wsdomain.Applied, error) {
+	f.lastCall.applyParams = p
+	return f.applied, f.err
+}
+
+func (f *fakeTree) Focused() (string, string) { return f.focusedWS, f.focusedTab }
 
 // sampleTree is a workspace with every field populated, so a missing one on the wire shows
 // up as an absence rather than as a zero that might have been correct.

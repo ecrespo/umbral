@@ -23,6 +23,36 @@ const (
 // goroutines room to drain.
 const dispatchBuffer = 2048
 
+// dispatchedKinds is every bus event that has a wire form (API Spec §6).
+//
+// It is a variable rather than an argument list inside Notify so a test can check it
+// against the kinds the modules publish. A kind with a `toNotification` case but no entry
+// here is invisible: the translation exists, the event never arrives, and the only symptom
+// is a client whose tree slowly drifts from the daemon's.
+var dispatchedKinds = []bus.Kind{
+	sessports.KindSessionOutput,
+	sessports.KindSessionExited,
+	sessports.KindSessionResized,
+	sessports.KindSessionInputOwner,
+	sessports.KindSessionIntegration,
+	sessports.KindBlockStarted,
+	sessports.KindBlockUpdated,
+	sessports.KindBlockClosed,
+	wsports.KindWorkspaceCreated,
+	wsports.KindWorkspaceUpdated,
+	wsports.KindWorkspaceClosed,
+	wsports.KindWorkspaceFocused,
+	wsports.KindTabCreated,
+	wsports.KindTabClosed,
+	wsports.KindTabFocused,
+	wsports.KindPaneCreated,
+	wsports.KindPaneUpdated,
+	wsports.KindPaneClosed,
+	wsports.KindPaneFocused,
+	wsports.KindPaneMoved,
+	wsports.KindLayoutUpdated,
+}
+
 // Notify forwards module events to connected clients as JSON-RPC notifications
 // (API Spec §6). It returns when ctx is cancelled.
 //
@@ -36,28 +66,7 @@ func (s *Server) Notify(ctx context.Context) {
 	// drops here is output no client will ever see. The per-client budget that API Spec §8
 	// actually specifies lives in the subscription, where it can drop one slow client
 	// rather than everyone.
-	sub := s.cfg.Bus.SubscribeBuffered(dispatchBuffer,
-		sessports.KindSessionOutput,
-		sessports.KindSessionExited,
-		sessports.KindSessionResized,
-		sessports.KindSessionInputOwner,
-		sessports.KindSessionIntegration,
-		sessports.KindBlockStarted,
-		sessports.KindBlockUpdated,
-		sessports.KindBlockClosed,
-		wsports.KindWorkspaceCreated,
-		wsports.KindWorkspaceUpdated,
-		wsports.KindWorkspaceClosed,
-		wsports.KindWorkspaceFocused,
-		wsports.KindTabCreated,
-		wsports.KindTabClosed,
-		wsports.KindTabFocused,
-		wsports.KindPaneCreated,
-		wsports.KindPaneUpdated,
-		wsports.KindPaneClosed,
-		wsports.KindPaneFocused,
-		wsports.KindPaneMoved,
-	)
+	sub := s.cfg.Bus.SubscribeBuffered(dispatchBuffer, dispatchedKinds...)
 	defer sub.Close()
 
 	for {
@@ -123,6 +132,9 @@ func toNotification(event bus.Event) (string, any) {
 		return string(e.Kind), toWireTab(e.Tab)
 	case wsports.PaneEvent:
 		return string(e.Kind), toWirePane(e.Pane)
+	case wsports.LayoutUpdated:
+		// §6 types this payload as a `Layout`, like the three above it.
+		return "layout.updated", toWireLayout(e.Layout)
 	case wsports.PaneMoved:
 		// REQ-WS-007's payload, and the reason this one is not a PaneEvent: §6 gives it
 		// the previous identifiers so a client can follow the terminal across the move

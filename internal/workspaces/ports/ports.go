@@ -59,8 +59,16 @@ type Workspaces interface {
 	// ClosePane closes one pane and terminates its session.
 	ClosePane(ctx context.Context, id string) error
 
-	// Layout reports a tab's tree, which `pane.split` returns and T-F0-15 exports.
-	Layout(ctx context.Context, tabID string) (domain.Layout, error)
+	// ExportLayout returns a tab's tree (REQ-WS-004). An empty tabID means the focused
+	// tab, which is API Spec §5.7's default.
+	ExportLayout(ctx context.Context, tabID string) (domain.Layout, error)
+	// ApplyLayout creates a tab reproducing a portable tree, and says in its result what
+	// it did not reproduce (REQ-WS-005).
+	ApplyLayout(ctx context.Context, params domain.ApplyLayoutParams) (domain.Applied, error)
+
+	// Focused reports the workspace and tab a client should open on, which
+	// `layout.export` defaults to and `session.snapshot` reports (API Spec §5.3).
+	Focused() (workspaceID, tabID string)
 }
 
 // Moved is what a completed `pane.move` reports. The previous identifiers are in the
@@ -148,4 +156,6 @@ type Tree interface {
 
 	// Layout reports a tab's stored tree.
 	Layout(ctx context.Context, tabID string) (domain.Layout, error)
+	// ApplyLayout writes a whole tab from a portable tree, in one transaction.
+	ApplyLayout(ctx context.Context, params domain.ApplyLayoutParams) (domain.Applied, error)
 }

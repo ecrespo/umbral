@@ -33,8 +33,9 @@ list — passes its tests and its
 [manual checklist](docs/qa/f0-tui.md), walked end to end on a real terminal. Three of the four performance NFRs are
 gates rather than prose: CI fails on a regression and proves, on the same run, that it
 still would. `umbrald` also owns the workspace tree — workspaces, tabs and panes addressed
-as `w1`, `w1:t2` and `w1:p3`, with a pane keeping its shell and its old name when it moves.
-Next: portable layouts and structure restore.
+as `w1`, `w1:t2` and `w1:p3`, with a pane keeping its shell and its old name when it moves —
+and a tab's layout exports as a portable tree that rebuilds anywhere, panes, working
+directories and launch commands included. Next: structure restore after a restart.
 
 ## What Umbral will be
 

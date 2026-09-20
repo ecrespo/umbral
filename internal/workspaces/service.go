@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ecrespo/umbral/internal/bus"
@@ -46,6 +47,17 @@ type Service struct {
 	terminals ports.Terminals
 	bus       *bus.Bus
 	shell     string
+
+	// focus is which workspace and tab a client should open on. It has no column: Data
+	// Model §2.4b gives `workspaces` and `tabs` none, and `tabs.layout_json` holds only
+	// the pane focused *within* a tab. So it is kept here, in memory, which means it is
+	// lost across a restart — acceptable because the cost is a client opening on the
+	// first workspace instead of the last one used, and because T-F0-18, which restores
+	// the structure, is where persisting it would belong. API Spec §5.7 defaults
+	// `layout.export` to it and §5.3 reports it.
+	mu           sync.RWMutex
+	focusedWS    string
+	focusedTabOf map[string]string
 }
 
 // New builds the service.
@@ -55,6 +67,7 @@ func New(cfg Config) (*Service, error) {
 	}
 	return &Service{
 		tree: cfg.Tree, terminals: cfg.Terminals, bus: cfg.Bus, shell: cfg.Shell,
+		focusedTabOf: map[string]string{},
 	}, nil
 }
 
@@ -152,6 +165,8 @@ func (s *Service) CreateWorkspace(ctx context.Context, params domain.CreateWorks
 	s.publish(ports.TabEvent{Kind: ports.KindTabCreated, Tab: tree.Tab})
 	s.publish(ports.PaneEvent{Kind: ports.KindPaneCreated, Pane: tree.RootPane})
 	if params.Focus {
+		s.setFocusedWorkspace(tree.Workspace.ID)
+		s.setFocusedTab(tree.Workspace.ID, tree.Tab.ID)
 		s.publish(ports.WorkspaceEvent{Kind: ports.KindWorkspaceFocused, Workspace: tree.Workspace})
 	}
 	return tree, nil
@@ -166,7 +181,11 @@ func (s *Service) attach(ctx context.Context, pane domain.Pane) (domain.Pane, er
 	}
 	session, err := s.terminals.Create(ctx, sessdomain.CreateParams{
 		Shell: s.shell, CWD: pane.CWD, Env: pane.Env, Size: defaultPaneSize,
-		ShellIntegration: true,
+		Command: pane.Command,
+		// A pane running a command gets no integration, because there is nothing to
+		// inject a bootstrap into; the sessions module says so too, and asking for it here
+		// would be asking for something the answer to is always no.
+		ShellIntegration: len(pane.Command) == 0,
 	})
 	if err != nil {
 		return domain.Pane{}, fmt.Errorf("workspaces: start the pane's terminal: %w", err)
@@ -229,6 +248,7 @@ func (s *Service) FocusWorkspace(ctx context.Context, id string) (domain.Workspa
 	if ws.RollupState, err = s.rollup(ctx, ws); err != nil {
 		return domain.Workspace{}, err
 	}
+	s.setFocusedWorkspace(ws.ID)
 	s.publish(ports.WorkspaceEvent{Kind: ports.KindWorkspaceFocused, Workspace: ws})
 	return ws, nil
 }
@@ -283,6 +303,7 @@ func (s *Service) CloseWorkspace(ctx context.Context, id string, closePanes bool
 	}
 
 	s.announceClosed(closing)
+	s.forgetWorkspace(id)
 	// The record that goes on the wire says closed. The one read above still said open,
 	// because at that point it was.
 	ws.ClosedAt = closedNow()
@@ -370,6 +391,7 @@ func (s *Service) CreateTab(ctx context.Context, workspaceID, label string, focu
 	s.publish(ports.TabEvent{Kind: ports.KindTabCreated, Tab: tab})
 	s.publish(ports.PaneEvent{Kind: ports.KindPaneCreated, Pane: pane})
 	if focus {
+		s.setFocusedTab(tab.WorkspaceID, tab.ID)
 		s.publish(ports.TabEvent{Kind: ports.KindTabFocused, Tab: tab})
 	}
 	return tab, pane, nil
@@ -392,6 +414,7 @@ func (s *Service) FocusTab(ctx context.Context, id string) (domain.Tab, error) {
 	if err != nil {
 		return domain.Tab{}, err
 	}
+	s.setFocusedTab(tab.WorkspaceID, tab.ID)
 	s.publish(ports.TabEvent{Kind: ports.KindTabFocused, Tab: tab})
 	return tab, nil
 }
@@ -427,6 +450,7 @@ func (s *Service) CloseTab(ctx context.Context, id string) error {
 	s.closeSessions(ctx, sessions)
 
 	s.announceClosed(subtree{tabs: []domain.Tab{tab}, panes: panes})
+	s.forgetTab(tab.WorkspaceID, tab.ID)
 	return nil
 }
 
@@ -438,17 +462,6 @@ func (s *Service) SplitPane(ctx context.Context, params domain.SplitParams) (dom
 	if !params.Direction.Valid() {
 		return domain.Pane{}, domain.Layout{}, fmt.Errorf(
 			"%w: direction %q is not \"right\" or \"down\"", domain.ErrValidation, params.Direction,
-		)
-	}
-	// API Spec §5.6 lists `command`, and nothing here can run it: a session is launched
-	// from a shell, and `sessdomain.CreateParams` carries no argv. Storing it and starting
-	// a plain shell would be the worst answer — the client is told nothing and watches its
-	// command not happen. Refusing says so, until T-F0-15 brings the launch path that
-	// `layout.apply` needs anyway.
-	if len(params.Command) > 0 {
-		return domain.Pane{}, domain.Layout{}, fmt.Errorf(
-			"%w: pane.split cannot launch a command yet; that arrives with layout.apply (T-F0-15)",
-			domain.ErrValidation,
 		)
 	}
 	if err := checkPaneID(params.PaneID); err != nil {
@@ -495,6 +508,7 @@ func (s *Service) SplitPane(ctx context.Context, params domain.SplitParams) (dom
 	}
 
 	s.publish(ports.PaneEvent{Kind: ports.KindPaneCreated, Pane: pane})
+	s.publish(ports.LayoutUpdated{Layout: updated})
 	if params.Focus {
 		s.publish(ports.PaneEvent{Kind: ports.KindPaneFocused, Pane: pane})
 	}
@@ -617,6 +631,10 @@ func (s *Service) MovePane(ctx context.Context, params domain.MoveParams) (ports
 		PreviousWorkspaceID: moved.PreviousWorkspaceID,
 		Layout:              moved.Layout,
 	})
+	// Two trees changed, and `pane.moved` carries only the destination's. A client showing
+	// the tab the pane left has to redraw it too.
+	s.publish(ports.LayoutUpdated{Layout: moved.SourceLayout})
+	s.publish(ports.LayoutUpdated{Layout: moved.Layout})
 	return moved, nil
 }
 
@@ -638,6 +656,9 @@ func (s *Service) ClosePane(ctx context.Context, id string) error {
 	}
 	pane.ClosedAt = closedNow()
 	s.publish(ports.PaneEvent{Kind: ports.KindPaneClosed, Pane: pane})
+	// The tab's tree lost a node and the split that held it collapsed into its sibling,
+	// so a client drawing from the tree needs the new shape and not just the absence.
+	s.publishLayout(ctx, pane.TabID)
 	return nil
 }
 
@@ -647,4 +668,150 @@ func (s *Service) Layout(ctx context.Context, tabID string) (domain.Layout, erro
 		return domain.Layout{}, err
 	}
 	return s.tree.Layout(ctx, tabID)
+}
+
+// setFocusedWorkspace and setFocusedTab record what the last focus call chose.
+func (s *Service) setFocusedWorkspace(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.focusedWS = id
+}
+
+func (s *Service) setFocusedTab(workspaceID, tabID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.focusedWS = workspaceID
+	s.focusedTabOf[workspaceID] = tabID
+}
+
+// forgetTab and forgetWorkspace drop focus that points at something closed.
+//
+// Focus is cleared rather than moved to a neighbour. `layout.export` with no `tab_id` then
+// answers "no tab is focused" instead of "tab w1:t1 does not exist", which is the truth and
+// is something a client can act on; re-pointing would be the daemon guessing which tab the
+// user is looking at, and it has no way to know.
+func (s *Service) forgetTab(workspaceID, tabID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.focusedTabOf[workspaceID] == tabID {
+		delete(s.focusedTabOf, workspaceID)
+	}
+}
+
+func (s *Service) forgetWorkspace(workspaceID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.focusedTabOf, workspaceID)
+	if s.focusedWS == workspaceID {
+		s.focusedWS = ""
+	}
+}
+
+// Focused reports the workspace and tab a client should open on.
+func (s *Service) Focused() (string, string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.focusedWS, s.focusedTabOf[s.focusedWS]
+}
+
+// ExportLayout is REQ-WS-004: a tab's tree, with each pane's label, cwd and launch command.
+//
+// An empty tabID means the focused tab, which is API Spec §5.7's default. A daemon nothing
+// has focused yet has no such tab, and says so rather than picking one: guessing would give
+// a client a layout for a tab it is not looking at.
+func (s *Service) ExportLayout(ctx context.Context, tabID string) (domain.Layout, error) {
+	if tabID == "" {
+		if _, tabID = s.Focused(); tabID == "" {
+			return domain.Layout{}, fmt.Errorf(
+				"%w: no tab is focused, so layout.export needs a tab_id", domain.ErrNotFound)
+		}
+	}
+	return s.Layout(ctx, tabID)
+}
+
+// ApplyLayout is REQ-WS-005: a tab that reproduces the structure, labels, cwd, env and
+// commands of a portable tree, and a response that says what it did not reproduce.
+//
+// The tree is validated before anything is written. A layout comes from outside — exported
+// months ago, hand-edited, produced by another tool — so it is the one input here that
+// cannot be assumed well formed, and a tab half-built from a bad one is worse than a
+// refusal: the client believes it has what it drew.
+func (s *Service) ApplyLayout(ctx context.Context, params domain.ApplyLayoutParams) (domain.Applied, error) {
+	if err := checkWorkspaceID(params.WorkspaceID); err != nil {
+		return domain.Applied{}, err
+	}
+	if err := checkLabel(params.TabLabel); err != nil {
+		return domain.Applied{}, err
+	}
+	if err := params.Root.Validate(0); err != nil {
+		return domain.Applied{}, err
+	}
+
+	applied, err := s.tree.ApplyLayout(ctx, params)
+	if err != nil {
+		return domain.Applied{}, err
+	}
+
+	// Terminals after the tree, the same order `workspace.create` uses and for the same
+	// reason: a terminal started before its row would be orphaned by a failed insert.
+	//
+	// This is also the step most likely to fail, and the only one the transaction above
+	// cannot cover. A layout is portable, so its `cwd` may not exist on this machine and
+	// its `command[0]` may not be on this PATH — `Node.Validate` checks the shape, not the
+	// world. Returning bare here would leave a committed tab holding some live panes and
+	// some empty ones, which is exactly the "asked for four panes and got two" this
+	// method exists to prevent. So a failure unwinds: the tab goes, and with it the panes
+	// and the terminals that did start.
+	for i := range applied.Panes {
+		pane, err := s.attach(ctx, applied.Panes[i])
+		if err != nil {
+			s.unapply(ctx, applied)
+			return domain.Applied{}, err
+		}
+		applied.Panes[i] = pane
+	}
+
+	s.publish(ports.TabEvent{Kind: ports.KindTabCreated, Tab: applied.Tab})
+	for _, pane := range applied.Panes {
+		s.publish(ports.PaneEvent{Kind: ports.KindPaneCreated, Pane: pane})
+	}
+	s.publishLayout(ctx, applied.Tab.ID)
+	if params.Focus {
+		s.setFocusedTab(applied.Tab.WorkspaceID, applied.Tab.ID)
+		s.publish(ports.TabEvent{Kind: ports.KindTabFocused, Tab: applied.Tab})
+	}
+	return applied, nil
+}
+
+// unapply undoes a partly-attached layout.
+//
+// Nothing is announced: the tab was never announced either, because the notifications for
+// an apply come after every terminal is up. From a client's side the call simply failed,
+// which is the only thing it can act on.
+//
+// Failures here are swallowed deliberately. This runs while returning another error — the
+// one the caller actually needs — and a cleanup that reported its own would replace the
+// cause with a consequence.
+func (s *Service) unapply(ctx context.Context, applied domain.Applied) {
+	sessions, err := s.tree.CloseTab(ctx, applied.Tab.ID)
+	if err != nil {
+		return
+	}
+	s.closeSessions(ctx, sessions)
+}
+
+// publishLayout emits §6's `layout.updated` for a tab whose tree changed shape.
+//
+// It reads the tab back rather than using whatever the caller had in hand, because the
+// store is what decides the final shape — a close collapses a split, an apply renumbers
+// every pane — and a notification built from the caller's copy would be a guess.
+func (s *Service) publishLayout(ctx context.Context, tabID string) {
+	layout, err := s.tree.Layout(ctx, tabID)
+	if err != nil {
+		// The change itself already committed and the caller has been told it succeeded.
+		// Failing to describe it is worth no error of its own; the client's recovery is
+		// the same either way, which is to ask for the layout.
+		return
+	}
+	s.publish(ports.LayoutUpdated{Layout: layout})
 }

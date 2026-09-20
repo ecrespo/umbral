@@ -7,12 +7,90 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ecrespo/umbral/internal/sessions/domain"
 	"github.com/ecrespo/umbral/internal/sessions/ports"
 )
+
+// launch decides what the child process actually is.
+//
+// Two shapes, and they are mutually exclusive on purpose. Without a command the child is
+// the configured shell, with the integration bootstrap injected when there is one
+// (REQ-BLK-005). With a command the child is that command and nothing is injected: the
+// bootstrap works by sourcing a file into bash, zsh or fish, and an arbitrary program has
+// nowhere to source it. Trying anyway would mean a `go test` that inherited a shell's
+// prompt hooks, which is worse than no integration.
+//
+// argv[0] is resolved here, not in the PTY adapter, and the difference from
+// `domain.CreateParams.Validate` is worth naming: that comment says "whether the shell is
+// executable and the directory exists is an adapter's job", and it stands — the adapter
+// still refuses a path it cannot execute. Resolving a *name* is a different question. It
+// has to be answered against the child's own environment, because a portable layout may
+// carry `env: {"PATH": "/opt/toolchain/bin"}` beside `command: ["mytool"]`, and the
+// daemon's PATH is not where that layout said to look. The environment is assembled here,
+// so this is where the answer lives.
+func (s *Service) launch(params domain.CreateParams) (program string, args, env []string, cleanup func() error, err error) {
+	if len(params.Command) == 0 {
+		args, env, cleanup, err = s.bootstrap(params)
+		return params.Shell, args, env, cleanup, err
+	}
+
+	env = environ(params.Env)
+	program, err = lookPath(params.Command[0], env)
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+	return program, params.Command[1:], env, nil, nil
+}
+
+// lookPath resolves a program name against the PATH the child will actually run with.
+//
+// `exec.LookPath` cannot be used: it reads the daemon's own PATH from the process
+// environment, and the whole point here is that the caller may have declared a different
+// one. A name that already carries a separator is a path and is returned as it stands, for
+// the adapter to validate.
+func lookPath(name string, env []string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("%w: command names no program", domain.ErrValidation)
+	}
+	if strings.ContainsRune(name, os.PathSeparator) {
+		return name, nil
+	}
+
+	for _, dir := range filepath.SplitList(pathFrom(env)) {
+		if dir == "" {
+			// POSIX: an empty element means the working directory. Honouring it would let
+			// a layout run whatever happens to sit in the directory it opens in, which is
+			// the classic way a `.` on PATH becomes an execution primitive, so it is
+			// skipped rather than resolved.
+			continue
+		}
+		candidate := filepath.Join(dir, name)
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+			continue
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("%w: command %q is not on the session's PATH", domain.ErrValidation, name)
+}
+
+// pathFrom reads PATH out of an assembled environment, taking the last assignment because
+// that is what execve does with duplicates — and `environ` appends the caller's overrides
+// after the daemon's own.
+func pathFrom(env []string) string {
+	path := ""
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "PATH="); ok {
+			path = value
+		}
+	}
+	return path
+}
 
 // bootstrap assembles the child's argv and environment, injecting shell integration when
 // the caller asked for it and the shell has a bootstrap (REQ-BLK-005).

@@ -138,7 +138,7 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 		return domain.Session{}, err
 	}
 
-	args, env, cleanup, err := s.bootstrap(params)
+	program, args, env, cleanup, err := s.launch(params)
 	if err != nil {
 		return domain.Session{}, err
 	}
@@ -153,7 +153,7 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 	}
 
 	pty, err := s.cfg.NewPTY(ports.PTYSpec{
-		Path: params.Shell, Args: args, Env: env, Dir: params.CWD, Size: params.Size,
+		Path: program, Args: args, Env: env, Dir: params.CWD, Size: params.Size,
 	})
 	if err != nil {
 		_ = emu.Close()
@@ -162,8 +162,10 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 	}
 
 	session := domain.Session{
-		ID:          store.NewID(store.PrefixSession),
-		Shell:       params.Shell,
+		ID: store.NewID(store.PrefixSession),
+		// The program actually running, which for a pane with a command is that command
+		// and not the shell nobody started. `session.list` is how a client sees it.
+		Shell:       program,
 		CWD:         params.CWD,
 		Size:        params.Size,
 		State:       domain.StateAlive,
