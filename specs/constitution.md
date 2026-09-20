@@ -1,6 +1,6 @@
 # Constitution — Umbral
 
-> Version 1.0 · Ratified: pending (proposed 2026-09-11) · Last amendment: —
+> Version 1.1 · Ratified: pending (proposed 2026-09-11) · Last amendment: 2026-09-20 (Art. 5)
 > Scope: the `umbral` repository (daemon `umbrald`, clients `umbral-tui`, `umbral-desktop`, CLI `umb`)
 > SDD rigor level: **spec-anchored** — `specs/` is the current truth; changes enter through `changes/`.
 
@@ -42,8 +42,10 @@ enables it explicitly.
 ### Art. 5 — Agent safety
 THE SYSTEM SHALL submit every tool with risk `WriteFS`, `Exec` or `Network` to a policy-engine
 decision (`allow` / `ask` / `deny`), with `ask` as the default. The `full-auto` mode SHALL only run
-inside a sandbox or a disposable worktree. Secrets SHALL be read only from the operating system
-keyring.
+inside a sandbox or a disposable worktree. Secrets SHALL be read from the operating system keyring,
+and only from an environment variable when the keyring is unavailable, the user has enabled that
+fallback explicitly, and the daemon reports it as a degraded mode (amendment of 2026-09-20).
+Rule material that arrives over the network SHALL be signed and verified before use.
 *Rationale: an agent with a shell is an attack surface (prompt injection, exfiltration, deletion).
 Explicit consent is the primary control.*
 
@@ -106,7 +108,8 @@ THE TEAM SHALL follow these process rules:
 
 | Date | Article | Change | Reason | Approved by |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| 2026-09-20 | 5 | Secrets may come from an environment variable when the keyring is unavailable, the fallback is enabled explicitly and the state is reported as degraded | Headless Linux, SSH sessions and containers have no Secret Service; without this, remote providers are unusable there and the workaround would be plaintext configuration, which is worse | Ernesto Crespo |
+| 2026-09-20 | 5 | Rule material fetched over the network must carry a valid signature | The redaction rules and the destructive-pattern list are the product's security control; an unsigned update can silently disable it | Ernesto Crespo |
 
 ## Constitution check (use in every artifact)
 

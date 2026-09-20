@@ -37,7 +37,7 @@ type subscription struct {
 	logger    *slog.Logger
 
 	mu       sync.Mutex
-	pending  [][]byte
+	pending  []queuedChunk
 	queued   int
 	lastSeq  uint64
 	closed   bool
@@ -46,6 +46,14 @@ type subscription struct {
 	wake   chan struct{}
 	done   chan struct{}
 	closer sync.Once
+}
+
+// queuedChunk is one chunk waiting to be written, with the sequence number it arrived
+// under. The seq is kept per chunk rather than only as the subscription's high-water mark
+// because `rebase` has to discard exactly the chunks a later snapshot already contains.
+type queuedChunk struct {
+	seq  uint64
+	data []byte
 }
 
 func newSubscription(c *conn, sessionID string, startSeq uint64) *subscription {
@@ -89,9 +97,39 @@ func (s *subscription) enqueue(seq uint64, data []byte) {
 		return
 	}
 
-	s.pending = append(s.pending, data)
+	s.pending = append(s.pending, queuedChunk{seq: seq, data: data})
 	s.queued += len(data)
 	s.signal()
+}
+
+// rebase raises the subscription's floor to the sequence number a snapshot is current as
+// of, dropping whatever the client is about to see on that snapshot and keeping the rest.
+//
+// `session.subscribe` registers the subscription *before* asking for the snapshot, so that
+// output produced while the snapshot is being built is queued rather than lost (REQ-TERM-004).
+// Re-creating the subscription afterwards to apply the snapshot's seq would throw that queue
+// away again, which is the gap the early registration exists to close; the chunk would
+// survive only when the bus happened to deliver it late. Chunks arrive in ascending seq, so
+// the ones to drop are a prefix.
+func (s *subscription) rebase(startSeq uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.overflow {
+		return
+	}
+	drop := 0
+	for drop < len(s.pending) && s.pending[drop].seq <= startSeq {
+		s.queued -= len(s.pending[drop].data)
+		drop++
+	}
+	s.pending = s.pending[drop:]
+	if startSeq > s.lastSeq {
+		s.lastSeq = startSeq
+	}
+	if len(s.pending) > 0 {
+		s.signal()
+	}
 }
 
 // signal wakes the writer without blocking if it is already awake.
@@ -162,11 +200,11 @@ func (s *subscription) take() ([]byte, uint64) {
 
 	out := make([]byte, 0, min(s.queued, BatchBytes))
 	for len(s.pending) > 0 && len(out) < BatchBytes {
-		chunk := s.pending[0]
+		chunk := s.pending[0].data
 		room := BatchBytes - len(out)
 		if len(chunk) > room {
 			out = append(out, chunk[:room]...)
-			s.pending[0] = chunk[room:]
+			s.pending[0].data = chunk[room:]
 			s.queued -= room
 			break
 		}

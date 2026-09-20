@@ -206,6 +206,10 @@ func handleSessionSubscribe(ctx context.Context, c *conn, raw json.RawMessage) (
 		return nil, err
 	}
 
+	// Subscribe before taking the snapshot, so output produced while it is being built is
+	// queued instead of lost, then raise the floor to what the snapshot already shows. The
+	// second step rebases the subscription rather than creating a new one: a replacement
+	// would drop that queue and reopen the gap (REQ-TERM-004).
 	c.subscribe(params.SessionID, 0)
 
 	snapshot, err := c.server.cfg.Sessions.Snapshot(ctx, params.SessionID)
@@ -213,7 +217,7 @@ func handleSessionSubscribe(ctx context.Context, c *conn, raw json.RawMessage) (
 		c.unsubscribe(params.SessionID)
 		return nil, err
 	}
-	c.subscribe(params.SessionID, snapshot.Seq)
+	c.rebaseSubscription(params.SessionID, snapshot.Seq)
 
 	return map[string]any{
 		"snapshot": map[string]any{

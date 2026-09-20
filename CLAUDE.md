@@ -65,7 +65,7 @@ Two things look like bugs and are not:
   `blocks.thread_id` hold foreign keys against it and SQLite rejects every insert into a
   table whose foreign key points at a missing table, even with a NULL value. This was
   Analyze finding A-01; `TestMigration0001InsertsWithForeignKeysOn` is its regression test.
-  Moving `threads` to 0002 breaks all of F0.
+  Moving `threads` to the agent migration breaks all of F0.
 - **The bus drops events under pressure** and counts the losses rather than blocking. A
   stalled TUI must never stall the goroutine draining a PTY. The client-facing backpressure
   policy, an 8 MiB queue that unsubscribes on overflow, belongs to the API fan-out in
@@ -86,7 +86,12 @@ including across the API (Art. 6).
 - **Not created yet**, although earlier notes described them: the project skills
   (`/implement-task`, `/spec-delta`, `/sdd-analyze`, `/checkpoint`), the session-start and
   post-edit hooks, `.claude/settings.json` with its permissions, and `.mcp.json`. Do not
-  try to invoke them; create them first or work without them.
+  try to invoke them; create them first or work without them. Verified again on 2026-09-20:
+  `.claude/` holds `agents/` and nothing else.
+- **Migrations:** `0001_terminal` and `0002_block_index` are applied. `0003_structure`
+  (T-F0-14) and `0004_agent` (T-F1-01) are not written yet. Migrations are forward-only
+  (Art. 6), so an applied file is never edited; that is why the agent subdomain is `0004`
+  and not the `0002` some older drafts name.
 - **Recommended flow:** start each task in Plan Mode, get the plan approved, implement it,
   then run `spec-guardian` before writing the commit.
 - **Before claiming a task is done**, verify against the filesystem rather than against

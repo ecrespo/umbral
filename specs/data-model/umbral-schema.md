@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.3 |
+| **Version** | 1.5 |
 | **Date** | 2026-09-11 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -114,7 +114,8 @@ CREATE INDEX idx_blocks_open            ON blocks(state) WHERE state IN ('runnin
 `umb block list`, and the other three indexes all begin with a column such a query does not
 name. Without it every page is a full scan and a sort of the table: 141 ms at 100,000 blocks
 against 0.18 ms with it. `id` is in the index because it is the tie-breaker the cursor pages
-on, and an index covering only the first column of the ordering still sorts.
+on, and an index covering only the first column of the ordering still sorts. It is created by
+migration **0002**, not 0001; §5 says why.
 
 `output_truncated` covers **both** caps: the 16 MiB raw chunk history of §2.3 and the 1 MiB
 `output_plain` transcript. A client that sees it `0` is promised the whole of what the
@@ -156,24 +157,16 @@ CREATE VIRTUAL TABLE blocks_fts USING fts5(
   content='blocks', content_rowid='rowid',
   tokenize='unicode61 remove_diacritics 2'
 );
-```
-
-The three synchronisation triggers are part of migration 0001 (REQ-BLK-006 depends on them):
-
-```sql
+-- the triggers below keep the index in sync
 CREATE TRIGGER blocks_fts_ai AFTER INSERT ON blocks BEGIN
-  INSERT INTO blocks_fts(rowid, command, output_plain)
-  VALUES (new.rowid, new.command, new.output_plain);
+  INSERT INTO blocks_fts(rowid, command, output_plain) VALUES (new.rowid, new.command, new.output_plain);
 END;
 CREATE TRIGGER blocks_fts_ad AFTER DELETE ON blocks BEGIN
-  INSERT INTO blocks_fts(blocks_fts, rowid, command, output_plain)
-  VALUES ('delete', old.rowid, old.command, old.output_plain);
+  INSERT INTO blocks_fts(blocks_fts, rowid, command, output_plain) VALUES ('delete', old.rowid, old.command, old.output_plain);
 END;
 CREATE TRIGGER blocks_fts_au AFTER UPDATE OF command, output_plain ON blocks BEGIN
-  INSERT INTO blocks_fts(blocks_fts, rowid, command, output_plain)
-  VALUES ('delete', old.rowid, old.command, old.output_plain);
-  INSERT INTO blocks_fts(rowid, command, output_plain)
-  VALUES (new.rowid, new.command, new.output_plain);
+  INSERT INTO blocks_fts(blocks_fts, rowid, command, output_plain) VALUES ('delete', old.rowid, old.command, old.output_plain);
+  INSERT INTO blocks_fts(rowid, command, output_plain) VALUES (new.rowid, new.command, new.output_plain);
 END;
 ```
 
@@ -190,10 +183,135 @@ INSERT INTO blocks_fts(blocks_fts) VALUES('rebuild');
 The retention job of T-F1-22 is the first thing that will want to reclaim space, and is where
 this has to be enforced.
 
-### 2.5 `threads`
+### 2.4b `workspaces`, `tabs`, `panes` (migration 0003)
 
-Created in migration **0001** (§5.1) even though it is only written from F1: `sessions` and
-`blocks` declare foreign keys against it.
+**Purpose:** the structure the daemon owns and restores (REQ-WS-001, REQ-TERM-009). A pane hosts at
+most one live session; `pane_aliases` keeps previous identifiers resolvable after a move
+(REQ-WS-007).
+
+```sql
+CREATE TABLE workspaces (
+  id          TEXT PRIMARY KEY CHECK (id LIKE 'w%'),
+  label       TEXT NOT NULL,
+  cwd         TEXT NOT NULL,
+  order_index INTEGER NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL,
+  closed_at   INTEGER
+);
+
+CREATE TABLE tabs (
+  id           TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  label        TEXT NOT NULL,
+  order_index  INTEGER NOT NULL DEFAULT 0,
+  layout_json  TEXT NOT NULL DEFAULT '{}',   -- portable tree (API Layout)
+  created_at   INTEGER NOT NULL,
+  closed_at    INTEGER
+);
+CREATE INDEX idx_tabs_workspace ON tabs(workspace_id, order_index);
+
+CREATE TABLE panes (
+  id          TEXT PRIMARY KEY,
+  tab_id      TEXT NOT NULL REFERENCES tabs(id) ON DELETE CASCADE,
+  session_id  TEXT REFERENCES sessions(id),   -- NULL while the pane has no live session
+  label       TEXT,
+  cwd         TEXT NOT NULL,
+  command_json TEXT,                          -- argv used to relaunch it on restore
+  env_json    TEXT NOT NULL DEFAULT '{}',
+  order_index INTEGER NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL,
+  closed_at   INTEGER
+);
+CREATE INDEX idx_panes_tab ON panes(tab_id, order_index);
+CREATE UNIQUE INDEX idx_panes_session ON panes(session_id) WHERE session_id IS NOT NULL;
+
+CREATE TABLE pane_aliases (
+  alias_id   TEXT PRIMARY KEY,
+  pane_id    TEXT NOT NULL REFERENCES panes(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL
+);
+```
+
+### 2.4c `pane_state_reports` and `pane_metadata` (migration 0004)
+
+**Purpose:** external state authority and display metadata, kept apart on purpose (REQ-INT-002 to
+REQ-INT-005). Semantic state drives waits, rollups and notifications; metadata never does.
+
+```sql
+CREATE TABLE pane_state_reports (
+  pane_id    TEXT NOT NULL REFERENCES panes(id) ON DELETE CASCADE,
+  source     TEXT NOT NULL,
+  agent      TEXT,
+  state      TEXT NOT NULL CHECK (state IN ('idle','working','blocked','done')),
+  message    TEXT,
+  seq        INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (pane_id, source)
+);
+
+CREATE TABLE pane_metadata (
+  pane_id    TEXT NOT NULL REFERENCES panes(id) ON DELETE CASCADE,
+  source     TEXT NOT NULL,
+  key        TEXT NOT NULL CHECK (length(key) BETWEEN 1 AND 32),
+  value      TEXT NOT NULL CHECK (length(value) <= 80),
+  expires_at INTEGER,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (pane_id, source, key)
+);
+CREATE INDEX idx_pane_metadata_expiry ON pane_metadata(expires_at) WHERE expires_at IS NOT NULL;
+```
+
+At most 32 live keys per pane; the `store` layer rejects the excess. Metadata is not restored after
+a restart (REQ-INT-004).
+
+### 2.4d `pane_history` (migration 0004, optional content)
+
+**Purpose:** recent screen replay after a restart, disabled by default because pane output can
+contain secrets (REQ-TERM-010).
+
+```sql
+CREATE TABLE pane_history (
+  pane_id    TEXT PRIMARY KEY REFERENCES panes(id) ON DELETE CASCADE,
+  screen_zst BLOB NOT NULL,        -- last N rows, zstd
+  rows       INTEGER NOT NULL,
+  captured_at INTEGER NOT NULL
+);
+```
+
+Rows are written only while `[experimental] pane_history = true`. Turning the setting off deletes
+the table's contents at the next start.
+
+### 2.4e `rule_bundles` and `trust_keys` (migration 0004)
+
+**Purpose:** provenance of the redaction rules and destructive patterns, and the trust store used to
+verify them (REQ-SEC-011 to REQ-SEC-016). Private keys never live here: the store holds public keys
+only.
+
+```sql
+CREATE TABLE trust_keys (
+  id          TEXT PRIMARY KEY,
+  public_key  BLOB NOT NULL,                 -- Ed25519, 32 bytes
+  fingerprint TEXT NOT NULL UNIQUE,          -- SHA-256 shown on add and rotate
+  added_at    INTEGER NOT NULL,
+  revoked_at  INTEGER
+);
+
+CREATE TABLE rule_bundles (
+  version      INTEGER PRIMARY KEY,          -- strictly increasing; a downgrade is rejected
+  sha256       TEXT NOT NULL,
+  source       TEXT NOT NULL CHECK (source IN ('builtin','remote','local')),
+  verified_with TEXT REFERENCES trust_keys(id),
+  installed_at INTEGER NOT NULL,
+  active       INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0,1))
+);
+CREATE UNIQUE INDEX idx_rule_bundles_active ON rule_bundles(active) WHERE active = 1;
+```
+
+Umbral keeps the active bundle and the previous one so `rules.rollback` works offline; older ones
+are pruned. A `remote` bundle without `verified_with` cannot exist: the DDL allows it, and the
+`store` layer rejects it.
+
+### 2.5 `threads`
 
 ```sql
 CREATE TABLE threads (
@@ -215,6 +333,20 @@ CREATE TABLE threads (
 CREATE INDEX idx_threads_updated ON threads(updated_at DESC) WHERE ephemeral = 0;
 ```
 
+The attention columns of REQ-AGT-016 and REQ-NTF-002 arrive in migration **0004**, not in the
+block above. Migration 0001 created `threads` and is applied, and Art. 6 makes migrations
+forward-only: a column added to an applied file exists on no database that already ran it.
+`attention_state` takes a default rather than being `NOT NULL` without one, because
+`ALTER TABLE … ADD COLUMN` has to be able to fill the rows already there. SQLite cannot add a
+`CHECK` in an `ALTER`, so the constraint is enforced by the writer and stated here.
+
+```sql
+-- migration 0004, alongside the agent tables (T-F1-01)
+ALTER TABLE threads ADD COLUMN attention_state TEXT NOT NULL DEFAULT 'idle';  -- REQ-AGT-016
+                             -- one of 'idle','working','blocked','done','unknown'
+ALTER TABLE threads ADD COLUMN seen_at INTEGER;  -- when a client last focused it; NULL = never
+```
+
 ### 2.6 `messages`
 
 ```sql
@@ -222,14 +354,15 @@ CREATE TABLE messages (
   id               TEXT PRIMARY KEY CHECK (id LIKE 'msg\_%' ESCAPE '\'),
   thread_id        TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
   turn_id          TEXT NOT NULL,
-  client_msg_id    TEXT,                          -- ULID sent by the client; idempotency key (REQ-AGT-015)
   role             TEXT NOT NULL CHECK (role IN ('user','assistant','tool','system_note')),
   content          TEXT NOT NULL,
+  client_msg_id    TEXT,                          -- ULID from the client; idempotency (REQ-AGT-015)
   attachments_json TEXT NOT NULL DEFAULT '[]',   -- [{kind, ref, bytes, truncated_bytes}]
   tainted          INTEGER NOT NULL DEFAULT 0 CHECK (tainted IN (0,1)),  -- REQ-SEC-006
   created_at       INTEGER NOT NULL
 );
 CREATE INDEX idx_messages_thread_created ON messages(thread_id, created_at);
+-- Partial, so the many rows without a client id do not collide with each other (A-04).
 CREATE UNIQUE INDEX idx_messages_client_msg ON messages(thread_id, client_msg_id)
   WHERE client_msg_id IS NOT NULL;
 ```
@@ -263,7 +396,7 @@ CREATE TABLE approvals (
   tool_call_id   TEXT NOT NULL UNIQUE REFERENCES tool_calls(id),
   tool           TEXT NOT NULL,
   risk           TEXT NOT NULL,
-  reason         TEXT NOT NULL CHECK (reason IN ('policy','destructive','tainted','outside_workspace')),
+  reason         TEXT NOT NULL CHECK (reason IN ('policy','destructive','tainted','outside_write_root')),
   summary        TEXT NOT NULL,
   diff           TEXT,                        -- REQ-AGT-012
   state          TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','approved','denied','expired')),
@@ -375,11 +508,16 @@ CREATE TABLE mcp_servers (
 | Startup: mark open blocks as `abandoned` | `idx_blocks_open` |
 | `block.search` | `blocks_fts` |
 | Startup: mark `alive` sessions as `exited` | `idx_sessions_state` |
+| `block.list {}` with no filter, the history pane | `idx_blocks_started` |
 | `thread.get {include_messages}` | `idx_messages_thread_created` |
 | `thread.send` idempotency lookup, REQ-AGT-015 | `idx_messages_client_msg` |
 | `thread.list` | `idx_threads_updated` |
 | `approval.list` (pending) | `idx_approvals_pending` |
 | `security.Decide` (rules per tool) | `idx_policy_rules_lookup` |
+| Restore structure on startup (REQ-TERM-009) | `idx_tabs_workspace`, `idx_panes_tab` |
+| Resolve a moved pane id (REQ-WS-007) | `pane_aliases` primary key |
+| Expire display metadata (REQ-INT-004) | `idx_pane_metadata_expiry` |
+| Pane ↔ live session (REQ-WS-003) | `idx_panes_session` |
 | Metrics per model, REQ-LLM-005 | `idx_usage_model_created` |
 | Egress audit | `idx_egress_created` |
 
@@ -391,6 +529,10 @@ CREATE TABLE mcp_servers (
 | `blocks.output_plain` | 180 days | `retention.plain_output_days` |
 | Non-ephemeral threads | indefinite | manual deletion |
 | Ephemeral threads (`umb ai`) | 24 h | — |
+| `pane_history` | until the pane closes; cleared when the setting is disabled | `[experimental] pane_history` |
+| `pane_metadata` | per-key TTL, at most 24 h | per report |
+| Closed workspaces, tabs and panes | 30 days | yes |
+| `pane_aliases` | deleted with their pane (cascade); an alias never outlives its terminal | no |
 | `egress_log`, `usage` | 365 days | `retention.audit_days` |
 
 A daily maintenance job applies retention and runs `PRAGMA optimize` and
@@ -405,26 +547,24 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 - Pragmas on open: `journal_mode=WAL`, `foreign_keys=ON`, `busy_timeout=5000`,
   `synchronous=NORMAL`.
 
-### 5.1 Content of each migration
-
 | Migration | Phase | Objects it creates |
 |---|---|---|
 | `0001_terminal.sql` | F0 | `schema_migrations`, **`threads`** (§2.5) and `idx_threads_updated`, `sessions`, `blocks`, `block_chunks`, `blocks_fts` and its three triggers, plus every index in §2.1-2.5 except `idx_blocks_started` |
 | `0002_block_index.sql` | F0 | `idx_blocks_started` (§2.2) |
-| `0003_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers` and their indexes (§2.6-2.13) |
+| `0003_structure.sql` | F0 | `workspaces`, `tabs`, `panes`, `pane_aliases` and their indexes (§2.4b) |
+| `0004_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers`, `pane_state_reports`, `pane_metadata`, `pane_history`, `trust_keys`, `rule_bundles` and their indexes (§2.4c-2.4e, §2.6-2.13), plus the two `ALTER TABLE threads` statements of §2.5 |
 
-`idx_blocks_started` is a migration of its own rather than a line added to 0001, because 0001
-had already been applied when the need for it was measured. Migrations are forward-only
-(Art. 6) and the runner records only the version a database reached, so editing an applied
-file changes nothing for the databases that ran it: they would have kept the 141 ms scan with
-nothing to report the divergence.
+`threads` belongs to 0001 even though the agent arrives in F1: `sessions.owner_thread_id` and
+`blocks.thread_id` point at it, and with `foreign_keys=ON` SQLite rejects every insert into those
+tables while the target does not exist (finding A-01, verified).
 
-`threads` is created in **0001**, not in 0002, even though the agent subdomain only starts in F1.
-Reason: `sessions.owner_thread_id` and `blocks.thread_id` declare `REFERENCES threads(id)` and,
-with `PRAGMA foreign_keys=ON`, SQLite rejects **every** INSERT into a table whose FK points at a
-missing table, even when the value is NULL. Creating `threads` in 0001 is cheaper than rebuilding
-`sessions` and `blocks` in 0002, and `threads` itself depends on no other table.
-In F0 the table stays empty; `store` only writes to it from T-F1-01 onwards.
+`idx_blocks_started`, the structure tables and the attention columns each arrive in a migration
+of their own rather than as lines added to 0001, because 0001 had already been applied when each
+need was established. Migrations are forward-only (Art. 6) and the runner records only the
+version a database reached, so editing an applied file changes nothing for the databases that
+ran it: they would have kept the 141 ms scan, or come up without a workspace table, with nothing
+to report the divergence. This is why the agent subdomain is `0004` rather than the `0002`
+earlier drafts named.
 
 ## 6. Recovery after a daemon restart
 
@@ -432,12 +572,23 @@ In F0 the table stays empty; `store` only writes to it from T-F1-01 onwards.
 2. `blocks.state IN ('running','interactive')` → `abandoned`.
 3. `threads.state IN ('running','awaiting_approval')` → `stopped`.
 4. `approvals.state = 'pending'` → `expired`.
+5. Structure: `workspaces`, `tabs` and `panes` that were not closed are reopened with their labels,
+   cwd and `layout_json`; each pane launches a fresh shell, or its `command_json` when it has one
+   (REQ-TERM-009). `panes.session_id` is cleared before relaunching.
+6. Screen: if `[experimental] pane_history = true`, the stored screen of each pane is replayed
+   before the new shell's output (REQ-TERM-010).
+7. Threads keep their full history; those left `running` or `awaiting_approval` become `stopped` and
+   accept `thread.send` again without losing context (REQ-AGT-017).
+8. `pane_state_reports` and `pane_metadata` are cleared: external authority and display metadata do
+   not survive a restart (REQ-INT-002, REQ-INT-004).
 
 ## Change History
 
 | Version | Date | Changes |
 |---|---|---|
 | 1.0 | 2026-09-11 | Initial version |
-| 1.1 | 2026-09-11 | delta `2026-09-analyze-fixes`: `threads` moves to migration 0001 and §5.1 lists each migration (A-01), `blocks_fts` triggers written out (A-07), `client_msg_id` in `messages` (A-04) |
+| 1.1 | 2026-09-11 | delta `2026-09-analyze-fixes`: `threads` moves to migration 0001 and §5 lists each migration (A-01), `blocks_fts` triggers written out (A-07), `client_msg_id` in `messages` (A-04) |
 | 1.2 | 2026-09-11 | delta `2026-09-block-lifecycle-decisions`: `output_truncated` covers both caps (§2.2), and §2.3 says which sequences the chunks do not keep |
-| 1.3 | 2026-09-11 | delta `2026-09-block-query-performance`: `idx_blocks_started` in §2.2 and §5.1, and the `VACUUM` rebuild rule in §2.4 |
+| 1.3 | 2026-09-11 | delta `2026-09-block-query-performance`: `idx_blocks_started` in §2.2 and §5, the `VACUUM` rebuild rule in §2.4, and `idx_blocks_started` given migration `0002` of its own |
+| 1.4 | 2026-09-20 | Adds `workspaces`, `tabs`, `panes`, `pane_aliases`, `pane_state_reports`, `pane_metadata` and `pane_history`; attention columns on `threads`; per-migration table list and restore steps 5-8. The structure tables take migration `0003` and the agent subdomain moves to `0004` (delta `2026-09-structure-migration`) |
+| 1.5 | 2026-09-20 | Closes the Analyze findings: `client_msg_id` gains its unique index (A-04) and the `trust_keys` / `rule_bundles` tables arrive |

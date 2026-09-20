@@ -117,6 +117,24 @@ def main():
     except sqlite3.Error as e:
         findings.append(("CRITICAL", f"migration 0001 in isolation rejects INSERT into sessions: {e}", "data-model"))
 
+    # Migration 0003 (F0 structure) on top of 0001: the pane tree must accept inserts with
+    # FKs on, since `panes.session_id` points back at a table migration 0001 created.
+    struct_tables = ("workspaces", "tabs", "panes", "pane_aliases")
+    struct_ddl = [b for b in re.findall(r"```sql\n(.*?)```", dm, re.S)
+                  if re.search(r"CREATE TABLE (%s)\b" % "|".join(struct_tables), b)]
+    if not struct_ddl:
+        findings.append(("CRITICAL", "no DDL found for the structure tables (§2.4b)", "data-model"))
+    else:
+        try:
+            con0.executescript("\n".join(struct_ddl))
+            con0.execute("INSERT INTO workspaces(id,label,cwd,created_at) VALUES ('w1','api','/',0)")
+            con0.execute("INSERT INTO tabs(id,workspace_id,label,created_at) VALUES ('w1:t1','w1','main',0)")
+            con0.execute("INSERT INTO panes(id,tab_id,session_id,cwd,created_at) "
+                         "VALUES ('w1:p1','w1:t1','ses_x','/',0)")
+            sql_ok += " · migration 0003 over 0001 OK"
+        except sqlite3.Error as e:
+            findings.append(("CRITICAL", f"migration 0003 rejects the pane tree: {e}", "data-model"))
+
     must = [r for r, (p, _) in all_defined.items() if p == "MUST"]
     print(f"REQs defined: {len(all_defined)} (MUST {len(must)}) · with task: {sum(1 for r in must if r in cited)}/{len(must)}")
     print(f"Tasks: {sum(len(tasks(tf)[0]) for tf in task_files)} · "

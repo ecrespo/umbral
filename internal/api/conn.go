@@ -95,6 +95,19 @@ func (c *conn) unsubscribe(sessionID string) bool {
 	return true
 }
 
+// rebaseSubscription raises the floor of an existing subscription to the seq a snapshot is
+// current as of, without replacing it. Replacing it would discard everything queued while
+// the snapshot was being taken, which is exactly what subscribing first is meant to keep.
+func (c *conn) rebaseSubscription(sessionID string, startSeq uint64) {
+	c.subsMu.Lock()
+	sub := c.subs[sessionID]
+	c.subsMu.Unlock()
+
+	if sub != nil {
+		sub.rebase(startSeq)
+	}
+}
+
 // deliver hands one output chunk to this connection's subscription, if it has one.
 func (c *conn) deliver(sessionID string, seq uint64, data []byte) {
 	c.subsMu.Lock()

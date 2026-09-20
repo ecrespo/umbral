@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.3 |
+| **Version** | 1.5 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -53,8 +53,10 @@ flowchart LR
   subgraph D["umbrald"]
     API["api JSON-RPC"]
     BUS(("bus"))
+    WSP["workspaces"]
     SES["sessions"]
     AGT["agents"]
+    INT["integrations"]
     CTX["context"]
     TOOLS["tools"]
     GW["llmgw"]
@@ -70,8 +72,12 @@ flowchart LR
   TUI --> API
   CLI --> API
   API --> BUS
+  BUS --> WSP
   BUS --> SES
   BUS --> AGT
+  WSP --> SES
+  INT --> WSP
+  API --> INT
   AGT --> CTX
   AGT --> TOOLS
   AGT --> GW
@@ -100,6 +106,10 @@ flowchart LR
 | `mcp` | `modelcontextprotocol/go-sdk` | connection, reconnection with backoff, prefixing | MCP-* |
 | `security` | own rules + `zalando/go-keyring` | policies, destructive patterns, taint, redaction, egress | SEC-*, AGT-004/009/013/014 |
 | `store` | `modernc.org/sqlite` | migrations, repositories, FTS5 | Data Model |
+| `workspaces` | own tree + SQLite | workspaces, tabs, panes, identifiers, layouts, rollup, restore | WS-*, TERM-009/010 |
+| `waits` | server-owned, event-driven | pinned waits on threads and output | AUT-* |
+| `integrations` | socket + env | external state reports, display metadata, authority | INT-* |
+| `notify` | client channel | normalization, rate limit, typed reasons | NTF-* |
 | `obs` | OpenTelemetry Go, `log/slog` | traces, metrics | OBS-* |
 
 ### 3.3 Main flow: US-003 scenario ("fix it")
@@ -224,6 +234,94 @@ sequenceDiagram
   providers also receive redacted content (defense in depth and consistent prompts).
 - **`egress_log`** only records non-loopback destinations.
 
+### DD-009: The daemon owns the workspace tree; the client only renders it
+
+- **Decision:** `workspaces` owns workspaces, tabs, panes and their layout; the TUI keeps no private
+  structure. Public identifiers (`w1`, `w1:t1`, `w1:p1`) are allocated by the daemon and are the
+  addressing surface for the CLI, the API and future clients.
+- **Alternative rejected:** keeping tabs and splits inside the TUI. That would make the layout
+  unreachable from scripts, would force the F2 desktop client to reinvent it, and would leave no
+  place to attach the rollup state.
+- **Consequence:** a moved pane changes its identifier; the previous one stays an alias while the
+  terminal lives (REQ-WS-007), so long-running commands that captured `UMBRAL_PANE_ID` keep working.
+
+### DD-010: Snapshot plus sequenced events, instead of resynchronizing
+
+- **Decision:** every notification carries a `seq` that is monotonic per session, and
+  `session.snapshot` reports the `seq` it contains. A client subscribes first, buffers, takes the
+  snapshot and then applies the buffered events with a higher `seq`.
+- **Rejected:** having the client ask for a full state refresh after each reconnect: it is expensive
+  and still leaves a gap.
+
+### DD-011: Waits belong to the server and pin their turn
+
+- **Decision:** `thread.wait` and the `wait` inside `thread.send` are resolved in the daemon with bus
+  events, never by client polling. The wait is pinned to the turn in progress, so a later turn does
+  not satisfy it, and `thread.send` with `wait` is one ordered submission.
+- **Consequence:** a timeout does not prove that nothing was sent. The contract states it and the CLI
+  repeats it, because the safe recovery is to read the thread before resending.
+
+### DD-012: One state authority per pane, with a fixed precedence
+
+- **Decision:** the attention state of a pane comes from exactly one source, in this order:
+  1. Umbral's own agent, for the panes of its threads (it cannot be displaced);
+  2. an external integration that reported with `pane.report_state` and has not released authority;
+  3. Umbral's own derivation from the block lifecycle (`running` → `working`, closed → `idle`).
+- **Rationale:** the failure mode to avoid is two sources disagreeing. Screen heuristics are
+  deliberately left out of the MVP: they are fragile and they would be a third source of truth.
+  Third-party agent detection arrives in F2 as the lowest-priority layer, behind hooks and ACP.
+- **Consequence:** display metadata is a separate channel (DD-013) precisely so that improving what
+  is shown never requires touching the state that drives waits.
+
+### DD-013: Semantic state and presentation are different channels
+
+- **Decision:** `pane.report_state` carries semantics; `pane.report_metadata` carries presentation
+  (title, displayed name, state labels, tokens with TTL). Metadata never alters waits, rollups or
+  notifications, has bounded size and does not survive a restart.
+
+### DD-014: Restore in tiers, each with a written guarantee
+
+| Case | Processes | Structure | Recent screen | Thread |
+|---|---|---|---|---|
+| Client detaches | keep running | returns | from the live terminal | keeps running |
+| Daemon restart | lost | restored (REQ-TERM-009) | only with `pane_history` (REQ-TERM-010) | history restored, turn `stopped` (REQ-AGT-017) |
+| Daemon update | lost in the MVP | restored | as above | as above |
+
+Live PTY handoff between daemon versions is F2: it is worth it only once the daemon is something
+people leave running for days.
+
+### DD-015: The protocol schema is generated from the code
+
+- **Decision:** the binary can print the JSON Schema of the protocol and CI compares it against the
+  API Spec (methods, error codes, notifications). A method that exists in code but not in the
+  document turns CI red.
+- **Rationale:** it is the cheapest mechanism that keeps Art. 9 ("code and spec must never diverge
+  silently") from depending on discipline alone.
+
+### DD-016: Rule material is signed, and recovery never depends on the network
+
+- **Decision:** the redaction rules and the destructive-pattern list travel as a versioned bundle
+  with a detached Ed25519 signature. The daemon verifies the signature against a trust store of
+  public keys, refuses downgrades, and on three consecutive failures — or with no valid key — it
+  disables remote updates and keeps working with what it already has.
+- **Key loss is the case that had to be designed for:** `rules.rollback` returns to the previous
+  verified bundle and `rules.reset` returns to the rules built into the binary. Both work offline
+  and need no key, so losing the signing key degrades the update channel but never the product.
+  The local override directory is never touched by any of this.
+- **Rejected:** TLS alone. The threat is a compromised endpoint, and TLS does not address it.
+- **Cost accepted:** key management (creation, rotation, revocation) and the release process that
+  signs each bundle.
+
+### DD-017: Waits are observable and cancellable, and a stall is not a failure
+
+- **Decision:** the daemon keeps an inventory of active waits (`wait.list`) with age and a stalled
+  flag, allows cancelling a wait without touching what it observes (`wait.cancel`), and marks a turn
+  `stalled` when it produces no model event, tool call or output within the window.
+- **Rationale:** the realistic failure is not an attack, it is a script that leaks waits or a
+  provider that stops answering. Exceeding a limit degrades that operation, never the connection.
+- **Consequence:** `stalled` is informational. Umbral notifies and offers the choice; it never kills
+  a turn on its own, because a local model can legitimately take minutes.
+
 ## 5. Patterns and Conventions
 
 ### 5.1 Code Structure
@@ -236,6 +334,9 @@ internal/<module>/domain/    # pure types and rules
 internal/<module>/ports/     # published interfaces
 internal/<module>/adapters/  # implementations
 internal/bus/                # typed pub/sub
+internal/workspaces/         # tree, identifiers, layout, restore
+internal/waits/              # pinned waits
+internal/integrations/       # external reports and metadata
 shell/                       # bash, zsh, fish bootstrap
 testdata/vt/                 # VT conformance suite
 ```
@@ -249,20 +350,43 @@ testdata/vt/                 # VT conformance suite
 | `*/adapters` | its own `ports`, its own `domain` and external libraries |
 | `agents` | `ports` of `sessions`, `tools`, `context`, `llmgw`, `security`, `store` |
 | `llmgw`, `sessions` | never `agents` |
+| `workspaces` | `ports` of `sessions` and `store`; never `agents`, `api` or `waits` |
+| `waits` | `ports` of `agents`, `sessions` and `store`, plus `bus`; never `api` |
+| `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api` |
+| `notify` | `bus` and stdlib only; it is a sink and imports no other module |
 | `cmd/*` | everything |
+
+Each of those four modules needs its own `components` entry and `deps` block in
+`.go-arch-lint.yml` before its first file lands, or `task arch` passes by having nothing to
+check. T-F0-14, T-F0-15 and T-F0-16 name that file for exactly this reason.
+
+### 5.2b Environment injected into panes (REQ-INT-001)
+
+| Variable | Value |
+|---|---|
+| `UMBRAL_ENV` | always `1` inside a managed pane |
+| `UMBRAL_SOCKET_PATH` | socket of the session that owns the pane |
+| `UMBRAL_BIN_PATH` | absolute path of the `umb` binary |
+| `UMBRAL_WORKSPACE_ID`, `UMBRAL_TAB_ID`, `UMBRAL_PANE_ID` | location of the pane |
+| `UMBRAL_SESSION_ID` | terminal session attached to the pane |
+
+Umbral's values win over any caller-supplied value. An integration reports only when
+`UMBRAL_ENV=1`, so the same hook is inert outside Umbral.
 
 ### 5.3 Default policies
 
 | Risk | `ask` mode | `normal` mode | `auto-edit` mode |
 |---|---|---|---|
 | ReadOnly | allow | allow | allow |
-| WriteFS (inside the workspace) | not exposed | ask (with diff) | allow |
-| WriteFS (outside the workspace) | not exposed | ask | ask (`outside_workspace`) |
+| WriteFS (inside the write root) | not exposed | ask (with diff) | allow |
+| WriteFS (outside the write root) | not exposed | ask | ask (`outside_write_root`) |
 | Exec | not exposed | ask | ask |
 | Network | not exposed | ask | ask |
 | Destructive pattern | — | ask, ignores `always` | ask, ignores `always` |
 
-`workspace` = the git root of the thread's cwd or, when there is no repo, the cwd itself.
+**Write root** = the git root of the thread's cwd or, when there is no repo, the cwd itself. It is
+the agent's write boundary and has nothing to do with the structural workspace of §3.2 (finding
+B-09).
 
 ### 5.4 Error Handling
 
@@ -327,16 +451,22 @@ One root span `agent.turn` per turn, with children `llm.call` (attributes `gen_a
 | Level | Target | Tools | What it covers |
 |---|---|---|---|
 | Unit | ≥ 75 % in domain, policy and router | `go test`, tables | policies, router, redaction, OSC parser, budget |
-| VT conformance | 100 % of the MUST cases in §8.1 | `testdata/vt/*.golden` + libghostty Formatter | VT-01 … VT-20: alt-screen, truecolor, bracketed paste, reflow, graphemes (REQ-TERM-002) |
+| VT conformance | 100 % of the MUST cases in §8.1 | `testdata/vt/*.golden` + libghostty Formatter | VT-01 … VT-20: alt-screen, truecolor, bracketed paste, reflow, wide chars, graphemes (REQ-TERM-002) |
 | Integration | critical flows | real PTY with bash/zsh/fish in CI; temporary SQLite | blocks, snapshots, cancellation |
 | API contract | every method | test JSON-RPC client | errors and notifications from the API Spec |
 | Providers | adapters | fake OpenAI-compat and Ollama servers; optionally real Ollama with `-tags live` | streaming, 429/5xx, timeouts |
 | E2E | US-003 | fixture repo with a broken test + `ollama/gpt-oss:20b` (`-tags live`) | 70 % target over 20 runs |
+| Waits and automation | AUT-* | scripted fake provider + fake PTY | pinning, race between send and wait, timeouts |
+| Integrations | INT-* | test process that reports over the socket | authority, stale `seq`, release, metadata limits |
+| Rules and signing | SEC-011/013/014/015/016 | test bundles with valid, invalid and unknown-key signatures | verification, downgrade, fail closed, offline recovery |
+| Waits under load | AUT-005/006/007/008 | script that leaks waits; provider that stops answering | limits, inventory, cancellation, stall detection |
+| Restore | TERM-009/010, AGT-017 | daemon restart in a temporary directory | structure, optional screen, thread history |
+| Protocol contract | API-* | generated schema vs. API Spec | drift between code and spec |
 | Performance | NFRs | `go test -bench`, 100,000-block fixture | TERM-006, BLK-006, TERM-001 |
 
 Convention: every test that verifies a REQ cites it, e.g. `TestBlockClosedOnOSC133D_REQ_BLK_002`.
 
-### 8.1 Appendix: VT conformance cases
+### 8.1 Appendix: VT conformance cases (finding A-02)
 
 Closed list that defines "100 % of the MUST cases" in REQ-TERM-002. Each case is a
 `testdata/vt/VT-NN-<slug>.in` / `.golden` pair: the `.in` file holds the byte stream fed to the
@@ -369,7 +499,9 @@ Sources: `vttest`, `esctest` and the Ghostty VT reference.
 | VT-22 | OSC 8 hyperlinks | SHOULD |
 
 A MUST case with no `.in` / `.golden` pair on disk fails the suite; it is never skipped.
-Adding or removing a MUST case requires a Delta, because REQ-TERM-002 is measured against this list.
+Adding or removing a MUST case requires a Delta, because REQ-TERM-002 is measured against this
+list. `assertEveryMustCaseIsPresent` in `internal/sessions/adapters/ghostty/conformance_test.go`
+enforces both rules, with `mustCases` pinned to the 20 MUST rows above.
 
 ## 9. Migration / Rollout Plan
 
@@ -378,12 +510,6 @@ Adding or removing a MUST case requires a Delta, because REQ-TERM-002 is measure
   - Linux binaries (tar.gz + `.deb`) and macOS (tar.gz, unsigned in 0.1);
   - `umbrald` as a user service (`systemd --user` / `launchd`).
 - Compatibility: `protocol_version = 1`, N and N-1 supported (API Spec §9).
-
-## 10. Open Questions
-
-- [ ] **Q-01**: does libghostty's `Formatter` serialize the screen in a replayable VT format (with styles) for the snapshot? If not, fallback: replay the raw byte buffer, bounded to the last N lines. — Owner: Tech Lead, before T-F0-06.
-- [ ] **Q-02**: which local models meet the < 5 % invalid tool call threshold? Candidates: `gpt-oss:20b`, Qwen3-Coder. — Owner: Tech Lead, during F1.
-- [ ] **Q-03**: tokenizer per family (tiktoken for OpenAI/gpt-oss, ×1.1 approximation for the rest). Is it enough for REQ-CTX-004? — F1.
 
 ### 9.3 Visual identity and packaging
 
@@ -403,6 +529,12 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   launcher. The regeneration step is what REQ-PKG-006 needs: checking the checksums alone
   would pass a source edit committed together with its new checksum.
 
+## 10. Open Questions
+
+- [ ] **Q-01**: does libghostty's `Formatter` serialize the screen in a replayable VT format (with styles) for the snapshot? If not, fallback: replay the raw byte buffer, bounded to the last N lines. — Owner: Tech Lead, before T-F0-06.
+- [ ] **Q-02**: which local models meet the < 5 % invalid tool call threshold? Candidates: `gpt-oss:20b`, Qwen3-Coder. — Owner: Tech Lead, during F1.
+- [ ] **Q-03**: tokenizer per family (tiktoken for OpenAI/gpt-oss, ×1.1 approximation for the rest). Is it enough for REQ-CTX-004? — F1.
+
 ## Constitution check
 
 - **Art. 3:** §5.2 rules encoded in `.go-arch-lint.yml` (T-F0-01).
@@ -419,3 +551,5 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.1 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-analyze-fixes`: appendix §8.1 with the VT conformance cases VT-01…VT-22 (A-02) |
 | 1.2 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-visual-identity`: §9.3 visual identity and packaging |
 | 1.3 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-block-lifecycle-decisions`: `klauspost/compress/zstd` recorded as a `sessions` dependency in §3.2 |
+| 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds the `workspaces`, `waits`, `integrations` and `notify` modules, DD-009 to DD-015, the injected environment and the new test levels |
+| 1.5 | 2026-09-20 | E. Crespo (assisted draft) | Closes the Analyze findings: DD-016 (signing and recovery), DD-017 (wait observability), renames the agent's boundary to "write root" (B-09) and adds two test levels. §8.1 was already folded in 1.1 |

@@ -52,11 +52,11 @@ The script is idempotent: you can run it again without duplicating anything. It 
 - creates the public repo and pushes `main` (add `--private` if you prefer);
 - sets the description, topics, discussions and *squash merge* only;
 - enables *Private Vulnerability Reporting*;
-- creates 33 labels (`type:*`, `phase:*`, `area:*`, `severity:*`, `parallel`, `claude-ready`);
+- creates 37 labels (`type:*`, `phase:*`, `area:*`, `severity:*`, `parallel`, `claude-ready`);
 - creates 5 milestones: Spec fixes → F0 → F1 → Hardening 0.1 → F2;
-- creates **45 task issues**, one per pending `T-…`, with their dependencies linked as `#number`;
+- creates **57 task issues**, one per pending `T-…`, with their dependencies linked as `#number`;
 - creates **5 epics** with checklists;
-- creates **8 issues** for Analyze findings not covered by a delta (A-08…A-15);
+- creates one issue per open Analyze finding not covered by a delta (today 10: B-01…B-10);
 - protects `main`: requires the 4 CI checks, linear history and forbids force-push. It does not require reviews, because as the only maintainer you cannot approve your own PRs.
 
 ## 3. Connect Claude Code to GitHub (for `@claude` in issues and PRs)
@@ -104,25 +104,25 @@ cd umbral && claude
    ```
 8. With CI green, *squash & merge*. `main` is now clean.
 
-## 5. Start F0 with the first supervised batch
+## 5. Continue F0
 
-One task per session or per branch:
+**T-F0-01 to T-F0-10 are already done**, so `go.mod`, the Taskfile, the linters and CI exist and
+`task lint && task arch && task test` is the local gate from the first clone. Before the first
+build, run `task deps:ghostty` once: it builds libghostty-vt with Zig, and without it the cgo
+packages do not compile. `task test` injects the `PKG_CONFIG_PATH` it needs; a bare
+`go test ./...` does not.
 
-```text
-/implement-task T-F0-01
-```
+What is left in F0, one task per session or per branch:
 
-T-F0-01 creates `go.mod`, the Taskfile, gofumpt/golangci-lint/go-arch-lint and adds them to CI.
-From that moment on, `task lint && task arch && task test` is the local gate.
+- **T-F0-11** (`umb` CLI) and **T-F0-12** (TUI) turn the daemon into something usable by hand.
+- **T-F0-13** adds the performance gates to CI.
+- **T-F0-14 to T-F0-18** are the structure tasks — workspaces, panes, portable layouts, sequenced
+  snapshots and restore — and they are what make the daemon scriptable. T-F0-14 comes first; the
+  other four depend on it.
 
-Continue with **T-F0-02, T-F0-03 and T-F0-04**: they are the first batch, at most 3-5 tasks before a
-general human review. Close the batch with:
-
-```text
-/checkpoint f0-batch-1
-```
-
-Review the checkpoint and adjust specs with `/spec-delta` if something did not fit. Then scale up.
+At most 3-5 tasks before a general human review. Close each batch with a checkpoint in
+`docs/checkpoints/`, verified against the filesystem rather than against your own notes, and adjust
+the specs through a Delta in `changes/` if something did not fit.
 
 ### Parallel work (`[P]` tasks)
 

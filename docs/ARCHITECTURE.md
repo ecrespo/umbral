@@ -1,6 +1,6 @@
 # Umbral — Agentic terminal (ADE) in Go, from scratch
 
-> Conceptual architecture document · v0.1 · 2026-09-11
+> Conceptual architecture document · v0.2 · 2026-09-20
 > Working name: **Umbral** (daemon `umbrald`, CLI `umb`). *Umbral* is Spanish for "threshold".
 
 ## 0. Executive summary
@@ -97,6 +97,11 @@ Priority legend: **MVP** (first usable release), **v1**, **v2** (differentiators
 
 | ID | Feature | Reference | Priority |
 |---|---|---|---|
+| O-00 | Workspace / tab / pane model owned by the daemon, addressable from CLI and API, with portable layouts and rollup state | Herdr | MVP |
+| O-0A | Server-owned waits: wait for a thread state or for output, with the turn pinned | Herdr | MVP |
+| O-0B | Integration surface: injected environment, external state reports, display metadata with TTL | Herdr | MVP |
+| O-0C | Bootstrap snapshot plus sequenced events, and capability negotiation between client and daemon | Herdr | MVP |
+| O-0D | Third-party agent detection by process and declarative manifests with local override | Herdr | v2 |
 | O-01 | Several agent threads in parallel with a status/attention panel | Warp 2.0, cmux, Superset | v1 |
 | O-02 | Isolation with one **git worktree** per agent | Superset | v1 |
 | O-03 | Background agents triggered by cron, webhooks, CI or file events (a local Oz) | Warp Oz | v2 |
@@ -758,6 +763,10 @@ umbral/
 │   ├── llmgw/{ports,catalog,router,adapters/{openaicompat,ollama,lmstudio,openrouter,anthropic,yzma}}
 │   ├── mcp/{client,server}
 │   ├── acp/{client,server}
+│   ├── workspaces/{tree,ids,layout,restore}
+│   ├── waits/
+│   ├── integrations/{reports,metadata}
+│   ├── notify/
 │   ├── orchestrator/{threads,worktrees,triggers}
 │   ├── security/{policy,sandbox,redact,egress,keyring}
 │   ├── store/{migrations,sqlite,vectors}
@@ -773,12 +782,34 @@ umbral/
 
 | Phase | Scope | Exit criterion |
 |---|---|---|
-| F0 Core | daemon, PTY, libghostty, OSC 133 bootstrap, blocks in SQLite, minimal TUI, `umb block` CLI | `vim`, `htop` and `tmux` work; blocks with correct exit codes in bash/zsh/fish |
-| F1 Agentic MVP | runtime with built-in tools, permissions + queue, `AGENTS.md` rules, `@`/`/`, gateway with Ollama, llama.cpp, LM Studio, OpenRouter and openai-compat, MCP client, secret redaction | "fix this error" works offline with `gpt-oss:20b` end to end |
-| F2 ADE | Wails v3 client (per-hunk diffs, editor, tree), Full Terminal Use, Active AI with an embedded model, HF + OmniRoute, policy router, parallel threads with worktrees, ACP client, durable sessions + SSH, OTel | three agents in parallel (one external through ACP) without interference, traces per turn |
+| F0 Core | daemon, PTY, libghostty, OSC 133 bootstrap, blocks in SQLite, workspace/tab/pane structure with portable layouts, snapshot with sequenced events, minimal TUI, `umb block` CLI | `vim`, `htop` and `tmux` work; blocks with correct exit codes in bash/zsh/fish; a script builds and restores a layout using only the CLI |
+| F1 Agentic MVP | runtime with built-in tools, permissions + queue, `AGENTS.md` rules, `@`/`/`, gateway with Ollama, llama.cpp, LM Studio, OpenRouter and openai-compat, MCP client, secret redaction, waits, integration surface, notifications, `policy.explain` | "fix this error" works offline with `gpt-oss:20b` end to end, and a script drives a whole thread without polling |
+| F2 ADE | Wails v3 client (per-hunk diffs, editor, tree), Full Terminal Use, Active AI with an embedded model, HF + OmniRoute, policy router, parallel threads with worktrees as a daemon primitive, ACP client, third-party agent detection, plugins with a declarative manifest, multi-machine federation, live PTY handoff, durable sessions + SSH, OTel | three agents in parallel (one external through ACP) without interference, traces per turn |
 | F3 Differentiators | background agents with triggers and containers, MCP and ACP servers, WASM plugins, workflows/notebooks exportable to Obsidian, voice, session sharing | a scheduled agent opens a draft PR unattended and is fully audited |
 
 ---
+
+## 10.1 Herdr: the adjacent runtime
+
+Herdr (Rust, Apache-2.0) is the closest neighbour to this design and solves the adjacent problem:
+being the runtime where *third-party* coding agents live. It does not emulate a terminal, does not
+bring its own agent and does not route models. It contributes the orchestration model this
+document adopted in §5 and ADR-0002: `session → workspace → tab → pane`, waits owned by the server,
+bootstrap snapshot with sequenced events, integrations that report state over the socket, and
+capability negotiation so client and server need not share a build.
+
+What Umbral deliberately does not take from it:
+
+- **screen heuristics as a state authority.** They are fragile by construction and become a second
+  source of truth. DD-012 fixes a single authority per pane and leaves third-party detection for
+  F2, below hooks and ACP;
+- **detection rules that update themselves from the project's servers.** REQ-SEC-011 keeps the
+  equivalent mechanism disabled by default, with local precedence and every fetch recorded in
+  `egress_log`.
+
+What Umbral has that it does not: permission engine, secret redaction, egress audit, local models
+and semantic blocks with full-text search. That is the intended difference, and it is where the new
+requirements reinforce rather than imitate.
 
 ## 11. Main risks
 
@@ -826,3 +857,4 @@ Revisit when: live multi-user collaboration or shared remote execution appears
 - LM Studio APIs: https://lmstudio.ai/docs/developer
 - Hugging Face Inference Providers: https://huggingface.co/docs/inference-providers
 - OmniRoute: https://github.com/diegosouzapw/OmniRoute
+- Herdr (agent runtime, Apache-2.0): https://github.com/herdrdev/herdr · docs: https://herdr.dev/docs/

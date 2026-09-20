@@ -31,7 +31,7 @@
 ### [x] 2026-09-11 T-F0-02 · Store and migration 0001 (terminal)
 - **What:**
   - open SQLite with the Data Model §5 pragmas;
-  - migration 0001 exactly as Data Model §5.1 lists it: `schema_migrations`, **`threads`**, `sessions`,
+  - migration 0001 exactly as Data Model §5 lists it: `schema_migrations`, **`threads`**, `sessions`,
     `blocks`, `block_chunks`, `blocks_fts` and the three `blocks_fts_ai/ad/au` triggers (§2.4);
   - restart recovery (Data Model §6, steps 1-2).
 - **REQ:** REQ-BLK-007, REQ-TERM-005, REQ-BLK-006
@@ -177,38 +177,56 @@
 - **Depends on:** T-F0-06
 - **Done:** the perf job is green; an artificial regression (10 ms sleep) turns it red.
 
-### [x] 2026-09-11 T-PKG-01 · Branding kit and pinned checksums
-- **What:** carry the icon kit in `assets/branding/umbral-icons/`, pin every artifact in
-  `CHECKSUMS.sha256`, and add a CI job that regenerates the kit with `tools/build.py` and
-  compares it byte for byte.
-- **REQ:** REQ-PKG-001, REQ-PKG-006
-- **Files:** `assets/branding/umbral-icons/**`, `scripts/icons_check.sh`, `.github/workflows/ci.yml`, `Taskfile.yml`
-- **Depends on:** —
-- **Done:** the `icons` job is green; changing one pixel of a PNG turns it red.
-- **Result:** `scripts/icons_check.sh` does three things rather than one: verify the
-  checksums, regenerate with `build.py` and compare, then validate the `.desktop` file. The
-  regeneration step is what REQ-PKG-006 actually asks for, because checking the checksums
-  alone would pass a source edit committed together with its new checksum. Verified by
-  flipping one byte of the 48 px PNG: exit 1. The kit reproduces byte for byte from source,
-  so 55 of the 56 artifacts were already correct; only the `.desktop` file changed, in
-  T-PKG-02. The regeneration step degrades to a warning when `cairosvg` and `Pillow` are
-  missing, so a contributor without them still gets the checksum and `.desktop` checks; CI
-  installs both, so the full check always runs there.
+### [ ] T-F0-14 · Workspace, tab and pane model
+- **What:**
+  - `workspaces`, `tabs`, `panes` and `pane_aliases` tables in **migration 0003**, not 0001: 0001 is already applied and migrations are forward-only (Art. 6, Data Model §5);
+  - public identifiers `w<n>`, `w<n>:t<m>`, `w<n>:p<m>` with an allocator per session;
+  - methods `workspace.*`, `tab.*` and `pane.split|list|get|focus|rename|move|close`;
+  - binding of one live session per pane;
+  - rollup state per tab and workspace derived from panes.
+- **REQ:** REQ-WS-001, REQ-WS-002, REQ-WS-003, REQ-WS-006, REQ-WS-007
+- **Files:** `internal/workspaces/**`, `internal/store/migrations/0003_structure.sql`, `internal/api/workspaces.go`, `.go-arch-lint.yml` (new `workspaces` component, Tech Design §5.2)
+- **Depends on:** T-F0-03, T-F0-05
+- **Note:** this is the largest task in F0. If its first estimate slips, split it into "model and identifiers" and "methods and rollup" (finding B-08).
+- **Done:** tests `TestWorkspaceCreateReturnsTree_REQ_WS_001`, `TestPaneIdsStable_REQ_WS_002`, `TestSplitAttachesSession_REQ_WS_003`, `TestRollupPrefersBlocked_REQ_WS_006` and `TestMovedPaneKeepsAlias_REQ_WS_007` green.
 
-### [x] 2026-09-11 T-PKG-02 · `.desktop` file for release 0.1
-- **What:** set the `.desktop` file to `Exec=umbral-tui` and `Terminal=true`, validate it in
-  CI, and regenerate `CHECKSUMS.sha256` (finding A-15).
-- **REQ:** REQ-PKG-002, REQ-PKG-003
-- **Files:** `assets/branding/umbral-icons/tools/build.py`, `assets/branding/umbral-icons/linux/share/applications/io.github.ecrespo.Umbral.desktop`, `assets/branding/umbral-icons/CHECKSUMS.sha256`
-- **Depends on:** T-PKG-01
-- **Done:** `desktop-file-validate` without errors.
-- **Result:** the change went into the `DESKTOP` template in `build.py`, not into the
-  generated file, so the next regeneration keeps it. `desktop-file-validate` exits 0; it
-  emits one *hint* about `Categories` listing more than one main category, which is
-  pre-existing, is not an error, and is left for whoever revisits the kit's categories.
-  `scripts/icons_check.sh` additionally asserts the four lines REQ-PKG-002 and REQ-PKG-003
-  name, because the validator does not know which binary release 0.1 ships. Checksums
-  regenerated, closing A-15.
+### [ ] T-F0-15 · Portable layouts
+- **What:** `layout.export` producing the binary tree with labels, cwd and command; `layout.apply` recreating a tab from that tree and declaring in its response that processes and scrollback are not reproduced.
+- **REQ:** REQ-WS-004, REQ-WS-005
+- **Files:** `internal/workspaces/layout/**`, `internal/api/layout.go`
+- **Depends on:** T-F0-14
+- **Done:** round-trip test `TestLayoutExportApplyRoundTrip_REQ_WS_004` plus `TestApplyWarnsNoProcesses_REQ_WS_005` green.
+
+### [ ] T-F0-16 · Snapshot and event sequencing
+- **What:**
+  - monotonic `seq` per session on every notification;
+  - `session.snapshot` with focused ids, records, layouts and the `seq` it contains;
+  - documented bootstrap protocol (subscribe → snapshot → apply the buffer).
+- **REQ:** REQ-API-001, REQ-API-002
+- **Files:** `internal/api/snapshot.go`, `internal/bus/**`
+- **Depends on:** T-F0-14
+- **Done:** `TestSnapshotCarriesSeq_REQ_API_001` and `TestNoGapBetweenSnapshotAndStream_REQ_API_002` (concurrent client under load) green.
+
+### [ ] T-F0-17 · Protocol schema and capability degradation
+- **What:**
+  - capability list in `system.hello`;
+  - unknown method → `METHOD_NOT_FOUND` without closing the connection;
+  - `umb api schema --json` generated from the Go types;
+  - CI check that compares the schema with `specs/api/umbral-daemon-api-v1.md` (methods and error codes).
+- **REQ:** REQ-API-003, REQ-API-004
+- **Files:** `internal/api/schema.go`, `cmd/umb/api.go`, `tools/api_schema_check.py`
+- **Depends on:** T-F0-03
+- **Done:** `TestUnknownMethodKeepsConnection_REQ_API_003` and `TestSchemaMatchesSpec_REQ_API_004` green; a method added to the code without the spec turns CI red.
+
+### [ ] T-F0-18 · Structure restore after restart
+- **What:**
+  - persist the structure and relaunch shells or `command_json` on start;
+  - mark previous sessions `exited`;
+  - `pane_history` table and its opt-in replay, disabled by default.
+- **REQ:** REQ-TERM-009, REQ-TERM-010, REQ-TERM-011
+- **Files:** `internal/workspaces/restore*.go`, `internal/store/**`, `internal/config/**`
+- **Depends on:** T-F0-14
+- **Done:** `TestRestoreRebuildsStructure_REQ_TERM_009`, `TestPaneHistoryDisabledByDefault_REQ_TERM_010` and `TestRestoreNeverRunsStoredCommand_REQ_TERM_011` green.
 
 ## Traceability matrix (F0)
 
@@ -217,7 +235,7 @@
 | REQ-TERM-001 | T-F0-05, T-F0-13 | TestCreateSession_REQ_TERM_001, BenchmarkSessionCreate_REQ_TERM_001 |
 | REQ-TERM-002 | T-F0-07 | Conformance_REQ_TERM_002 |
 | REQ-TERM-003 | T-F0-06 | TestSessionSurvivesNoClients_REQ_TERM_003 |
-| REQ-TERM-004 | T-F0-04, T-F0-06 | TestSubscribeSnapshotBeforeLive_REQ_TERM_004, TestSnapshotRoundTrip_REQ_TERM_004 |
+| REQ-TERM-004 | T-F0-04, T-F0-06 | TestSubscribeSnapshotBeforeLive_REQ_TERM_004, TestSnapshotRoundTrip_REQ_TERM_004, TestRebaseKeepsWhatTheSnapshotDoesNotContain_REQ_TERM_004 |
 | REQ-TERM-005 | T-F0-02, T-F0-05 | TestExitedEmitsCode_REQ_TERM_005, TestRecoveryMarksOpenBlocksAbandoned_REQ_TERM_005 |
 | REQ-TERM-006 | T-F0-06, T-F0-13 | BenchmarkOutputLatency_REQ_TERM_006 |
 | REQ-TERM-007 | T-F0-05 | TestResizeNotifies_REQ_TERM_007 |
@@ -234,19 +252,28 @@
 | REQ-CLI-002 | T-F0-10, T-F0-11 | TestBlockGetLast_REQ_CLI_002 |
 | REQ-CLI-003 | T-F0-11 | TestUmbAutostartFailsWith69_REQ_CLI_003 |
 | REQ-TUI-001 | T-F0-12 (+ T-F1-20) | TestTUIBlockNavigation_REQ_TUI_001 |
-| REQ-PKG-001 | T-PKG-01 | `icons` job: checksums + byte-for-byte regeneration |
-| REQ-PKG-002 | T-PKG-01, T-PKG-02 | `desktop-file-validate`, asserted keys in `scripts/icons_check.sh` |
-| REQ-PKG-003 | T-PKG-02 | asserted `Exec=umbral-tui` and `Terminal=true` in `scripts/icons_check.sh` |
-| REQ-PKG-006 | T-PKG-01 | `icons` job regenerates with `build.py` and compares |
+| REQ-WS-001 | T-F0-14 | TestWorkspaceCreateReturnsTree_REQ_WS_001 |
+| REQ-WS-002 | T-F0-14 | TestPaneIdsStable_REQ_WS_002 |
+| REQ-WS-003 | T-F0-14 | TestSplitAttachesSession_REQ_WS_003 |
+| REQ-WS-004 | T-F0-15 | TestLayoutExportApplyRoundTrip_REQ_WS_004 |
+| REQ-WS-005 | T-F0-15 | TestApplyWarnsNoProcesses_REQ_WS_005 |
+| REQ-WS-006 | T-F0-14 | TestRollupPrefersBlocked_REQ_WS_006 |
+| REQ-WS-007 | T-F0-14 | TestMovedPaneKeepsAlias_REQ_WS_007 |
+| REQ-API-001 | T-F0-16 | TestSnapshotCarriesSeq_REQ_API_001 |
+| REQ-API-002 | T-F0-16 | TestNoGapBetweenSnapshotAndStream_REQ_API_002 |
+| REQ-API-003 | T-F0-17 | TestUnknownMethodKeepsConnection_REQ_API_003 |
+| REQ-API-004 | T-F0-17 | TestSchemaMatchesSpec_REQ_API_004 |
+| REQ-TERM-009 | T-F0-18 | TestRestoreRebuildsStructure_REQ_TERM_009 |
+| REQ-TERM-010 | T-F0-18 | TestPaneHistoryDisabledByDefault_REQ_TERM_010 |
+| REQ-TERM-011 | T-F0-18 | TestRestoreNeverRunsStoredCommand_REQ_TERM_011 |
 
 **Deferred:** REQ-BLK-008 (SHOULD, PowerShell) moves to F2 together with Windows.
-REQ-PKG-004, 005, 007 and 008 are not MVP requirements; finding A-12 moved them to
-`specs/prd/umbral-f2-desktop.md`, and tasks T-PKG-04 and T-PKG-05 go with them.
 
 ## Execution log
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-20 | reconciliation | done | Merging the two spec lineages surfaced a real defect in T-F0-06, not just the flaky test that exposed it. `session.subscribe` registered the subscription, took the snapshot, and then called `subscribe` again with the snapshot's seq — which closes the subscription and creates a new one, throwing away everything queued in between. The early registration exists precisely to keep that window; output produced during the snapshot survived only when the bus happened to deliver it after the replacement, which is why `TestSubscribeSnapshotBeforeLive_REQ_TERM_004` failed about one run in three under `-race` rather than always. The handler now rebases the existing subscription, dropping the prefix the snapshot already shows. `TestRebaseKeepsWhatTheSnapshotDoesNotContain_REQ_TERM_004` pins it deterministically and was checked for teeth. Separately, `TestNoChunkWaitsLongerThanTheBatchInterval` timed a single socket round-trip against the 4 ms batch ceiling, which the race detector's own overhead exceeds; it now takes the median of 25 lone chunks and still fails at a 4.48 ms median when a fixed timer is injected. |
 | 2026-09-11 | T-F0-10 | done | The first task whose requirement was missed on the first measurement, by six times: `block.search` p95 was 1.23 s against a 200 ms budget, and a `LIMIT 50` list page took 129 ms. `EXPLAIN QUERY PLAN` named both causes. `blocks` had no index on its default ordering, only on `(session_id, started_at)`, so an unfiltered page scanned and sorted 100,000 rows. And ordering a full-text search by `started_at` puts a temporary B-tree over the whole match set, so a term matching half the history sorted fifty thousand rows to return fifty; no index helps, because the rows arrive from the full-text index in rowid order. Ordering by that rowid instead is 300 times faster and returns the same list, since a block's row is written when its command starts. Both changes needed spec text and were folded on approval into Data Model v1.3 and API Spec v1.4. Six properties were checked for teeth. Two things found while writing it: FTS5 rejects a bare path as a syntax error, so a client typing one has to quote it; and `blocks_fts` is keyed on implicit rowids, which `VACUUM` may renumber, silently desynchronising the index, which the delta records. |
 | 2026-09-11 | T-F0-09 | done | Two defects in already-"done" work surfaced only when a real shell was asked for a real exit code. First: the bash and zsh bootstraps read `$?` in a hook registered last, and every element of `PROMPT_COMMAND`/`precmd_functions` leaves `$?` set to its own result, so with Starship installed every command was recorded as exit 0. The work is now split in two, a capture hook first and the marker hook last, because the two halves want opposite positions. Second: the daemon never wired libghostty's write-pty effect, so no program's query to the terminal was ever answered; fish waits two seconds for a Primary Device Attributes reply and then permanently disables features, and under a retrying test it never timed out at all. Both were found by `TestBlocksInEveryShell_REQ_BLK_005`, which exists because REQ-BLK-005 covers three shells and only running all three proves they agree. A third, smaller one was found by the plain-text test: carriage return was treated as "erase the line", which is right for a progress bar and wrong for the CRLF a PTY ends every line with, so the decision is now deferred one byte. The scanner and the recorder were each checked for teeth by breaking three and four properties respectively. Deliberately not done: `block.list`/`get`/`search` are T-F0-10, and chunk writes sit on the drain goroutine, after the chunk has been published, so they delay the history and never the screen. |
 | 2026-09-11 | T-F0-07 | done | 22 cases: VT-01…VT-20 MUST plus VT-21 and VT-22 SHOULD. Everything passes against libghostty on the first run, which is expected rather than suspicious: the emulator is Ghostty's own and these are the sequences it exists to implement. The value is the regression net, not the discovery. Worth noting from the fixtures: VT-20 confirms the shell-integration OSC sequences leave no visible mark, which is what lets T-F0-09 read them without corrupting the screen. |
@@ -254,7 +281,7 @@ REQ-PKG-004, 005, 007 and 008 are not MVP requirements; finding A-12 moved them 
 | 2026-09-11 | T-F0-05 | done | Both security-relevant tests were checked for teeth by breaking what they guard: writing the input before checking the lock fails REQ-TERM-008's canary check, and resizing only the bookkeeping fails REQ-TERM-007's `tput cols`. Verified end to end over the real socket: create, input, resize with its notification, list, close and the exited notification. One observation worth keeping: input written to a PTY before the shell's line editor is ready can be lost, so an end-to-end script that types immediately after `session.create` sees a wrong exit code. With the shell settled, bash, zsh and fish all report the real code. `session.*` is restricted to the `tui` and `desktop` client kinds, since API Spec §2 does not grant it to `cli`. |
 | 2026-09-11 | T-F0-08 | done | bash 5.3.9, zsh 5.9 and fish 4.2.1, each driven through a PTY with `creack/pty`. The prompt-framework clause is covered by a fake rc that reassigns the prompt on every prompt, so it holds on a CI runner with neither Starship nor powerlevel10k installed; the machine that found the bug had Starship in its own rc. Both new tests were checked for teeth by breaking the thing they guard. fish skips the configuration-preservation case by design: `--init-command` runs after `config.fish`, so there is nothing to restore. |
 | 2026-09-11 | T-F0-04 | done | First cgo in the repository. `libghostty-vt` is built from ghostty's source with Zig 0.16.0 by `scripts/build_libghostty.sh` (`task deps:ghostty`); the Taskfile points `PKG_CONFIG_PATH` at the default prefix so no Go target needs the caller to export anything, and CI builds it in the lint and test jobs. Measured numbers and the scrollback finding are in `docs/spikes/q01-snapshot.md`. Not covered here and deliberately left to their own tasks: reflow on resize (T-F0-07), real PTY output (T-F0-05), macOS. |
-| 2026-09-11 | T-PKG-01, T-PKG-02 | done | Closes Phase 0. The kit reproduces byte for byte from `tools/build.py`, verified by regenerating it: 55 of 56 artifacts identical, the `.desktop` file the only intended change. Finding A-12 honoured: REQ-PKG-004, 005, 007 and 008 went to `specs/prd/umbral-f2-desktop.md` instead of becoming MVP MUSTs nothing could close. Finding A-15 closed: the checksums were regenerated after the `.desktop` change. Finding A-16 closed: the superseded Spanish copy of the delta was deleted. |
+| 2026-09-11 | T-PKG-01, T-PKG-02 | done | Recorded here because the hardening tasks file did not exist yet; both tasks now live in `umbral-hardening-tasks.md`. Closes Phase 0. The kit reproduces byte for byte from `tools/build.py`, verified by regenerating it: 55 of 56 artifacts identical, the `.desktop` file the only intended change. Finding A-12 honoured: REQ-PKG-004, 005, 007 and 008 went to `specs/prd/umbral-f2-desktop.md` instead of becoming MVP MUSTs nothing could close. Finding A-15 closed: the checksums were regenerated after the `.desktop` change. Finding A-16 closed: the superseded Spanish copy of the delta was deleted. |
 | 2026-09-11 | T-F0-03 | done after a `spec-guardian` round | The review returned FIX FIRST with 1 CRITICAL and 5 HIGH. The critical was real and reproduced with a probe: a token file that existed but was empty kept its old mode, because `os.WriteFile` does not apply its mode argument to an existing file, so the token landed at 0664. It is now written through `OpenFile` with an explicit `Chmod` and the mode is read back. Also fixed: the handshake validated `client_kind` before the token, so a bad token plus a bad kind answered `VALIDATION_ERROR` and left the connection open, against REQ-SEC-003; the runtime-directory fallback trusted a world-writable parent; `trace_id` carried a freshly minted id that correlated to nothing; `capabilities` advertised `sessions` and `blocks` with no such method registered; `go.mod` recorded a direct dependency as indirect. Five decisions the spec does not cover went into `changes/_archive/2026-09-api-f0-decisions/` instead of staying in comments. |
 | 2026-09-11 | T-F0-02 | done | `internal/store` with migration 0001, pragma verification, forward-only migrations and restart recovery. Driver: `modernc.org/sqlite` (pure Go, no cgo). `threads` is created in 0001 per the folded delta, and the regression test for A-01 was checked by reverting the fix: it fails with `no such table: main.threads`, exactly as the Analyze described. Steps 3-4 of Data Model §6 wait for T-F1-01, which creates the tables they touch. |
 | 2026-09-11 | T-F0-01 | done | Go 1.27.1 installed under `~/.local/go` without root, since the machine had no Go at all. `task lint` (gofumpt, go vet, golangci-lint with gosec, govulncheck, gitleaks), `task arch`, `task arch:selftest` and `task test -race` all green. `gosec` G115 is excluded for now with a written reason: it fires on every epoch-ms and micro-USD conversion Art. 6 mandates, and it is re-enabled once the store layer exists. **Zig is still missing**, so T-F0-04 and T-F0-05 cannot build libghostty yet. |

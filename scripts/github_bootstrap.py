@@ -47,7 +47,8 @@ LABELS = {
     "phase:spec-fixes": ("e99695", "Spec fixes before F0"),
 }
 for area in ["sessions", "agents", "context", "tools", "llmgw", "mcp", "security", "store", "api",
-             "obs", "tui", "cli", "config", "packaging", "ci", "specs"]:
+             "obs", "tui", "cli", "config", "packaging", "ci", "specs",
+             "workspaces", "waits", "integrations", "notify"]:
     LABELS[f"area:{area}"] = ("ededed", f"Module {area}")
 
 MILESTONES = {
@@ -59,7 +60,7 @@ MILESTONES = {
 }
 
 AREA_RULES = [
-    (r"internal/(sessions|agents|context|tools|llmgw|mcp|security|store|api|obs|config)\b", None),
+    (r"internal/(sessions|agents|context|tools|llmgw|mcp|security|store|api|obs|config|workspaces|waits|integrations|notify)\b", None),
     (r"cmd/umbral-tui|internal/tui", "tui"),
     (r"cmd/umb\b|cmd/umb/", "cli"),
     (r"shell/|testdata/vt", "sessions"),
@@ -138,7 +139,7 @@ def parse_open_findings(covered: set[str]) -> list[dict]:
     reports = sorted((ROOT / "specs/analyze").glob("analyze-*.md"))
     if not reports:
         return []
-    rows = re.findall(r"^\| (A-\d{2}) \| \**([A-Z]+)\** \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \|$",
+    rows = re.findall(r"^\| ([A-Z]-\d{2}) \| \**([A-Z]+)\** \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \|$",
                       reports[-1].read_text(encoding="utf-8"), re.M)
     sev = {"CRITICAL": "critical", "HIGH": "high", "MEDIUM": "medium", "LOW": "low"}
     out = []
@@ -156,7 +157,7 @@ def covered_findings() -> set[str]:
     for p in (ROOT / "changes").glob("*/proposal.md"):
         if "_archive" in p.parts:
             continue
-        covered |= set(re.findall(r"A-\d{2}", p.read_text(encoding="utf-8").split("**Scope", 1)[0]))
+        covered |= set(re.findall(r"[A-Z]-\d{2}", p.read_text(encoding="utf-8").split("**Scope", 1)[0]))
     if (ROOT / "changes/2026-09-analyze-fixes").exists():
         covered |= {f"A-{i:02d}" for i in range(1, 8)}
     return covered

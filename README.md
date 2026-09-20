@@ -22,9 +22,14 @@
 
 ## Status
 
-🚧 **Specification phase.** Today the repository contains the research, the architecture, the visual
-identity and every SDD artifact (constitution, PRD with EARS, API, technical design, data model,
-plan, tasks and Analyze). Code starts with task [`T-F0-01`](specs/tasks/umbral-f0-tasks.md).
+🚧 **Phase F0 in progress.** The quality gate passes with no critical findings; one change proposal
+is pending ratification ([`changes/2026-09-structure-migration`](changes/2026-09-structure-migration/)),
+and it blocks only T-F0-14. Alongside the full SDD package (constitution, PRD with EARS, API, technical
+design, data model, plan, tasks and Analyze), `umbrald` already exists: it owns durable PTY sessions
+with a libghostty emulator, streams them over a 0600 JSON-RPC socket, records a block per command
+from the shell integration, and searches 100,000 blocks in under a millisecond. Tasks
+[`T-F0-01` … `T-F0-10`](specs/tasks/umbral-f0-tasks.md) are done. Next: the `umb` CLI, the TUI and
+the workspace/pane orchestration surface.
 
 ## What Umbral will be
 
@@ -38,6 +43,10 @@ plan, tasks and Analyze). Code starts with task [`T-F0-01`](specs/tasks/umbral-f
 - **Truly local-first:**
   - works offline with Ollama, llama.cpp or LM Studio;
   - whatever leaves the machine is redacted and logged.
+- **Structure that scripts can drive:**
+  - workspaces, tabs and panes owned by the daemon, with portable layouts;
+  - one glance tells you which project is blocked, working or ready to review;
+  - waits (`thread.wait`, `send --wait`) so another agent or a shell script can drive a thread.
 - **Open protocols:** MCP for tools, ACP for external agents (Claude Code, Gemini CLI, Codex…) and OpenAI-compatible APIs for models.
 
 ![Umbral architecture, components and features](docs/diagrams/umbral-architecture.png)
@@ -75,8 +84,8 @@ flowchart LR
 
 | Phase | Content | Status |
 |---|---|---|
-| F0 Core | daemon, PTY, libghostty, blocks, search, TUI, `umb block` | ⏳ next |
-| F1 Agentic (MVP) | permissioned agent, model gateway, MCP, redaction, OTel | 📋 specified |
+| F0 Core | daemon, PTY, libghostty, blocks, search, workspaces and layouts, snapshot, TUI, `umb block` | ⏳ next |
+| F1 Agentic (MVP) | permissioned agent, model gateway, MCP, redaction, waits, integrations, notifications, OTel | 📋 specified |
 | F2 ADE | Wails v3 GUI, Full Terminal Use, Active AI, ACP, worktrees, SSH, Windows | 🔭 horizon |
 | F3 Platform | background agents, MCP/ACP server, WASM plugins | 🔭 horizon |
 
@@ -85,9 +94,11 @@ flowchart LR
 | Document | Purpose |
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | research (Warp, Wave, Crush, Zed/ACP) and conceptual architecture |
+| [`docs/adr/`](docs/adr/) | architectural style (ADR-0001) and orchestration surface (ADR-0002) |
 | [`specs/constitution.md`](specs/constitution.md) | non-negotiable principles |
 | [`specs/`](specs/README.md) | PRD, API, technical design, data model, plan, tasks and Analyze |
-| [`changes/`](changes/) | change proposals (Delta Specs) |
+| [`changes/`](changes/) | change proposals; one is pending ratification (`2026-09-structure-migration`) |
+| [`changes/_archive/`](changes/_archive/) | the seven folded proposals, kept as history |
 | [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) | how to start development with Claude Code |
 | [`assets/branding/umbral-icons/`](assets/branding/umbral-icons/README.md) | icons for Linux, Windows and macOS |
 

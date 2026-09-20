@@ -8,12 +8,9 @@ Umbral is a local-first agentic terminal in Go. It consists of:
 - `umbrald`: a daemon with PTY, VT (libghostty), blocks, agent, model gateway and MCP;
 - thin clients: Bubble Tea v2 TUI, `umb` CLI and, from F2, a Wails v3 desktop app.
 
-The second-pass Analyze cleared F0 to start, and implementation has begun: T-F0-01 through
-T-F0-10 are done, so the daemon owns sessions, streams their output, records blocks and
-answers queries over them. T-F0-11 (`umb`), T-F0-12 (TUI) and T-F0-13 (performance gates)
-remain. The specs themselves are still `DRAFT`: the Analyze presents findings, it approves nothing. The execution
-log at the bottom of `specs/tasks/umbral-f0-tasks.md` is the only trustworthy record of what is
-complete; the task file's `[x]` markers are the source of truth, not this paragraph.
+The specification package is complete and **phase F0 is under way**: `T-F0-01` … `T-F0-10` are
+implemented (daemon, store, JSON-RPC, PTY sessions, streaming, blocks and search). See "Known
+status" at the end of this file for what is and is not written.
 
 ## Mandatory reading order
 1. `specs/constitution.md`: 9 non-negotiable articles. A violation blocks the merge.
@@ -55,15 +52,12 @@ complete; the task file's `[x]` markers are the source of truth, not this paragr
 - **Checkpoint:** after multi-step work, verify against the filesystem what is actually complete (`docs/checkpoints/`).
 
 ## Known status (update it when findings are closed)
-- The second-pass Analyze (`specs/analyze/analyze-2026-09-11b.md`, 2026-09-11) has **0 CRITICAL and 0 HIGH**. Verdict: **READY TO IMPLEMENT (F0)**.
-- A-01 … A-07 and A-13 are folded into `specs/`; the delta lives in `changes/_archive/2026-09-analyze-fixes/`.
-- Open findings, each attached to the task that first needs it: A-08 (reference machine, T-F0-13), A-09 (entropy and rules precedence, T-F1-04/T-F1-11), A-10 (SQLite write failure, T-F1-13), A-11 (`fetch_url` limits, T-F1-09), A-14 (glossary).
-- Closed while folding the visual identity: A-12 (the four desktop PKG requirements moved to `specs/prd/umbral-f2-desktop.md`), A-15 (checksums regenerated) and A-16 (Spanish duplicate deleted).
-- **Phase 0 is closed** and `changes/` holds no pending delta: all six are archived. The three
-  raised during F0, `2026-09-slow-client-notification` (T-F0-06),
-  `2026-09-block-lifecycle-decisions` (T-F0-09) and `2026-09-block-query-performance`
-  (T-F0-10), were approved and folded on 2026-09-11. The base specs are now API Spec v1.4,
-  Data Model v1.3, PRD v1.3 and Tech Design v1.3.
-- **Q-01 is resolved** (`docs/spikes/q01-snapshot.md`): the libghostty VT formatter produces replayable snapshots, so the bounded-replay fallback is not needed and DD-001 stands unchanged.
-- **Building needs libghostty-vt.** Run `task deps:ghostty` once; the Taskfile then points `PKG_CONFIG_PATH` at it, so no Go target needs you to export anything.
-- `python3 tools/sdd_check.py` exits 0. Keep it that way: it is the *Specs* gate in CI.
+
+- **Implementation: T-F0-01 … T-F0-10 and T-PKG-01/02 are done** (see the execution log in `specs/tasks/umbral-f0-tasks.md`). `umbrald` owns real PTY sessions, streams them, records blocks and serves `block.list`/`get`/`search`. Not yet written: the `umb` CLI (T-F0-11), the TUI (T-F0-12), the performance gates (T-F0-13) and the whole orchestration surface (T-F0-14…18).
+- Specs at PRD 1.5 / API 1.6 / Tech 1.5 / Data Model 1.5 / Plan 1.4, constitution 1.1. The seven deltas raised so far are folded and archived under `changes/_archive/`.
+- **One delta is pending ratification:** `changes/2026-09-structure-migration/`, which renumbers the structure and agent migrations. It blocks T-F0-14 and nothing else.
+- Migrations are `0001_terminal`, `0002_block_index`, `0003_structure` (T-F0-14, not written yet) and `0004_agent` (T-F1-01). 0001 and 0002 are applied; nothing already applied is ever edited (Art. 6).
+- `python3 tools/sdd_check.py` passes with no CRITICAL findings: 106/106 MUST with a task, and migration 0001 works in isolation.
+- Building the tests needs libghostty-vt: run `task deps:ghostty` once, then use `task test` (it injects `PKG_CONFIG_PATH`). A bare `go test ./...` fails to build the cgo packages.
+- Current Analyze: `specs/analyze/analyze-2026-09-20b.md`. Open: **C-05 (HIGH)**, the `w1:t1:p2` identifiers of REQ-WS-002 against Art. 6's type-prefixed ULIDs — a decision needed before T-F0-14; C-01 (SQLite write failure under persist-first, blocks T-F1-13); C-02 (custody of the rule-signing key, blocks T-F1-30); and two LOW items.
+- The constitution carries two amendments to Art. 5 dated 2026-09-20: environment fallback for secrets and mandatory signatures for rule material.

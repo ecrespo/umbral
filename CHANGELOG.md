@@ -19,27 +19,36 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The pr
 - **T-F0-01**: Go module `github.com/ecrespo/umbral`, the Tech Design §5.1 package skeleton and the three `cmd/` binaries.
 - Quality gate: `Taskfile.yml` (`task lint`, `task arch`, `task test`, `task specs`, `task ci`), `.golangci.yml` with gosec, `.pre-commit-config.yaml` and the GitHub Actions pipeline.
 - `.go-arch-lint.yml` encoding the Tech Design §5.2 dependency rules, plus `scripts/arch_selftest.sh`, which proves the rules reject a `sessions` → `agents` import instead of merely being present.
+- REQ-SEC-008 (degraded start when the OS keyring is unavailable) and REQ-AGT-015 (`thread.send` idempotency through `client_msg_id`).
+- Tech Design appendix §8.1 with the closed VT conformance case list (VT-01…VT-22).
+- Data Model §5: what each migration creates.
 - Research and conceptual architecture (`docs/ARCHITECTURE.md`), ADR-0001.
 - Architecture infographic (`docs/diagrams/umbral-architecture.excalidraw` + PNG/SVG render).
 - SDD artifacts: constitution, PRD with EARS, JSON-RPC API v1, technical design, data model, plan, F0/F1 tasks and Analyze.
 - Visual identity Delta Spec and icon kit (Linux, Windows, macOS).
-- REQ-SEC-008 (degraded start when the OS keyring is unavailable) and REQ-AGT-015 (`thread.send` idempotency through `client_msg_id`).
-- Tech Design appendix §8.1 with the closed VT conformance case list (VT-01…VT-22).
-- Data Model §5.1: what each migration creates.
+- Delta fixing Analyze findings A-01…A-07 and A-13, folded and archived: migration 0001 now creates `threads` so `sessions` and `blocks` accept inserts with `foreign_keys=ON` (A-01); the three `blocks_fts` synchronisation triggers are written out instead of described in a comment (A-07); `Session` gains `owner_thread_id` (A-05); `mcp.server.add` takes `env_refs` instead of `env_keyring_refs` (A-06).
+- Repository setup: spec CI, issue/PR templates, Claude Code configuration (skills, subagents, hooks), GitHub bootstrap script.
 
 ### Fixed
-- `block.list` was a full table scan and a sort of the whole history, 141 ms at 100,000 blocks, because the three indexes on `blocks` all begin with a column an unfiltered page does not name. It now has an index on the ordering it is listed by.
+- `session.subscribe` lost output produced while the snapshot was being taken. It registered the subscription first, which is what makes the stream gapless, and then replaced that subscription with a new one carrying the snapshot's sequence number, discarding the queue the first one had been filling. The chunk survived only when the bus delivered it after the replacement. The handler now rebases the existing subscription instead (REQ-TERM-004).
+- `block.list` was a full table scan and a sort of the whole history, 141 ms at 100,000 blocks, because the three indexes on `blocks` all begin with a column an unfiltered page does not name. It now has an index on the ordering it is listed by, created by migration 0002.
 - `block.search` sorted its entire match set to return one page, 1.23 seconds at 100,000 blocks against a 200 ms budget. It now orders by insertion position, which lets SQLite walk the full-text index backwards and stop at the limit.
 - The bash and zsh integration reported exit code 0 for every command on any machine with a prompt framework installed. Both read `$?` from a hook registered last, and each element of `PROMPT_COMMAND` and of zsh's `precmd_functions` leaves `$?` set to its own result. The capture is now a separate hook registered first.
 - The daemon never answered a program's query to the terminal, because libghostty's write-pty effect was never wired. Every fish session stalled for two seconds waiting for a Primary Device Attributes reply and then permanently disabled features.
 
 ### Changed
-- API Spec v1.4, Data Model v1.3, PRD v1.3 and Tech Design v1.3 fold the three deltas raised during F0. `session.unsubscribed` tells a client its subscription was dropped, `abandoned` now covers a block superseded without its end marker, `output_truncated` covers the plain-text cap as well as the raw one, a shell that announces itself after the five-second window is promoted rather than left marked as having no integration, and the zstd dependency is recorded. Data Model §2.4 now warns that `VACUUM` renumbers the rowids the full-text index is keyed on, and must be followed by a rebuild.
-- API Spec v1.2: the runtime-directory fallback and its ownership rule, `trace_id` before tracing exists, `capabilities` derived from the method table, a required `protocol_version`, and a repeated handshake closing the connection.
-- The visual identity delta is folded: PRD §6.10 keeps the four requirements release 0.1 can satisfy, and the four that describe the F2 desktop client moved to `specs/prd/umbral-f2-desktop.md` (Analyze finding A-12).
-- Migration 0001 now creates `threads`, so `sessions` and `blocks` accept inserts with `foreign_keys=ON` (finding A-01).
-- The three `blocks_fts` synchronisation triggers are specified instead of described in a comment (A-07).
-- API: `Session` gains `owner_thread_id`; `mcp.server.add` takes `env_refs` instead of `env_keyring_refs`.
-- `tools/sdd_check.py` simulates migration 0001 with `threads`, asserts an FTS `MATCH`, and accepts a constitution article as the citation of an infrastructure task.
-- The delta fixing Analyze findings A-01…A-07 is folded and archived in `changes/_archive/`.
-- Repository setup: spec CI, issue/PR templates, Claude Code configuration (skills, subagents, hooks), GitHub bootstrap script.
+- The four deltas raised during F0 are folded and archived: `session.unsubscribed` tells a client its subscription was dropped, `abandoned` now covers a block superseded without its end marker, `output_truncated` covers the plain-text cap as well as the raw one, a shell that announces itself after the five-second window is promoted rather than left marked as having no integration, and the zstd dependency is recorded. Data Model §2.4 now warns that `VACUUM` renumbers the rowids the full-text index is keyed on, and must be followed by a rebuild.
+- The runtime-directory fallback and its ownership rule, `trace_id` before tracing exists, `capabilities` derived from the method table, a required `protocol_version`, and a repeated handshake closing the connection.
+- Migrations renumbered so that nothing already applied is edited (Art. 6): `0001_terminal`, `0002_block_index`, `0003_structure` (T-F0-14) and `0004_agent` (T-F1-01), which also takes the `ALTER TABLE threads` statements for the attention columns. Pending ratification in `changes/2026-09-structure-migration/`.
+- Specs raised to PRD 1.4 / API 1.5 / Technical 1.4 / Data Model 1.4 with the orchestration surface (ADR-0002, informed by a review of Herdr): workspaces, tabs and panes in the daemon, portable layouts, `session.snapshot` with sequenced events, server-owned waits, integration surface with external state reports and display metadata, notifications, `policy.explain`, rule overrides, tiered restore and a protocol schema generated from code.
+- 29 new MUST requirements (WS, API, AUT, INT, NTF and additions to TERM, AGT and SEC), 12 new tasks (T-F0-14…18, T-F1-23…29) and their traceability matrices. Then PRD 1.5 / API 1.6 / Technical 1.5 / Data Model 1.5 / Plan 1.4 fold the closing Analyze and re-fold the four deltas raised while F0 was being built, so both lineages sit in one set of specs.
+- `tools/sdd_check.py` now also verifies the F0 structure tables, which migration 0003 creates.
+- Architecture document at v0.2: orchestration features in the catalog, new modules in the repository layout, updated roadmap and a section on Herdr as the adjacent runtime.
+- Architecture diagram regenerated with the `workspaces`, `waits`, `integrations` and `notify` modules.
+- New Analyze against specs 1.1 (`specs/analyze/analyze-2026-09-20.md`) with findings B-01…B-10; REQ-TERM-011 added so a restart never re-runs stored commands.
+- GitHub bootstrap: area labels for the new modules and support for Analyze finding IDs beyond `A-*`.
+- Every blocking Analyze finding closed, and the quality gate passes with no CRITICAL findings.
+- Constitution amended twice (Art. 5): `env:<VAR>` accepted as a secret source when the keyring is unavailable and the fallback is enabled explicitly, and network-delivered rule material must be signed.
+- Signed rule bundles with a trust store, key lifecycle (add, list, remove, rotate with fingerprint confirmation), fail-closed behaviour and offline recovery through `rules.rollback` and `rules.reset`.
+- Wait monitoring: inventory with age and stall flag, safe cancellation, stalled-turn detection and orchestration metrics.
+- `fetch_url` restricted against SSRF; redaction thresholds, rule precedence and reference hardware made explicit.
