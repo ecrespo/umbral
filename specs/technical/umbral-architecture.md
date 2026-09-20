@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.7 |
+| **Version** | 1.8 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -98,6 +98,7 @@ flowchart LR
 | Component | Technology | Responsibility | Main REQs |
 |---|---|---|---|
 | `api` | own JSON-RPC 2.0 over a Unix `net.Listener` | handshake, auth, dispatch, notification fan-out with a per-client queue | SEC-003, SEC-007 |
+| `tui` | Bubble Tea v2 (`charm.land/bubbletea/v2`), go-libghostty for the client's own renderer (DD-001) | tabs, panes, block list, keyboard | TUI-* |
 | `sessions` | `creack/pty`, go-libghostty, `shell/` bootstrap, `klauspost/compress/zstd` | PTY, VT, blocks, input lock, snapshots | TERM-*, BLK-* |
 | `agents` | own runtime over ports | per-turn loop, modes, limits, cancellation, persist-first | AGT-* |
 | `context` | `text/template`, tiktoken tokenizer in Go | rules, attachments, git, budget, compaction | CTX-* |
@@ -176,7 +177,10 @@ sequenceDiagram
 | C: VT only in the client | simple | no durability and no blocks without a connected client |
 
 - **Consequences:** the snapshot sent on subscribe must be serialized in a format the client can
-  replay (**Q-01**).
+  replay (**Q-01**). The client's renderer is libghostty too, in `internal/tui/adapters/`, not a
+  second VT implementation: the two sides parse the same byte stream, so two emulators would be two
+  chances to disagree, and what the user sees would drift from what the block history recorded. The
+  price is that `umbral-tui` links cgo and needs `task deps:ghostty`, the same as the daemon.
 
 ### DD-002: Blocks from OSC 133 / 633 / 7, with a degraded mode
 
@@ -338,6 +342,8 @@ internal/client/             # JSON-RPC client, daemon autostart; used by cmd/um
 internal/config/             # runtime file locations and the TOML configuration
 internal/store/              # SQLite, migrations, restart recovery
 internal/tui/                # Bubble Tea v2 model and views
+internal/tui/ports/          # the screen the model renders from
+internal/tui/adapters/       # libghostty renderer (DD-001: the client parses for itself)
 internal/bus/                # typed pub/sub
 internal/workspaces/         # tree, identifiers, layout, restore
 internal/waits/              # pinned waits
@@ -357,7 +363,9 @@ testdata/vt/                 # VT conformance suite
 | `llmgw`, `sessions` | never `agents` |
 | `api` | `bus`, `store`, `config` and the `ports` of the modules it serves |
 | `client` | `config` only, and never `api`: the client and the server of one protocol must not depend on each other, so what they share — where the socket and the token live — lives in `config` |
-| `tui` | `client` and the `domain` packages; never `api` |
+| `tui` | `client`, its own `ports`, and the `domain` packages; never `api`, and never its own adapters — `cmd/umbral-tui` wires those, as `cmd/umbrald` does for the daemon |
+| `tui/ports` | `sessions/domain`, for the size and cursor types the daemon already defines |
+| `tui/adapters/**` | its own `ports`, `client`, `sessions/domain` and external libraries, like every other module's adapters. The `client` allowance is what keeps method names and parameter shapes in one adapter instead of in the model |
 | `workspaces` | `ports` of `sessions` and `store`; never `agents`, `api` or `waits` |
 | `waits` | `ports` of `agents`, `sessions` and `store`, plus `bus`; never `api` |
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api` |
@@ -583,6 +591,7 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.2 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-visual-identity`: §9.3 visual identity and packaging |
 | 1.3 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-block-lifecycle-decisions`: `klauspost/compress/zstd` recorded as a `sessions` dependency in §3.2 |
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds the `workspaces`, `waits`, `integrations` and `notify` modules, DD-009 to DD-015, the injected environment and the new test levels |
+| 1.8 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-tui-renderer`: §5.1 lists the TUI's `ports` and `adapters`, §5.2 gains their rows, and DD-001 records which renderer the client uses and why it is the daemon's |
 | 1.7 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-cli-surface`: §5.1 lists the packages that existed but were unlisted, §5.2 gains the `api`, `client` and `tui` rows, and §9.4 records the `umb` surface, the daemon log and the instance lock |
 | 1.6 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-art6-structural-ids`: the Constitution check records the Art. 6 exception behind DD-009 (C-05) |
 | 1.5 | 2026-09-20 | E. Crespo (assisted draft) | Closes the Analyze findings: DD-016 (signing and recovery), DD-017 (wait observability), renames the agent's boundary to "write root" (B-09) and adds two test levels. §8.1 was already folded in 1.1 |

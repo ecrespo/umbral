@@ -22,14 +22,16 @@
 
 ## Status
 
-🚧 **Phase F0 in progress.** The quality gate passes with no critical findings and there is no open
-change proposal. Alongside the full SDD package (constitution, PRD with EARS, API, technical
+🚧 **Phase F0 in progress.** The quality gate passes with no critical findings; one change proposal
+is pending ratification ([`changes/2026-09-tui-renderer`](changes/2026-09-tui-renderer/)). Alongside the full SDD package (constitution, PRD with EARS, API, technical
 design, data model, plan, tasks and Analyze), `umbrald` already exists: it owns durable PTY sessions
 with a libghostty emulator, streams them over a 0600 JSON-RPC socket, records a block per command
 from the shell integration, and searches 100,000 blocks in under a millisecond. Tasks
 [`T-F0-01` … `T-F0-11`](specs/tasks/umbral-f0-tasks.md) are done, so `umb status` and
-`umb block last --json` already work from any terminal. Next: the TUI and the workspace/pane
-orchestration surface.
+`umb block last --json` work from any terminal. `umbral-tui` — tabs, a split and a block
+list — is written and passing its tests, and closes once its
+[manual checklist](docs/qa/f0-tui.md) has been walked. Next: the performance gates and the
+workspace/pane orchestration surface.
 
 ## What Umbral will be
 

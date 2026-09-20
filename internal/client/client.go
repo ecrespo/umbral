@@ -36,10 +36,16 @@ const ProtocolVersion = 1
 // main package and the daemon logs what its clients claim to be.
 var Version = "0.0.0-dev"
 
-// ClientKindCLI is what `umb` announces. The daemon restricts a `cli` connection to
-// `system.*`, `block.*`, `thread.create|send|cancel` and `model.list` (API Spec §2), so a
-// method outside that set comes back as METHOD_NOT_FOUND rather than being served.
-const ClientKindCLI = "cli"
+// The client kinds of API Spec §2. The daemon serves a different method set to each: a
+// `cli` connection reaches `system.*`, `block.*`, `thread.create|send|cancel` and
+// `model.list`, while a `tui` reaches everything. Announcing the wrong one does not fail
+// the handshake — it turns every method outside the set into METHOD_NOT_FOUND, which
+// looks like a daemon that does not implement `session.create` rather than a client that
+// misidentified itself.
+const (
+	ClientKindCLI = "cli"
+	ClientKindTUI = "tui"
+)
 
 // maxMessageBytes is the 4 MiB frame limit of API Spec §1 and §8. The reader enforces it
 // so a daemon that went wrong cannot make the client allocate without bound.
@@ -138,16 +144,27 @@ func DefaultSocketPath() (string, error) { return config.DefaultSocketPath() }
 // The token is read from the file beside the socket rather than passed in, because that
 // is the only place it exists: the daemon writes it there at 0600 on first run.
 func Dial(ctx context.Context, socketPath string) (*Client, error) {
+	return DialKind(ctx, socketPath, ClientKindCLI)
+}
+
+// DialKind is Dial with the client kind chosen (API Spec §2).
+func DialKind(ctx context.Context, socketPath, kind string) (*Client, error) {
 	token, err := readToken(filepath.Join(filepath.Dir(socketPath), config.TokenFileName))
 	if err != nil {
 		return nil, err
 	}
-	return DialWithToken(ctx, socketPath, token)
+	return DialAs(ctx, socketPath, token, kind)
 }
 
 // DialWithToken is Dial with the token supplied, for a caller that already has it and for
 // the tests that need a wrong one.
 func DialWithToken(ctx context.Context, socketPath, token string) (*Client, error) {
+	return DialAs(ctx, socketPath, token, ClientKindCLI)
+}
+
+// DialAs is DialWithToken with the client kind chosen. `umbral-tui` needs ClientKindTUI:
+// the session methods are not in the `cli` set.
+func DialAs(ctx context.Context, socketPath, token, kind string) (*Client, error) {
 	var d net.Dialer
 	dialCtx, cancel := context.WithTimeout(ctx, DialTimeout)
 	defer cancel()
@@ -170,7 +187,7 @@ func DialWithToken(ctx context.Context, socketPath, token string) (*Client, erro
 	}
 	// dialCtx, not ctx: the handshake shares the connection attempt's budget. A daemon
 	// that accepts and never answers is the case this closes.
-	if err := c.hello(dialCtx, token); err != nil {
+	if err := c.hello(dialCtx, token, kind); err != nil {
 		_ = c.Close()
 		return nil, err
 	}
@@ -208,7 +225,7 @@ func (c *Client) Call(ctx context.Context, method string, params, out any) error
 	return c.call(ctx, method, params, out)
 }
 
-func (c *Client) hello(ctx context.Context, token string) error {
+func (c *Client) hello(ctx context.Context, token, kind string) error {
 	var result struct {
 		DaemonVersion   string   `json:"daemon_version"`
 		ProtocolVersion int      `json:"protocol_version"`
@@ -217,7 +234,7 @@ func (c *Client) hello(ctx context.Context, token string) error {
 	}
 	params := map[string]any{
 		"token":            token,
-		"client_kind":      ClientKindCLI,
+		"client_kind":      kind,
 		"client_version":   Version,
 		"protocol_version": ProtocolVersion,
 	}
@@ -239,7 +256,9 @@ type rpcResponse struct {
 	ID      *int64          `json:"id"`
 	Result  json.RawMessage `json:"result"`
 	Error   *wireError      `json:"error"`
-	Method  string          `json:"method"`
+	// Method and Params are set on a notification, which carries no id (API Spec §6).
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
 }
 
 type wireError struct {

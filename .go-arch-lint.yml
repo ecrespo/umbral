@@ -41,7 +41,9 @@ components:
   store:  { in: internal/store }
   config: { in: internal/config }
   client: { in: internal/client }
-  tui:    { in: internal/tui }
+  tui:          { in: internal/tui }
+  tui-ports:    { in: internal/tui/ports }
+  tui-adapters: { in: internal/tui/adapters/** }
 
   # --- hexagonal modules ------------------------------------------------------
   sessions-domain:   { in: internal/sessions/domain }
@@ -319,10 +321,21 @@ deps:
       - context-domain
       - llmgw-domain
       - security-domain
+  tui-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+  tui-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - tui-ports
+      - client
+      - sessions-domain
   tui:
     anyVendorDeps: true
     mayDependOn:
       - client
+      - tui-ports
       - sessions-domain
       - agents-domain
       - tools-domain
@@ -358,6 +371,8 @@ deps:
       - config
       - client
       - tui
+      - tui-ports
+      - tui-adapters
       - sessions-service
       - shellscripts
       - sessions-ports

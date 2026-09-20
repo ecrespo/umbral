@@ -71,6 +71,10 @@ type Options struct {
 	// NoAutostart makes a missing daemon an immediate failure. `umb status` in a script
 	// that must not spawn anything wants this.
 	NoAutostart bool
+	// ClientKind is what the handshake announces (API Spec §2). Empty means ClientKindCLI,
+	// which is right for `umb`; `umbral-tui` must set ClientKindTUI, because the session
+	// methods are outside the `cli` set.
+	ClientKind string
 }
 
 // Connect returns a connected client, starting `umbrald` if nothing is listening
@@ -91,7 +95,12 @@ func Connect(ctx context.Context, opts Options) (*Client, error) {
 		socketPath = p
 	}
 
-	c, err := Dial(ctx, socketPath)
+	kind := opts.ClientKind
+	if kind == "" {
+		kind = ClientKindCLI
+	}
+
+	c, err := DialKind(ctx, socketPath, kind)
 	if err == nil {
 		return c, nil
 	}
@@ -128,7 +137,7 @@ func Connect(ctx context.Context, opts Options) (*Client, error) {
 	//     the requirement measures the wait rather than the failure mode.
 	lastErr := err
 	for startCtx.Err() == nil {
-		c, dialErr := Dial(startCtx, socketPath)
+		c, dialErr := DialKind(startCtx, socketPath, kind)
 		if dialErr == nil {
 			return c, nil
 		}

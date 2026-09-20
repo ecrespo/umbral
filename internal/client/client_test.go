@@ -150,6 +150,15 @@ func helloReply(id json.RawMessage) map[string]any {
 // file the client reads. It returns the socket path.
 func fakeServer(t *testing.T, handle func(method string, id json.RawMessage, enc *json.Encoder)) string {
 	t.Helper()
+	return fakeServerWithParams(t, func(method string, _ map[string]any, id json.RawMessage, enc *json.Encoder) {
+		handle(method, id, enc)
+	})
+}
+
+// fakeServerWithParams is fakeServer with the request's parameters handed to the handler,
+// so a test can assert on what the client sent and not only on what it did with the reply.
+func fakeServerWithParams(t *testing.T, handle func(method string, params map[string]any, id json.RawMessage, enc *json.Encoder)) string {
+	t.Helper()
 
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "umbral.sock")
@@ -182,11 +191,12 @@ func fakeServer(t *testing.T, handle func(method string, id json.RawMessage, enc
 					var req struct {
 						ID     json.RawMessage `json:"id"`
 						Method string          `json:"method"`
+						Params map[string]any  `json:"params"`
 					}
 					if err := json.Unmarshal(line, &req); err != nil {
 						return
 					}
-					handle(req.Method, req.ID, enc)
+					handle(req.Method, req.Params, req.ID, enc)
 				}
 			}()
 		}
@@ -216,4 +226,59 @@ func TestCloseRacingACallIsSafe(t *testing.T) {
 		go func() { defer wg.Done(); _ = c.Close() }()
 	}
 	wg.Wait()
+}
+
+// TestConnectAnnouncesTheRequestedClientKind_REQ_SEC_003 is the regression test for a bug
+// that cost a real-daemon debugging session: every connection announced `cli`, and API
+// Spec §2 keeps `session.*` out of the `cli` method set, so the TUI's first call came back
+// METHOD_NOT_FOUND — indistinguishable from a daemon that does not implement it.
+//
+// No fake caught it because every fake answered the handshake without reading it.
+func TestConnectAnnouncesTheRequestedClientKind_REQ_SEC_003(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		opts Options
+		want string
+	}{
+		{name: "default is cli", want: ClientKindCLI},
+		{name: "tui asks for tui", opts: Options{ClientKind: ClientKindTUI}, want: ClientKindTUI},
+		{name: "cli asks for cli", opts: Options{ClientKind: ClientKindCLI}, want: ClientKindCLI},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			seen := make(chan string, 1)
+			socket := fakeServerReadingHello(t, seen)
+
+			opts := tc.opts
+			opts.SocketPath = socket
+			opts.NoAutostart = true
+			c, err := Connect(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("Connect: %v", err)
+			}
+			defer func() { _ = c.Close() }()
+
+			if got := <-seen; got != tc.want {
+				t.Errorf("client_kind = %q, want %q; the daemon serves a different method set to each", got, tc.want)
+			}
+		})
+	}
+}
+
+// fakeServerReadingHello answers the handshake and reports the client_kind it was sent.
+func fakeServerReadingHello(t *testing.T, seen chan<- string) string {
+	t.Helper()
+	return fakeServerWithParams(t, func(method string, params map[string]any, id json.RawMessage, enc *json.Encoder) {
+		if method == "system.hello" {
+			kind, _ := params["client_kind"].(string)
+			select {
+			case seen <- kind:
+			default:
+			}
+			_ = enc.Encode(helloReply(id))
+		}
+	})
 }

@@ -3,8 +3,10 @@
 This folder holds all Spec-Driven Development artifacts that precede code.
 
 **Status:** PRD 1.7, API 1.8, Technical Design 1.7, Data Model 1.6, Plan 1.4, constitution 1.2.
-Every finding that blocked implementation is folded, the ten deltas raised so far are archived,
-there is no pending delta, and the quality gate passes with no CRITICAL findings. What remains are MEDIUM and LOW items tracked as issues. The specs
+Every finding that blocked implementation is folded, ten deltas are archived and the quality gate
+passes with no CRITICAL findings. **One delta is pending ratification:**
+`../changes/2026-09-tui-renderer/`, which gives the client's VT renderer a place in the boundary
+rules of Technical Design §5.2. What remains are MEDIUM and LOW items tracked as issues. The specs
 carry both lineages: the orchestration surface of 2026-09-20 and the six deltas raised while F0 was
 being built.
 
