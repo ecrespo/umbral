@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.9 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.10 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -92,11 +92,24 @@ before the daemon starts.
   compatible would silently pair this daemon with a client built for a version it never declared.
 - Each entry of `capabilities` names a method namespace (`sessions`, `blocks`, `threads`, `mcp`,
   `models`, `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`,
-  `wait_admin`, `rules`) whose methods the daemon serves **at that moment**. THE SYSTEM SHALL derive
-  the list from its method table rather than declaring it statically, and SHALL NOT advertise a
-  namespace whose methods are not registered: a client that branches on the advertisement must not
-  be sent down a path that cannot work. `system` is never listed, since every client may always call
-  it. An empty list is valid, and is what a daemon serving only `system.*` returns.
+  `wait_admin`, `rules`) whose methods the daemon **serves at that moment**. THE SYSTEM SHALL derive
+  the list from its method table rather than declaring it statically, SHALL advertise a namespace
+  when at least one of its methods is served by this build, and SHALL NOT advertise one whose
+  methods are all unserved: a client that branches on the advertisement must not be sent down a path
+  that cannot work.
+- **Registered is not the same as served.** Every method of the protocol stays in the table whether
+  or not this build has the module behind it, which is what lets an unserved one answer
+  `NOT_IMPLEMENTED` instead of `METHOD_NOT_FOUND` (§9). So the list is derived from what the daemon
+  can do, not from what its table contains — the two differ exactly when a module is missing, which
+  is the case the list exists for.
+- The grain of a capability is the namespace; the grain of an answer is the method. An absent
+  namespace means "this daemon cannot do any of that". A present one does not promise every method
+  in it: a client that needs to know about one method calls it and reads the error, or asks
+  `api.schema`, which reports `served` per method.
+- `system` and `api` are never listed. Every client may always call `system.*`, and `api.schema` is
+  how a client finds out what the daemon speaks — a capability that had to be granted before a
+  client could ask what it had been granted would be circular. An empty list is valid, and is what a
+  daemon serving only those two returns.
 
 ## 3. General Conventions
 
@@ -556,7 +569,20 @@ discarded. Neither closes the connection.
 It is a read-only evaluation: it neither runs the tool nor creates approvals.
 
 ### 5.37 `api.schema` — REQ-API-004
-**Params:** `{}`. **Result:** `{schema}` — the JSON Schema document built into the binary. Exposed on the CLI as `umb api schema --json`.
+**Params:** `{}`. **Result:** `{schema}` — the protocol document built into the binary. Exposed on
+the CLI as `umb api schema --json`, which needs no running daemon: the document describes the build,
+so a client can read it before it has anywhere to connect.
+
+The document carries `protocol_version`; `methods`, each with its name, the `client_kinds` of §2
+allowed to call it, whether this build `served` it (§9), and the object schemas of its parameters
+and result; `notifications`, the §6 table with each payload's schema; and `errors`, the whole §3
+code table rather than the subset this build can currently raise — a client switching on
+`domain_code` needs the complete set to be exhaustive.
+
+THE SYSTEM SHALL generate the document from the types it serves with rather than from a written
+copy, and CI SHALL compare it against this specification. The comparison is blocking for method
+names, required parameters and error codes, and non-blocking for descriptions and added optional
+fields (REQ-API-004); `tools/api_schema_check.py` is the check and `task schema` runs it.
 
 ## 6. Notifications (daemon → client)
 
@@ -696,7 +722,12 @@ stateDiagram-v2
   `METHOD_NOT_FOUND`; a name it knows whose capability is switched off in this build receives
   `NOT_IMPLEMENTED`. Both keep the connection open and disable only that action, so neither client
   nor daemon need to be on the same build (REQ-API-003). `TestUnknownMethodKeepsConnection_REQ_API_003`
-  covers the first case, which is the one REQ-API-003 states.
+  and `TestUnservedMethodIsNotImplemented_REQ_API_003` cover the two cases.
+- **The mechanism the second case needs.** THE SYSTEM SHALL keep every method of the protocol in its
+  table whether or not this build serves it. Dropping the unserved ones would make their names
+  unknown, and the only honest answer to an unknown name is `METHOD_NOT_FOUND` — which would leave
+  the two codes indistinguishable and the client unable to tell an old daemon from a partial one.
+  `api.schema` reports `served` per method for a client that wants the whole picture at once.
 - **Published schema:** the binary can print the JSON Schema of the protocol (`umb api schema --json`).
   CI checks it against this document, so the spec and the implementation cannot drift silently
   (REQ-API-004).
@@ -725,3 +756,4 @@ printf '%s\n' \
 | 1.7 | 2026-09-20 | delta `2026-09-art6-structural-ids`: §3 documents the structural identifier grammar as the Art. 6 exception (C-05) |
 | 1.8 | 2026-09-20 | delta `2026-09-cli-surface`: §5.17 says what the reserved id `"last"` means with and without a `session_id` |
 | 1.9 | 2026-09-20 | delta `2026-09-notification-sequencing`: §1 shows the notification envelope with `seq`; §6 states its scope, that it counts events rather than notifications, that it is ordered in assignment and not in arrival, and names the two other numbers called `seq`; §5.3 types `focused` nullable throughout, says which notifications the discard rule covers, pins the read order against DD-007, and replaces the `events.subscribe` bootstrap step with a second connection |
+| 1.10 | 2026-09-20 | delta `2026-09-capability-degradation`: §2 derives `capabilities` from the methods a build *serves* and excludes `system` and `api`; §9 states that an unserved method keeps its name, which is what makes `NOT_IMPLEMENTED` reachable; §5.37 describes `api.schema`'s document and the blocking CI comparison |

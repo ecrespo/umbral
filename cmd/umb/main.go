@@ -66,6 +66,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return finish(cmdStatus(ctx, args[1:], out, errOut), out, stderr)
 	case "block":
 		return finish(cmdBlock(ctx, args[1:], out, errOut), out, stderr)
+	case "api":
+		return finish(cmdAPI(args[1:], out, errOut), out, stderr)
 	case "version", "--version", "-version":
 		out.println(buildVersion())
 		return finish(exitOK, out, stderr)
@@ -85,6 +87,7 @@ func usage(p *printer) {
 Usage:
   umb status [--json]            the daemon's health, providers and MCP servers
   umb block last [--json]        the last closed block of this session (REQ-CLI-002)
+  umb api schema --json          the protocol this binary speaks (REQ-API-004)
   umb version
 
 Flags common to every command:

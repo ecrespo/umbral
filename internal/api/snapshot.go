@@ -14,13 +14,6 @@ import (
 // greater than the one the snapshot reports. What makes that work is the order below, not
 // the contents.
 
-const (
-	keyFocused = "focused"
-	keyLayouts = "layouts"
-	keyThreads = "threads"
-	keySeq     = "seq"
-)
-
 // handleSessionSnapshot returns the tree and the sequence number it contains.
 //
 // **The counter is read before the tree, and that ordering is the whole correctness
@@ -64,17 +57,17 @@ func handleSessionSnapshot(ctx context.Context, c *conn, _ json.RawMessage) (any
 		layouts = append(layouts, toWireLayout(layout))
 	}
 
-	return map[string]any{
-		keySeq:       seq,
-		keyFocused:   toWireFocus(snapshot.Focus),
-		"workspaces": workspaces,
-		"tabs":       tabs,
-		keyPanes:     panes,
-		keyLayouts:   layouts,
-		// Threads arrive with F1. The key is present and empty rather than absent, because
-		// §5.3 lists it and a client iterating the result should not have to branch on
-		// which build of the daemon it is talking to.
-		keyThreads: []any{},
+	return snapshotResult{
+		Seq:        seq,
+		Focused:    toWireFocus(snapshot.Focus),
+		Workspaces: workspaces,
+		Tabs:       tabs,
+		Panes:      panes,
+		Layouts:    layouts,
+		// Threads arrive with F1. The member is present and empty rather than absent,
+		// because §5.3 lists it and a client iterating the result should not have to
+		// branch on which build of the daemon it is talking to.
+		Threads: []any{},
 	}, nil
 }
 

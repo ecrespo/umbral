@@ -30,8 +30,16 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
+      # `umb` links no cgo, so the protocol schema can be generated here without building
+      # libghostty. The same comparison also runs inside `go test` as
+      # TestSchemaMatchesSpec_REQ_API_004; this job is where it fails with its own name.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
       - name: REQ coverage, matrices and DDL executability
         run: python3 tools/sdd_check.py
+      - name: Protocol schema against the API Specification (REQ-API-004)
+        run: python3 tools/api_schema_check.py
       - name: Mermaid diagrams
         run: |
           npm install --prefix tools

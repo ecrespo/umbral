@@ -21,6 +21,30 @@ type method struct {
 	kinds []ClientKind
 	// beforeHello marks the handshake itself, the only method reachable unauthenticated.
 	beforeHello bool
+	// available reports whether the module behind this method is wired into this build.
+	// A nil value means the method is always served.
+	//
+	// It is what separates REQ-API-003's two cases. The name stays in the table either
+	// way, so an unserved method answers NOT_IMPLEMENTED and METHOD_NOT_FOUND keeps its
+	// one meaning: this daemon has never heard of the name. A client can then tell a
+	// daemon too old to know a method from one built without the module behind it, which
+	// is the distinction API Spec §9 draws and the reason both codes exist.
+	available func(Config) bool
+	// params and result are zero values of this method's request and response types,
+	// which `api.schema` reflects into the protocol document (REQ-API-004).
+	//
+	// They live in the table rather than in a map beside it because a second table is a
+	// second thing to forget: a method registered without its shapes would publish
+	// `params: {}` and the schema would be quietly wrong. Both are required — a method
+	// that genuinely takes or returns nothing declares `emptyResult{}` — and
+	// TestEveryMethodDeclaresItsShapes_REQ_API_004 fails the build when one is missing.
+	params any
+	result any
+}
+
+// served reports whether this build can actually run the method.
+func (m method) served(cfg Config) bool {
+	return m.available == nil || m.available(cfg)
 }
 
 // allows reports whether a client of this kind may call the method. A method the caller
@@ -221,6 +245,15 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 	}
 	if !known || (c.authenticated && !m.allows(c.clientKind)) {
 		c.reply(req, nil, fmt.Errorf("%w: %s", ErrMethodNotFound, req.Method))
+		return false
+	}
+
+	// A name this build knows but cannot serve. REQ-API-003 keeps the connection and every
+	// other capability usable, so this is an ordinary error reply and not a close: the
+	// client drops that one action and carries on.
+	if !m.served(c.server.cfg) {
+		c.reply(req, nil, fmt.Errorf(
+			"%w: %s is not served by this build", ErrNotImplemented, req.Method))
 		return false
 	}
 

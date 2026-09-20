@@ -214,25 +214,7 @@ func TestLayoutMethodsRequireAnInteractiveClient(t *testing.T) {
 func TestEveryWorkspaceEventIsDispatched(t *testing.T) {
 	t.Parallel()
 
-	sample := sampleTree()
-	events := []struct {
-		kind  bus.Kind
-		event bus.Event
-	}{
-		{wsports.KindWorkspaceCreated, wsports.WorkspaceEvent{Kind: wsports.KindWorkspaceCreated, Workspace: sample.Workspace}},
-		{wsports.KindWorkspaceUpdated, wsports.WorkspaceEvent{Kind: wsports.KindWorkspaceUpdated, Workspace: sample.Workspace}},
-		{wsports.KindWorkspaceClosed, wsports.WorkspaceEvent{Kind: wsports.KindWorkspaceClosed, Workspace: sample.Workspace}},
-		{wsports.KindWorkspaceFocused, wsports.WorkspaceEvent{Kind: wsports.KindWorkspaceFocused, Workspace: sample.Workspace}},
-		{wsports.KindTabCreated, wsports.TabEvent{Kind: wsports.KindTabCreated, Tab: sample.Tab}},
-		{wsports.KindTabClosed, wsports.TabEvent{Kind: wsports.KindTabClosed, Tab: sample.Tab}},
-		{wsports.KindTabFocused, wsports.TabEvent{Kind: wsports.KindTabFocused, Tab: sample.Tab}},
-		{wsports.KindPaneCreated, wsports.PaneEvent{Kind: wsports.KindPaneCreated, Pane: sample.RootPane}},
-		{wsports.KindPaneUpdated, wsports.PaneEvent{Kind: wsports.KindPaneUpdated, Pane: sample.RootPane}},
-		{wsports.KindPaneClosed, wsports.PaneEvent{Kind: wsports.KindPaneClosed, Pane: sample.RootPane}},
-		{wsports.KindPaneFocused, wsports.PaneEvent{Kind: wsports.KindPaneFocused, Pane: sample.RootPane}},
-		{wsports.KindPaneMoved, wsports.PaneMoved{Pane: sample.RootPane}},
-		{wsports.KindLayoutUpdated, wsports.LayoutUpdated{}},
-	}
+	events := everyDispatchedEvent()
 
 	subscribed := make(map[bus.Kind]bool, len(dispatchedKinds))
 	for _, kind := range dispatchedKinds {

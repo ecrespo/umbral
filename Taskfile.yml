@@ -119,6 +119,11 @@ tasks:
       - test -d tools/node_modules || npm install --prefix tools
       - node tools/mermaid_check.mjs
 
+  schema:
+    desc: 'REQ-API-004: the protocol in the binary against the API Specification'
+    cmds:
+      - python3 tools/api_schema_check.py
+
   # --- branding -----------------------------------------------------------------
   icons:
     desc: 'REQ-PKG-001/002/003/006: checksums, reproducible kit and a valid .desktop file'
@@ -148,6 +153,7 @@ tasks:
     desc: Everything the pipeline runs
     cmds:
       - task: specs
+      - task: schema
       - task: icons
       - task: lint
       - task: arch

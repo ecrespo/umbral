@@ -8,15 +8,28 @@ import (
 	"time"
 )
 
-// collectNotifications reads notifications from a client until the deadline, returning
-// those whose method matches.
+// collectNotifications reads notifications whose method matches, returning once the stream
+// has gone quiet or `until` has elapsed.
+//
+// The idle gap is what makes it both quick and dependable. Spending the whole budget on
+// every call made the budget a tax on the suite, so it was short — and a short fixed budget
+// is a flake: under `go test -race ./...` on a loaded machine the first notification can
+// take longer than two seconds to arrive, and the test failed for the one reason it is not
+// about. Waiting for quiet instead means the common case returns in one gap and a slow
+// machine gets the whole budget.
 func (c *client) collectNotifications(method string, until time.Duration) []map[string]any {
 	c.t.Helper()
+
+	const idleGap = 300 * time.Millisecond
 
 	var out []map[string]any
 	deadline := time.Now().Add(until)
 	for time.Now().Before(deadline) {
-		if err := c.conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
+		if len(out) > 0 {
+			// Something arrived: stop at the first gap rather than at the deadline.
+			deadline = minTime(deadline, time.Now().Add(idleGap))
+		}
+		if err := c.conn.SetReadDeadline(time.Now().Add(idleGap)); err != nil {
 			return out
 		}
 		var msg struct {
@@ -31,6 +44,13 @@ func (c *client) collectNotifications(method string, until time.Duration) []map[
 		}
 	}
 	return out
+}
+
+func minTime(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
 }
 
 // TestSubscribeSnapshotBeforeLive_REQ_TERM_004 is the ordering promise: a client that
@@ -107,7 +127,7 @@ func TestSubscribeSnapshotBeforeLive_REQ_TERM_004(t *testing.T) {
 	s.dispatchTestOutput(fakeSessionID, 7, []byte("already on screen"))
 	s.dispatchTestOutput(fakeSessionID, 9, []byte("live output"))
 
-	notifications := c.collectNotifications("session.output", 2*time.Second)
+	notifications := c.collectNotifications("session.output", 15*time.Second)
 	if len(notifications) == 0 {
 		t.Fatal("no session.output notification arrived after subscribing")
 	}
@@ -161,7 +181,7 @@ func TestSessionSurvivesNoClients_REQ_TERM_003(t *testing.T) {
 	}
 
 	s.dispatchTestOutput(fakeSessionID, 101, []byte("after attaching"))
-	notifications := c.collectNotifications("session.output", 2*time.Second)
+	notifications := c.collectNotifications("session.output", 15*time.Second)
 	if len(notifications) == 0 {
 		t.Fatal("a client that attached to a session with history received nothing")
 	}
@@ -301,7 +321,7 @@ func TestBatchingCoalescesABurst(t *testing.T) {
 		s.dispatchTestOutput(fakeSessionID, seq, []byte("x"))
 	}
 
-	notifications := c.collectNotifications("session.output", 2*time.Second)
+	notifications := c.collectNotifications("session.output", 15*time.Second)
 	if len(notifications) == 0 {
 		t.Fatal("the burst produced no notifications")
 	}
@@ -342,7 +362,7 @@ func TestNotificationSeqIsMonotonic(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	notifications := c.collectNotifications("session.output", 2*time.Second)
+	notifications := c.collectNotifications("session.output", 15*time.Second)
 	seqs := make([]float64, 0, len(notifications))
 	for _, n := range notifications {
 		seqs = append(seqs, n["seq"].(float64))

@@ -72,12 +72,24 @@ var capabilityOf = map[string]string{
 //
 // It is derived from the method table rather than written by hand, because a hand-written
 // list drifts: advertising "sessions" before session.create exists tells a client to take
-// a branch that cannot work. "system" is excluded because every client can always call it.
+// a branch that cannot work. "system" is excluded because every client can always call it,
+// and so is "api", for the same reason: `api.schema` is how a client finds out what this
+// daemon speaks, so it can never be the thing a client has to ask permission for.
+//
+// A method whose module is not wired in is skipped, which is what keeps the advertisement
+// honest now that unserved methods stay in the table to answer NOT_IMPLEMENTED. The grain
+// is the namespace, not the method: a namespace appears when at least one of its methods is
+// served, and a client that needs to know about a particular one calls it and reads the
+// error. Capabilities answer "is this daemon built with the tree?", not "which seventeen
+// methods does it have?" — that question has `api.schema`.
 func (s *Server) capabilities() []string {
 	seen := make(map[string]struct{}, len(s.methods))
-	for name := range s.methods {
+	for name, m := range s.methods {
 		prefix, _, found := strings.Cut(name, ".")
-		if !found || prefix == "system" {
+		if !found || prefix == "system" || prefix == "api" {
+			continue
+		}
+		if !m.served(s.cfg) {
 			continue
 		}
 		namespace := prefix

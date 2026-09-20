@@ -367,3 +367,65 @@ func TestHandshakeCarriesWhatTheSpecRequires_REQ_SEC_003(t *testing.T) {
 		t.Error("client_version is empty; the daemon logs what its clients claim to be")
 	}
 }
+
+// TestAPISchemaPrintsTheProtocol_REQ_API_004 drives the command end to end.
+//
+// The daemon is not running and must not need to be: the schema describes the binary, and a
+// client that has to reach a daemon before it can find out what the protocol is cannot use
+// it for the thing REQ-API-004 names — validating against it. So this test asserts the
+// absence of a socket is not a problem, which is a claim about the command rather than about
+// the document.
+func TestAPISchemaPrintsTheProtocol_REQ_API_004(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"api", "schema", "--json"}, &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("exit = %d, want %d; stderr: %s", code, exitOK, stderr.String())
+	}
+
+	var doc struct {
+		ProtocolVersion int `json:"protocol_version"`
+		Methods         []struct {
+			Name string `json:"name"`
+		} `json:"methods"`
+		Errors []struct {
+			DomainCode string `json:"domain_code"`
+			Code       int    `json:"code"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("the output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if doc.ProtocolVersion != 1 {
+		t.Errorf("protocol_version = %d, want 1", doc.ProtocolVersion)
+	}
+
+	var found bool
+	for _, m := range doc.Methods {
+		if m.Name == "block.search" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the schema names %d methods and none of them is block.search", len(doc.Methods))
+	}
+	for _, e := range doc.Errors {
+		if e.DomainCode == "METHOD_NOT_FOUND" && e.Code != -32601 {
+			t.Errorf("METHOD_NOT_FOUND = %d, want -32601", e.Code)
+		}
+	}
+}
+
+// TestAPISchemaRequiresJSON_REQ_API_004 refuses rather than inventing a second format.
+func TestAPISchemaRequiresJSON_REQ_API_004(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"api", "schema"}, &stdout, &stderr); code == exitOK {
+		t.Errorf("`umb api schema` without --json exited 0 and printed %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "--json") {
+		t.Errorf("stderr does not say what is missing: %q", stderr.String())
+	}
+}

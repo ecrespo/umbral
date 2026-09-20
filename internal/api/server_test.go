@@ -233,15 +233,16 @@ func TestHelloSucceedsAndReturnsAConnectionID(t *testing.T) {
 	if len(result.ConnectionID) < 5 || result.ConnectionID[:4] != "con_" {
 		t.Errorf("connection_id = %q, want a con_ prefixed ULID (Art. 6)", result.ConnectionID)
 	}
-	// Derived from the method table rather than written by hand: the namespaces advertised
-	// are exactly the ones with registered methods. Announcing one whose methods do not
-	// exist would tell a client to take a branch that cannot work, which is the mistake
-	// this assertion exists to catch, so it is updated when a namespace is really added.
+	// This server is wired with no modules at all, so it advertises nothing. That is the
+	// point: the list names what the daemon can actually serve, not what its method table
+	// happens to contain. `session.*` and `block.*` are registered here — they have to be,
+	// so an unserved call answers NOT_IMPLEMENTED rather than METHOD_NOT_FOUND (§9) — and
+	// they are still not advertised, because nothing is behind them.
 	//
-	// The names are §2's, not the method prefixes: §2 enumerates the legal entries and a
-	// client branches on those exact strings, so `session.*` is advertised as `sessions`.
-	if want := []string{"blocks", "sessions"}; !slices.Equal(result.Capabilities, want) {
-		t.Errorf("capabilities = %v, want %v", result.Capabilities, want)
+	// `api` and `system` are excluded by rule: every client may always call them.
+	if len(result.Capabilities) != 0 {
+		t.Errorf("capabilities = %v on a daemon with no modules wired, want none",
+			result.Capabilities)
 	}
 }
 
@@ -623,12 +624,30 @@ func TestCapabilitiesFollowTheMethodTable(t *testing.T) {
 		t.Errorf("capabilities = %v, must not list system", s.capabilities())
 	}
 
+	// `api.schema` is never advertised either, for the same reason as `system.*`: it is
+	// how a client discovers what the daemon speaks, so it cannot itself be something the
+	// client has to be granted first.
+	if slices.Contains(s.capabilities(), "api") {
+		t.Errorf("capabilities = %v, must not list api", s.capabilities())
+	}
+
 	// The list follows the table rather than a hand-written constant, so registering a
 	// method in a new namespace is enough to advertise it.
 	s.methods["block.list"] = method{}
 	got := s.capabilities()
-	if !slices.Contains(got, "blocks") || !slices.Contains(got, "sessions") {
-		t.Errorf("capabilities = %v, want both blocks and sessions", got)
+	if !slices.Contains(got, "blocks") {
+		t.Errorf("capabilities = %v, want blocks", got)
+	}
+
+	// But only what this build can serve. A registered method whose module is absent
+	// answers NOT_IMPLEMENTED, and advertising its namespace would tell a client to take
+	// a branch that cannot work — the exact drift the derivation exists to prevent. This
+	// is the half that the old assertion got backwards: it required `sessions` from a
+	// daemon with no sessions module.
+	s.methods["thread.create"] = method{available: func(Config) bool { return false }}
+	if withUnserved := s.capabilities(); slices.Contains(withUnserved, "threads") {
+		t.Errorf("capabilities = %v, must not list a namespace this build cannot serve",
+			withUnserved)
 	}
 
 	// Three method prefixes, one namespace: API Spec §2 lists `workspaces` and no

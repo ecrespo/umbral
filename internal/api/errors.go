@@ -13,6 +13,7 @@ const (
 	domainNotFound        = "NOT_FOUND"
 	domainValidationError = "VALIDATION_ERROR"
 	domainConflict        = "CONFLICT"
+	domainInputLocked     = "INPUT_LOCKED"
 )
 
 // Domain error codes from API Spec §3. The JSON-RPC numbers are part of the contract,
@@ -32,7 +33,40 @@ const (
 	codeUnsupportedProtocolVersion = -32007
 	codeInputLocked                = -32008
 	codeConfigInvalid              = -32009
+	codeThreadBlocked              = -32010
+	codeTimeout                    = -32011
+	codeNotImplemented             = -32012
+	codeCancelled                  = -32013
 )
+
+// errorCodes is the whole §3 table, in one place a generated schema can read.
+//
+// The constants above are what the handlers use; this map is what `api.schema` publishes
+// and what `tools/api_schema_check.py` compares against the specification. Keeping the two
+// together means a code added to the daemon without a row in §3 fails the build, which is
+// the drift REQ-API-004 exists to catch. Codes for methods F0 does not serve yet are listed
+// because the table, not the method set, is the contract: a client switching on
+// `domain_code` needs the complete set to be exhaustive.
+var errorCodes = map[string]int{
+	"PARSE_ERROR":                  codeParseError,
+	"INVALID_REQUEST":              codeInvalidRequest,
+	"METHOD_NOT_FOUND":             codeMethodNotFound,
+	"VALIDATION_ERROR":             codeValidationError,
+	"INTERNAL_ERROR":               codeInternalError,
+	"UNAUTHORIZED":                 codeUnauthorized,
+	"NOT_FOUND":                    codeNotFound,
+	"CONFLICT":                     codeConflict,
+	"PERMISSION_DENIED":            codePermissionDenied,
+	"PROVIDER_UNAVAILABLE":         codeProviderUnavailable,
+	"BUDGET_EXCEEDED":              codeBudgetExceeded,
+	"UNSUPPORTED_PROTOCOL_VERSION": codeUnsupportedProtocolVersion,
+	domainInputLocked:              codeInputLocked,
+	"CONFIG_INVALID":               codeConfigInvalid,
+	"THREAD_BLOCKED":               codeThreadBlocked,
+	"TIMEOUT":                      codeTimeout,
+	"NOT_IMPLEMENTED":              codeNotImplemented,
+	"CANCELLED":                    codeCancelled,
+}
 
 // Sentinel errors the modules return. api is the only package that knows which JSON-RPC
 // number each one becomes (Tech Design §5.4), so a handler returns a domain error and
@@ -48,6 +82,15 @@ var (
 	ErrUnauthorized        = errors.New("unauthorized")
 	ErrMethodNotFound      = errors.New("method_not_found")
 	ErrUnsupportedProtocol = errors.New("unsupported_protocol_version")
+	// ErrNotImplemented is the other half of REQ-API-003: a method this build knows by
+	// name but cannot serve, because the module behind it is not wired in. It is not
+	// METHOD_NOT_FOUND — that one means "this daemon has never heard of the name" — and
+	// the difference is what lets a client tell an old daemon from a partial one
+	// (API Spec §9).
+	ErrNotImplemented = errors.New("not_implemented")
+	ErrThreadBlocked  = errors.New("thread_blocked")
+	ErrTimeout        = errors.New("timeout")
+	ErrCancelled      = errors.New("cancelled")
 )
 
 // apiError is a domain error enriched with the per-field details the contract allows.
@@ -133,6 +176,14 @@ func toWire(err error, traceID string) *wireError {
 		code, domainCode = codeUnauthorized, "UNAUTHORIZED"
 	case errors.Is(err, ErrMethodNotFound):
 		code, domainCode = codeMethodNotFound, "METHOD_NOT_FOUND"
+	case errors.Is(err, ErrNotImplemented):
+		code, domainCode = codeNotImplemented, "NOT_IMPLEMENTED"
+	case errors.Is(err, ErrThreadBlocked):
+		code, domainCode = codeThreadBlocked, "THREAD_BLOCKED"
+	case errors.Is(err, ErrTimeout):
+		code, domainCode = codeTimeout, "TIMEOUT"
+	case errors.Is(err, ErrCancelled):
+		code, domainCode = codeCancelled, "CANCELLED"
 	case errors.Is(err, ErrUnsupportedProtocol):
 		code, domainCode = codeUnsupportedProtocolVersion, "UNSUPPORTED_PROTOCOL_VERSION"
 	case errors.Is(err, ErrNotFound):
@@ -146,7 +197,7 @@ func toWire(err error, traceID string) *wireError {
 	case errors.Is(err, ErrBudgetExceeded):
 		code, domainCode = codeBudgetExceeded, "BUDGET_EXCEEDED"
 	case errors.Is(err, ErrInputLocked):
-		code, domainCode = codeInputLocked, "INPUT_LOCKED"
+		code, domainCode = codeInputLocked, domainInputLocked
 	case errors.Is(err, ErrConfigInvalid):
 		code, domainCode = codeConfigInvalid, "CONFIG_INVALID"
 	default:

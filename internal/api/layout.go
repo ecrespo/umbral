@@ -13,10 +13,11 @@ import (
 // the tree a client takes away with it: an exported layout outlives the daemon that made
 // it, and is the thing a person checks into a repository beside the project it describes.
 
-const (
-	keyPanes    = "panes"
-	keyWarnings = "warnings"
-)
+// layoutExportParams is §5.7's request. `tab_id` is optional and defaults to the focused
+// tab, which is why a client can bind this to a key without tracking which tab it is on.
+type layoutExportParams struct {
+	TabID string `json:"tab_id" api:"optional"`
+}
 
 // handleLayoutExport returns a tab's tree (REQ-WS-004).
 //
@@ -27,9 +28,7 @@ func handleLayoutExport(ctx context.Context, c *conn, raw json.RawMessage) (any,
 	if err != nil {
 		return nil, err
 	}
-	var params struct {
-		TabID string `json:"tab_id"`
-	}
+	var params layoutExportParams
 	if err := decode(raw, &params, "layout.export"); err != nil {
 		return nil, err
 	}
@@ -45,8 +44,8 @@ func handleLayoutExport(ctx context.Context, c *conn, raw json.RawMessage) (any,
 // before anything is created.
 type applyParams struct {
 	WorkspaceID string         `json:"workspace_id"`
-	TabLabel    string         `json:"tab_label"`
-	Root        *wsdomain.Node `json:"root"`
+	TabLabel    string         `json:"tab_label" api:"optional"`
+	Root        *wsdomain.Node `json:"root" api:"required"`
 	Focus       *bool          `json:"focus"`
 }
 
@@ -80,9 +79,9 @@ func handleLayoutApply(ctx context.Context, c *conn, raw json.RawMessage) (any, 
 	for _, pane := range applied.Panes {
 		panes = append(panes, toWirePane(pane))
 	}
-	return map[string]any{
-		keyTab:      toWireTab(applied.Tab),
-		keyPanes:    panes,
-		keyWarnings: applied.Warnings,
+	return layoutApplyResult{
+		Tab:      toWireTab(applied.Tab),
+		Panes:    panes,
+		Warnings: applied.Warnings,
 	}, nil
 }

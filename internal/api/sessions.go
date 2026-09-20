@@ -49,9 +49,9 @@ func toWireSession(s sessdomain.Session) Session {
 }
 
 type createSessionParams struct {
-	Shell            string            `json:"shell"`
-	CWD              string            `json:"cwd"`
-	Env              map[string]string `json:"env"`
+	Shell            string            `json:"shell" api:"optional"`
+	CWD              string            `json:"cwd" api:"optional"`
+	Env              map[string]string `json:"env" api:"optional"`
 	Cols             uint16            `json:"cols"`
 	Rows             uint16            `json:"rows"`
 	ShellIntegration *bool             `json:"shell_integration"`
@@ -59,7 +59,7 @@ type createSessionParams struct {
 
 func handleSessionCreate(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
 	if c.server.cfg.Sessions == nil {
-		return nil, fmt.Errorf("%w: session.create", ErrMethodNotFound)
+		return nil, fmt.Errorf("%w: session.create", ErrNotImplemented)
 	}
 
 	var params createSessionParams
@@ -88,7 +88,7 @@ func handleSessionCreate(ctx context.Context, c *conn, raw json.RawMessage) (any
 
 func handleSessionList(ctx context.Context, c *conn, _ json.RawMessage) (any, error) {
 	if c.server.cfg.Sessions == nil {
-		return nil, fmt.Errorf("%w: session.list", ErrMethodNotFound)
+		return nil, fmt.Errorf("%w: session.list", ErrNotImplemented)
 	}
 
 	sessions, err := c.server.cfg.Sessions.List(ctx)
@@ -100,7 +100,7 @@ func handleSessionList(ctx context.Context, c *conn, _ json.RawMessage) (any, er
 	for _, s := range sessions {
 		items = append(items, toWireSession(s))
 	}
-	return map[string]any{"items": items}, nil
+	return sessionListResult{Items: items}, nil
 }
 
 type sessionInputParams struct {
@@ -110,7 +110,7 @@ type sessionInputParams struct {
 
 func handleSessionInput(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
 	if c.server.cfg.Sessions == nil {
-		return nil, fmt.Errorf("%w: session.input", ErrMethodNotFound)
+		return nil, fmt.Errorf("%w: session.input", ErrNotImplemented)
 	}
 
 	var params sessionInputParams
@@ -128,7 +128,7 @@ func handleSessionInput(ctx context.Context, c *conn, raw json.RawMessage) (any,
 	if err := c.server.cfg.Sessions.Input(ctx, params.SessionID, data, sessdomain.InputOwnerHuman); err != nil {
 		return nil, err
 	}
-	return map[string]any{}, nil
+	return emptyResult{}, nil
 }
 
 type sessionResizeParams struct {
@@ -139,7 +139,7 @@ type sessionResizeParams struct {
 
 func handleSessionResize(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
 	if c.server.cfg.Sessions == nil {
-		return nil, fmt.Errorf("%w: session.resize", ErrMethodNotFound)
+		return nil, fmt.Errorf("%w: session.resize", ErrNotImplemented)
 	}
 
 	var params sessionResizeParams
@@ -150,7 +150,7 @@ func handleSessionResize(ctx context.Context, c *conn, raw json.RawMessage) (any
 		sessdomain.Size{Cols: params.Cols, Rows: params.Rows}); err != nil {
 		return nil, err
 	}
-	return map[string]any{}, nil
+	return emptyResult{}, nil
 }
 
 type sessionIDParams struct {
@@ -159,7 +159,7 @@ type sessionIDParams struct {
 
 func handleSessionClose(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
 	if c.server.cfg.Sessions == nil {
-		return nil, fmt.Errorf("%w: session.close", ErrMethodNotFound)
+		return nil, fmt.Errorf("%w: session.close", ErrNotImplemented)
 	}
 
 	var params sessionIDParams
@@ -169,7 +169,7 @@ func handleSessionClose(ctx context.Context, c *conn, raw json.RawMessage) (any,
 	if err := c.server.cfg.Sessions.Close(ctx, params.SessionID); err != nil {
 		return nil, err
 	}
-	return map[string]any{}, nil
+	return emptyResult{}, nil
 }
 
 type sessionSubscribeParams struct {
@@ -186,7 +186,7 @@ type sessionSubscribeParams struct {
 // silently loses a line is worse than one that repeats it.
 func handleSessionSubscribe(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
 	if c.server.cfg.Sessions == nil {
-		return nil, fmt.Errorf("%w: session.subscribe", ErrMethodNotFound)
+		return nil, fmt.Errorf("%w: session.subscribe", ErrNotImplemented)
 	}
 
 	var params sessionSubscribeParams
@@ -219,13 +219,13 @@ func handleSessionSubscribe(ctx context.Context, c *conn, raw json.RawMessage) (
 	}
 	c.rebaseSubscription(params.SessionID, snapshot.Seq)
 
-	return map[string]any{
-		"snapshot": map[string]any{
-			"format":     "vt",
-			fieldDataB64: base64.StdEncoding.EncodeToString(snapshot.Data),
-			"cursor":     map[string]any{"x": snapshot.CursorX, "y": snapshot.CursorY},
+	return sessionSubscribeResult{
+		Snapshot: screenSnapshot{
+			Format:  "vt",
+			DataB64: base64.StdEncoding.EncodeToString(snapshot.Data),
+			Cursor:  cursorPosition{X: snapshot.CursorX, Y: snapshot.CursorY},
 		},
-		"seq": snapshot.Seq,
+		Seq: snapshot.Seq,
 	}, nil
 }
 
@@ -237,7 +237,7 @@ func handleSessionUnsubscribe(_ context.Context, c *conn, raw json.RawMessage) (
 	c.unsubscribe(params.SessionID)
 	// Unsubscribing from something you were not subscribed to is not an error: the client
 	// wanted no subscription, and it has none.
-	return map[string]any{}, nil
+	return emptyResult{}, nil
 }
 
 // sessionDomainError maps the sessions module's sentinels onto the protocol codes of API
@@ -248,7 +248,7 @@ func sessionDomainError(err error) (int, string, bool) {
 	case errors.Is(err, sessdomain.ErrNotFound):
 		return codeNotFound, domainNotFound, true
 	case errors.Is(err, sessdomain.ErrInputLocked):
-		return codeInputLocked, "INPUT_LOCKED", true
+		return codeInputLocked, domainInputLocked, true
 	case errors.Is(err, sessdomain.ErrExited):
 		return codeConflict, domainConflict, true
 	case errors.Is(err, sessdomain.ErrValidation):

@@ -17,18 +17,6 @@ import (
 // errors.go turns them into the §5.4 table. What this file adds is the parameter names,
 // the field names and the defaults the spec writes down but a Go signature cannot.
 
-// The result keys of API Spec §5.4 to §5.6. They are constants because the same key
-// appears in several results, and a typo in one of them would be a field a client silently
-// never finds.
-const (
-	keyWorkspace = "workspace"
-	keyTab       = "tab"
-	keyPane      = "pane"
-	keyItems     = "items"
-	keyClosed    = "closed"
-	keyLayout    = "layout"
-)
-
 // Workspace is API Spec §4's `Workspace`.
 type Workspace struct {
 	ID          string   `json:"id"`
@@ -185,7 +173,7 @@ func emptyAsNull(v string) *string {
 // tree returns the workspaces port or the error a daemon without one owes its client.
 func (c *conn) tree() (wsports.Workspaces, error) {
 	if c.server.cfg.Workspaces == nil {
-		return nil, fmt.Errorf("%w: the workspace tree is not wired in", ErrMethodNotFound)
+		return nil, fmt.Errorf("%w: the workspace tree is not wired in", ErrNotImplemented)
 	}
 	return c.server.cfg.Workspaces, nil
 }
@@ -206,8 +194,8 @@ func decode(raw json.RawMessage, into any, method string) error {
 
 type createWorkspaceParams struct {
 	CWD      string `json:"cwd"`
-	Label    string `json:"label"`
-	TabLabel string `json:"tab_label"`
+	Label    string `json:"label" api:"optional"`
+	TabLabel string `json:"tab_label" api:"optional"`
 	Focus    *bool  `json:"focus"`
 }
 
@@ -229,10 +217,10 @@ func handleWorkspaceCreate(ctx context.Context, c *conn, raw json.RawMessage) (a
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{
-		keyWorkspace: toWireWorkspace(result.Workspace),
-		keyTab:       toWireTab(result.Tab),
-		"root_pane":  toWirePane(result.RootPane),
+	return workspaceCreateResult{
+		Workspace: toWireWorkspace(result.Workspace),
+		Tab:       toWireTab(result.Tab),
+		RootPane:  toWirePane(result.RootPane),
 	}, nil
 }
 
@@ -257,12 +245,31 @@ func handleWorkspaceList(ctx context.Context, c *conn, _ json.RawMessage) (any, 
 	for _, w := range workspaces {
 		items = append(items, toWireWorkspace(w))
 	}
-	return map[string]any{keyItems: items}, nil
+	return workspaceListResult{Items: items}, nil
 }
 
+// One struct per method, rather than one per namespace.
+//
+// These were three shared structs until T-F0-17, and `api.schema` is what made the cost
+// visible: a published shape for `workspace.close` that listed `label`, and one for
+// `tab.create` that listed `tab_id`, would be telling clients about members the method does
+// not read. Decoding tolerated the extra fields; the contract could not.
+
+// workspaceIDParams is `workspace.focus` and `tab.list`: a workspace and nothing else.
 type workspaceIDParams struct {
 	WorkspaceID string `json:"workspace_id"`
+}
+
+// workspaceRenameParams is §5.4's `rename`.
+type workspaceRenameParams struct {
+	WorkspaceID string `json:"workspace_id"`
 	Label       string `json:"label"`
+}
+
+// workspaceCloseParams is §5.4's `close`. `close_panes` defaults to true, which is why it
+// is a pointer: absent and false are different answers.
+type workspaceCloseParams struct {
+	WorkspaceID string `json:"workspace_id"`
 	ClosePanes  *bool  `json:"close_panes"`
 }
 
@@ -279,7 +286,7 @@ func handleWorkspaceFocus(ctx context.Context, c *conn, raw json.RawMessage) (an
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{keyWorkspace: toWireWorkspace(workspace)}, nil
+	return workspaceResult{Workspace: toWireWorkspace(workspace)}, nil
 }
 
 func handleWorkspaceRename(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -287,7 +294,7 @@ func handleWorkspaceRename(ctx context.Context, c *conn, raw json.RawMessage) (a
 	if err != nil {
 		return nil, err
 	}
-	var params workspaceIDParams
+	var params workspaceRenameParams
 	if err := decode(raw, &params, "workspace.rename"); err != nil {
 		return nil, err
 	}
@@ -295,7 +302,7 @@ func handleWorkspaceRename(ctx context.Context, c *conn, raw json.RawMessage) (a
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{keyWorkspace: toWireWorkspace(workspace)}, nil
+	return workspaceResult{Workspace: toWireWorkspace(workspace)}, nil
 }
 
 func handleWorkspaceClose(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -303,7 +310,7 @@ func handleWorkspaceClose(ctx context.Context, c *conn, raw json.RawMessage) (an
 	if err != nil {
 		return nil, err
 	}
-	var params workspaceIDParams
+	var params workspaceCloseParams
 	if err := decode(raw, &params, "workspace.close"); err != nil {
 		return nil, err
 	}
@@ -312,16 +319,27 @@ func handleWorkspaceClose(ctx context.Context, c *conn, raw json.RawMessage) (an
 	if err := tree.CloseWorkspace(ctx, params.WorkspaceID, optionalBool(params.ClosePanes, true)); err != nil {
 		return nil, err
 	}
-	return map[string]any{keyClosed: true}, nil
+	return closedResult{Closed: true}, nil
 }
 
 // --- tab.* -------------------------------------------------------------------------
 
-type tabParams struct {
+// tabCreateParams is §5.5's `create`.
+type tabCreateParams struct {
 	WorkspaceID string `json:"workspace_id"`
-	TabID       string `json:"tab_id"`
-	Label       string `json:"label"`
+	Label       string `json:"label" api:"optional"`
 	Focus       *bool  `json:"focus"`
+}
+
+// tabParams is `tab.focus`, `tab.close` and `pane.list`: a tab and nothing else.
+type tabParams struct {
+	TabID string `json:"tab_id"`
+}
+
+// tabRenameParams is §5.5's `rename`.
+type tabRenameParams struct {
+	TabID string `json:"tab_id"`
+	Label string `json:"label"`
 }
 
 func handleTabCreate(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -329,7 +347,7 @@ func handleTabCreate(ctx context.Context, c *conn, raw json.RawMessage) (any, er
 	if err != nil {
 		return nil, err
 	}
-	var params tabParams
+	var params tabCreateParams
 	if err := decode(raw, &params, "tab.create"); err != nil {
 		return nil, err
 	}
@@ -338,7 +356,7 @@ func handleTabCreate(ctx context.Context, c *conn, raw json.RawMessage) (any, er
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{keyTab: toWireTab(tab), "root_pane": toWirePane(pane)}, nil
+	return tabCreateResult{Tab: toWireTab(tab), RootPane: toWirePane(pane)}, nil
 }
 
 func handleTabList(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -346,7 +364,7 @@ func handleTabList(ctx context.Context, c *conn, raw json.RawMessage) (any, erro
 	if err != nil {
 		return nil, err
 	}
-	var params tabParams
+	var params workspaceIDParams
 	if err := decode(raw, &params, "tab.list"); err != nil {
 		return nil, err
 	}
@@ -358,7 +376,7 @@ func handleTabList(ctx context.Context, c *conn, raw json.RawMessage) (any, erro
 	for _, t := range tabs {
 		items = append(items, toWireTab(t))
 	}
-	return map[string]any{keyItems: items}, nil
+	return tabListResult{Items: items}, nil
 }
 
 func handleTabFocus(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -374,7 +392,7 @@ func handleTabFocus(ctx context.Context, c *conn, raw json.RawMessage) (any, err
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{keyTab: toWireTab(tab)}, nil
+	return tabResult{Tab: toWireTab(tab)}, nil
 }
 
 func handleTabRename(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -382,7 +400,7 @@ func handleTabRename(ctx context.Context, c *conn, raw json.RawMessage) (any, er
 	if err != nil {
 		return nil, err
 	}
-	var params tabParams
+	var params tabRenameParams
 	if err := decode(raw, &params, "tab.rename"); err != nil {
 		return nil, err
 	}
@@ -390,7 +408,7 @@ func handleTabRename(ctx context.Context, c *conn, raw json.RawMessage) (any, er
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{keyTab: toWireTab(tab)}, nil
+	return tabResult{Tab: toWireTab(tab)}, nil
 }
 
 func handleTabClose(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -405,7 +423,7 @@ func handleTabClose(ctx context.Context, c *conn, raw json.RawMessage) (any, err
 	if err := tree.CloseTab(ctx, params.TabID); err != nil {
 		return nil, err
 	}
-	return map[string]any{keyClosed: true}, nil
+	return closedResult{Closed: true}, nil
 }
 
 // --- pane.* ------------------------------------------------------------------------
@@ -413,10 +431,10 @@ func handleTabClose(ctx context.Context, c *conn, raw json.RawMessage) (any, err
 type splitParams struct {
 	PaneID    string            `json:"pane_id"`
 	Direction string            `json:"direction"`
-	Ratio     float64           `json:"ratio"`
-	CWD       string            `json:"cwd"`
-	Command   []string          `json:"command"`
-	Env       map[string]string `json:"env"`
+	Ratio     float64           `json:"ratio" api:"optional"`
+	CWD       string            `json:"cwd" api:"optional"`
+	Command   []string          `json:"command" api:"optional"`
+	Env       map[string]string `json:"env" api:"optional"`
 	Focus     *bool             `json:"focus"`
 }
 
@@ -437,12 +455,17 @@ func handlePaneSplit(ctx context.Context, c *conn, raw json.RawMessage) (any, er
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{keyPane: toWirePane(pane), keyLayout: toWireLayout(layout)}, nil
+	return paneSplitResult{Pane: toWirePane(pane), Layout: toWireLayout(layout)}, nil
 }
 
+// paneParams is `pane.get`, `pane.focus` and `pane.close`.
 type paneParams struct {
 	PaneID string `json:"pane_id"`
-	TabID  string `json:"tab_id"`
+}
+
+// paneRenameParams is §5.6's `rename`.
+type paneRenameParams struct {
+	PaneID string `json:"pane_id"`
 	Label  string `json:"label"`
 }
 
@@ -451,7 +474,7 @@ func handlePaneList(ctx context.Context, c *conn, raw json.RawMessage) (any, err
 	if err != nil {
 		return nil, err
 	}
-	var params paneParams
+	var params tabParams
 	if err := decode(raw, &params, "pane.list"); err != nil {
 		return nil, err
 	}
@@ -463,7 +486,7 @@ func handlePaneList(ctx context.Context, c *conn, raw json.RawMessage) (any, err
 	for _, p := range panes {
 		items = append(items, toWirePane(p))
 	}
-	return map[string]any{keyItems: items}, nil
+	return paneListResult{Items: items}, nil
 }
 
 func handlePaneGet(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -479,7 +502,7 @@ func handlePaneGet(ctx context.Context, c *conn, raw json.RawMessage) (any, erro
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{keyPane: toWirePane(pane)}, nil
+	return paneResult{Pane: toWirePane(pane)}, nil
 }
 
 func handlePaneFocus(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -495,7 +518,7 @@ func handlePaneFocus(ctx context.Context, c *conn, raw json.RawMessage) (any, er
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{keyPane: toWirePane(pane)}, nil
+	return paneResult{Pane: toWirePane(pane)}, nil
 }
 
 func handlePaneRename(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -503,7 +526,7 @@ func handlePaneRename(ctx context.Context, c *conn, raw json.RawMessage) (any, e
 	if err != nil {
 		return nil, err
 	}
-	var params paneParams
+	var params paneRenameParams
 	if err := decode(raw, &params, "pane.rename"); err != nil {
 		return nil, err
 	}
@@ -511,7 +534,7 @@ func handlePaneRename(ctx context.Context, c *conn, raw json.RawMessage) (any, e
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{keyPane: toWirePane(pane)}, nil
+	return paneResult{Pane: toWirePane(pane)}, nil
 }
 
 type moveParams struct {
@@ -545,11 +568,11 @@ func handlePaneMove(ctx context.Context, c *conn, raw json.RawMessage) (any, err
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{
-		keyPane:                 toWirePane(moved.Pane),
-		"previous_pane_id":      moved.PreviousPaneID,
-		"previous_workspace_id": moved.PreviousWorkspaceID,
-		keyLayout:               toWireLayout(moved.Layout),
+	return paneMoveResult{
+		Pane:                toWirePane(moved.Pane),
+		PreviousPaneID:      moved.PreviousPaneID,
+		PreviousWorkspaceID: moved.PreviousWorkspaceID,
+		Layout:              toWireLayout(moved.Layout),
 	}, nil
 }
 
@@ -565,5 +588,5 @@ func handlePaneClose(ctx context.Context, c *conn, raw json.RawMessage) (any, er
 	if err := tree.ClosePane(ctx, params.PaneID); err != nil {
 		return nil, err
 	}
-	return map[string]any{keyClosed: true}, nil
+	return closedResult{Closed: true}, nil
 }

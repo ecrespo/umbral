@@ -175,9 +175,9 @@ func (s *subscription) run() {
 		}
 
 		if s.takeOverflow() {
-			s.conn.notify("session.unsubscribed", map[string]any{
-				fieldSessionID: s.sessionID,
-				"reason":       DropReasonSlowClient,
+			s.conn.notify("session.unsubscribed", sessionUnsubscribedPayload{
+				SessionID: s.sessionID,
+				Reason:    DropReasonSlowClient,
 			}, s.conn.server.nextSeq())
 			s.logger.Warn("subscription dropped: the client fell more than the queue limit behind",
 				slog.String("session_id", s.sessionID), slog.Int("queue_bytes", ClientQueueBytes))
@@ -189,10 +189,10 @@ func (s *subscription) run() {
 			if len(batch) == 0 {
 				break
 			}
-			s.conn.notify("session.output", map[string]any{
-				fieldSessionID: s.sessionID,
-				"seq":          seq,
-				fieldDataB64:   base64.StdEncoding.EncodeToString(batch),
+			s.conn.notify("session.output", sessionOutputPayload{
+				SessionID: s.sessionID,
+				Seq:       seq,
+				DataB64:   base64.StdEncoding.EncodeToString(batch),
 			}, envelope)
 		}
 

@@ -55,10 +55,10 @@ func toWireBlock(b sessdomain.Block) Block {
 }
 
 type listBlocksParams struct {
-	SessionID string `json:"session_id"`
-	ThreadID  string `json:"thread_id"`
-	Origin    string `json:"origin"`
-	State     string `json:"state"`
+	SessionID string `json:"session_id" api:"optional"`
+	ThreadID  string `json:"thread_id" api:"optional"`
+	Origin    string `json:"origin" api:"optional"`
+	State     string `json:"state" api:"optional"`
 	ExitCode  *int   `json:"exit_code"`
 	Limit     int    `json:"limit"`
 	Cursor    string `json:"cursor"`
@@ -74,7 +74,7 @@ type blockPage struct {
 func handleBlockList(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
 	reader := c.server.cfg.Blocks
 	if reader == nil {
-		return nil, fmt.Errorf("%w: block.list", ErrMethodNotFound)
+		return nil, fmt.Errorf("%w: block.list", ErrNotImplemented)
 	}
 
 	var params listBlocksParams
@@ -107,7 +107,7 @@ func handleBlockList(ctx context.Context, c *conn, raw json.RawMessage) (any, er
 
 type getBlockParams struct {
 	BlockID   string `json:"block_id"`
-	SessionID string `json:"session_id"`
+	SessionID string `json:"session_id" api:"optional"`
 	Include   string `json:"include"`
 }
 
@@ -127,7 +127,7 @@ type blockResult struct {
 func handleBlockGet(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
 	reader := c.server.cfg.Blocks
 	if reader == nil {
-		return nil, fmt.Errorf("%w: block.get", ErrMethodNotFound)
+		return nil, fmt.Errorf("%w: block.get", ErrNotImplemented)
 	}
 
 	var params getBlockParams
@@ -163,7 +163,7 @@ func handleBlockGet(ctx context.Context, c *conn, raw json.RawMessage) (any, err
 
 type searchBlocksParams struct {
 	Query     string `json:"query"`
-	SessionID string `json:"session_id"`
+	SessionID string `json:"session_id" api:"optional"`
 	Limit     int    `json:"limit"`
 	Cursor    string `json:"cursor"`
 }
@@ -181,7 +181,7 @@ type searchPage struct {
 func handleBlockSearch(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
 	reader := c.server.cfg.Blocks
 	if reader == nil {
-		return nil, fmt.Errorf("%w: block.search", ErrMethodNotFound)
+		return nil, fmt.Errorf("%w: block.search", ErrNotImplemented)
 	}
 
 	var params searchBlocksParams

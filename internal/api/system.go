@@ -23,37 +23,48 @@ var interactiveClients = []ClientKind{ClientTUI, ClientDesktop}
 // later should not be two sources of the same truth.
 func (s *Server) registry() map[string]method {
 	table := map[string]method{
-		"system.hello":  {handle: handleHello, beforeHello: true},
-		"system.status": {handle: handleStatus},
+		"system.hello":  {handle: handleHello, beforeHello: true, params: helloParams{}, result: helloResult{}},
+		"system.status": {handle: handleStatus, params: emptyResult{}, result: StatusResult{}},
+
+		// api.schema prints the protocol this binary was built with (API Spec §5.37).
+		// It needs no module behind it and is granted to every client kind: a client
+		// that cannot ask what the daemon speaks has to guess.
+		"api.schema": {handle: handleAPISchema, params: emptyResult{}, result: schemaResult{}},
 
 		// session.* is not in the `cli` allowlist of API Spec §2: `umb` reads blocks and
 		// talks to threads, it does not drive terminals.
-		"session.create": {handle: handleSessionCreate, kinds: interactiveClients},
-		"session.list":   {handle: handleSessionList, kinds: interactiveClients},
-		"session.input":  {handle: handleSessionInput, kinds: interactiveClients},
-		"session.resize": {handle: handleSessionResize, kinds: interactiveClients},
-		"session.close":  {handle: handleSessionClose, kinds: interactiveClients},
+		"session.create": {handle: handleSessionCreate, kinds: interactiveClients, available: hasSessions, params: createSessionParams{}, result: Session{}},
+		"session.list":   {handle: handleSessionList, kinds: interactiveClients, available: hasSessions, params: emptyResult{}, result: sessionListResult{}},
+		"session.input":  {handle: handleSessionInput, kinds: interactiveClients, available: hasSessions, params: sessionInputParams{}, result: emptyResult{}},
+		"session.resize": {handle: handleSessionResize, kinds: interactiveClients, available: hasSessions, params: sessionResizeParams{}, result: emptyResult{}},
+		"session.close":  {handle: handleSessionClose, kinds: interactiveClients, available: hasSessions, params: sessionIDParams{}, result: emptyResult{}},
 
 		// session.snapshot bootstraps a client's own cache of the tree (API Spec §5.3).
-		"session.snapshot": {handle: handleSessionSnapshot, kinds: interactiveClients},
+		"session.snapshot": {handle: handleSessionSnapshot, kinds: interactiveClients, available: hasWorkspaces, params: emptyResult{}, result: snapshotResult{}},
 
-		"session.subscribe":   {handle: handleSessionSubscribe, kinds: interactiveClients},
-		"session.unsubscribe": {handle: handleSessionUnsubscribe, kinds: interactiveClients},
+		"session.subscribe":   {handle: handleSessionSubscribe, kinds: interactiveClients, available: hasSessions, params: sessionSubscribeParams{}, result: sessionSubscribeResult{}},
+		"session.unsubscribe": {handle: handleSessionUnsubscribe, kinds: interactiveClients, available: hasSessions, params: sessionIDParams{}, result: emptyResult{}},
 
 		// block.* carries no kinds: API Spec §2 grants it to every client kind, and `umb`
 		// exists mostly to read it.
-		"block.list":   {handle: handleBlockList},
-		"block.get":    {handle: handleBlockGet},
-		"block.search": {handle: handleBlockSearch},
+		"block.list":   {handle: handleBlockList, available: hasBlocks, params: listBlocksParams{}, result: blockPage{}},
+		"block.get":    {handle: handleBlockGet, available: hasBlocks, params: getBlockParams{}, result: blockResult{}},
+		"block.search": {handle: handleBlockSearch, available: hasBlocks, params: searchBlocksParams{}, result: blockPage{}},
 	}
 
-	if s.cfg.Workspaces != nil {
-		for name, m := range workspaceMethods() {
-			table[name] = m
-		}
+	for name, m := range workspaceMethods() {
+		m.available = hasWorkspaces
+		table[name] = m
 	}
 	return table
 }
+
+// The three modules a method can depend on. A method whose module is absent keeps its name
+// in the table and answers NOT_IMPLEMENTED (REQ-API-003, API Spec §9); `capabilities()`
+// leaves its namespace out of the handshake, so a client is told what works before it asks.
+func hasSessions(cfg Config) bool   { return cfg.Sessions != nil }
+func hasBlocks(cfg Config) bool     { return cfg.Blocks != nil }
+func hasWorkspaces(cfg Config) bool { return cfg.Workspaces != nil }
 
 // workspaceMethods is the `workspace.*`, `tab.*` and `pane.*` surface of API Spec §5.4 to
 // §5.6.
@@ -62,30 +73,30 @@ func workspaceMethods() map[string]method {
 		// The workspace tree is interactive-only for the same reason session.* is: API
 		// Spec §2 gives `cli` `system.*`, `block.*`, three `thread.*` and `model.list`,
 		// and nothing that arranges windows.
-		"workspace.create": {handle: handleWorkspaceCreate, kinds: interactiveClients},
-		"workspace.list":   {handle: handleWorkspaceList, kinds: interactiveClients},
-		"workspace.focus":  {handle: handleWorkspaceFocus, kinds: interactiveClients},
-		"workspace.rename": {handle: handleWorkspaceRename, kinds: interactiveClients},
-		"workspace.close":  {handle: handleWorkspaceClose, kinds: interactiveClients},
+		"workspace.create": {handle: handleWorkspaceCreate, kinds: interactiveClients, params: createWorkspaceParams{}, result: workspaceCreateResult{}},
+		"workspace.list":   {handle: handleWorkspaceList, kinds: interactiveClients, params: emptyResult{}, result: workspaceListResult{}},
+		"workspace.focus":  {handle: handleWorkspaceFocus, kinds: interactiveClients, params: workspaceIDParams{}, result: workspaceResult{}},
+		"workspace.rename": {handle: handleWorkspaceRename, kinds: interactiveClients, params: workspaceRenameParams{}, result: workspaceResult{}},
+		"workspace.close":  {handle: handleWorkspaceClose, kinds: interactiveClients, params: workspaceCloseParams{}, result: closedResult{}},
 
-		"tab.create": {handle: handleTabCreate, kinds: interactiveClients},
-		"tab.list":   {handle: handleTabList, kinds: interactiveClients},
-		"tab.focus":  {handle: handleTabFocus, kinds: interactiveClients},
-		"tab.rename": {handle: handleTabRename, kinds: interactiveClients},
-		"tab.close":  {handle: handleTabClose, kinds: interactiveClients},
+		"tab.create": {handle: handleTabCreate, kinds: interactiveClients, params: tabCreateParams{}, result: tabCreateResult{}},
+		"tab.list":   {handle: handleTabList, kinds: interactiveClients, params: workspaceIDParams{}, result: tabListResult{}},
+		"tab.focus":  {handle: handleTabFocus, kinds: interactiveClients, params: tabParams{}, result: tabResult{}},
+		"tab.rename": {handle: handleTabRename, kinds: interactiveClients, params: tabRenameParams{}, result: tabResult{}},
+		"tab.close":  {handle: handleTabClose, kinds: interactiveClients, params: tabParams{}, result: closedResult{}},
 
-		"pane.split":  {handle: handlePaneSplit, kinds: interactiveClients},
-		"pane.list":   {handle: handlePaneList, kinds: interactiveClients},
-		"pane.get":    {handle: handlePaneGet, kinds: interactiveClients},
-		"pane.focus":  {handle: handlePaneFocus, kinds: interactiveClients},
-		"pane.rename": {handle: handlePaneRename, kinds: interactiveClients},
-		"pane.move":   {handle: handlePaneMove, kinds: interactiveClients},
-		"pane.close":  {handle: handlePaneClose, kinds: interactiveClients},
+		"pane.split":  {handle: handlePaneSplit, kinds: interactiveClients, params: splitParams{}, result: paneSplitResult{}},
+		"pane.list":   {handle: handlePaneList, kinds: interactiveClients, params: tabParams{}, result: paneListResult{}},
+		"pane.get":    {handle: handlePaneGet, kinds: interactiveClients, params: paneParams{}, result: paneResult{}},
+		"pane.focus":  {handle: handlePaneFocus, kinds: interactiveClients, params: paneParams{}, result: paneResult{}},
+		"pane.rename": {handle: handlePaneRename, kinds: interactiveClients, params: paneRenameParams{}, result: paneResult{}},
+		"pane.move":   {handle: handlePaneMove, kinds: interactiveClients, params: moveParams{}, result: paneMoveResult{}},
+		"pane.close":  {handle: handlePaneClose, kinds: interactiveClients, params: paneParams{}, result: closedResult{}},
 
 		// §2 lists `layouts` as a capability of its own, which is why these two are not
 		// folded into the workspace surface above.
-		"layout.export": {handle: handleLayoutExport, kinds: interactiveClients},
-		"layout.apply":  {handle: handleLayoutApply, kinds: interactiveClients},
+		"layout.export": {handle: handleLayoutExport, kinds: interactiveClients, params: layoutExportParams{}, result: Layout{}},
+		"layout.apply":  {handle: handleLayoutApply, kinds: interactiveClients, params: applyParams{}, result: layoutApplyResult{}},
 	}
 }
 
