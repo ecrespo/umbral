@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PENDING APPROVAL — applied to specs/ on 2026-09-20, awaiting ratification` |
+| **Status** | `RATIFIED 2026-09-20 — applied to specs/ and archived` |
 | **Date** | 2026-09-20 |
 | **Task** | T-F0-17 |
 | **Raised by** | a `spec-guardian` round on T-F0-17: one sentence ratified the same day is not met by any build, one §9 bullet contradicts the §2 bullet the previous delta rewrote, and three methods publish a required parameter the daemon defaults |
