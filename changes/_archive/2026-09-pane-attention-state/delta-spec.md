@@ -2,9 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PENDING APPROVAL — applied to specs/ on 2026-09-20, awaiting ratification` |
+| **Status** | `APPROVED 2026-09-20 — folded into specs/` |
 | **Date** | 2026-09-20 |
 | **Task** | T-F0-14 |
+| **Approved by** | Ernesto Crespo |
 | **Raised by** | T-F0-14: REQ-WS-006 produces a value the wire type cannot carry, and nothing in F0 assigns the input it rolls up |
 
 ## Evidence

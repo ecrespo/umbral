@@ -1,6 +1,6 @@
 # Tasks — delta `2026-09-pane-attention-state`
 
-### [ ] T-PA-01 · Write the `unknown` rollup and F0's missing state source into the specs
+### [x] 2026-09-20 T-PA-01 · Write the `unknown` rollup and F0's missing state source into the specs
 - **What:** API Spec §4 `Workspace.rollup_state` gains `unknown`; §4 `Pane` records that
   `attention_state` is `unknown` with a `null` `state_source` until a source reports one;
   PRD REQ-WS-006 notes that clients must render `unknown`.
