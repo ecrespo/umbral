@@ -30,6 +30,9 @@ type fakeTree struct {
 	applied    wsdomain.Applied
 	focusedWS  string
 	focusedTab string
+	// onSnapshot runs while Snapshot is assembling, standing in for an event that lands
+	// during the read.
+	onSnapshot func()
 	err        error
 	lastCall   struct {
 		createParams wsdomain.CreateWorkspaceParams
@@ -152,6 +155,22 @@ func (f *fakeTree) ApplyLayout(_ context.Context, p wsdomain.ApplyLayoutParams) 
 }
 
 func (f *fakeTree) Focused() (string, string) { return f.focusedWS, f.focusedTab }
+
+func (f *fakeTree) Snapshot(context.Context) (wsdomain.Snapshot, error) {
+	if f.onSnapshot != nil {
+		f.onSnapshot()
+	}
+	if f.err != nil {
+		return wsdomain.Snapshot{}, f.err
+	}
+	return wsdomain.Snapshot{
+		Focus:      wsdomain.Focus{WorkspaceID: f.focusedWS, TabID: f.focusedTab},
+		Workspaces: []wsdomain.Workspace{f.tree.Workspace},
+		Tabs:       []wsdomain.Tab{f.tree.Tab},
+		Panes:      []wsdomain.Pane{f.tree.RootPane},
+		Layouts:    []wsdomain.Layout{f.layout},
+	}, nil
+}
 
 // sampleTree is a workspace with every field populated, so a missing one on the wire shows
 // up as an absence rather than as a zero that might have been correct.

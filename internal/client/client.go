@@ -258,6 +258,7 @@ type rpcResponse struct {
 	Error   *wireError      `json:"error"`
 	// Method and Params are set on a notification, which carries no id (API Spec §6).
 	Method string          `json:"method"`
+	Seq    uint64          `json:"seq"`
 	Params json.RawMessage `json:"params"`
 }
 

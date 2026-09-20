@@ -41,9 +41,19 @@ type response struct {
 }
 
 // notification is a daemon-to-client message (API Spec §6). It carries no id.
+//
+// `seq` is the envelope counter of §1: one daemon run, shared by every connection, so the
+// same event carries the same number for everyone. It is not `session.output`'s `seq`, which
+// lives in the parameters and counts per PTY session (§5.11) — two different numbers with
+// the same name in different places, which is why each says so where it is defined.
+//
+// It is never omitted, not even at 0. An absent member and a zero would be the same on the
+// wire, and a client cannot tell "the first notification of this run" from "a daemon that
+// does not sequence" if the field can vanish.
 type notification struct {
 	JSONRPC string `json:"jsonrpc"`
 	Method  string `json:"method"`
+	Seq     uint64 `json:"seq"`
 	Params  any    `json:"params,omitempty"`
 }
 

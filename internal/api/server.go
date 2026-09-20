@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ecrespo/umbral/internal/bus"
@@ -131,9 +132,24 @@ type Server struct {
 
 	wg sync.WaitGroup
 
+	// seq numbers the notifications of API Spec §6: one counter for this daemon run,
+	// shared by every connection, so the same event carries the same number for everyone.
+	// It is not persisted and must not be — it names one run, and a client is told not to
+	// carry one across a reconnect.
+	seq atomic.Uint64
+
 	mu    sync.Mutex
 	conns map[*conn]struct{}
 }
+
+// nextSeq hands out the next notification number. Every notification the daemon emits goes
+// through here, including the ones a subscription emits on its own goroutine, so that the
+// counter has exactly one source.
+func (s *Server) nextSeq() uint64 { return s.seq.Add(1) }
+
+// currentSeq reports the highest number handed out so far, which is what `session.snapshot`
+// records as the events its result already contains (§5.3).
+func (s *Server) currentSeq() uint64 { return s.seq.Load() }
 
 // Listen creates the runtime directory, loads or creates the token and binds the socket
 // with mode 0600 (REQ-SEC-007). It does not serve yet; call Serve.

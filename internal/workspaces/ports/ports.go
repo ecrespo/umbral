@@ -69,6 +69,11 @@ type Workspaces interface {
 	// Focused reports the workspace and tab a client should open on, which
 	// `layout.export` defaults to and `session.snapshot` reports (API Spec §5.3).
 	Focused() (workspaceID, tabID string)
+
+	// Snapshot returns every open workspace, tab, pane and layout in one read
+	// (REQ-API-001). It is assembled here rather than in `api` because it is several
+	// queries whose order matters, and that is the module's business, not the wire's.
+	Snapshot(ctx context.Context) (domain.Snapshot, error)
 }
 
 // Moved is what a completed `pane.move` reports. The previous identifiers are in the

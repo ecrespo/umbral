@@ -815,3 +815,48 @@ func (s *Service) publishLayout(ctx context.Context, tabID string) {
 	}
 	s.publish(ports.LayoutUpdated{Layout: layout})
 }
+
+// Snapshot assembles the whole tree for `session.snapshot` (REQ-API-001).
+//
+// It reads workspaces, then each one's tabs, then each tab's panes and layout. The result is
+// a flat set of records plus the layouts, which is the shape API Spec §5.3 defines: a client
+// keeping a cache wants to replace it wholesale, not to walk a nested document.
+//
+// No transaction wraps it. A tree that changed underneath is not a problem this method has
+// to solve: §5.3 makes the *counter* the boundary, read before any of this, so a client that
+// applies the events above it converges on whatever the tree became. A snapshot slightly
+// ahead of its own seq is safe; one behind would not be, and that is what the counter's
+// read order prevents.
+func (s *Service) Snapshot(ctx context.Context) (domain.Snapshot, error) {
+	workspaces, err := s.ListWorkspaces(ctx)
+	if err != nil {
+		return domain.Snapshot{}, err
+	}
+
+	out := domain.Snapshot{Workspaces: workspaces}
+	workspaceID, tabID := s.Focused()
+	out.Focus = domain.Focus{WorkspaceID: workspaceID, TabID: tabID}
+
+	for _, ws := range workspaces {
+		tabs, err := s.tree.ListTabs(ctx, ws.ID)
+		if err != nil {
+			return domain.Snapshot{}, err
+		}
+		out.Tabs = append(out.Tabs, tabs...)
+
+		for _, tab := range tabs {
+			panes, err := s.tree.ListPanes(ctx, tab.ID)
+			if err != nil {
+				return domain.Snapshot{}, err
+			}
+			out.Panes = append(out.Panes, panes...)
+
+			layout, err := s.tree.Layout(ctx, tab.ID)
+			if err != nil {
+				return domain.Snapshot{}, err
+			}
+			out.Layouts = append(out.Layouts, layout)
+		}
+	}
+	return out, nil
+}

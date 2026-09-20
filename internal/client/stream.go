@@ -14,6 +14,14 @@ import (
 // caller decodes only what it cares about (API Spec §6).
 type Notification struct {
 	Method string
+	// Seq is the envelope counter of API Spec §1 and §6: one daemon run, shared by every
+	// connection. A client that keeps its own cache discards the notifications whose Seq is
+	// not greater than the one `session.snapshot` reported.
+	//
+	// It is not `session.output`'s `seq`, which lives in Params and counts bytes within one
+	// terminal (§5.11). The two are different numbers with the same name, which is why this
+	// one is named on the envelope and that one stays in the payload.
+	Seq    uint64
 	Params json.RawMessage
 }
 
@@ -173,7 +181,7 @@ func (s *Stream) read() {
 		}
 
 		select {
-		case s.ch <- Notification{Method: resp.Method, Params: resp.Params}:
+		case s.ch <- Notification{Method: resp.Method, Seq: resp.Seq, Params: resp.Params}:
 		default:
 			// The caller is too far behind to catch up. Stopping is the honest outcome:
 			// a client that silently dropped output would show a screen missing bytes it

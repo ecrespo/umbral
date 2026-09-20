@@ -25,6 +25,16 @@ The channel is bidirectional:
 
 Framing: JSON messages delimited by `\n` (NDJSON). Maximum message size: 4 MiB.
 
+A notification carries a sequence number in its envelope, beside `jsonrpc`, `method` and
+`params`:
+
+```json
+{"jsonrpc":"2.0","method":"workspace.created","seq":42,"params":{"id":"w1","label":"api"}}
+```
+
+§6 says what `seq` counts. A client that ignores the member behaves exactly as one written
+before it existed, which is why adding it left `protocol_version` at 1 (§9).
+
 ## 2. Authentication and Authorization
 
 1. On installation the daemon creates `$XDG_RUNTIME_DIR/umbral/token` (32 random bytes in hex,
@@ -300,6 +310,19 @@ Used by `umb status` (REQ-CLI-003).
 **Params:** `{}`.
 **Result:** `{seq, focused:{workspace_id, tab_id, thread_id|null}, workspaces: Workspace[], tabs: Tab[], panes: Pane[], layouts: Layout[], threads: Thread[]}`.
 
+The `seq` is the envelope counter of §6, read **before** the tree: the daemon persists before it
+notifies (DD-007), so an event whose `seq` has been assigned is already stored, and reading the
+counter first guarantees that everything at or below the reported number is in this result. The
+result may additionally reflect a few events *above* it, which makes a client re-apply something it
+already has — safe, because every tree notification carries the whole record. The other direction
+is not safe, which is why the order is specified rather than left to an implementation.
+
+The discard rule covers what this result contains: the `workspace.*`, `tab.*`, `pane.*`,
+`layout.*` and `thread.*` notifications. It does **not** cover `session.output`, which this result
+carries no screen to have contained; a terminal is bootstrapped by `session.subscribe` against that
+method's own per-session `seq` (§5.11), and discarding output on the envelope counter would lose
+bytes with nothing to notice.
+
 Bootstrap without gaps, for clients that keep their own cache:
 
 1. open `events.subscribe` on a second connection and wait for its acknowledgement;
@@ -560,9 +583,24 @@ It is a read-only evaluation: it neither runs the tool nor creates approvals.
 | `thread.stalled` | `{thread_id, turn_id, idle_ms, last_event}` | REQ-AUT-008 |
 | `rules.update_rejected` | `{reason, version, source}` | REQ-SEC-013 |
 
-Every notification carries `seq`, a monotonic counter per session shared by all subscribers, and the
-`session.snapshot` result reports the `seq` it contains (REQ-API-002). A client applies only the
-events whose `seq` is greater than the snapshot's.
+Every notification carries `seq` in its envelope (§1): a counter that increases by one per
+notification, scoped to **one daemon run** and shared by every connection, so the same event carries
+the same number for everyone (REQ-API-002). It starts at 0 when the daemon starts, and a client
+SHALL NOT carry one across a reconnect — the connection dies with the daemon, and a number from the
+previous run names nothing in this one.
+
+**Gaps are expected and are not loss.** A client receives only the notifications it is eligible for
+— output for the sessions it subscribed to, nothing for a subscription that was dropped — so its
+`seq` values skip. A missing number means "an event that was not yours", never "an event you lost".
+Loss has its own signal, `session.unsubscribed`.
+
+**This is not `session.output`'s `seq`.** That one lives in the parameters, counts per PTY session,
+and anchors the screen to the byte stream (§5.11, REQ-TERM-004). The two are different numbers with
+the same name in different places: the envelope one orders events across the whole daemon, the
+parameter one orders bytes within one terminal.
+
+`session.snapshot` reports the envelope `seq` it contains, and a client applies only the events
+above it — for the notifications that snapshot actually carries. §5.3 says which.
 
 `stop_reason`: `end_turn` | `cancelled` | `max_steps` | `budget` | `tool_error` | `provider_error`.
 

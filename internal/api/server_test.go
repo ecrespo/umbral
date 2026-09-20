@@ -664,3 +664,29 @@ func TestCapabilitiesFollowTheMethodTable(t *testing.T) {
 			s.capabilities())
 	}
 }
+
+// readNotification reads one daemon-to-client message and returns its method, its envelope
+// `seq` (API Spec §1, §6) and its raw parameters.
+func (c *client) readNotification(t *testing.T) (string, uint64, json.RawMessage) {
+	t.Helper()
+
+	if err := c.conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	var msg struct {
+		Method string          `json:"method"`
+		Seq    uint64          `json:"seq"`
+		Params json.RawMessage `json:"params"`
+	}
+	if err := c.dec.Decode(&msg); err != nil {
+		t.Fatalf("read notification: %v", err)
+	}
+	return msg.Method, msg.Seq, msg.Params
+}
+
+// readNotificationSeq is readNotification when only the number matters.
+func (c *client) readNotificationSeq(t *testing.T) uint64 {
+	t.Helper()
+	_, seq, _ := c.readNotification(t)
+	return seq
+}

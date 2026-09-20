@@ -210,7 +210,7 @@ func TestSlowClientIsDropped(t *testing.T) {
 	var seq uint64
 	for sub.queued+len(chunk) <= ClientQueueBytes {
 		seq++
-		sub.enqueue(seq, chunk)
+		sub.enqueue(seq, seq, chunk)
 	}
 	if sub.overflow {
 		t.Fatal("the subscription overflowed before reaching the limit")
@@ -218,7 +218,7 @@ func TestSlowClientIsDropped(t *testing.T) {
 	queuedBefore := sub.queued
 
 	seq++
-	sub.enqueue(seq, chunk)
+	sub.enqueue(seq, seq, chunk)
 
 	if !sub.overflow {
 		t.Fatalf("the subscription accepted %d bytes, past the %d limit", queuedBefore+len(chunk), ClientQueueBytes)
@@ -229,7 +229,7 @@ func TestSlowClientIsDropped(t *testing.T) {
 
 	// Once overflowed it accepts nothing more: the client is getting a new snapshot.
 	seq++
-	sub.enqueue(seq, chunk)
+	sub.enqueue(seq, seq, chunk)
 	if sub.queued != 0 {
 		t.Errorf("an overflowed subscription queued %d more bytes", sub.queued)
 	}
@@ -252,13 +252,13 @@ func TestRebaseKeepsWhatTheSnapshotDoesNotContain_REQ_TERM_004(t *testing.T) {
 		done:      make(chan struct{}),
 	}
 
-	sub.enqueue(5, []byte("on the snapshot"))
-	sub.enqueue(7, []byte("also on the snapshot"))
-	sub.enqueue(9, []byte("after the snapshot"))
+	sub.enqueue(5, 5, []byte("on the snapshot"))
+	sub.enqueue(7, 7, []byte("also on the snapshot"))
+	sub.enqueue(9, 9, []byte("after the snapshot"))
 
 	sub.rebase(7)
 
-	out, _ := sub.take()
+	out, _, _ := sub.take()
 	if got := string(out); got != "after the snapshot" {
 		t.Errorf("after rebasing to seq 7 the queue held %q, want only the seq 9 chunk", got)
 	}
@@ -270,13 +270,13 @@ func TestRebaseKeepsWhatTheSnapshotDoesNotContain_REQ_TERM_004(t *testing.T) {
 	}
 
 	// Rebasing past everything queued leaves nothing, and a later chunk still arrives.
-	sub.enqueue(11, []byte("newer"))
+	sub.enqueue(11, 11, []byte("newer"))
 	sub.rebase(20)
-	if out, _ := sub.take(); len(out) != 0 {
+	if out, _, _ := sub.take(); len(out) != 0 {
 		t.Errorf("rebasing past the queue left %q behind", out)
 	}
-	sub.enqueue(21, []byte("newest"))
-	if out, _ := sub.take(); string(out) != "newest" {
+	sub.enqueue(21, 21, []byte("newest"))
+	if out, _, _ := sub.take(); string(out) != "newest" {
 		t.Errorf("a chunk above the new floor was dropped; got %q", out)
 	}
 }

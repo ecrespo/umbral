@@ -22,8 +22,8 @@
 
 ## Status
 
-🚧 **Phase F0 in progress.** The quality gate passes with no critical findings and every change
-proposal raised so far is ratified and archived. Alongside the full SDD package (constitution, PRD with EARS, API, technical
+🚧 **Phase F0 in progress.** The quality gate passes with no critical findings; one change proposal
+is pending ratification ([`changes/2026-09-notification-sequencing`](changes/2026-09-notification-sequencing/)). Alongside the full SDD package (constitution, PRD with EARS, API, technical
 design, data model, plan, tasks and Analyze), `umbrald` already exists: it owns durable PTY sessions
 with a libghostty emulator, streams them over a 0600 JSON-RPC socket, records a block per command
 from the shell integration, and searches 100,000 blocks in a few milliseconds against a 200 ms budget. Tasks

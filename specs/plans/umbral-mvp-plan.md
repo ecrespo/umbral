@@ -76,7 +76,7 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 | T-F0-13 | TERM-001 and TERM-006 performance gates in CI | 1d | T-F0-06 | ✅ 2026-09-20 |
 | T-F0-14 | Workspace, tab and pane model with identifiers and rollup | 3d | T-F0-03, T-F0-05 | ✅ 2026-09-20 |
 | T-F0-15 | Portable layouts (`layout.export` / `apply`) | 1.5d | T-F0-14 | ✅ 2026-09-20 |
-| T-F0-16 | `session.snapshot` and event sequencing | 1.5d | T-F0-14 | ☐ |
+| T-F0-16 | `session.snapshot` and event sequencing | 1.5d | T-F0-14 | ✅ 2026-09-20 |
 | T-F0-17 | Protocol schema and capability degradation | 1.5d | T-F0-03 | ☐ |
 | T-F0-18 | Structure restore after restart (+ optional pane history) | 2d | T-F0-14 | ☐ |
 

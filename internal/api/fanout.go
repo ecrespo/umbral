@@ -36,12 +36,13 @@ type subscription struct {
 	conn      *conn
 	logger    *slog.Logger
 
-	mu       sync.Mutex
-	pending  []queuedChunk
-	queued   int
-	lastSeq  uint64
-	closed   bool
-	overflow bool
+	mu           sync.Mutex
+	pending      []queuedChunk
+	queued       int
+	lastSeq      uint64
+	lastEnvelope uint64
+	closed       bool
+	overflow     bool
 
 	wake   chan struct{}
 	done   chan struct{}
@@ -52,8 +53,11 @@ type subscription struct {
 // under. The seq is kept per chunk rather than only as the subscription's high-water mark
 // because `rebase` has to discard exactly the chunks a later snapshot already contains.
 type queuedChunk struct {
-	seq  uint64
-	data []byte
+	seq uint64
+	// envelope is the daemon-run counter of API Spec §6, carried alongside the session's
+	// own seq because a batch has to report the highest one it contains.
+	envelope uint64
+	data     []byte
 }
 
 func newSubscription(c *conn, sessionID string, startSeq uint64) *subscription {
@@ -75,7 +79,7 @@ func newSubscription(c *conn, sessionID string, startSeq uint64) *subscription {
 // A chunk whose sequence number the subscription already has is dropped. That is what
 // makes `session.subscribe` gapless without being duplicative: the snapshot is current as
 // of some seq, and anything at or below it is already on the client's screen.
-func (s *subscription) enqueue(seq uint64, data []byte) {
+func (s *subscription) enqueue(seq, envelope uint64, data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -86,6 +90,7 @@ func (s *subscription) enqueue(seq uint64, data []byte) {
 		return
 	}
 	s.lastSeq = seq
+	s.lastEnvelope = envelope
 
 	if s.queued+len(data) > ClientQueueBytes {
 		// API Spec §8: past the queue limit the daemon drops the subscription. Keeping
@@ -97,7 +102,7 @@ func (s *subscription) enqueue(seq uint64, data []byte) {
 		return
 	}
 
-	s.pending = append(s.pending, queuedChunk{seq: seq, data: data})
+	s.pending = append(s.pending, queuedChunk{seq: seq, envelope: envelope, data: data})
 	s.queued += len(data)
 	s.signal()
 }
@@ -163,14 +168,14 @@ func (s *subscription) run() {
 			s.conn.notify("session.unsubscribed", map[string]any{
 				fieldSessionID: s.sessionID,
 				"reason":       DropReasonSlowClient,
-			})
+			}, s.conn.server.nextSeq())
 			s.logger.Warn("subscription dropped: the client fell more than the queue limit behind",
 				slog.String("session_id", s.sessionID), slog.Int("queue_bytes", ClientQueueBytes))
 			return
 		}
 
 		for {
-			batch, seq := s.take()
+			batch, seq, envelope := s.take()
 			if len(batch) == 0 {
 				break
 			}
@@ -178,7 +183,7 @@ func (s *subscription) run() {
 				fieldSessionID: s.sessionID,
 				"seq":          seq,
 				fieldDataB64:   base64.StdEncoding.EncodeToString(batch),
-			})
+			}, envelope)
 		}
 
 		if s.isClosed() {
@@ -190,12 +195,12 @@ func (s *subscription) run() {
 // take removes up to BatchBytes of queued output. A longer queue is split across several
 // notifications rather than sent as one oversized message, which is the other half of
 // API Spec §8 and keeps each message well inside the 4 MiB framing limit.
-func (s *subscription) take() ([]byte, uint64) {
+func (s *subscription) take() ([]byte, uint64, uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if len(s.pending) == 0 {
-		return nil, s.lastSeq
+		return nil, s.lastSeq, s.lastEnvelope
 	}
 
 	out := make([]byte, 0, min(s.queued, BatchBytes))
@@ -217,7 +222,7 @@ func (s *subscription) take() ([]byte, uint64) {
 	if len(s.pending) > 0 {
 		s.signal()
 	}
-	return out, s.lastSeq
+	return out, s.lastSeq, s.lastEnvelope
 }
 
 func (s *subscription) takeOverflow() bool {

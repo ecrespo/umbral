@@ -86,7 +86,7 @@ func (s *Server) Notify(ctx context.Context) {
 			if method == "" {
 				continue
 			}
-			s.broadcast(method, params)
+			s.broadcast(method, params, s.nextSeq())
 		}
 	}
 }
@@ -206,13 +206,17 @@ func (s *Server) dispatchOutput(output sessports.SessionOutput) {
 	}
 	s.mu.Unlock()
 
+	// One envelope number per bus event, assigned before the fan-out so every connection
+	// sees the same one. Assigning it per connection would break §6's "shared by all
+	// subscribers" without anything failing.
+	envelope := s.nextSeq()
 	for _, c := range conns {
-		c.deliver(output.SessionID, output.Seq, output.Data)
+		c.deliver(output.SessionID, output.Seq, envelope, output.Data)
 	}
 }
 
 // broadcast sends a notification to every connection that completed the handshake.
-func (s *Server) broadcast(method string, params any) {
+func (s *Server) broadcast(method string, params any, seq uint64) {
 	s.mu.Lock()
 	conns := make([]*conn, 0, len(s.conns))
 	for c := range s.conns {
@@ -224,7 +228,7 @@ func (s *Server) broadcast(method string, params any) {
 		if !c.authenticated {
 			continue
 		}
-		c.notify(method, params)
+		c.notify(method, params, seq)
 	}
 }
 

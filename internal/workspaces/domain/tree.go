@@ -194,3 +194,25 @@ type MoveParams struct {
 	PaneID      string
 	Destination MoveDestination
 }
+
+// Focus is the workspace, tab and thread a client should open on (API Spec §5.3).
+type Focus struct {
+	WorkspaceID string
+	TabID       string
+	ThreadID    string
+}
+
+// Snapshot is the whole tree at one moment, which `session.snapshot` returns so a client
+// keeping its own cache can start from a known state instead of inferring one from the
+// events it happens to have seen (REQ-API-001).
+//
+// Threads are absent in F0 and the field is not here to hold them: they arrive with F1 and
+// the API's result carries them beside these. What this type holds is what the workspace
+// module owns.
+type Snapshot struct {
+	Focus      Focus
+	Workspaces []Workspace
+	Tabs       []Tab
+	Panes      []Pane
+	Layouts    []Layout
+}
