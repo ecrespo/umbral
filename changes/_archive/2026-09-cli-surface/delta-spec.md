@@ -2,9 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PENDING APPROVAL — applied to specs/ on 2026-09-20, awaiting ratification` |
+| **Status** | `APPROVED 2026-09-20 — folded into specs/` |
 | **Date** | 2026-09-20 |
 | **Task** | T-F0-11 |
+| **Approved by** | Ernesto Crespo |
 | **Raised by** | `spec-guardian` review of T-F0-11: findings 1, 3 and 7 |
 
 ## Evidence

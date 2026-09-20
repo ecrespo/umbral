@@ -3,9 +3,8 @@
 This folder holds all Spec-Driven Development artifacts that precede code.
 
 **Status:** PRD 1.7, API 1.8, Technical Design 1.7, Data Model 1.6, Plan 1.4, constitution 1.2.
-Every finding that blocked implementation is folded and the quality gate passes with no CRITICAL
-findings. **One delta is pending ratification:** `../changes/2026-09-structure-migration/`, which
-renumbers the structure and agent migrations; it blocks T-F0-14 and nothing else. What remains are MEDIUM and LOW items tracked as issues. The specs
+Every finding that blocked implementation is folded, the ten deltas raised so far are archived,
+there is no pending delta, and the quality gate passes with no CRITICAL findings. What remains are MEDIUM and LOW items tracked as issues. The specs
 carry both lineages: the orchestration surface of 2026-09-20 and the six deltas raised while F0 was
 being built.
 
@@ -27,9 +26,7 @@ being built.
 | `analyze/analyze-2026-09-20b.md` | current validation: verdict READY TO IMPLEMENT, findings C-01…C-04 |
 | `analyze/analyze-2026-09-20.md` | previous report against specs 1.1, kept as history |
 | `analyze/analyze-2026-09-11.md` | previous report against specs 1.0, kept as history |
-| `../changes/2026-09-structure-migration/` | **pending ratification**: migrations `0003_structure` and `0004_agent` |
-| `../changes/2026-09-cli-surface/` | **pending ratification**: the `umb` surface, `block.get "last"`, and the §5.1/§5.2 package rows |
-| `../changes/_archive/` | the eight folded Delta Specs, kept as the record of what changed and why |
+| `../changes/_archive/` | the ten folded Delta Specs, kept as the record of what changed and why |
 | `../assets/branding/umbral-icons/` | icon kit (Linux/Windows/macOS), SVG sources and generators |
 | `../tools/sdd_check.py` | REQ → task coverage and DDL check (CI-ready) |
 | `../docs/checkpoints/` | inventories verified against the filesystem |

@@ -2,9 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PENDING APPROVAL — applied to specs/ on 2026-09-20, awaiting ratification` |
+| **Status** | `APPROVED 2026-09-20 — folded into specs/` |
 | **Date** | 2026-09-20 |
 | **Task** | T-F0-14 (blocked on this), T-F1-01 |
+| **Approved by** | Ernesto Crespo |
 | **Raised by** | reconciliation: the orchestration surface was authored against a pre-implementation baseline |
 
 ## Evidence

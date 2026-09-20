@@ -33,7 +33,7 @@ There are two MVP phases in sequence (F0 Core → F1 Agentic) plus a hardening p
 
 | Prerequisite | Owner | Status | Deadline |
 |---|---|---|---|
-| Specs approved (this package) + Analyze without CRITICAL findings | Tech Lead | ✅ 2026-09-20 | closed: the gate passes. One delta pending ratification (`changes/2026-09-structure-migration`), which blocks T-F0-14 only |
+| Specs approved (this package) + Analyze without CRITICAL findings | Tech Lead | ✅ 2026-09-20 | closed: the gate passes and every delta raised so far is ratified and archived |
 | Toolchain: Go ≥ 1.25, Zig (libghostty-vt build), golangci-lint, go-arch-lint, gitleaks | Tech Lead | ✅ 2026-09-11 | closed in T-F0-01; Go 1.27.1 and Zig on the development machine |
 | Ollama with `gpt-oss:20b` and `num_ctx` ≥ 32k on the development machine | Tech Lead | ☐ Pending | start of F1 |
 | CI runner with bash, zsh and fish installed | Tech Lead | ✅ 2026-09-11 | closed in T-F0-08: the Linux test job installs zsh and fish, and the tests skip a shell that is absent rather than failing, so macOS runs bash only |

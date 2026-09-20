@@ -7,5 +7,4 @@
 - **REQ:** REQ-CLI-002, REQ-CLI-004
 - **Files:** `specs/prd/umbral-mvp.md`, `specs/api/umbral-daemon-api-v1.md`, `specs/technical/umbral-architecture.md`, `specs/tasks/umbral-f0-tasks.md`
 - **Done:** `python3 tools/sdd_check.py` exits 0; no artifact cites a §5.2 row that does not exist.
-- **Result:** applied during T-F0-11. Awaiting ratification together with
-  `2026-09-structure-migration`.
+- **Result:** applied during T-F0-11. Ratified on 2026-09-20.
