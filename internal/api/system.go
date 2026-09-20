@@ -14,8 +14,15 @@ var interactiveClients = []ClientKind{ClientTUI, ClientDesktop}
 
 // registry is the method table. Adding a method here is the only way to expose one, and
 // the kinds field is where API Spec §2's per-client-kind allowlist lives.
+//
+// A module that is not wired in contributes no methods. That is what keeps `capabilities()`
+// honest: it is derived from this table, and a daemon that advertised `workspace` while
+// every `workspace.*` call answered METHOD_NOT_FOUND would be telling a client to take a
+// branch that cannot work — the exact drift the derivation exists to prevent. The nil
+// checks inside the handlers stay as well, because a table built once and a config read
+// later should not be two sources of the same truth.
 func (s *Server) registry() map[string]method {
-	return map[string]method{
+	table := map[string]method{
 		"system.hello":  {handle: handleHello, beforeHello: true},
 		"system.status": {handle: handleStatus},
 
@@ -35,6 +42,42 @@ func (s *Server) registry() map[string]method {
 		"block.list":   {handle: handleBlockList},
 		"block.get":    {handle: handleBlockGet},
 		"block.search": {handle: handleBlockSearch},
+	}
+
+	if s.cfg.Workspaces != nil {
+		for name, m := range workspaceMethods() {
+			table[name] = m
+		}
+	}
+	return table
+}
+
+// workspaceMethods is the `workspace.*`, `tab.*` and `pane.*` surface of API Spec §5.4 to
+// §5.6.
+func workspaceMethods() map[string]method {
+	return map[string]method{
+		// The workspace tree is interactive-only for the same reason session.* is: API
+		// Spec §2 gives `cli` `system.*`, `block.*`, three `thread.*` and `model.list`,
+		// and nothing that arranges windows.
+		"workspace.create": {handle: handleWorkspaceCreate, kinds: interactiveClients},
+		"workspace.list":   {handle: handleWorkspaceList, kinds: interactiveClients},
+		"workspace.focus":  {handle: handleWorkspaceFocus, kinds: interactiveClients},
+		"workspace.rename": {handle: handleWorkspaceRename, kinds: interactiveClients},
+		"workspace.close":  {handle: handleWorkspaceClose, kinds: interactiveClients},
+
+		"tab.create": {handle: handleTabCreate, kinds: interactiveClients},
+		"tab.list":   {handle: handleTabList, kinds: interactiveClients},
+		"tab.focus":  {handle: handleTabFocus, kinds: interactiveClients},
+		"tab.rename": {handle: handleTabRename, kinds: interactiveClients},
+		"tab.close":  {handle: handleTabClose, kinds: interactiveClients},
+
+		"pane.split":  {handle: handlePaneSplit, kinds: interactiveClients},
+		"pane.list":   {handle: handlePaneList, kinds: interactiveClients},
+		"pane.get":    {handle: handlePaneGet, kinds: interactiveClients},
+		"pane.focus":  {handle: handlePaneFocus, kinds: interactiveClients},
+		"pane.rename": {handle: handlePaneRename, kinds: interactiveClients},
+		"pane.move":   {handle: handlePaneMove, kinds: interactiveClients},
+		"pane.close":  {handle: handlePaneClose, kinds: interactiveClients},
 	}
 }
 

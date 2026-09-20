@@ -35,6 +35,10 @@ components:
   # and outside adapters, which must stay replaceable.
   workspaces-service: { in: internal/workspaces }
 
+  # The tree's integration tests wire the real store to the service, which is the job
+  # Art. 3 reserves for a composition root — the same exception sessions-integration has.
+  workspaces-integration: { in: internal/workspaces/integration }
+
   # The module's integration tests wire the real adapters together, which is the job Art. 3
   # reserves for a composition root. Naming it here keeps every file under the rules rather
   # than excluding _test.go from them.
@@ -311,10 +315,12 @@ deps:
       - store
       - config
       - sessions-ports
+      - workspaces-ports
       - agents-ports
       - llmgw-ports
       - security-ports
       - sessions-domain
+      - workspaces-domain
       - agents-domain
       - tools-domain
       - context-domain
@@ -383,9 +389,12 @@ deps:
       - tui-ports
       - tui-adapters
       - sessions-service
+      - workspaces-service
       - shellscripts
       - sessions-ports
       - sessions-adapters
+      - workspaces-ports
+      - workspaces-adapters
       - agents-ports
       - agents-adapters
       - tools-ports
@@ -397,6 +406,7 @@ deps:
       - security-ports
       - security-adapters
       - sessions-domain
+      - workspaces-domain
       - agents-domain
       - tools-domain
       - context-domain
@@ -423,6 +433,8 @@ deps:
     mayDependOn:
       - workspaces-domain
       - sessions-domain
+      # The published events carry a bus.Kind, the same reason sessions-ports depends on it.
+      - bus
 
   workspaces-adapters:
     anyVendorDeps: true
@@ -437,7 +449,16 @@ deps:
     mayDependOn:
       - workspaces-ports
       - workspaces-domain
-      - sessions-ports
+      - sessions-domain
+      - bus
+
+  workspaces-integration:
+    anyVendorDeps: true
+    mayDependOn:
+      - workspaces-service
+      - workspaces-ports
+      - workspaces-domain
+      - workspaces-adapters
       - sessions-domain
       - store
       - bus

@@ -246,13 +246,13 @@ func handleSessionUnsubscribe(_ context.Context, c *conn, raw json.RawMessage) (
 func sessionDomainError(err error) (int, string, bool) {
 	switch {
 	case errors.Is(err, sessdomain.ErrNotFound):
-		return codeNotFound, "NOT_FOUND", true
+		return codeNotFound, domainNotFound, true
 	case errors.Is(err, sessdomain.ErrInputLocked):
 		return codeInputLocked, "INPUT_LOCKED", true
 	case errors.Is(err, sessdomain.ErrExited):
-		return codeConflict, "CONFLICT", true
+		return codeConflict, domainConflict, true
 	case errors.Is(err, sessdomain.ErrValidation):
-		return codeValidationError, "VALIDATION_ERROR", true
+		return codeValidationError, domainValidationError, true
 	default:
 		return 0, "", false
 	}

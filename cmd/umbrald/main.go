@@ -34,6 +34,9 @@ import (
 	"github.com/ecrespo/umbral/internal/sessions/adapters/shellinteg"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
 	"github.com/ecrespo/umbral/internal/store"
+	"github.com/ecrespo/umbral/internal/workspaces"
+	"github.com/ecrespo/umbral/internal/workspaces/adapters/treestore"
+	wsports "github.com/ecrespo/umbral/internal/workspaces/ports"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=…".
@@ -185,6 +188,26 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitCantCreate
 	}
 
+	tree, err := treestore.New(db)
+	if err != nil {
+		logger.Error("cannot build the workspace store", slog.Any("error", err))
+		return exitCantCreate
+	}
+	// The tree takes the sessions module through ports.Terminals, a two-method view of it:
+	// a pane needs a terminal and needs to give it back, and nothing else. The assignment
+	// is written through the port rather than the concrete service so go-arch-lint's deep
+	// scan sees the dependency the boundary rules describe.
+	var terminals wsports.Terminals = sessionService
+	workspaceService, err := workspaces.New(workspaces.Config{
+		Tree:      tree,
+		Terminals: terminals,
+		Bus:       eventBus,
+	})
+	if err != nil {
+		logger.Error("cannot build the workspace tree", slog.Any("error", err))
+		return exitCantCreate
+	}
+
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
 		TokenPath:     tokenPath,
@@ -192,6 +215,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Status:        statusFromStore(db),
 		Sessions:      sessionService,
 		Blocks:        blockReader,
+		Workspaces:    workspaceService,
 		Bus:           eventBus,
 		Logger:        logger,
 	})

@@ -22,8 +22,8 @@
 
 ## Status
 
-🚧 **Phase F0 in progress.** The quality gate passes with no critical findings and every change
-proposal raised so far is ratified and archived. Alongside the full SDD package (constitution, PRD with EARS, API, technical
+🚧 **Phase F0 in progress.** The quality gate passes with no critical findings; one change proposal
+is pending ratification ([`changes/2026-09-pane-attention-state`](changes/2026-09-pane-attention-state/)). Alongside the full SDD package (constitution, PRD with EARS, API, technical
 design, data model, plan, tasks and Analyze), `umbrald` already exists: it owns durable PTY sessions
 with a libghostty emulator, streams them over a 0600 JSON-RPC socket, records a block per command
 from the shell integration, and searches 100,000 blocks in a few milliseconds against a 200 ms budget. Tasks
@@ -32,7 +32,9 @@ from the shell integration, and searches 100,000 blocks in a few milliseconds ag
 list — passes its tests and its
 [manual checklist](docs/qa/f0-tui.md), walked end to end on a real terminal. Three of the four performance NFRs are
 gates rather than prose: CI fails on a regression and proves, on the same run, that it
-still would. Next: the workspace/pane orchestration surface.
+still would. `umbrald` also owns the workspace tree — workspaces, tabs and panes addressed
+as `w1`, `w1:t2` and `w1:p3`, with a pane keeping its shell and its old name when it moves.
+Next: portable layouts and structure restore.
 
 ## What Umbral will be
 

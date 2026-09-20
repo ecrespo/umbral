@@ -7,6 +7,7 @@ import (
 	"github.com/ecrespo/umbral/internal/bus"
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
+	wsports "github.com/ecrespo/umbral/internal/workspaces/ports"
 )
 
 // fieldSessionID is the parameter name every session notification carries (API Spec §6).
@@ -44,6 +45,18 @@ func (s *Server) Notify(ctx context.Context) {
 		sessports.KindBlockStarted,
 		sessports.KindBlockUpdated,
 		sessports.KindBlockClosed,
+		wsports.KindWorkspaceCreated,
+		wsports.KindWorkspaceUpdated,
+		wsports.KindWorkspaceClosed,
+		wsports.KindWorkspaceFocused,
+		wsports.KindTabCreated,
+		wsports.KindTabClosed,
+		wsports.KindTabFocused,
+		wsports.KindPaneCreated,
+		wsports.KindPaneUpdated,
+		wsports.KindPaneClosed,
+		wsports.KindPaneFocused,
+		wsports.KindPaneMoved,
 	)
 	defer sub.Close()
 
@@ -98,6 +111,29 @@ func toNotification(event bus.Event) (string, any) {
 		}
 	case sessports.BlockClosed:
 		return "block.closed", blockPayload(e.Block)
+
+	// The workspace tree's kinds are already the §6 method names, so the event carries its
+	// own method and only the payload has to be built.
+	// §6 types these payloads as the object itself — `Workspace`, `Tab`, `Pane` — exactly
+	// as `block.started` carries a `Block`. An envelope would leave a client written
+	// against §6 looking for an `id` field that is one level down.
+	case wsports.WorkspaceEvent:
+		return string(e.Kind), toWireWorkspace(e.Workspace)
+	case wsports.TabEvent:
+		return string(e.Kind), toWireTab(e.Tab)
+	case wsports.PaneEvent:
+		return string(e.Kind), toWirePane(e.Pane)
+	case wsports.PaneMoved:
+		// REQ-WS-007's payload, and the reason this one is not a PaneEvent: §6 gives it
+		// the previous identifiers so a client can follow the terminal across the move
+		// instead of seeing an unrelated pane appear.
+		return "pane.moved", map[string]any{
+			keyPane:                 toWirePane(e.Pane),
+			"previous_pane_id":      e.PreviousPaneID,
+			"previous_workspace_id": e.PreviousWorkspaceID,
+			keyLayout:               toWireLayout(e.Layout),
+		}
+
 	default:
 		return "", nil
 	}

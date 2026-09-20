@@ -118,6 +118,22 @@ func dsn(path string) string {
 	for _, p := range pragmas {
 		q.Add("_pragma", p)
 	}
+
+	// Every transaction begins as a writer.
+	//
+	// SQLite's default is BEGIN DEFERRED, which starts as a reader and takes the write
+	// lock at the first write. Two such transactions that both read and then write cannot
+	// both succeed, and the loser gets SQLITE_BUSY_SNAPSHOT — which `busy_timeout` does
+	// *not* wait out, because there is nothing to wait for: its snapshot is already stale
+	// and the only cure is to roll back. Read-then-write is exactly the shape of allocating
+	// an identifier and inserting the row that uses it, so under two concurrent clients
+	// most of those writes failed outright.
+	//
+	// BEGIN IMMEDIATE takes the write lock up front, so contenders queue on `busy_timeout`
+	// instead of failing. The cost is that a transaction used only for reading also
+	// serialises; that is why the read paths here use plain queries rather than wrapping
+	// themselves in one.
+	q.Set("_txlock", "immediate")
 	return "file:" + path + "?" + q.Encode()
 }
 

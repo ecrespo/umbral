@@ -16,6 +16,7 @@ import (
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/config"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
+	wsports "github.com/ecrespo/umbral/internal/workspaces/ports"
 )
 
 // ClientKind is the caller's role (API Spec §2). It decides which methods are reachable.
@@ -39,8 +40,34 @@ func (k ClientKind) valid() bool {
 	}
 }
 
-// capabilities reports the method namespaces this daemon actually serves, which is what
-// the handshake advertises (API Spec §2).
+// capabilityOf maps a method's prefix to the namespace API Spec §2 advertises it under.
+//
+// The two are not the same word, and the difference is not cosmetic. §2 enumerates the
+// legal entries — `sessions`, `blocks`, `threads`, `mcp`, `models`, `workspaces`,
+// `layouts`, … — and a client branching on them looks for those exact strings. The
+// workspace tree is three method prefixes and one capability: a daemon that advertised
+// `workspace`, `tab` and `pane` would tell such a client the tree is absent while serving
+// all seventeen of its methods.
+//
+// A prefix with no entry here is advertised as itself, which is the safe default for a
+// namespace §2 names the same way its methods are named.
+const capabilityWorkspaces = "workspaces"
+
+var capabilityOf = map[string]string{
+	"session":   "sessions",
+	"block":     "blocks",
+	"thread":    "threads",
+	"model":     "models",
+	"workspace": capabilityWorkspaces,
+	"tab":       capabilityWorkspaces,
+	"pane":      capabilityWorkspaces,
+	"layout":    "layouts",
+	"wait":      "waits",
+	"rule":      "rules",
+}
+
+// capabilities reports the namespaces this daemon actually serves, which is what the
+// handshake advertises (API Spec §2).
 //
 // It is derived from the method table rather than written by hand, because a hand-written
 // list drifts: advertising "sessions" before session.create exists tells a client to take
@@ -48,9 +75,13 @@ func (k ClientKind) valid() bool {
 func (s *Server) capabilities() []string {
 	seen := make(map[string]struct{}, len(s.methods))
 	for name := range s.methods {
-		namespace, _, found := strings.Cut(name, ".")
-		if !found || namespace == "system" {
+		prefix, _, found := strings.Cut(name, ".")
+		if !found || prefix == "system" {
 			continue
+		}
+		namespace := prefix
+		if mapped, ok := capabilityOf[prefix]; ok {
+			namespace = mapped
 		}
 		seen[namespace] = struct{}{}
 	}
@@ -82,8 +113,12 @@ type Config struct {
 	// Blocks is the history port. A nil value leaves the block.* methods answering
 	// METHOD_NOT_FOUND, which is what the daemon does before T-F0-10 is wired in.
 	Blocks sessports.Blocks
-	Bus    *bus.Bus
-	Logger *slog.Logger
+	// Workspaces is the tree's inbound port. A nil value leaves the workspace.*, tab.*
+	// and pane.* methods answering METHOD_NOT_FOUND, which is what the daemon does before
+	// T-F0-14 is wired in.
+	Workspaces wsports.Workspaces
+	Bus        *bus.Bus
+	Logger     *slog.Logger
 }
 
 // Server accepts client connections on the Unix socket and dispatches JSON-RPC methods.

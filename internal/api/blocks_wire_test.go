@@ -382,11 +382,12 @@ func TestBlockMethodsAreAdvertised(t *testing.T) {
 	}
 	found := false
 	for _, capability := range capabilities {
-		if capability == "block" {
+		// API Spec §2 calls the namespace `blocks`; `block.*` is the method prefix.
+		if capability == "blocks" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("capabilities is %v, want it to advertise block", capabilities)
+		t.Errorf("capabilities is %v, want it to advertise blocks", capabilities)
 	}
 }

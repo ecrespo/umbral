@@ -89,8 +89,8 @@ including across the API (Art. 6).
   post-edit hooks, `.claude/settings.json` with its permissions, and `.mcp.json`. Do not
   try to invoke them; create them first or work without them. Verified again on 2026-09-20:
   `.claude/` holds `agents/` and nothing else.
-- **Migrations:** `0001_terminal` and `0002_block_index` are applied. `0003_structure`
-  (T-F0-14) and `0004_agent` (T-F1-01) are not written yet. Migrations are forward-only
+- **Migrations:** `0001_terminal`, `0002_block_index` and `0003_structure` are applied.
+  `0004_agent` (T-F1-01) is not written yet. Migrations are forward-only
   (Art. 6), so an applied file is never edited; that is why the agent subdomain is `0004`
   and not the `0002` some older drafts name.
 - **Recommended flow:** start each task in Plan Mode, get the plan approved, implement it,

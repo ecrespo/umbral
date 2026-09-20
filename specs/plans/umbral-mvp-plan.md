@@ -74,7 +74,7 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 | T-F0-11 | `umb` CLI: autostart, `status`, `block last --json` | 1d | T-F0-10 | ✅ 2026-09-20 |
 | T-F0-12 | Base TUI: tabs, splits, rendering, block navigation | 4d | T-F0-06, T-F0-09 | ✅ 2026-09-20 |
 | T-F0-13 | TERM-001 and TERM-006 performance gates in CI | 1d | T-F0-06 | ✅ 2026-09-20 |
-| T-F0-14 | Workspace, tab and pane model with identifiers and rollup | 3d | T-F0-03, T-F0-05 | ☐ |
+| T-F0-14 | Workspace, tab and pane model with identifiers and rollup | 3d | T-F0-03, T-F0-05 | ✅ 2026-09-20 |
 | T-F0-15 | Portable layouts (`layout.export` / `apply`) | 1.5d | T-F0-14 | ☐ |
 | T-F0-16 | `session.snapshot` and event sequencing | 1.5d | T-F0-14 | ☐ |
 | T-F0-17 | Protocol schema and capability degradation | 1.5d | T-F0-03 | ☐ |

@@ -3,6 +3,16 @@ package api
 import (
 	"errors"
 	"fmt"
+
+	wsdomain "github.com/ecrespo/umbral/internal/workspaces/domain"
+)
+
+// The `domain_code` strings of API Spec §3, named because more than one module maps its
+// sentinels onto them and a typo in one place would ship a code no client recognises.
+const (
+	domainNotFound        = "NOT_FOUND"
+	domainValidationError = "VALIDATION_ERROR"
+	domainConflict        = "CONFLICT"
 )
 
 // Domain error codes from API Spec §3. The JSON-RPC numbers are part of the contract,
@@ -72,6 +82,32 @@ func unsupportedProtocolError(got int) error {
 	}
 }
 
+// moduleErrors is every module's sentinel translation, consulted before the generic codes.
+//
+// It is a list rather than a chain of ifs because forgetting to add a module here is
+// invisible: its errors keep reaching clients, just as INTERNAL_ERROR with a trace id
+// attached, which is both the wrong code and a leak Art. 7 reserves for real faults. That
+// is what happened to the workspace tree until `TestWorkspaceErrorsReachTheWire` was
+// written.
+var moduleErrors = []func(error) (int, string, bool){
+	sessionDomainError,
+	workspaceDomainError,
+}
+
+// workspaceDomainError maps the workspace tree's sentinels onto the §5.4 table.
+func workspaceDomainError(err error) (int, string, bool) {
+	switch {
+	case errors.Is(err, wsdomain.ErrNotFound):
+		return codeNotFound, domainNotFound, true
+	case errors.Is(err, wsdomain.ErrValidation):
+		return codeValidationError, domainValidationError, true
+	case errors.Is(err, wsdomain.ErrConflict):
+		return codeConflict, domainConflict, true
+	default:
+		return 0, "", false
+	}
+}
+
 // toWire translates a handler error into the protocol object of API Spec §3.
 //
 // traceID is attached to INTERNAL_ERROR only, where Art. 7 requires it: for the other
@@ -83,14 +119,16 @@ func toWire(err error, traceID string) *wireError {
 
 	// Module sentinels first: they are more specific than the generic ones below, and a
 	// module error that also wrapped a generic sentinel must map to its own code.
-	if moduleCode, moduleDomain, ok := sessionDomainError(err); ok {
-		code, domainCode = moduleCode, moduleDomain
-		return finishWire(err, code, domainCode, traceID)
+	for _, translate := range moduleErrors {
+		if moduleCode, moduleDomain, ok := translate(err); ok {
+			code, domainCode = moduleCode, moduleDomain
+			return finishWire(err, code, domainCode, traceID)
+		}
 	}
 
 	switch {
 	case errors.Is(err, errValidation):
-		code, domainCode = codeValidationError, "VALIDATION_ERROR"
+		code, domainCode = codeValidationError, domainValidationError
 	case errors.Is(err, ErrUnauthorized):
 		code, domainCode = codeUnauthorized, "UNAUTHORIZED"
 	case errors.Is(err, ErrMethodNotFound):
@@ -98,9 +136,9 @@ func toWire(err error, traceID string) *wireError {
 	case errors.Is(err, ErrUnsupportedProtocol):
 		code, domainCode = codeUnsupportedProtocolVersion, "UNSUPPORTED_PROTOCOL_VERSION"
 	case errors.Is(err, ErrNotFound):
-		code, domainCode = codeNotFound, "NOT_FOUND"
+		code, domainCode = codeNotFound, domainNotFound
 	case errors.Is(err, ErrConflict):
-		code, domainCode = codeConflict, "CONFLICT"
+		code, domainCode = codeConflict, domainConflict
 	case errors.Is(err, ErrPermissionDenied):
 		code, domainCode = codePermissionDenied, "PERMISSION_DENIED"
 	case errors.Is(err, ErrProviderUnavailable):

@@ -237,7 +237,10 @@ func TestHelloSucceedsAndReturnsAConnectionID(t *testing.T) {
 	// are exactly the ones with registered methods. Announcing one whose methods do not
 	// exist would tell a client to take a branch that cannot work, which is the mistake
 	// this assertion exists to catch, so it is updated when a namespace is really added.
-	if want := []string{"block", "session"}; !slices.Equal(result.Capabilities, want) {
+	//
+	// The names are §2's, not the method prefixes: §2 enumerates the legal entries and a
+	// client branches on those exact strings, so `session.*` is advertised as `sessions`.
+	if want := []string{"blocks", "sessions"}; !slices.Equal(result.Capabilities, want) {
 		t.Errorf("capabilities = %v, want %v", result.Capabilities, want)
 	}
 }
@@ -624,9 +627,28 @@ func TestCapabilitiesFollowTheMethodTable(t *testing.T) {
 	// method in a new namespace is enough to advertise it.
 	s.methods["block.list"] = method{}
 	got := s.capabilities()
-	if !slices.Contains(got, "block") || !slices.Contains(got, "session") {
-		t.Errorf("capabilities = %v, want both block and session", got)
+	if !slices.Contains(got, "blocks") || !slices.Contains(got, "sessions") {
+		t.Errorf("capabilities = %v, want both blocks and sessions", got)
 	}
+
+	// Three method prefixes, one namespace: API Spec §2 lists `workspaces` and no
+	// `workspace`, `tab` or `pane`, so a client looking for the tree finds one entry.
+	s.methods["workspace.create"] = method{}
+	s.methods["tab.create"] = method{}
+	s.methods["pane.split"] = method{}
+	withTree := s.capabilities()
+	if !slices.Contains(withTree, "workspaces") {
+		t.Errorf("capabilities = %v, want it to advertise workspaces", withTree)
+	}
+	for _, absent := range []string{"workspace", "tab", "pane"} {
+		if slices.Contains(withTree, absent) {
+			t.Errorf("capabilities = %v, which advertises %q; API Spec §2 has no such namespace",
+				withTree, absent)
+		}
+	}
+	delete(s.methods, "workspace.create")
+	delete(s.methods, "tab.create")
+	delete(s.methods, "pane.split")
 	if !slices.IsSorted(got) {
 		t.Errorf("capabilities = %v, want them sorted so the handshake is stable", got)
 	}
@@ -637,8 +659,8 @@ func TestCapabilitiesFollowTheMethodTable(t *testing.T) {
 			delete(s.methods, name)
 		}
 	}
-	if slices.Contains(s.capabilities(), "session") {
-		t.Errorf("capabilities = %v, still lists session with no session method registered",
+	if slices.Contains(s.capabilities(), "sessions") {
+		t.Errorf("capabilities = %v, still lists sessions with no session method registered",
 			s.capabilities())
 	}
 }
