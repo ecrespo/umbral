@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PENDING APPROVAL — applied to specs/ on 2026-09-20, awaiting ratification` |
+| **Status** | `RATIFIED 2026-09-20 — applied to specs/ and archived` |
 | **Date** | 2026-09-20 |
 | **Task** | T-F0-18 |
 | **Raised by** | T-F0-18: Data Model §6 step 5 and REQ-TERM-011 say opposite things about the same command, and four things the task needs are specified nowhere |
