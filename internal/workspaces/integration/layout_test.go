@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"bytes"
 	"maps"
 	"slices"
 	"strings"
@@ -128,9 +129,21 @@ func TestLayoutExportApplyRoundTrip_REQ_WS_004(t *testing.T) {
 			launched, ok := h.terminals.launchedWith(pane.SessionID)
 			if !ok {
 				t.Errorf("no terminal was started for pane %q", pane.ID)
-			} else if !slices.Equal(launched.Command, []string{"sh", "-c", "sleep 30"}) {
-				t.Errorf("the watch pane's terminal was started with %v, want the exported command",
-					launched.Command)
+			}
+			// REQ-TERM-011: "`layout.apply` behaves the same way: it returns the commands
+			// as pending, never as launched". A layout is an intention from another time
+			// and possibly another machine, so applying one is not consent to run what it
+			// carries. The terminal is a shell; the command is typed at its prompt.
+			if ok && len(launched.Command) != 0 {
+				t.Errorf("the watch pane's terminal was launched with %v; layout.apply must "+
+					"not run a stored command", launched.Command)
+			}
+			if !pane.CommandPending {
+				t.Error("the applied watch pane does not report its command as pending")
+			}
+			if ok && !bytes.Contains(launched.TypeAtPrompt, []byte("sleep 30")) {
+				t.Errorf("the watch pane was given %q to show at its prompt, want the "+
+					"exported command", launched.TypeAtPrompt)
 			}
 			// The env has to reach the process, not merely the row: REQ-WS-005 reproduces
 			// it so the relaunched command behaves the way it did before.
@@ -141,9 +154,11 @@ func TestLayoutExportApplyRoundTrip_REQ_WS_004(t *testing.T) {
 				t.Errorf("the watch pane's terminal was started with env %v, want UMBRAL_ROLE=tests",
 					launched.Env)
 			}
-			// A pane running a command has nothing to source a bootstrap into.
-			if ok && launched.ShellIntegration {
-				t.Error("a pane launched with a command asked for shell integration")
+			// A restored or applied pane runs a *shell*, so the block lifecycle applies
+			// to it — and the prompt marker is what tells the session when it is safe to
+			// type the pending command.
+			if ok && !launched.ShellIntegration {
+				t.Error("an applied pane runs a shell and must have shell integration")
 			}
 		}
 		if seen[pane.SessionID] {

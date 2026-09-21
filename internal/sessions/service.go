@@ -80,6 +80,10 @@ type liveSession struct {
 	// goroutine and by finish, which runs after it.
 	scanner  ports.Scanner
 	recorder *domain.Recorder
+	// typeAtPrompt is text waiting to be placed on the shell's command line, once it has
+	// one (REQ-TERM-011). It is cleared by the write, so it happens exactly once, and it
+	// is guarded by mu because the drain goroutine and the grace timer both reach it.
+	typeAtPrompt []byte
 	// pendingRaw buffers output until it is worth a chunk; chunkSeq orders the chunks
 	// within the open block.
 	pendingRaw   []byte
@@ -152,6 +156,20 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 		return domain.Session{}, err
 	}
 
+	// The previous run's screen, before the shell writes a byte (REQ-TERM-010). Into the
+	// emulator only: these are bytes the terminal printed, and putting them on the PTY
+	// would feed a program's old output back to it as input.
+	//
+	// A failure here is logged and not fatal. The screen is a convenience the user opted
+	// into; a pane that comes back blank is a disappointment, a pane that fails to start
+	// because its history could not be replayed is a broken terminal.
+	if len(params.ReplayScreen) > 0 {
+		if _, err := emu.Write(params.ReplayScreen); err != nil {
+			s.cfg.Logger.Warn("could not replay the pane's stored screen",
+				slog.Int("bytes", len(params.ReplayScreen)), slog.String("error", err.Error()))
+		}
+	}
+
 	pty, err := s.cfg.NewPTY(ports.PTYSpec{
 		Path: program, Args: args, Env: env, Dir: params.CWD, Size: params.Size,
 	})
@@ -207,6 +225,10 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 	// passing the create call's context down would end the session when that call returns.
 	//nolint:contextcheck // deliberate: the session's lifetime is not the request's
 	go s.drain(live)
+
+	// Armed after the drain goroutine is running, so the prompt marker that delivers it
+	// cannot be missed by a session that is not yet reading its PTY (REQ-TERM-011).
+	s.armPendingInput(live, params.TypeAtPrompt)
 
 	return session, nil
 }

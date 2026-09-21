@@ -210,7 +210,7 @@ method and the ordering that produced it, so one handed to a different method is
 ```json
 {"id":"w1:p2","tab_id":"w1:t1","workspace_id":"w1","session_id":"ses_…","thread_id":null,
  "label":"tests","cwd":"/home/u/repo","aliases":["w1:p2"],
- "command":["sh","-c","go test ./..."],"env":{"UMBRAL_ROLE":"tests"},
+ "command":["sh","-c","go test ./..."],"command_pending":false,"env":{"UMBRAL_ROLE":"tests"},
  "attention_state":"working","state_source":"umbral:agent",
  "metadata":{"title":"go test","tokens":{"summary":"unit"}},
  "created_at":1757592000000,"closed_at":null}
@@ -218,8 +218,13 @@ method and the ordering that produced it, so one handed to a different method is
 - `attention_state`: `blocked` | `working` | `done` | `idle` | `unknown`. `unknown` is the
   starting value and the one that survives until some source reports another: it is the absence of
   a report, not a report of nothing. F0 has no producer at all — `pane_state_reports` arrives with
-  migration 0004 and threads with F1 — so every F0 pane is `unknown` with a `null` `state_source`
+  migration 0005 and threads with F1 — so every F0 pane is `unknown` with a `null` `state_source`
 - `state_source`: who owns the state — `umbral:agent` for Umbral's own agent, `umbral:shell` when it is derived from the block lifecycle, or the `source` of an external integration (REQ-INT-002). `null` while nothing has reported. The `umbral:shell` derivation is named here but specified nowhere: which block state maps to which attention state is deferred to the task that owns REQ-INT-002
+- `command_pending`: the pane has a `command` that Umbral has not run. Set by `layout.apply` and
+  by a restart, never by `pane.split` — a client asking for a command now is asking for it to run,
+  while a layout and a restart replay an intention from another time, and REQ-TERM-011 forbids
+  acting on one unasked. The command is typed at the pane's prompt without a newline, so the user
+  sees it and presses Enter to run it. **Omitted when false**, like `command`
 - `command` and `env`: what the pane runs instead of a shell, and the environment overrides it
   runs with. They arrive through `pane.split` or `layout.apply`, are stored, and are what
   `layout.export` carries into a portable tree (REQ-WS-004, REQ-WS-005). **Both are omitted when
@@ -374,9 +379,16 @@ Bootstrap without gaps, for clients that keep their own cache:
 ### 5.7 `layout.export` — REQ-WS-004
 **Params:** `{tab_id?}` (default: the focused tab). **Result:** `Layout`.
 
-### 5.8 `layout.apply` — REQ-WS-005
+### 5.8 `layout.apply` — REQ-WS-005, REQ-TERM-011
 **Params:** `{workspace_id, tab_label?, root, focus?: true}`.
-**Result:** `{tab: Tab, panes: Pane[], warnings: ["live processes and scrollback are not reproduced"]}`.
+**Result:** `{tab: Tab, panes: Pane[], warnings: ["live processes and scrollback are not reproduced", "commands are pending: they are typed at each pane's prompt and run when you press Enter"]}`.
+
+Every pane it creates runs a **shell**. A node carrying a `command` gets that command stored and
+`command_pending` set, typed at the pane's prompt without a newline — REQ-TERM-011: "it returns the
+commands as pending, never as launched". A layout is an intention from another time and possibly
+another machine, so applying one is not consent to run what it carries; `pane.split`, where a
+client asks for a command now, is unaffected. The second warning is present only when the tree
+carried at least one command.
 
 ### 5.9 `session.create` — REQ-TERM-001, REQ-BLK-005
 **Params:**

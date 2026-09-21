@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -39,6 +40,15 @@ type Config struct {
 	Bus *bus.Bus
 	// Shell is the program a new pane runs. Empty means the session module's default.
 	Shell string
+	// Logger reports what a restart rebuilt and what it could not. A nil value discards.
+	Logger *slog.Logger
+	// PaneHistory turns on REQ-TERM-010's capture and replay. Off unless
+	// `$XDG_CONFIG_HOME/umbral/config.toml` says otherwise, because pane output can
+	// contain secrets and the requirement makes that the default.
+	PaneHistory bool
+	// Screens reads a pane's current screen for that capture. Nil disables capture
+	// whatever the setting says.
+	Screens ports.Screens
 }
 
 // Service is the module's inbound port in the flesh.
@@ -47,14 +57,17 @@ type Service struct {
 	terminals ports.Terminals
 	bus       *bus.Bus
 	shell     string
+	log       *slog.Logger
 
-	// focus is which workspace and tab a client should open on. It has no column: Data
-	// Model §2.4b gives `workspaces` and `tabs` none, and `tabs.layout_json` holds only
-	// the pane focused *within* a tab. So it is kept here, in memory, which means it is
-	// lost across a restart — acceptable because the cost is a client opening on the
-	// first workspace instead of the last one used, and because T-F0-18, which restores
-	// the structure, is where persisting it would belong. API Spec §5.7 defaults
-	// `layout.export` to it and §5.3 reports it.
+	paneHistory bool
+	screens     ports.Screens
+
+	// focus is which workspace and tab a client should open on, cached here because every
+	// `layout.export` with no `tab_id` and every `session.snapshot` asks for it and
+	// neither should cost a query. The durable copy lives in
+	// `workspaces.focused_tab_id`/`focused_at` (migration 0004), which is what a restart
+	// reads: before T-F0-18 this was the only copy and the answer was lost on restart.
+	// API Spec §5.7 defaults `layout.export` to it and §5.3 reports it.
 	mu           sync.RWMutex
 	focusedWS    string
 	focusedTabOf map[string]string
@@ -67,6 +80,9 @@ func New(cfg Config) (*Service, error) {
 	}
 	return &Service{
 		tree: cfg.Tree, terminals: cfg.Terminals, bus: cfg.Bus, shell: cfg.Shell,
+		log:          logger(cfg.Logger),
+		paneHistory:  cfg.PaneHistory,
+		screens:      cfg.Screens,
 		focusedTabOf: map[string]string{},
 	}, nil
 }
@@ -165,11 +181,46 @@ func (s *Service) CreateWorkspace(ctx context.Context, params domain.CreateWorks
 	s.publish(ports.TabEvent{Kind: ports.KindTabCreated, Tab: tree.Tab})
 	s.publish(ports.PaneEvent{Kind: ports.KindPaneCreated, Pane: tree.RootPane})
 	if params.Focus {
-		s.setFocusedWorkspace(tree.Workspace.ID)
-		s.setFocusedTab(tree.Workspace.ID, tree.Tab.ID)
+		s.setFocusedWorkspace(ctx, tree.Workspace.ID)
+		s.setFocusedTab(ctx, tree.Workspace.ID, tree.Tab.ID)
 		s.publish(ports.WorkspaceEvent{Kind: ports.KindWorkspaceFocused, Workspace: tree.Workspace})
 	}
 	return tree, nil
+}
+
+// attachPending gives an applied pane a shell and leaves its command waiting (REQ-TERM-011).
+//
+// It is `attach`'s sibling rather than a flag on it, because the two differ in what they
+// promise: `attach` runs what the pane says it runs, which is what `pane.split` asks for;
+// this one deliberately does not, and a boolean argument at the call site would have made
+// that the less visible of the two.
+func (s *Service) attachPending(ctx context.Context, pane domain.Pane) (domain.Pane, error) {
+	if len(pane.Command) == 0 {
+		return s.attach(ctx, pane)
+	}
+	if s.terminals == nil {
+		pane.CommandPending = true
+		return pane, nil
+	}
+
+	session, err := s.terminals.Create(ctx, sessdomain.CreateParams{
+		Shell: s.shell, CWD: pane.CWD, Env: pane.Env, Size: defaultPaneSize,
+		ShellIntegration: true,
+		TypeAtPrompt:     []byte(shellLine(pane.Command)),
+	})
+	if err != nil {
+		return domain.Pane{}, fmt.Errorf("workspaces: start the pane's terminal: %w", err)
+	}
+	if err := s.tree.AttachSession(ctx, pane.ID, session.ID); err != nil {
+		_ = s.terminals.Close(ctx, session.ID)
+		return domain.Pane{}, err
+	}
+	if err := s.tree.SetCommandPending(ctx, pane.ID); err != nil {
+		return domain.Pane{}, err
+	}
+	pane.SessionID = session.ID
+	pane.CommandPending = true
+	return pane, nil
 }
 
 // attach gives a pane a terminal. A pane whose terminal cannot start is reported as an
@@ -248,7 +299,7 @@ func (s *Service) FocusWorkspace(ctx context.Context, id string) (domain.Workspa
 	if ws.RollupState, err = s.rollup(ctx, ws); err != nil {
 		return domain.Workspace{}, err
 	}
-	s.setFocusedWorkspace(ws.ID)
+	s.setFocusedWorkspace(ctx, ws.ID)
 	s.publish(ports.WorkspaceEvent{Kind: ports.KindWorkspaceFocused, Workspace: ws})
 	return ws, nil
 }
@@ -391,7 +442,7 @@ func (s *Service) CreateTab(ctx context.Context, workspaceID, label string, focu
 	s.publish(ports.TabEvent{Kind: ports.KindTabCreated, Tab: tab})
 	s.publish(ports.PaneEvent{Kind: ports.KindPaneCreated, Pane: pane})
 	if focus {
-		s.setFocusedTab(tab.WorkspaceID, tab.ID)
+		s.setFocusedTab(ctx, tab.WorkspaceID, tab.ID)
 		s.publish(ports.TabEvent{Kind: ports.KindTabFocused, Tab: tab})
 	}
 	return tab, pane, nil
@@ -414,7 +465,7 @@ func (s *Service) FocusTab(ctx context.Context, id string) (domain.Tab, error) {
 	if err != nil {
 		return domain.Tab{}, err
 	}
-	s.setFocusedTab(tab.WorkspaceID, tab.ID)
+	s.setFocusedTab(ctx, tab.WorkspaceID, tab.ID)
 	s.publish(ports.TabEvent{Kind: ports.KindTabFocused, Tab: tab})
 	return tab, nil
 }
@@ -671,17 +722,30 @@ func (s *Service) Layout(ctx context.Context, tabID string) (domain.Layout, erro
 }
 
 // setFocusedWorkspace and setFocusedTab record what the last focus call chose.
-func (s *Service) setFocusedWorkspace(id string) {
+func (s *Service) setFocusedWorkspace(ctx context.Context, id string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.focusedWS = id
+	tabID := s.focusedTabOf[id]
+	s.mu.Unlock()
+	s.rememberFocus(ctx, id, tabID)
 }
 
-func (s *Service) setFocusedTab(workspaceID, tabID string) {
+func (s *Service) setFocusedTab(ctx context.Context, workspaceID, tabID string) {
+	s.mu.Lock()
+	s.focusedWS = workspaceID
+	s.focusedTabOf[workspaceID] = tabID
+	s.mu.Unlock()
+	s.rememberFocus(ctx, workspaceID, tabID)
+}
+
+// adoptFocus installs focus read back from the database without writing it again.
+func (s *Service) adoptFocus(workspaceID, tabID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.focusedWS = workspaceID
-	s.focusedTabOf[workspaceID] = tabID
+	if tabID != "" {
+		s.focusedTabOf[workspaceID] = tabID
+	}
 }
 
 // forgetTab and forgetWorkspace drop focus that points at something closed.
@@ -762,13 +826,26 @@ func (s *Service) ApplyLayout(ctx context.Context, params domain.ApplyLayoutPara
 	// some empty ones, which is exactly the "asked for four panes and got two" this
 	// method exists to prevent. So a failure unwinds: the tab goes, and with it the panes
 	// and the terminals that did start.
+	//
+	// And every pane gets a **shell**, never the command its node carried. REQ-TERM-011:
+	// "`layout.apply` behaves the same way: it returns the commands as pending, never as
+	// launched". A layout is an intention from another time and possibly another machine,
+	// so applying one is not consent to run what it holds; the command is stored, marked
+	// pending, and typed at the pane's prompt for the user to accept or edit.
+	pendingCommands := false
 	for i := range applied.Panes {
-		pane, err := s.attach(ctx, applied.Panes[i])
+		pane, err := s.attachPending(ctx, applied.Panes[i])
 		if err != nil {
 			s.unapply(ctx, applied)
 			return domain.Applied{}, err
 		}
+		if pane.CommandPending {
+			pendingCommands = true
+		}
 		applied.Panes[i] = pane
+	}
+	if pendingCommands {
+		applied.Warnings = append(applied.Warnings, domain.PendingCommandWarning)
 	}
 
 	s.publish(ports.TabEvent{Kind: ports.KindTabCreated, Tab: applied.Tab})
@@ -777,7 +854,7 @@ func (s *Service) ApplyLayout(ctx context.Context, params domain.ApplyLayoutPara
 	}
 	s.publishLayout(ctx, applied.Tab.ID)
 	if params.Focus {
-		s.setFocusedTab(applied.Tab.WorkspaceID, applied.Tab.ID)
+		s.setFocusedTab(ctx, applied.Tab.WorkspaceID, applied.Tab.ID)
 		s.publish(ports.TabEvent{Kind: ports.KindTabFocused, Tab: applied.Tab})
 	}
 	return applied, nil
@@ -859,4 +936,13 @@ func (s *Service) Snapshot(ctx context.Context) (domain.Snapshot, error) {
 		}
 	}
 	return out, nil
+}
+
+// logger returns the configured logger or one that discards, so no call site needs a nil
+// check and a test may leave it out.
+func logger(l *slog.Logger) *slog.Logger {
+	if l != nil {
+		return l
+	}
+	return slog.New(slog.DiscardHandler)
 }

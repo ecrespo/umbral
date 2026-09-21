@@ -352,6 +352,27 @@ shell/                       # bash, zsh, fish bootstrap
 testdata/vt/                 # VT conformance suite
 ```
 
+### Configuration
+
+`$XDG_CONFIG_HOME/umbral/config.toml`, read once when the daemon starts. Three rules, and the
+second is the one that matters:
+
+- **Absent is the default configuration, not an error.** Umbral runs with no configuration at all;
+  a local-first tool owes a new user a working daemon before it owes them a settings file.
+- **Malformed refuses to start.** Falling back to defaults after the user asked for something is
+  how `pane_history = true` silently becomes false and someone believes their screens are being
+  captured when they are not. This is REQ-SEC-010's "SHALL NOT fall back to an empty rule set"
+  pointed the other way: when a user has stated an intention, guessing is worse than stopping.
+- **An unknown key warns.** A configuration written for a later version still starts this one.
+
+F0 reads one section and one key:
+
+```toml
+[experimental]
+pane_history = false   # REQ-TERM-010: capture and replay pane screens. Off by default,
+                       # because pane output can contain secrets.
+```
+
 ### 5.2 Dependency rules (Art. 3, verified by `go-arch-lint`)
 
 | From | May import |

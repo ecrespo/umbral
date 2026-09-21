@@ -92,9 +92,14 @@ func waitUntilArmed(t *testing.T, h *harness, sessionID string) {
 	const probe = "printf 'umbral-probe\\n'"
 	typeCommand(t, h, sessionID, probe)
 
+	// Generous, and for the same reason as the shell bootstrap's exit budget: this bound
+	// exists to stop a wedged shell hanging the suite, not to measure anything. Three real
+	// shells start in parallel here, and under `go test -race ./...` on a loaded machine
+	// zsh has taken past thirty seconds to run its first command through the hooks — a red
+	// build that says nothing about the code, and is read as a finding.
 	retry := time.NewTicker(2 * time.Second)
 	defer retry.Stop()
-	deadline := time.After(30 * time.Second)
+	deadline := time.After(90 * time.Second)
 
 	for {
 		select {

@@ -66,6 +66,13 @@ func (f *fakeTerminals) failAfter(n int) {
 	f.failOn = f.n + n + 1
 }
 
+// count reports how many terminals this fake has been asked for.
+func (f *fakeTerminals) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.n
+}
+
 func (f *fakeTerminals) createdIDs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -83,7 +90,10 @@ type harness struct {
 	*workspaces.Service
 	terminals *fakeTerminals
 	store     *store.Store
-	events    *bus.Subscription
+	// screens reads what the capture wrote, so a test asserts on the database rather than
+	// on what the service reported writing.
+	screens *treestore.Store
+	events  *bus.Subscription
 }
 
 func newHarness(t *testing.T) *harness {
@@ -224,4 +234,92 @@ func countKind(events []bus.Event, kind bus.Kind) int {
 		}
 	}
 	return n
+}
+
+// restart builds a second service over the same database, which is what a daemon restart is:
+// the rows survive and the processes do not.
+//
+// New fake terminals on purpose. Reusing the first set would let a restored pane point at a
+// session that is still "alive" in the fake, and the one thing a restart has to get right is
+// that those are gone.
+func (h *harness) restart(t *testing.T) *harness {
+	t.Helper()
+
+	tree, err := treestore.New(h.store)
+	if err != nil {
+		t.Fatalf("treestore.New on restart: %v", err)
+	}
+	// The counter starts past the first run's, so the identifiers differ the way a real
+	// restart's do. Without it every restored pane would appear to have kept its previous
+	// session, and the assertion that they are new would fail on an artefact of the fake
+	// rather than on anything the daemon did.
+	terminals := &fakeTerminals{n: h.terminals.count() + 1000}
+	eventBus := bus.New()
+	t.Cleanup(eventBus.Close)
+	events := eventBus.SubscribeBuffered(256,
+		wsports.KindWorkspaceCreated, wsports.KindWorkspaceUpdated,
+		wsports.KindWorkspaceClosed, wsports.KindWorkspaceFocused,
+		wsports.KindTabCreated, wsports.KindTabClosed, wsports.KindTabFocused,
+		wsports.KindPaneCreated, wsports.KindPaneUpdated, wsports.KindPaneClosed,
+		wsports.KindPaneFocused, wsports.KindPaneMoved, wsports.KindLayoutUpdated)
+	t.Cleanup(events.Close)
+
+	service, err := workspaces.New(workspaces.Config{
+		Tree: &sessionRegistering{Tree: tree, db: h.store, t: t}, Terminals: terminals,
+		Bus: eventBus,
+	})
+	if err != nil {
+		t.Fatalf("workspaces.New on restart: %v", err)
+	}
+	return &harness{Service: service, terminals: terminals, store: h.store, events: events}
+}
+
+// fakeScreens hands the capture a fixed screen, so the test is about what the service does
+// with it rather than about a real emulator.
+type fakeScreens struct{ screen string }
+
+func (f fakeScreens) Screen(context.Context, string) (wsports.Screen, error) {
+	return wsports.Screen{Data: []byte(f.screen), Rows: 1}, nil
+}
+
+// allLaunched reports every set of parameters a terminal was started with.
+func (f *fakeTerminals) allLaunched() []sessdomain.CreateParams {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]sessdomain.CreateParams(nil), f.launched...)
+}
+
+func (h *harness) restartWithHistory(t *testing.T, on bool, screen string) *harness {
+	t.Helper()
+	next := h.restart(t)
+	return rebuild(t, next, on, screen)
+}
+
+func newHarnessWithHistory(t *testing.T, on bool, screen string) *harness {
+	t.Helper()
+	return rebuild(t, newHarness(t), on, screen)
+}
+
+// rebuild replaces a harness's service with one configured for pane history, over the same
+// database and the same fake terminals.
+func rebuild(t *testing.T, h *harness, on bool, screen string) *harness {
+	t.Helper()
+
+	tree, err := treestore.New(h.store)
+	if err != nil {
+		t.Fatalf("treestore.New: %v", err)
+	}
+	eventBus := bus.New()
+	t.Cleanup(eventBus.Close)
+
+	service, err := workspaces.New(workspaces.Config{
+		Tree: &sessionRegistering{Tree: tree, db: h.store, t: t}, Terminals: h.terminals,
+		Bus: eventBus, PaneHistory: on, Screens: fakeScreens{screen: screen},
+	})
+	if err != nil {
+		t.Fatalf("workspaces.New: %v", err)
+	}
+	h.Service = service
+	h.screens = tree
+	return h
 }

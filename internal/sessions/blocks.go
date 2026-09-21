@@ -26,7 +26,12 @@ func (s *Service) recordOutput(live *liveSession, chunk []byte) {
 		return
 	}
 
-	actions := live.recorder.Feed(live.scanner.Scan(chunk))
+	events := live.scanner.Scan(chunk)
+	// A pane restored with a stored command shows it once the shell is ready to be typed
+	// into, which is the first prompt that ends (REQ-TERM-011).
+	s.notePrompt(live, events)
+
+	actions := live.recorder.Feed(events)
 	for _, action := range actions {
 		s.applyBlockAction(live, action)
 	}

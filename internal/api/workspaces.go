@@ -47,14 +47,18 @@ type Tab struct {
 // and a client written against F0 should not have to change when F1 starts filling them
 // (delta `2026-09-pane-attention-state`).
 type Pane struct {
-	ID             string            `json:"id"`
-	TabID          string            `json:"tab_id"`
-	WorkspaceID    string            `json:"workspace_id"`
-	SessionID      *string           `json:"session_id"`
-	ThreadID       *string           `json:"thread_id"`
-	Label          string            `json:"label"`
-	CWD            string            `json:"cwd"`
-	Command        []string          `json:"command,omitempty"`
+	ID          string   `json:"id"`
+	TabID       string   `json:"tab_id"`
+	WorkspaceID string   `json:"workspace_id"`
+	SessionID   *string  `json:"session_id"`
+	ThreadID    *string  `json:"thread_id"`
+	Label       string   `json:"label"`
+	CWD         string   `json:"cwd"`
+	Command     []string `json:"command,omitempty"`
+	// CommandPending says Umbral has not run Command: a restart and `layout.apply` leave
+	// it waiting at the pane's prompt rather than executing it (REQ-TERM-011). Omitted when
+	// false, like Command, so its absence reads as "nothing waiting".
+	CommandPending bool              `json:"command_pending,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
 	Aliases        []string          `json:"aliases"`
 	AttentionState string            `json:"attention_state"`
@@ -143,7 +147,7 @@ func toWirePane(p wsdomain.Pane) Pane {
 	return Pane{
 		ID: p.ID, TabID: p.TabID, WorkspaceID: p.WorkspaceID,
 		SessionID: emptyAsNull(p.SessionID), ThreadID: emptyAsNull(p.ThreadID),
-		Label: p.Label, CWD: p.CWD, Command: p.Command, Env: p.Env,
+		Label: p.Label, CWD: p.CWD, Command: p.Command, CommandPending: p.CommandPending, Env: p.Env,
 		Aliases: aliases, AttentionState: string(p.AttentionState),
 		StateSource: emptyAsNull(p.StateSource), Metadata: map[string]any{},
 		CreatedAt: p.CreatedAt.UnixMilli(), ClosedAt: millisPtr(p.ClosedAt),

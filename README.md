@@ -22,12 +22,12 @@
 
 ## Status
 
-🚧 **Phase F0 in progress.** The quality gate passes with no critical findings and no change
-proposal is pending. Alongside the full SDD package (constitution, PRD with EARS, API, technical
+🚧 **Phase F0 complete.** The quality gate passes with no critical findings; one change proposal
+is pending ratification ([`changes/2026-09-restore-semantics`](changes/2026-09-restore-semantics/)). Alongside the full SDD package (constitution, PRD with EARS, API, technical
 design, data model, plan, tasks and Analyze), `umbrald` already exists: it owns durable PTY sessions
 with a libghostty emulator, streams them over a 0600 JSON-RPC socket, records a block per command
 from the shell integration, and searches 100,000 blocks in a few milliseconds against a 200 ms budget. Tasks
-[`T-F0-01` … `T-F0-17`](specs/tasks/umbral-f0-tasks.md) are done, so `umb status` and
+[`T-F0-01` … `T-F0-18`](specs/tasks/umbral-f0-tasks.md) are done, so `umb status` and
 `umb block last --json` work from any terminal. `umbral-tui` — tabs, a split and a block
 list — passes its tests and its
 [manual checklist](docs/qa/f0-tui.md), walked end to end on a real terminal. Three of the four performance NFRs are

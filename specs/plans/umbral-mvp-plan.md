@@ -78,7 +78,7 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 | T-F0-15 | Portable layouts (`layout.export` / `apply`) | 1.5d | T-F0-14 | ✅ 2026-09-20 |
 | T-F0-16 | `session.snapshot` and event sequencing | 1.5d | T-F0-14 | ✅ 2026-09-20 |
 | T-F0-17 | Protocol schema and capability degradation | 1.5d | T-F0-03 | ✅ |
-| T-F0-18 | Structure restore after restart (+ optional pane history) | 2d | T-F0-14 | ☐ |
+| T-F0-18 | Structure restore after restart (+ optional pane history) | 2d | T-F0-14 | ✅ |
 
 **F0 "Done" criteria:**
 - VT conformance suite 100 % MUST green (REQ-TERM-002) — ☑ met by T-F0-07, 20 MUST cases.
@@ -98,7 +98,7 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 
 | ID | Task | Estimate | Dependency | Status |
 |---|---|---|---|---|
-| T-F1-01 | Migration 0004 (agent, models, audit, MCP) | 1d | F0 | ☐ |
+| T-F1-01 | Migration 0005 (agent, models, audit, MCP) | 1d | F0 | ☐ |
 | T-F1-02 | Keyring and config loader that rejects plaintext secrets | 1d | T-F1-01 | ☐ |
 | T-F1-03 | Policy engine (pure function) | 2d | T-F1-01 | ☐ |
 | T-F1-04 | Secret redaction | 1.5d | T-F1-01 | ☐ |

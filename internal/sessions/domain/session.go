@@ -146,6 +146,30 @@ type CreateParams struct {
 	// failure, and REQ-BLK-003 already describes the resulting `integration: none`.
 	Command          []string
 	ShellIntegration bool
+	// TypeAtPrompt is written into the session once its shell shows a prompt, without a
+	// trailing newline, so it sits on the command line as if the user had typed it.
+	//
+	// REQ-TERM-011 is why it exists: a restored pane, or one built by `layout.apply`,
+	// must show its stored command without running it, and the confirmation is the user
+	// pressing Enter. It lives here rather than in the workspaces module because this is
+	// where the PTY and the shell-integration markers are — the tree has no business
+	// knowing when a prompt appeared, and `ports.Terminals` says in as many words that a
+	// pane never writes input.
+	//
+	// Writing before the prompt loses the bytes to the terminal discipline, so the session
+	// waits for the first OSC 133 prompt marker; a shell with no integration never sends
+	// one, so the wait has a deadline and the text is typed anyway. A command that appears
+	// early is a better failure than one that never appears.
+	TypeAtPrompt []byte
+	// ReplayScreen is a VT stream written into the session's emulator before the shell
+	// produces anything, so a restored pane comes back showing what it showed before
+	// (REQ-TERM-010).
+	//
+	// It goes to the emulator and never to the PTY: these are bytes the *terminal* once
+	// printed, and writing them to the shell's input would hand a program's output back to
+	// it as if a user had typed it. The distinction is the whole difference between
+	// restoring a screen and replaying a session.
+	ReplayScreen []byte
 }
 
 // MaxCommandArgs caps a pane's launch argv. The API sets no number; one is set here because

@@ -10,15 +10,15 @@ default CI.
 
 ## Tasks
 
-### [ ] T-F1-01 · Migration 0004 (agent, models, audit, MCP)
+### [ ] T-F1-01 · Migration 0005 (agent, models, audit, MCP)
 - **What:** Data Model tables §2.4c to §2.13 with their indexes, plus recovery §6 steps 3-4.
   `threads` (§2.5) is **not** created here: migration 0001 already created it (§5, finding A-01).
   The structure tables (§2.4b) are **not** created here either: migration 0003 owns them (T-F0-14).
   `messages` includes `client_msg_id` and its partial unique index `idx_messages_client_msg`.
 - **REQ:** REQ-AGT-011, REQ-LLM-005, REQ-SEC-002
-- **Files:** `internal/store/migrations/0004_agent.sql`, `internal/store/**`
+- **Files:** `internal/store/migrations/0005_agent.sql`, `internal/store/**`
 - **Depends on:** F0 complete
-- **Done:** `TestMigration0004Constraints` and `TestRecoveryExpiresPendingApprovals_REQ_AGT_011` green.
+- **Done:** `TestMigration0005Constraints` and `TestRecoveryExpiresPendingApprovals_REQ_AGT_011` green.
 
 ### [ ] T-F1-02 · Keyring and configuration loader
 - **What:**
@@ -242,7 +242,7 @@ default CI.
 ### [ ] T-F1-24 · Attention state and thread resume
 - **What:** `attention_state` and `seen_at` on threads; `done` until a client focuses it; `thread.attention_changed` notification; restore threads after a restart with their history and `stopped` turns. The two columns are added by the `ALTER TABLE` statements of Data Model §2.5 inside migration **0004**, because 0001 created `threads` and is already applied (Art. 6).
 - **REQ:** REQ-AGT-016, REQ-AGT-017
-- **Files:** `internal/agents/attention*.go`, `internal/store/migrations/0004_agent.sql`, `internal/store/**`
+- **Files:** `internal/agents/attention*.go`, `internal/store/migrations/0005_agent.sql`, `internal/store/**`
 - **Depends on:** T-F1-13
 - **Done:** `TestDoneUntilFocused_REQ_AGT_016` and `TestThreadsResumeAfterRestart_REQ_AGT_017` green.
 

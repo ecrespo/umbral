@@ -244,6 +244,13 @@ func ClampRatio(ratio float64) float64 {
 // client showing it to a user is entitled to the same words every time.
 const ApplyWarning = "live processes and scrollback are not reproduced"
 
+// PendingCommandWarning is REQ-TERM-011's half, present only when the tree carried a command.
+//
+// The requirement's last sentence is explicit — "`layout.apply` behaves the same way: it
+// returns the commands as pending, never as launched" — and a client that was not told would
+// reasonably conclude the tab it asked for is running, when every pane is sitting at a prompt.
+const PendingCommandWarning = "commands are pending: they are typed at each pane's prompt and run when you press Enter"
+
 // ApplyLayoutParams is what `layout.apply` takes (API Spec §5.8).
 type ApplyLayoutParams struct {
 	WorkspaceID string

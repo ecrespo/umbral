@@ -391,7 +391,7 @@ func (s *Store) AttachSession(ctx context.Context, paneID, sessionID string) err
 }
 
 const paneColumns = `p.id, p.tab_id, t.workspace_id, p.session_id, p.label, p.cwd,
-	p.command_json, p.env_json, p.order_index, p.created_at, p.closed_at`
+	p.command_json, p.command_pending, p.env_json, p.order_index, p.created_at, p.closed_at`
 
 func scanPane(row scanner) (domain.Pane, error) {
 	var (
@@ -404,7 +404,7 @@ func scanPane(row scanner) (domain.Pane, error) {
 		closedAt sql.NullInt64
 	)
 	if err := row.Scan(&pane.ID, &pane.TabID, &pane.WorkspaceID, &session, &label, &pane.CWD,
-		&command, &env, &pane.OrderIndex, &created, &closedAt); err != nil {
+		&command, &pane.CommandPending, &env, &pane.OrderIndex, &created, &closedAt); err != nil {
 		return domain.Pane{}, fmt.Errorf("treestore: read pane: %w", err)
 	}
 	pane.SessionID = session.String
@@ -420,7 +420,7 @@ func scanPane(row scanner) (domain.Pane, error) {
 	}
 	pane.CreatedAt = epoch(created)
 	pane.ClosedAt = epochPtr(closedAt)
-	// F0 has no producer of a pane state: `pane_state_reports` is migration 0004 and
+	// F0 has no producer of a pane state: `pane_state_reports` is migration 0005 and
 	// threads are F1 (delta `2026-09-pane-attention-state`).
 	pane.AttentionState = domain.AttentionUnknown
 	return pane, nil

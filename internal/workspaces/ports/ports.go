@@ -16,6 +16,11 @@ import (
 
 // Workspaces is the module's inbound port: the `workspace.*`, `tab.*` and `pane.*` surface
 // of API Spec §5.4 to §5.6.
+//
+// `Restore` is deliberately absent. It is called once, by the composition root, on the
+// concrete service — `api` has no business rebuilding the tree, and putting it here would
+// both widen what the wire layer can reach and make every fake in every wire test implement
+// a method none of them exercises.
 type Workspaces interface {
 	// CreateWorkspace builds a workspace, its first tab and its root pane and returns all
 	// three (REQ-WS-001). One call, one response, never a half-built tree.
@@ -76,6 +81,16 @@ type Workspaces interface {
 	Snapshot(ctx context.Context) (domain.Snapshot, error)
 }
 
+// Restored is what a restart finds waiting in the database (REQ-TERM-009).
+//
+// The panes come back with their session cleared, because the terminals they named died with
+// the previous daemon, and with `CommandPending` set wherever a command was stored: a restart
+// never runs one (REQ-TERM-011).
+type Restored struct {
+	Panes []domain.Pane
+	Focus domain.Focus
+}
+
 // Moved is what a completed `pane.move` reports. The previous identifiers are in the
 // result rather than left for the caller to remember, because API Spec §6 puts them in the
 // `pane.moved` notification and a caller that had to cache them would be one refactor away
@@ -108,6 +123,31 @@ type Terminals interface {
 	Close(ctx context.Context, id string) error
 }
 
+// Screens is the narrow view of the sessions module that REQ-TERM-010's capture needs: the
+// current screen of one session, as a VT stream that replays into an empty emulator.
+//
+// It is separate from Terminals rather than folded into it because the two are used under
+// different conditions — Terminals on every pane, this one only while pane history is on —
+// and because a port that can read screens is one a future change could quietly use for
+// something the user did not opt into.
+type Screens interface {
+	Screen(ctx context.Context, sessionID string) (Screen, error)
+}
+
+// Screen is a pane's current display, in this module's own terms.
+//
+// It is not `sessions/ports.Snapshot`, and the boundary rules are right to refuse that:
+// `workspaces` depends on the *domain* of `sessions` and never on its ports, so a type
+// declared here and adapted by the composition root is what keeps the two modules from
+// growing into one. The cost is a four-line struct; the benefit is that a change to what
+// `session.subscribe` returns is not automatically a change to what a restart stores.
+type Screen struct {
+	// Data is a VT stream that replays into an empty emulator.
+	Data []byte
+	// Rows is how many lines it represents, which Data Model §2.4d stores beside it.
+	Rows int
+}
+
 // Tree is the persistence port: the whole tree's storage, in one interface because every
 // operation on it spans at least two tables and has to be one transaction.
 //
@@ -127,6 +167,25 @@ type Tree interface {
 	// CloseWorkspace marks a workspace and everything under it closed, and reports the
 	// sessions that were attached so the caller can terminate them.
 	CloseWorkspace(ctx context.Context, id string) ([]string, error)
+
+	// Restore reads what a restart has to rebuild and clears the previous run's sessions
+	// in the same transaction (REQ-TERM-009, Data Model §6 step 5).
+	Restore(ctx context.Context) (Restored, error)
+	// SetFocus persists which workspace is focused and which tab inside it, so the answer
+	// survives a restart instead of living only in the service.
+	SetFocus(ctx context.Context, workspaceID, tabID string, atMillis int64) error
+	// SetCommandPending and ClearCommandPending record whether a pane's stored command is
+	// still waiting to be run (REQ-TERM-011).
+	SetCommandPending(ctx context.Context, paneID string) error
+	ClearCommandPending(ctx context.Context, paneID string) error
+
+	// SaveScreen, LoadScreen and ForgetScreens are REQ-TERM-010's opt-in replay. They are
+	// called only while the setting is on, except ForgetScreens, which runs once at start
+	// when it is off — Data Model §2.4d makes turning it off a promise that what was
+	// captured stops existing.
+	SaveScreen(ctx context.Context, paneID string, screen []byte, rows int, atMillis int64) error
+	LoadScreen(ctx context.Context, paneID string) ([]byte, error)
+	ForgetScreens(ctx context.Context) error
 
 	// CreateTab allocates a tab and its root pane inside an existing workspace.
 	CreateTab(ctx context.Context, workspaceID, label string) (domain.Tab, domain.Pane, error)

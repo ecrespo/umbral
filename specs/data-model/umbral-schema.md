@@ -195,6 +195,11 @@ CREATE TABLE workspaces (
   label       TEXT NOT NULL,
   cwd         TEXT NOT NULL,
   order_index INTEGER NOT NULL DEFAULT 0,
+  -- Which tab is focused inside this workspace, and when the workspace itself was last
+  -- focused. The focused workspace is the one with the greatest focused_at. Added by
+  -- migration 0004; before it, focus lived only in memory and did not survive a restart.
+  focused_tab_id TEXT REFERENCES tabs(id) ON DELETE SET NULL,
+  focused_at  INTEGER,
   created_at  INTEGER NOT NULL,
   closed_at   INTEGER
 );
@@ -216,7 +221,11 @@ CREATE TABLE panes (
   session_id  TEXT REFERENCES sessions(id),   -- NULL while the pane has no live session
   label       TEXT,
   cwd         TEXT NOT NULL,
-  command_json TEXT,                          -- argv used to relaunch it on restore
+  command_json TEXT,                          -- argv the pane runs instead of a shell
+  -- 1 while that command has not been run by Umbral. Set by `layout.apply` and by restore,
+  -- never by `pane.split`: a restart and an applied layout replay an intention from another
+  -- time, and REQ-TERM-011 forbids acting on one unasked. Added by migration 0004.
+  command_pending INTEGER NOT NULL DEFAULT 0 CHECK (command_pending IN (0,1)),
   env_json    TEXT NOT NULL DEFAULT '{}',
   order_index INTEGER NOT NULL DEFAULT 0,
   created_at  INTEGER NOT NULL,
@@ -232,7 +241,7 @@ CREATE TABLE pane_aliases (
 );
 ```
 
-### 2.4c `pane_state_reports` and `pane_metadata` (migration 0004)
+### 2.4c `pane_state_reports` and `pane_metadata` (migration 0005)
 
 **Purpose:** external state authority and display metadata, kept apart on purpose (REQ-INT-002 to
 REQ-INT-005). Semantic state drives waits, rollups and notifications; metadata never does.
@@ -281,7 +290,7 @@ CREATE TABLE pane_history (
 Rows are written only while `[experimental] pane_history = true`. Turning the setting off deletes
 the table's contents at the next start.
 
-### 2.4e `rule_bundles` and `trust_keys` (migration 0004)
+### 2.4e `rule_bundles` and `trust_keys` (migration 0005)
 
 **Purpose:** provenance of the redaction rules and destructive patterns, and the trust store used to
 verify them (REQ-SEC-011 to REQ-SEC-016). Private keys never live here: the store holds public keys
@@ -333,7 +342,7 @@ CREATE TABLE threads (
 CREATE INDEX idx_threads_updated ON threads(updated_at DESC) WHERE ephemeral = 0;
 ```
 
-The attention columns of REQ-AGT-016 and REQ-NTF-002 arrive in migration **0004**, not in the
+The attention columns of REQ-AGT-016 and REQ-NTF-002 arrive in migration **0005**, not in the
 block above. Migration 0001 created `threads` and is applied, and Art. 6 makes migrations
 forward-only: a column added to an applied file exists on no database that already ran it.
 `attention_state` takes a default rather than being `NOT NULL` without one, because
@@ -341,7 +350,7 @@ forward-only: a column added to an applied file exists on no database that alrea
 `CHECK` in an `ALTER`, so the constraint is enforced by the writer and stated here.
 
 ```sql
--- migration 0004, alongside the agent tables (T-F1-01)
+-- migration 0005, alongside the agent tables (T-F1-01)
 ALTER TABLE threads ADD COLUMN attention_state TEXT NOT NULL DEFAULT 'idle';  -- REQ-AGT-016
                              -- one of 'idle','working','blocked','done','unknown'
 ALTER TABLE threads ADD COLUMN seen_at INTEGER;  -- when a client last focused it; NULL = never
@@ -552,7 +561,8 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 | `0001_terminal.sql` | F0 | `schema_migrations`, **`threads`** (§2.5) and `idx_threads_updated`, `sessions`, `blocks`, `block_chunks`, `blocks_fts` and its three triggers, plus every index in §2.1-2.5 except `idx_blocks_started` |
 | `0002_block_index.sql` | F0 | `idx_blocks_started` (§2.2) |
 | `0003_structure.sql` | F0 | `workspaces`, `tabs`, `panes`, `pane_aliases` and their indexes (§2.4b) |
-| `0004_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers`, `pane_state_reports`, `pane_metadata`, `pane_history`, `trust_keys`, `rule_bundles` and their indexes (§2.4c-2.4e, §2.6-2.13), plus the two `ALTER TABLE threads` statements of §2.5 |
+| `0004_restore.sql` | F0 | `pane_history` (§2.4d), `panes.command_pending` and `workspaces.focused_tab_id`/`focused_at` (§2.4b) — everything a restart needs and nothing else (T-F0-18) |
+| `0005_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers`, `pane_state_reports`, `pane_metadata`, `trust_keys`, `rule_bundles` and their indexes (§2.4c-2.4e, §2.6-2.13), plus the two `ALTER TABLE threads` statements of §2.5 |
 
 `threads` belongs to 0001 even though the agent arrives in F1: `sessions.owner_thread_id` and
 `blocks.thread_id` point at it, and with `foreign_keys=ON` SQLite rejects every insert into those
@@ -563,7 +573,7 @@ of their own rather than as lines added to 0001, because 0001 had already been a
 need was established. Migrations are forward-only (Art. 6) and the runner records only the
 version a database reached, so editing an applied file changes nothing for the databases that
 ran it: they would have kept the 141 ms scan, or come up without a workspace table, with nothing
-to report the divergence. This is why the agent subdomain is `0004` rather than the `0002`
+to report the divergence. This is why the agent subdomain is `0005` rather than the `0002`
 earlier drafts named.
 
 ## 6. Recovery after a daemon restart
@@ -573,8 +583,12 @@ earlier drafts named.
 3. `threads.state IN ('running','awaiting_approval')` → `stopped`.
 4. `approvals.state = 'pending'` → `expired`.
 5. Structure: `workspaces`, `tabs` and `panes` that were not closed are reopened with their labels,
-   cwd and `layout_json`; each pane launches a fresh shell, or its `command_json` when it has one
-   (REQ-TERM-009). `panes.session_id` is cleared before relaunching.
+   cwd and `layout_json`; **every pane launches a fresh shell**, whatever it was running before
+   (REQ-TERM-009). `panes.session_id` is cleared before relaunching. A pane with a `command_json`
+   keeps it, `command_pending` is set, and the command is typed at the new shell's prompt without a
+   newline — visible, waiting for the user to press Enter, never executed by the restart
+   (REQ-TERM-011). `workspaces.focused_tab_id` and `focused_at` restore which tab and which
+   workspace were focused.
 6. Screen: if `[experimental] pane_history = true`, the stored screen of each pane is replayed
    before the new shell's output (REQ-TERM-010).
 7. Threads keep their full history; those left `running` or `awaiting_approval` become `stopped` and

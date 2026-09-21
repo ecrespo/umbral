@@ -14,7 +14,7 @@ const (
 	AttentionIdle    AttentionState = "idle"
 	// AttentionUnknown is the absence of a report, not a report of nothing. It is the
 	// state every pane starts in and the only one F0 produces: `pane_state_reports` is
-	// migration 0004 and threads are F1, so nothing reports yet (delta
+	// migration 0005 and threads are F1, so nothing reports yet (delta
 	// `2026-09-pane-attention-state`).
 	AttentionUnknown AttentionState = "unknown"
 )
@@ -103,14 +103,20 @@ type Pane struct {
 	Label       string
 	CWD         string
 	Command     []string
-	Env         map[string]string
-	OrderIndex  int
+	// CommandPending says Umbral has not run Command. It is set by `layout.apply` and by a
+	// restart and never by `pane.split`, because REQ-TERM-011 forbids acting unasked on an
+	// intention recorded at another time — while a client calling `pane.split` with a
+	// command is asking for it now. The command is typed at the pane's prompt without a
+	// newline; the user pressing Enter is the confirmation the requirement asks for.
+	CommandPending bool
+	Env            map[string]string
+	OrderIndex     int
 	// Aliases are the identifiers this pane answered to before it was moved, oldest first,
 	// and they stay resolvable for the life of the terminal (REQ-WS-007). The current id is
 	// included, so a client can render the whole set without appending it.
 	Aliases []string
 	// AttentionState is `unknown` in F0 and StateSource is empty with it: nothing reports
-	// a pane state until migration 0004 brings `pane_state_reports`.
+	// a pane state until migration 0005 brings `pane_state_reports`.
 	AttentionState AttentionState
 	StateSource    string
 	CreatedAt      time.Time

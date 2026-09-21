@@ -49,6 +49,7 @@ const (
 	exitDataErr     = 65 // EX_DATAERR: the database is unusable, for example a newer schema
 	exitUnavailable = 69 // EX_UNAVAILABLE: the socket could not be served
 	exitCantCreate  = 73 // EX_CANTCREAT: a required file or directory could not be created
+	exitConfig      = 78 // EX_CONFIG: the settings file is there and cannot be read
 )
 
 func main() {
@@ -82,6 +83,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		logger.Error("cannot locate the socket", slog.Any("error", err))
 		return exitCantCreate
+	}
+
+	// Settings before anything they configure, and a malformed file stops the daemon here
+	// rather than after it has taken the lock and opened the database. A user who wrote
+	// `pane_history = true` and got a daemon running with it off would believe their
+	// screens were being captured when they were not; refusing is the honest answer.
+	settingsPath, err := config.SettingsPath()
+	if err != nil {
+		logger.Error("cannot locate the settings file", slog.Any("error", err))
+		return exitCantCreate
+	}
+	settings, err := config.LoadSettings(logger, settingsPath)
+	if err != nil {
+		logger.Error("the settings file cannot be read; refusing to start with defaults "+
+			"the user did not ask for", slog.Any("error", err))
+		return exitConfig
 	}
 
 	// Before the database, and before recovery above all. Recovery rewrites live rows on
@@ -198,14 +215,45 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// is written through the port rather than the concrete service so go-arch-lint's deep
 	// scan sees the dependency the boundary rules describe.
 	var terminals wsports.Terminals = sessionService
+	// REQ-TERM-010's capture reads a session's screen through a port declared in the
+	// workspaces module's own terms, so neither module has to know the other's shapes.
+	// Adapting them is a composition-root job, which is what this file is for.
+	screens := wsports.Screens(screenReader{sessions: sessionService})
 	workspaceService, err := workspaces.New(workspaces.Config{
-		Tree:      tree,
-		Terminals: terminals,
-		Bus:       eventBus,
+		Tree:        tree,
+		Terminals:   terminals,
+		Bus:         eventBus,
+		Logger:      logger,
+		PaneHistory: settings.PaneHistory,
+		Screens:     screens,
 	})
 	if err != nil {
 		logger.Error("cannot build the workspace tree", slog.Any("error", err))
 		return exitCantCreate
+	}
+
+	// The tree comes back before the socket opens (REQ-TERM-009).
+	//
+	// Order matters twice over. After `db.Recover` above, because that is what marks the
+	// previous run's sessions `exited` — restoring first would attach fresh terminals to
+	// panes whose old rows still claimed to be alive. And before `api.Listen`, because a
+	// client that connected midway would watch panes appear one at a time with no
+	// notification explaining them, and `session.snapshot` would report a tree that was
+	// true for a moment.
+	//
+	// A restore that fails does not stop the daemon. The structure is a convenience; the
+	// sessions a user starts next are not, and refusing to serve them because an old
+	// workspace could not be rebuilt would turn a lost layout into a lost terminal.
+	// Screens the setting no longer wants are deleted before anything can read them
+	// (Data Model §2.4d, a privacy promise rather than housekeeping).
+	if err := workspaceService.PrepareHistory(ctx); err != nil {
+		logger.Error("could not reconcile the stored pane screens with the setting",
+			slog.Any("error", err))
+	}
+
+	if err := workspaceService.Restore(ctx); err != nil {
+		logger.Error("could not restore the saved structure; starting with an empty tree",
+			slog.Any("error", err))
 	}
 
 	server, err := api.Listen(ctx, api.Config{
@@ -231,6 +279,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// Forward module events to connected clients (API Spec §6).
 	go server.Notify(ctx)
+
+	// REQ-TERM-010's capture: every 10 s while the setting is on, and once more when the
+	// context ends, which is the "on clean shutdown" half. A no-op when it is off.
+	captureDone := make(chan struct{})
+	go func() {
+		defer close(captureDone)
+		workspaceService.RunCapture(ctx)
+	}()
+	defer func() { <-captureDone }()
 
 	logger.Info("umbrald listening",
 		slog.String("socket", server.SocketPath()),
@@ -289,4 +346,19 @@ func buildVersion() string {
 		}
 	}
 	return version
+}
+
+// screenReader adapts the sessions module to the narrow view REQ-TERM-010's capture needs.
+type screenReader struct {
+	sessions sessports.Sessions
+}
+
+func (r screenReader) Screen(ctx context.Context, sessionID string) (wsports.Screen, error) {
+	snapshot, err := r.sessions.Snapshot(ctx, sessionID)
+	if err != nil {
+		return wsports.Screen{}, err
+	}
+	// The cursor's row is the closest thing the snapshot has to "how many lines this is",
+	// and Data Model §2.4d stores `rows` beside the screen so a reader knows what it got.
+	return wsports.Screen{Data: snapshot.Data, Rows: int(snapshot.CursorY) + 1}, nil
 }
