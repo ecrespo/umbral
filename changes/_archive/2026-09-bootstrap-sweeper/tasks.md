@@ -1,6 +1,6 @@
 # Tasks — delta `2026-09-bootstrap-sweeper`
 
-### [ ] T-BS-01 · Settle where a shell's bootstrap files live and who removes the orphans
+### [x] 2026-09-20 T-BS-01 · Settle where a shell's bootstrap files live and who removes the orphans
 - **What:** PRD §6.1 gains REQ-TERM-012; Tech Design §9.2 says the bootstrap directories live
   in the runtime directory and that a daemon sweeps the previous run's after taking the
   instance lock and before restoring the tree.

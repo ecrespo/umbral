@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Only the benchmarks that gate, plus their selftest | `task perf` |
 
 - **`task ci` is the gate, in the pipeline's own order:** specs, schema, icons, lint, arch,
-  arch:selftest, test, perf, build. Run it before every commit; a green `go test` alone is not
+  arch:selftest, test:hygiene, test:hygiene:selftest, perf, build. Run it before every commit; a green `go test` alone is not
   the gate. `task schema` is REQ-API-004's: it generates the protocol from the Go types and
   compares it with `specs/api/umbral-daemon-api-v1.md`, so a method or an error code that
   exists on one side and not the other fails the build.

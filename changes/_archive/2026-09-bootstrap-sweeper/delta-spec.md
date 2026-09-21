@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-09-20 — pending ratification` |
+| **Status** | `RATIFIED 2026-09-20 — applied to specs/ and archived` |
 | **Date** | 2026-09-20 |
 | **Task** | T-F0-19 (new) |
 | **Raised by** | The F0 final verification of 2026-09-20: 2515 orphaned bootstrap directories, 168 MB, found on the development machine. Nothing in the specification package says where those files live or who removes them. |
