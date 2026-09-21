@@ -77,17 +77,35 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 | T-F0-14 | Workspace, tab and pane model with identifiers and rollup | 3d | T-F0-03, T-F0-05 | ✅ 2026-09-20 |
 | T-F0-15 | Portable layouts (`layout.export` / `apply`) | 1.5d | T-F0-14 | ✅ 2026-09-20 |
 | T-F0-16 | `session.snapshot` and event sequencing | 1.5d | T-F0-14 | ✅ 2026-09-20 |
-| T-F0-17 | Protocol schema and capability degradation | 1.5d | T-F0-03 | ✅ |
-| T-F0-18 | Structure restore after restart (+ optional pane history) | 2d | T-F0-14 | ✅ |
+| T-F0-17 | Protocol schema and capability degradation | 1.5d | T-F0-03 | ✅ 2026-09-20 |
+| T-F0-18 | Structure restore after restart (+ optional pane history) | 2d | T-F0-14 | ✅ 2026-09-20 |
+| T-F0-19 | Bootstrap files in the runtime directory, and a sweep at start | 0.5d | T-F0-08, T-F0-18 | ⬜ |
 
-**F0 "Done" criteria:**
+**F0 is open.** Reviewed against a running daemon on 2026-09-20
+(`docs/checkpoints/2026-09-20-f0-closure.md`): `T-F0-01` … `T-F0-18` are done and the gate is
+green, but two exit criteria are unmet and `T-F0-19` was added afterwards from the same
+verification. The phase closes when the criteria below are met, not when the table above is
+full.
+
 - VT conformance suite 100 % MUST green (REQ-TERM-002) — ☑ met by T-F0-07, 20 MUST cases.
 - Correct blocks in bash, zsh and fish in CI — ☑ met by T-F0-09,
   `TestBlocksInEveryShell_REQ_BLK_005`; the Linux test job installs all three shells.
-- The TUI is used for one week as the main terminal without blocking regressions.
-- A script creates a workspace, splits, exports and reapplies a layout using only the CLI.
-- After `kill` on the daemon, the structure comes back with its cwd and labels.
-- Benchmarks within the NFRs.
+- The TUI is used for one week as the main terminal without blocking regressions — ☐ **open**,
+  and a human's to close. `docs/qa/f0-tui.md` was walked once on 2026-09-20, which closed
+  T-F0-12; one session is not one week.
+- A script creates a workspace, splits, exports and reapplies a layout using only the CLI —
+  ☐ **not met: the feature does not exist.** `umb` serves `status`, `block last`,
+  `api schema`, `version` and `help` and nothing else, so the workspace tree is reachable only
+  over raw JSON-RPC. No task builds it and no REQ requires it, while the Art. 6 amendment
+  justifies the `w<n>` identifiers on the strength of `umb pane split w1:t1` being "the
+  feature". A Delta, not a new task added quietly.
+- After `kill` on the daemon, the structure comes back with its cwd and labels — ☑ verified
+  end to end on 2026-09-20: `kill -9`, restart, 5 panes back with their labels, cwds and fresh
+  sessions, focus preserved, and the two stored commands typed at their prompts without
+  running.
+- Benchmarks within the NFRs — ◐ three of the four are gates (`task perf`, and
+  `scripts/perf_selftest.sh` proves they still bite). Idle daemon memory (§7, 80 MiB with five
+  sessions) carries no REQ id and is ungated, as T-F0-13 records.
 
 ---
 

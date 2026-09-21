@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.8 |
+| **Version** | 1.10 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -571,6 +571,21 @@ the previous process is gone; a second daemon running it over a first one's sess
 destroy state that is not stale, and autostart makes two daemons starting at once ordinary.
 `flock` rather than a pid file, so a killed daemon leaves nothing to clean up.
 
+A shell's bootstrap files — the generated rc that injects the OSC 133 markers — live in
+`shellinteg-<random>/` inside that same runtime directory, not in the shared temporary
+directory. The session removes its own when the shell exits, which is what keeps a
+long-running daemon tidy; a daemon killed with `SIGKILL` cannot, and the directory name is
+recorded nowhere, so the next start would have no way to learn it existed. Immediately after
+taking the instance lock and before restoring the tree, a daemon therefore deletes every
+`shellinteg-*` it finds there (REQ-TERM-012).
+
+The lock is what makes the sweep safe rather than an age heuristic: holding it means no other
+daemon of this installation is running, so everything under that directory belongs to a
+process that is gone. Sweeping the shared temporary directory instead would race a daemon of
+another installation starting a session at that moment. A removal that fails is logged and
+startup continues — the litter is kilobytes, and refusing to serve over it would turn a
+cosmetic problem into an outage.
+
 ### 9.3 Visual identity and packaging
 
 Folded from `changes/_archive/2026-09-visual-identity/`.
@@ -612,6 +627,8 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.2 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-visual-identity`: §9.3 visual identity and packaging |
 | 1.3 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-block-lifecycle-decisions`: `klauspost/compress/zstd` recorded as a `sessions` dependency in §3.2 |
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds the `workspaces`, `waits`, `integrations` and `notify` modules, DD-009 to DD-015, the injected environment and the new test levels |
+| 1.10 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-bootstrap-sweeper` (**pending ratification**): §9.2 places a shell's bootstrap files in the runtime directory and specifies the sweep at start, with the instance lock as the argument for why it needs no age heuristic |
+| 1.9 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-restore-semantics`: a Configuration section specifies `$XDG_CONFIG_HOME/umbral/config.toml`, its `[experimental] pane_history` key and that a malformed file stops the daemon rather than falling back to defaults |
 | 1.8 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-tui-renderer`: §5.1 lists the TUI's `ports` and `adapters`, §5.2 gains their rows, and DD-001 records which renderer the client uses and why it is the daemon's |
 | 1.7 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-cli-surface`: §5.1 lists the packages that existed but were unlisted, §5.2 gains the `api`, `client` and `tui` rows, and §9.4 records the `umb` surface, the daemon log and the instance lock |
 | 1.6 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-art6-structural-ids`: the Constitution check records the Art. 6 exception behind DD-009 (C-05) |

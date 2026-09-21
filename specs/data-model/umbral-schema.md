@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.6 |
+| **Version** | 1.7 |
 | **Date** | 2026-09-11 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -607,3 +607,4 @@ earlier drafts named.
 | 1.4 | 2026-09-20 | Adds `workspaces`, `tabs`, `panes`, `pane_aliases`, `pane_state_reports`, `pane_metadata` and `pane_history`; attention columns on `threads`; per-migration table list and restore steps 5-8. The structure tables take migration `0003` and the agent subdomain moves to `0004` (delta `2026-09-structure-migration`) |
 | 1.5 | 2026-09-20 | Closes the Analyze findings: `client_msg_id` gains its unique index (A-04) and the `trust_keys` / `rule_bundles` tables arrive |
 | 1.6 | 2026-09-20 | delta `2026-09-art6-structural-ids`: `workspaces`, `tabs`, `panes` and `pane_aliases` enforce the structural identifier grammar with a `CHECK` (C-05) |
+| 1.7 | 2026-09-20 | delta `2026-09-restore-semantics`: §6 step 5 stops launching a restored pane's stored command; `panes.command_pending` and `workspaces.focused_tab_id`/`focused_at` in §2.4b; `pane_history` (§2.4d) moves to migration `0004_restore` and the agent subdomain to `0005_agent`, superseding the note in 1.4 |

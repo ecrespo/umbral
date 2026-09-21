@@ -240,7 +240,7 @@ default CI.
 - **Done:** tests `TestWaitPinsTurn_REQ_AUT_001`, `TestSendWaitRejectsBlocked_REQ_AUT_002`, `TestWaitOutputMatchesLine_REQ_AUT_003` and `TestWaitTimeoutReportsLastState_REQ_AUT_004` green.
 
 ### [ ] T-F1-24 · Attention state and thread resume
-- **What:** `attention_state` and `seen_at` on threads; `done` until a client focuses it; `thread.attention_changed` notification; restore threads after a restart with their history and `stopped` turns. The two columns are added by the `ALTER TABLE` statements of Data Model §2.5 inside migration **0004**, because 0001 created `threads` and is already applied (Art. 6).
+- **What:** `attention_state` and `seen_at` on threads; `done` until a client focuses it; `thread.attention_changed` notification; restore threads after a restart with their history and `stopped` turns. The two columns are added by the `ALTER TABLE` statements of Data Model §2.5 inside migration **0005**, because 0001 created `threads` and is already applied (Art. 6). It was 0004 until delta `2026-09-restore-semantics` gave that number to the restore migration.
 - **REQ:** REQ-AGT-016, REQ-AGT-017
 - **Files:** `internal/agents/attention*.go`, `internal/store/migrations/0005_agent.sql`, `internal/store/**`
 - **Depends on:** T-F1-13

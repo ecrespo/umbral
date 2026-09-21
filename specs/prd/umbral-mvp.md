@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.8 |
+| **Version** | 1.10 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-09-20 |
@@ -148,6 +148,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-TERM-009** · MUST · event — WHEN the daemon starts after a shutdown, THE SYSTEM SHALL restore the saved workspace, tab and pane structure with their labels and cwd, launch a fresh shell in each restored pane, and mark the sessions of the previous run as `exited`.
 - **REQ-TERM-010** · MUST · optional — WHERE `[experimental] pane_history = true` in `$XDG_CONFIG_HOME/umbral/config.toml`, THE SYSTEM SHALL replay the stored recent screen of each restored pane before its new shell output; the setting SHALL be disabled by default because pane output can contain secrets. Capture happens every 10 s and on clean shutdown, so a crash loses at most the last window.
 - **REQ-TERM-011** · MUST · unwanted — IF a restored pane has a stored launch command, THEN THE SYSTEM SHALL leave it visible in the pane without running it, and SHALL run it only after the user confirms, so that a restart never re-executes commands on its own. `layout.apply` behaves the same way: it returns the commands as pending, never as launched.
+- **REQ-TERM-012** · MUST · event — WHEN the daemon starts, THE SYSTEM SHALL delete the shell bootstrap directories left in its runtime directory by previous runs, before it restores the workspace tree, so that a daemon killed without a chance to clean up does not leave files that nothing will ever remove. THE SYSTEM SHALL create those directories inside its own runtime directory rather than the shared temporary directory, and SHALL log and continue when one cannot be removed.
 
 ### 6.2 Blocks (BLK)
 
@@ -450,6 +451,8 @@ TUI as text:
 | 1.2 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-visual-identity`: §6.10 with REQ-PKG-001, 002, 003 and 006; REQ-PKG-004, 005, 007 and 008 moved to the F2 PRD per finding A-12 |
 | 1.3 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-block-lifecycle-decisions`: REQ-BLK-003 gains the late-marker promotion and the one-way rule |
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds the WS, API, AUT, INT and NTF areas, REQ-TERM-009/010, REQ-AGT-016/017 and REQ-SEC-009/010/011, plus the glossary. Rationale in `docs/adr/ADR-0002-orchestration-surface.md` |
+| 1.10 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-bootstrap-sweeper` (**pending ratification**): REQ-TERM-012 — the daemon sweeps the shell bootstrap directories a killed run left in its runtime directory, and creates them there rather than in the shared temporary directory |
+| 1.9 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-restore-semantics`: REQ-TERM-010 names `$XDG_CONFIG_HOME/umbral/config.toml` as the file the setting lives in, and REQ-TERM-011 states that a restored pane's command is left visible and never run, `layout.apply` included |
 | 1.8 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-notification-sequencing`: REQ-API-002 counts per daemon run, shared by every connection, instead of "per session" — a word that in this system already names a PTY |
 | 1.7 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-cli-surface`: REQ-CLI-002 says what the current session is and what happens without one; REQ-CLI-004 fixes the `umb` exit codes |
 | 1.6 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-art6-structural-ids`: the Constitution check names the Art. 6 exception for structural identifiers (C-05) |
