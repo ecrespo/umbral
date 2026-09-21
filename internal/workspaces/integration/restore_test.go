@@ -2,8 +2,11 @@ package integration_test
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/ecrespo/umbral/internal/workspaces/domain"
 )
@@ -35,10 +38,32 @@ func TestRestoreRebuildsStructure_REQ_TERM_009(t *testing.T) {
 	}
 	firstSessions := first.terminals.createdIDs()
 
-	// The restart.
+	// The restart, in the order `cmd/umbrald` does it: the store's recovery runs before
+	// the tree is rebuilt. That order is REQ-TERM-009's third clause — "mark the sessions
+	// of the previous run as `exited`" — and it is asserted below rather than assumed,
+	// because a restore that ran first would hand every pane a session the daemon still
+	// believed was alive.
+	if _, err := first.store.Recover(t.Context(), time.Now()); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
 	restarted := first.restart(t)
 	if err := restarted.Restore(t.Context()); err != nil {
 		t.Fatalf("Restore: %v", err)
+	}
+
+	// No session of the previous run is still `alive`. `internal/store` proves the
+	// recovery in isolation; what this adds is that it has happened by the time the tree
+	// is back, which is the clause's actual claim.
+	for _, id := range firstSessions {
+		var state string
+		if err := first.store.DB().QueryRowContext(t.Context(),
+			`SELECT state FROM sessions WHERE id = ?`, id).Scan(&state); err != nil {
+			t.Fatalf("read the state of %s: %v", id, err)
+		}
+		if state != "exited" {
+			t.Errorf("session %q of the previous run is %q after the restart, want "+
+				"\"exited\" (REQ-TERM-009)", id, state)
+		}
 	}
 
 	after, err := restarted.Snapshot(t.Context())
@@ -124,7 +149,17 @@ func TestRestoreKeepsFocus_REQ_TERM_009(t *testing.T) {
 func TestRestoreNeverRunsStoredCommand_REQ_TERM_011(t *testing.T) {
 	t.Parallel()
 
-	command := []string{"sh", "-c", "echo it ran > /tmp/umbral-must-not-exist"}
+	// The sentinel is inside the test's own directory, so its absence is checked rather
+	// than asserted about a path shared with every other run on the machine. These
+	// terminals are fakes and cannot run anything, so the absence proves little here; it
+	// is `TestAPendingCommandIsShownAndNotRun_REQ_TERM_011` in the sessions integration
+	// package, against a real PTY and a real shell, that proves the command does not run.
+	sentinel := filepath.Join(t.TempDir(), "it-ran")
+	command := []string{"sh", "-c", "echo it ran > " + sentinel}
+	// The exact text a restored pane must be given to show. Asserting the whole line and
+	// not a substring is deliberate: `bytes.Contains` is satisfied by a trailing newline,
+	// and a trailing newline is precisely what makes the shell run the command.
+	wantLine := "sh -c 'echo it ran > " + sentinel + "'"
 
 	first := newHarness(t)
 	tree := first.newWorkspace(t, "commands")
@@ -182,14 +217,26 @@ func TestRestoreNeverRunsStoredCommand_REQ_TERM_011(t *testing.T) {
 		if !launched.ShellIntegration {
 			t.Errorf("restored pane %q runs a shell and must have shell integration", p.ID)
 		}
-		if !bytes.Contains(launched.TypeAtPrompt, []byte("echo it ran")) {
-			t.Errorf("restored pane %q was given %q to show at its prompt, want the stored "+
-				"command: REQ-TERM-011 says leave it *visible*",
-				p.ID, launched.TypeAtPrompt)
+		if string(launched.TypeAtPrompt) != wantLine {
+			t.Errorf("restored pane %q was given %q to show at its prompt, want exactly "+
+				"%q: REQ-TERM-011 says leave it *visible*, and any trailing line ending "+
+				"would make the shell run it",
+				p.ID, launched.TypeAtPrompt, wantLine)
+		}
+		if bytes.ContainsAny(launched.TypeAtPrompt, "\n\r") {
+			t.Errorf("restored pane %q was given text containing a line ending (%q); the "+
+				"shell would submit it", p.ID, launched.TypeAtPrompt)
 		}
 	}
 	if checked == 0 {
 		t.Fatal("no restored pane carried a command, so this test asserted nothing")
+	}
+
+	// Nothing ran. With fake terminals this cannot fail, and it is kept as the statement
+	// of what the whole test is about rather than as evidence — the evidence is in the
+	// sessions integration package, where a real shell is asked the same question.
+	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
+		t.Errorf("the stored command ran: %s exists", sentinel)
 	}
 }
 
@@ -323,5 +370,159 @@ func TestTurningPaneHistoryOffForgetsWhatWasStored_REQ_TERM_010(t *testing.T) {
 			t.Errorf("a screen was replayed after the setting was turned off: %q",
 				launched.ReplayScreen)
 		}
+	}
+}
+
+// TestRestoreDoesNotAdoptFocusOnAClosedTab_REQ_TERM_009 closes the gap between the two ways a
+// tab stops existing.
+//
+// `workspaces.focused_tab_id` is declared ON DELETE SET NULL, which reads like it handles
+// this — and does not, because closing a tab is an UPDATE and the row is never deleted. So
+// the id outlives its tab, and a restart that trusted the column would come up focused on a
+// tab that is gone. The symptom is not a crash: `layout.export` with no `tab_id` resolves the
+// focused tab and answers "tab w1:t1 does not exist", which is exactly the failure the
+// default was added to prevent.
+//
+// The workspace still comes back focused. Losing which tab was in use is a small cost; losing
+// the workspace as well would send a client back to whichever one sorts first.
+func TestRestoreDoesNotAdoptFocusOnAClosedTab_REQ_TERM_009(t *testing.T) {
+	t.Parallel()
+
+	first := newHarness(t)
+	tree := first.newWorkspace(t, "w")
+
+	doomed, _, err := first.CreateTab(t.Context(), tree.Workspace.ID, "doomed", true)
+	if err != nil {
+		t.Fatalf("CreateTab: %v", err)
+	}
+	if _, tab := first.Focused(); tab != doomed.ID {
+		t.Fatalf("focus is on %q, want the tab just created (%q)", tab, doomed.ID)
+	}
+	if err := first.CloseTab(t.Context(), doomed.ID); err != nil {
+		t.Fatalf("CloseTab: %v", err)
+	}
+
+	restarted := first.restart(t)
+	if err := restarted.Restore(t.Context()); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	ws, tab := restarted.Focused()
+	if ws != tree.Workspace.ID {
+		t.Errorf("focused workspace after the restart is %q, want %q", ws, tree.Workspace.ID)
+	}
+	if tab == doomed.ID {
+		t.Fatalf("the restart adopted focus on the closed tab %q; layout.export with no "+
+			"tab_id would answer that it does not exist", tab)
+	}
+
+	// And the default actually resolves, which is the outcome this is protecting.
+	if _, err := restarted.ExportLayout(t.Context(), ""); err != nil {
+		t.Errorf("layout.export with no tab_id failed after the restart: %v", err)
+	}
+}
+
+// TestClosingAPaneForgetsItsScreen_REQ_TERM_010 is the retention half of the requirement.
+//
+// Data Model §4 gives `pane_history` a retention of "until the pane closes". Nothing was
+// enforcing it. The table is declared `ON DELETE CASCADE`, which reads like it handles this,
+// but a pane is closed with `UPDATE panes SET closed_at = ?` and is never deleted — so the
+// cascade never fired, there was no sweeper, and the captured screen of every pane the user
+// ever closed stayed in the database for the life of the installation.
+//
+// That is a privacy defect rather than an untidiness. REQ-TERM-010 disables the setting by
+// default "because pane output can contain secrets", and a user who opted in accepted storage
+// for the panes they are using, not an archive of every pane they have ever closed.
+//
+// All three closing paths, because they are three different statements and only one of them
+// would have been noticed.
+func TestClosingAPaneForgetsItsScreen_REQ_TERM_010(t *testing.T) {
+	t.Parallel()
+
+	const screen = "a captured screen that must not outlive its pane\r\n"
+
+	t.Run("pane.close", func(t *testing.T) {
+		t.Parallel()
+
+		h := newHarnessWithHistory(t, true, screen)
+		tree := h.newWorkspace(t, "closing a pane")
+		// A tab keeps at least one pane, so the split gives us one that can be closed
+		// while the tab stays open — which is the path that has to forget on its own.
+		extra, _, err := h.SplitPane(t.Context(), domain.SplitParams{
+			PaneID: tree.RootPane.ID, Direction: domain.SplitRight, Ratio: 0.5,
+			CWD: t.TempDir(),
+		})
+		if err != nil {
+			t.Fatalf("SplitPane: %v", err)
+		}
+		h.CaptureScreens(t.Context())
+		requireStored(t, h, extra.ID)
+
+		if err := h.ClosePane(t.Context(), extra.ID); err != nil {
+			t.Fatalf("ClosePane: %v", err)
+		}
+		requireForgotten(t, h, extra.ID)
+
+		// The pane that stayed open keeps its screen: the delete is targeted, not a
+		// convenient way of emptying the table.
+		requireStored(t, h, tree.RootPane.ID)
+	})
+
+	t.Run("tab.close", func(t *testing.T) {
+		t.Parallel()
+
+		h := newHarnessWithHistory(t, true, screen)
+		tree := h.newWorkspace(t, "closing a tab")
+		tab, tabPane, err := h.CreateTab(t.Context(), tree.Workspace.ID, "doomed", false)
+		if err != nil {
+			t.Fatalf("CreateTab: %v", err)
+		}
+		h.CaptureScreens(t.Context())
+		requireStored(t, h, tabPane.ID)
+
+		if err := h.CloseTab(t.Context(), tab.ID); err != nil {
+			t.Fatalf("CloseTab: %v", err)
+		}
+		requireForgotten(t, h, tabPane.ID)
+		requireStored(t, h, tree.RootPane.ID)
+	})
+
+	t.Run("workspace.close", func(t *testing.T) {
+		t.Parallel()
+
+		h := newHarnessWithHistory(t, true, screen)
+		kept := h.newWorkspace(t, "kept")
+		doomed := h.newWorkspace(t, "doomed")
+		h.CaptureScreens(t.Context())
+		requireStored(t, h, doomed.RootPane.ID)
+
+		if err := h.CloseWorkspace(t.Context(), doomed.Workspace.ID, true); err != nil {
+			t.Fatalf("CloseWorkspace: %v", err)
+		}
+		requireForgotten(t, h, doomed.RootPane.ID)
+		requireStored(t, h, kept.RootPane.ID)
+	})
+}
+
+func requireStored(t *testing.T, h *harness, paneID string) {
+	t.Helper()
+	stored, err := h.screens.LoadScreen(t.Context(), paneID)
+	if err != nil {
+		t.Fatalf("read the stored screen of %s: %v", paneID, err)
+	}
+	if len(stored) == 0 {
+		t.Fatalf("no screen is stored for pane %s, so the test would assert nothing", paneID)
+	}
+}
+
+func requireForgotten(t *testing.T, h *harness, paneID string) {
+	t.Helper()
+	stored, err := h.screens.LoadScreen(t.Context(), paneID)
+	if err != nil {
+		t.Fatalf("read the stored screen of %s: %v", paneID, err)
+	}
+	if len(stored) != 0 {
+		t.Errorf("the screen of the closed pane %s survived it: %q. Data Model §4 keeps "+
+			"pane_history only \"until the pane closes\"", paneID, stored)
 	}
 }

@@ -31,7 +31,9 @@ ALTER TABLE panes ADD COLUMN command_pending INTEGER NOT NULL DEFAULT 0
 -- One row per pane, replaced on each capture rather than appended: the requirement is "the
 -- stored recent screen", not a history, and an append-only table of screens would grow
 -- without bound while holding exactly the secrets the setting is disabled by default to
--- avoid. ON DELETE CASCADE means closing a pane forgets its screen with no sweeper.
+-- avoid. ON DELETE CASCADE covers a pane row that is deleted outright; closing a pane is
+-- an UPDATE, so the store deletes the screen in the closing transaction instead — Data
+-- Model §4's retention is "until the pane closes", and only the writer can honour it.
 CREATE TABLE pane_history (
   pane_id     TEXT PRIMARY KEY REFERENCES panes(id) ON DELETE CASCADE,
   screen_zst  BLOB NOT NULL,

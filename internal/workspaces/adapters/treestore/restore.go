@@ -52,12 +52,37 @@ func (s *Store) Restore(ctx context.Context) (ports.Restored, error) {
 
 	// Focus, as of the last run. The focused workspace is the one focused most recently;
 	// its focused tab is the one recorded on it.
+	//
+	// The tab is checked rather than trusted. `focused_tab_id` is declared ON DELETE SET
+	// NULL, which reads like it covers this and does not: closing a tab is an UPDATE, the
+	// row is never deleted, and the id outlives its tab. A restart that adopted it would
+	// come up focused on a tab that is gone, and `layout.export` with no `tab_id` — whose
+	// whole purpose is to resolve the focused tab — would answer "tab w1:t1 does not
+	// exist".
+	//
+	// The ordering is fully determined, which it was not before. `focused_at` is epoch
+	// milliseconds (Art. 6), so two workspaces focused inside the same millisecond tied,
+	// and SQLite was free to return either — a restart landing on a different workspace
+	// depending on the query plan. Within one millisecond the true order is unknowable, so
+	// the tie falls to the workspace created last, which is both deterministic and the
+	// better guess.
+	//
+	// When it is gone the workspace keeps focus and falls back to its oldest open tab.
+	// Dropping the tab as well would leave the daemon with a focused workspace and no
+	// focused tab, which is a state the default handles by failing; landing on a tab the
+	// user did not choose is a smaller cost than that, and than losing the workspace too.
 	var workspaceID, tabID sql.NullString
 	err = tx.QueryRowContext(ctx, `
-		SELECT w.id, w.focused_tab_id
+		SELECT w.id,
+		       COALESCE(
+		         (SELECT t.id FROM tabs t
+		           WHERE t.id = w.focused_tab_id AND t.closed_at IS NULL),
+		         (SELECT t2.id FROM tabs t2
+		           WHERE t2.workspace_id = w.id AND t2.closed_at IS NULL
+		           ORDER BY t2.order_index, t2.created_at LIMIT 1))
 		  FROM workspaces w
 		 WHERE w.closed_at IS NULL AND w.focused_at IS NOT NULL
-		 ORDER BY w.focused_at DESC
+		 ORDER BY w.focused_at DESC, w.created_at DESC, w.rowid DESC
 		 LIMIT 1`).Scan(&workspaceID, &tabID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return ports.Restored{}, fmt.Errorf("treestore: read the focused workspace: %w", err)
@@ -87,15 +112,6 @@ func (s *Store) SetFocus(ctx context.Context, workspaceID, tabID string, atMilli
 	}
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("treestore: record focus: %w", err)
-	}
-	return nil
-}
-
-// ClearCommandPending records that a pane's stored command is no longer waiting.
-func (s *Store) ClearCommandPending(ctx context.Context, paneID string) error {
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE panes SET command_pending = 0 WHERE id = ?`, paneID); err != nil {
-		return fmt.Errorf("treestore: clear the pending command of %s: %w", paneID, err)
 	}
 	return nil
 }

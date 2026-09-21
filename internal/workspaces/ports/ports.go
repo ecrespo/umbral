@@ -174,10 +174,16 @@ type Tree interface {
 	// SetFocus persists which workspace is focused and which tab inside it, so the answer
 	// survives a restart instead of living only in the service.
 	SetFocus(ctx context.Context, workspaceID, tabID string, atMillis int64) error
-	// SetCommandPending and ClearCommandPending record whether a pane's stored command is
-	// still waiting to be run (REQ-TERM-011).
+	// SetCommandPending records that a pane's stored command has not been run
+	// (REQ-TERM-011).
+	//
+	// There is no clearing counterpart, and that is the design rather than an omission: no
+	// spec sentence says when a command stops being pending, because the daemon never
+	// learns. It types the command at the prompt and stops watching — whether the user
+	// presses Enter, edits it or abandons it with Ctrl-C happens inside the PTY, and a
+	// daemon that guessed would report a command as run that never was. The flag says
+	// "Umbral did not run this", which stays true for the pane's whole life.
 	SetCommandPending(ctx context.Context, paneID string) error
-	ClearCommandPending(ctx context.Context, paneID string) error
 
 	// SaveScreen, LoadScreen and ForgetScreens are REQ-TERM-010's opt-in replay. They are
 	// called only while the setting is on, except ForgetScreens, which runs once at start

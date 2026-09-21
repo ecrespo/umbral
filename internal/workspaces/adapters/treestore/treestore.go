@@ -373,7 +373,9 @@ func (s *Store) CloseWorkspace(ctx context.Context, id string) ([]string, error)
 				return fmt.Errorf("treestore: close workspace: %w", err)
 			}
 		}
-		return nil
+		// Every pane under the workspace closed with it, so every screen goes too
+		// (Data Model §4).
+		return forgetScreens(ctx, tx, forgetScreensOfWorkspace, id)
 	})
 	return sessions, err
 }

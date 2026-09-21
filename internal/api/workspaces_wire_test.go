@@ -735,3 +735,67 @@ func TestPaneCarriesItsCommandAndEnv(t *testing.T) {
 		}
 	}
 }
+
+// TestPaneCommandPendingOnTheWire_REQ_TERM_011 pins API Spec §4's `command_pending`.
+//
+// The field is how a client learns that a pane it was just handed is sitting at a prompt with
+// a command typed into it rather than running one, and `task schema` cannot check it: the
+// generator compares §5's methods and their params, not §4's object members. So the only
+// thing standing between the spec's sentence and the bytes is this test.
+//
+// Both directions, because §4 says "omitted when false". A field that is always present would
+// make `if (pane.command_pending)` read false for a pane with nothing pending and true for
+// one with a command waiting — the same as the correct behaviour — right up until a client
+// uses `in` or `hasOwnProperty`, which is what "omitted" invites.
+func TestPaneCommandPendingOnTheWire_REQ_TERM_011(t *testing.T) {
+	t.Parallel()
+
+	created := time.UnixMilli(1757592000000).UTC()
+
+	t.Run("present when a command is waiting", func(t *testing.T) {
+		t.Parallel()
+
+		raw, err := json.Marshal(toWirePane(wsdomain.Pane{
+			ID: "w1:p1", TabID: "w1:t1", WorkspaceID: "w1", Label: "watch", CWD: "/tmp",
+			Command: []string{"sh", "-c", "sleep 30"}, CommandPending: true,
+			CreatedAt: created,
+		}))
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+
+		var wire map[string]any
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		pending, ok := wire["command_pending"]
+		if !ok {
+			t.Fatalf("command_pending is absent from %s; REQ-TERM-011 is how a client "+
+				"learns the pane is not running its command", raw)
+		}
+		if pending != true {
+			t.Errorf("command_pending = %v, want true", pending)
+		}
+	})
+
+	t.Run("omitted when nothing is waiting", func(t *testing.T) {
+		t.Parallel()
+
+		raw, err := json.Marshal(toWirePane(wsdomain.Pane{
+			ID: "w1:p2", TabID: "w1:t1", WorkspaceID: "w1", Label: "plain", CWD: "/tmp",
+			CreatedAt: created,
+		}))
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+
+		var wire map[string]any
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if _, ok := wire["command_pending"]; ok {
+			t.Errorf("command_pending is present on a pane with nothing pending: %s. "+
+				"API Spec §4 says it is omitted when false", raw)
+		}
+	})
+}

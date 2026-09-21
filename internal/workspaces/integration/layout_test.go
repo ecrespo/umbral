@@ -3,6 +3,8 @@ package integration_test
 import (
 	"bytes"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -245,8 +247,8 @@ func errShape(format string, args ...any) error {
 // TestApplyWarnsNoProcesses_REQ_WS_005 is the half of the requirement that is about what
 // `layout.apply` does *not* do.
 //
-// A layout carries structure, not state. The panes come back, the commands are relaunched,
-// and everything that was on the screen — the half-finished build, the scrollback, the
+// A layout carries structure, not state. The panes come back, their commands come back as
+// pending (REQ-TERM-011), and everything that was on the screen — the half-finished build, the scrollback, the
 // process that was running — does not. REQ-WS-005 makes saying so part of the response
 // rather than something a client is expected to know, and this pins the sentence.
 func TestApplyWarnsNoProcesses_REQ_WS_005(t *testing.T) {
@@ -552,5 +554,140 @@ func TestTheTwoCommandCapsAgree(t *testing.T) {
 		t.Errorf("the layout caps a command at %d arguments and the sessions module at %d; "+
 			"a layout between the two would be accepted here and refused at the launch",
 			domain.MaxCommandArgs, sessdomain.MaxCommandArgs)
+	}
+}
+
+// TestApplyReturnsCommandsAsPending_REQ_TERM_011 is the apply half of the requirement, under
+// the name the delta gives it.
+//
+// It existed only inside `TestLayoutExportApplyRoundTrip_REQ_WS_004` before, which meant the
+// repo's own way of checking one criterion — `go test ./... -run REQ_TERM_011` — never
+// touched `layout.apply` at all. The round trip still asserts it in passing; this is the test
+// that answers when the requirement is queried by name.
+//
+// A layout is the one tree that arrives from outside: exported months ago, hand-edited,
+// written by another tool. Applying one is a request for a *shape*, not consent to run what
+// it carries, and the difference is the whole of REQ-TERM-011's last sentence.
+func TestApplyReturnsCommandsAsPending_REQ_TERM_011(t *testing.T) {
+	t.Parallel()
+
+	sentinel := filepath.Join(t.TempDir(), "it-ran")
+	command := []string{"sh", "-c", "echo applied > " + sentinel}
+	wantLine := "sh -c 'echo applied > " + sentinel + "'"
+
+	h := newHarness(t)
+	ws := h.newWorkspace(t, "w")
+
+	applied, err := h.ApplyLayout(t.Context(), domain.ApplyLayoutParams{
+		WorkspaceID: ws.Workspace.ID, TabLabel: "from a layout",
+		Root: &domain.Node{
+			Type: domain.NodeSplit, Direction: domain.SplitRight, Ratio: 0.5,
+			First: &domain.Node{
+				Type: domain.NodePane, Label: "carries a command", CWD: "/tmp",
+				Command: command,
+			},
+			Second: &domain.Node{Type: domain.NodePane, Label: "plain", CWD: "/tmp"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyLayout: %v", err)
+	}
+
+	var checked int
+	for _, pane := range applied.Panes {
+		if pane.Label != "carries a command" {
+			if pane.CommandPending {
+				t.Errorf("pane %q carries no command and is reported pending", pane.ID)
+			}
+			continue
+		}
+		checked++
+
+		if !slices.Equal(pane.Command, command) {
+			t.Errorf("the applied pane records command %v, want %v", pane.Command, command)
+		}
+		if !pane.CommandPending {
+			t.Error("the applied pane does not report its command as pending; REQ-TERM-011 " +
+				"says layout.apply returns commands as pending, never as launched")
+		}
+
+		launched, ok := h.terminals.launchedWith(pane.SessionID)
+		if !ok {
+			t.Fatalf("no terminal was started for pane %q", pane.ID)
+		}
+		if len(launched.Command) != 0 {
+			t.Errorf("the terminal was launched with %v; layout.apply must start a shell "+
+				"and leave the command pending", launched.Command)
+		}
+		if !launched.ShellIntegration {
+			t.Error("an applied pane runs a shell and must have shell integration")
+		}
+		// The exact line, not a substring: a trailing newline satisfies `Contains` and is
+		// exactly what would make the shell run the command.
+		if string(launched.TypeAtPrompt) != wantLine {
+			t.Errorf("the pane was given %q to type at its prompt, want exactly %q",
+				launched.TypeAtPrompt, wantLine)
+		}
+		if bytes.ContainsAny(launched.TypeAtPrompt, "\n\r") {
+			t.Errorf("the pane was given text containing a line ending (%q); the shell "+
+				"would submit it", launched.TypeAtPrompt)
+		}
+	}
+	if checked != 1 {
+		t.Fatalf("found %d panes carrying a command among the applied ones, want 1", checked)
+	}
+
+	// The response says so. A client that was not told would reasonably show the tab as
+	// running when every pane is sitting at a prompt.
+	if !slices.Contains(applied.Warnings, domain.PendingCommandWarning) {
+		t.Errorf("warnings = %v, want them to include %q",
+			applied.Warnings, domain.PendingCommandWarning)
+	}
+
+	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
+		t.Errorf("the layout's command ran: %s exists", sentinel)
+	}
+}
+
+// TestApplyWarnsAboutPendingCommandsOnlyWhenThereAreAny_REQ_TERM_011 is the other half of the
+// conditional §5.8 states.
+//
+// A warning that is always present carries no information, and one a client learns to ignore
+// is worse than none: the next tab really is full of pending commands and the badge looks the
+// same. The constant is asserted in both directions for that reason.
+func TestApplyWarnsAboutPendingCommandsOnlyWhenThereAreAny_REQ_TERM_011(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	ws := h.newWorkspace(t, "w")
+
+	applied, err := h.ApplyLayout(t.Context(), domain.ApplyLayoutParams{
+		WorkspaceID: ws.Workspace.ID, TabLabel: "no commands",
+		Root: &domain.Node{
+			Type: domain.NodeSplit, Direction: domain.SplitDown, Ratio: 0.5,
+			First:  &domain.Node{Type: domain.NodePane, Label: "a", CWD: "/tmp"},
+			Second: &domain.Node{Type: domain.NodePane, Label: "b", CWD: "/tmp"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyLayout: %v", err)
+	}
+
+	if slices.Contains(applied.Warnings, domain.PendingCommandWarning) {
+		t.Errorf("warnings = %v: a tree with no commands must not warn about pending ones",
+			applied.Warnings)
+	}
+	// The unconditional half of REQ-WS-005 is still there, so the absence above is the
+	// conditional doing its job rather than the warnings being empty.
+	if !slices.Contains(applied.Warnings, domain.ApplyWarning) {
+		t.Errorf("warnings = %v, want them to still include %q",
+			applied.Warnings, domain.ApplyWarning)
+	}
+
+	// The sentence is the contract: a client shows it to a person.
+	for _, word := range []string{"pending", "prompt", "Enter"} {
+		if !strings.Contains(domain.PendingCommandWarning, word) {
+			t.Errorf("the warning %q does not mention %q", domain.PendingCommandWarning, word)
+		}
 	}
 }

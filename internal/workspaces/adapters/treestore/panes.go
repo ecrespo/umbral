@@ -221,7 +221,8 @@ func (s *Store) CloseTab(ctx context.Context, id string) ([]string, error) {
 			`UPDATE tabs SET closed_at = ? WHERE id = ?`, now, id); err != nil {
 			return fmt.Errorf("treestore: close tab: %w", err)
 		}
-		return nil
+		// Every pane of the tab closed with it, so every screen goes too (Data Model §4).
+		return forgetScreens(ctx, tx, forgetScreensOfTab, id)
 	})
 	return sessions, err
 }
@@ -636,7 +637,10 @@ func (s *Store) ClosePane(ctx context.Context, id string) (string, error) {
 			s.millis(), id); err != nil {
 			return fmt.Errorf("treestore: close pane: %w", err)
 		}
-		return nil
+		// Data Model §4: a stored screen is kept "until the pane closes". This is that
+		// moment, and nothing else reaches the row — the pane is closed, not deleted, so
+		// pane_history's ON DELETE CASCADE never fires.
+		return forgetScreens(ctx, tx, forgetScreenOfPane, id)
 	})
 	return sessionID, err
 }

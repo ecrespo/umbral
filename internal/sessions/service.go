@@ -220,15 +220,19 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 	s.live[session.ID] = live
 	s.mu.Unlock()
 
+	// Armed before the drain goroutine starts (REQ-TERM-011). The drain is what reads the
+	// OSC 133 prompt marker that delivers the text, so arming afterwards races it: a shell
+	// that reaches its first prompt quickly can have that marker consumed by a drain whose
+	// `typeAtPrompt` is still empty, and the delivery then falls back to the two-second
+	// grace timer. Nothing is lost either way — the command is never run — but the user
+	// waits for no reason, and the ordering that cannot lose the marker costs nothing.
+	s.armPendingInput(live, params.TypeAtPrompt)
+
 	// The session outlives the request that created it, so the drain goroutine gets a
 	// background context. REQ-TERM-003 is exactly this: the PTY survives its clients, and
 	// passing the create call's context down would end the session when that call returns.
 	//nolint:contextcheck // deliberate: the session's lifetime is not the request's
 	go s.drain(live)
-
-	// Armed after the drain goroutine is running, so the prompt marker that delivers it
-	// cannot be missed by a session that is not yet reading its PTY (REQ-TERM-011).
-	s.armPendingInput(live, params.TypeAtPrompt)
 
 	return session, nil
 }

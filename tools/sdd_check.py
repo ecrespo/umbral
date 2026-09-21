@@ -135,6 +135,37 @@ def main():
         except sqlite3.Error as e:
             findings.append(("CRITICAL", f"migration 0003 rejects the pane tree: {e}", "data-model"))
 
+    # Migration 0004 (F0 restore) on top of 0003: `pane_history` holds a foreign key against
+    # `panes`, and the two restore columns live in §2.4b's tables above. Nothing checked this
+    # step, so a divergence between §2.4b/§2.4d and `0004_restore.sql` reached CI unnoticed.
+    hist_ddl = [b for b in re.findall(r"```sql\n(.*?)```", dm, re.S)
+                if re.search(r"CREATE TABLE pane_history\b", b)]
+    if not hist_ddl:
+        findings.append(("CRITICAL", "no DDL found for pane_history (§2.4d)", "data-model"))
+    else:
+        try:
+            con0.executescript("\n".join(hist_ddl))
+            con0.execute("INSERT INTO pane_history(pane_id,screen_zst,rows,captured_at) "
+                         "VALUES ('w1:p1',X'00',24,0)")
+            # The two restore columns of §2.4b are on the tables 0003 created above; a
+            # divergence shows up as "no such column" rather than as a failed insert.
+            con0.execute("UPDATE panes SET command_pending = 1 WHERE id = 'w1:p1'")
+            con0.execute("UPDATE workspaces SET focused_tab_id = 'w1:t1', focused_at = 0 "
+                         "WHERE id = 'w1'")
+            # REQ-TERM-010's retention is "until the pane closes", and a pane is closed with
+            # an UPDATE. So the cascade cannot be what enforces it: this asserts the row
+            # survives the close, which is why the store deletes it explicitly.
+            con0.execute("UPDATE panes SET closed_at = 1 WHERE id = 'w1:p1'")
+            left = con0.execute("SELECT count(*) FROM pane_history "
+                                "WHERE pane_id = 'w1:p1'").fetchone()[0]
+            if left != 1:
+                findings.append(("CRITICAL",
+                                 "closing a pane deletes its pane_history row by itself; the "
+                                 "store's explicit delete is now dead code", "data-model"))
+            sql_ok += " · migration 0004 over 0003 OK"
+        except sqlite3.Error as e:
+            findings.append(("CRITICAL", f"migration 0004 rejects the restore schema: {e}", "data-model"))
+
     must = [r for r, (p, _) in all_defined.items() if p == "MUST"]
     print(f"REQs defined: {len(all_defined)} (MUST {len(must)}) · with task: {sum(1 for r in must if r in cited)}/{len(must)}")
     print(f"Tasks: {sum(len(tasks(tf)[0]) for tf in task_files)} · "

@@ -89,7 +89,12 @@ func TestACommandPaneGetsNoShellIntegration_REQ_BLK_003(t *testing.T) {
 	// The environment marker a bootstrap would have set is the observable difference, and
 	// the screen is where a sourced rc file would have announced itself. Neither happens;
 	// what is asserted here is the state the daemon settles on.
-	deadline := time.Now().Add(8 * time.Second)
+	//
+	// The bound is generous for the same reason the block tests' is: it exists to stop a
+	// wedged session hanging the suite, not to measure anything. Eight seconds failed once
+	// under `-race ./...` on a loaded machine and passed in isolation, which is a red build
+	// that says nothing about the code and gets read as a finding.
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		current, err := h.Get(t.Context(), session.ID)
 		if err != nil {
