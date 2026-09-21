@@ -41,7 +41,8 @@ status" at the end of this file for what is and is not written.
 
 ## Working rules
 - **One task per branch and per PR.** Branch `feat/T-F0-03-<slug>`.
-- **Tests first.** Every test cites its REQ in the name (`Test…_REQ_SEC_003`); use the exact name from the traceability matrix when it exists.
+- **Tests first, always.** Write the failing test from the EARS criterion before the implementation. Every test cites its REQ in the name (`Test…_REQ_SEC_003`); use the exact name from the traceability matrix when it exists. Then **check the teeth**: break the property deliberately and confirm the test reddens. A test written after the code tends to be written to fit it — the T-F0-18 review found every gate green while a one-token mutation that made a restart execute every stored command passed the whole suite.
+- **Start every test run clean, and leave nothing behind.** No orphan `umbrald` processes, no stray temp directories, and never a write to the real `$XDG_DATA_HOME` database. A test that starts a daemon redirects **every** `XDG_*` directory it writes to — not only `XDG_RUNTIME_DIR`, which moves the socket and leaves the database where the developer's own is — and owns and stops the process it starts, because `umbrald` outlives its clients by design (REQ-TERM-003) and there is no `system.shutdown`. Dirty state hides defects and invents others; the suite was not hermetic until 2026-09-20 (`docs/checkpoints/2026-09-20-f0-closure.md`).
 - **First supervised batch:** at most 3-5 tasks before a human review.
 - **If the spec is wrong: stop.** Open a Delta in `changes/<YYYY-MM>-<slug>/` and do not continue until it is approved. Never let code and `specs/` diverge silently.
 - **Mark progress** in the tasks file (`### [x] YYYY-MM-DD T-…`) and in its execution log.
