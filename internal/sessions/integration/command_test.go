@@ -90,10 +90,10 @@ func TestACommandPaneGetsNoShellIntegration_REQ_BLK_003(t *testing.T) {
 	// the screen is where a sourced rc file would have announced itself. Neither happens;
 	// what is asserted here is the state the daemon settles on.
 	//
-	// The bound is generous for the same reason the block tests' is: it exists to stop a
-	// wedged session hanging the suite, not to measure anything. Eight seconds failed once
-	// under `-race ./...` on a loaded machine and passed in isolation, which is a red build
-	// that says nothing about the code and gets read as a finding.
+	// The bound only stops a wedged session hanging the suite. This test used to race
+	// `sleep 5` against the five-second window and lose under load, because an exit
+	// cancelled the only thing that wrote `none`; since T-F0-21 the exit settles it too, so
+	// it lands at five seconds either way.
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		current, err := h.Get(t.Context(), session.ID)
@@ -109,6 +109,73 @@ func TestACommandPaneGetsNoShellIntegration_REQ_BLK_003(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Error("the command session never settled on integration: none")
+}
+
+// TestAnExitInsideTheWindowStillSettlesIntegration_REQ_BLK_003 is the requirement's verdict
+// for a session that does not live long enough to be judged by the clock.
+//
+// REQ-BLK-003 says a session that emits no OSC 133 within five seconds SHALL be marked
+// `integration: none`. The five-second timer was the only thing that ever wrote `none`, and
+// the exit cancelled it, so a process that ended inside the window left its session on
+// `pending` for the life of the daemon — in `session.list` and in its row, about a process
+// that was gone. The verdict is due by the time the exit is visible: a client that reacts to
+// the session having exited must not find it still undecided.
+func TestAnExitInsideTheWindowStillSettlesIntegration_REQ_BLK_003(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skipf("sh is not installed: %v", err)
+	}
+	h := newHarness(t)
+
+	// One second, well inside the five-second window, so the timer can never be what
+	// settles it: under the defect this session sits on `pending` forever.
+	started := time.Now()
+	session, err := h.Create(t.Context(), domain.CreateParams{
+		Shell: "/bin/sh", CWD: t.TempDir(), Size: testSize,
+		Command: []string{"sh", "-c", "sleep 1"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Bounded only to stop a wedged session hanging the suite; the process exits in a
+	// second and nothing here measures time.
+	var current domain.Session
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		current, err = h.Get(t.Context(), session.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if current.State == domain.StateExited {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the session never exited; state %q", current.State)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Read at the first moment the exit is visible. If the window had already closed by
+	// then, the timer could have produced the verdict and the assertions below would pass
+	// without the fix, so a machine that slow proves nothing and says so.
+	if elapsed := time.Since(started); elapsed >= domain.IntegrationWindow {
+		t.Skipf("the one-second command took %v to be seen exiting, past the %v window; "+
+			"the timer may have decided, so this run cannot tell", elapsed, domain.IntegrationWindow)
+	}
+	if current.Integration != domain.IntegrationNone {
+		t.Errorf("an exited session reports integration %q, want %q", current.Integration, domain.IntegrationNone)
+	}
+	// The row is what a restarted daemon and every other reader see.
+	var persisted string
+	if err := h.store.DB().QueryRowContext(t.Context(),
+		"SELECT integration FROM sessions WHERE id = ?", session.ID).Scan(&persisted); err != nil {
+		t.Fatalf("read the session row: %v", err)
+	}
+	if persisted != string(domain.IntegrationNone) {
+		t.Errorf("the session row says integration %q, want %q", persisted, domain.IntegrationNone)
+	}
 }
 
 // TestACommandOffThePathIsAValidationError: `layout.apply` replays a layout written

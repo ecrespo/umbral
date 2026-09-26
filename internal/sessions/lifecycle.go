@@ -243,8 +243,15 @@ func (s *Service) finish(live *liveSession) {
 		// The block the shell died under is closed before the session is, so a client
 		// that reacts to session.exited finds no block still claiming to be running.
 		s.abandonOpenBlock(live)
+		// The exit settles the integration verdict rather than cancelling it (REQ-BLK-003):
+		// the timer was the only thing that ever wrote `none`, so stopping it alone left a
+		// session that exited inside the window on `pending` for the life of the daemon. A
+		// session that already spoke OSC 133 keeps `osc133`, which setIntegration's
+		// transition rule gives for free. Settled before the state flips, so a client that
+		// sees the session exited never sees it undecided.
 		if live.integrationTimer != nil {
 			live.integrationTimer.Stop()
+			s.setIntegration(live, domain.IntegrationNone)
 		}
 
 		live.mu.Lock()

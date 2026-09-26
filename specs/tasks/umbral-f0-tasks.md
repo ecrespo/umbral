@@ -419,10 +419,15 @@
 - **Out of scope, deliberately:** `pane.move`, whose `destination` is a tagged union that has
   more than one defensible flag syntax; it is not needed by the criterion and a CLI verb is
   kept forever.
-- **Unblocked** on 2026-09-26: delta `2026-09-cli-workspace-surface` was ratified and
-  archived.
+- **Blocked** on an API delta. Delta `2026-09-cli-workspace-surface` was ratified on
+  2026-09-26, but API §2's allowlist does not let the `cli` client kind call `workspace.*`,
+  `tab.*`, `pane.*` or `layout.*` — `umb` would get `METHOD_NOT_FOUND` for every one of them,
+  measured against a real daemon — and that delta said the API Specification was not touched.
+  §2 has to change first, by a delta of its own. The five tests are written and red on
+  `feat/T-F0-20-cli-workspace` (`c025050`); they use a fake daemon, so they cannot see the
+  allowlist, and `scripts/cli_roundtrip.sh` is where it would surface.
 
-### [ ] T-F0-21 · A shell that exits inside the integration window still gets a verdict
+### [x] 2026-09-26 T-F0-21 · A shell that exits inside the integration window still gets a verdict
 - **What:** `Service.finish` calls `live.integrationTimer.Stop()`, and the timer is the only
   thing that ever writes `integration: none`. A session whose process exits before the five
   second window closes therefore stays `pending` for the rest of the daemon's life, and the
@@ -458,6 +463,31 @@
   machine load decides. It passes in isolation and under its own package, and it failed after
   60.52 s inside a full `task ci` on 2026-09-21. The test is not flaky about nothing: it is a
   coin flip over a real defect, and it can only be made deterministic by fixing the defect.
+- **Result.** `finish` stops the timer and then settles the verdict with
+  `setIntegration(live, none)`, before the session's state flips to `exited`, so a client that
+  sees a live session exit never sees it undecided. A session that already reached `osc133`
+  keeps it through `setIntegration`'s existing rule, and the one wrinkle — a session built
+  without a block recorder has no timer and so no verdict — is the same configuration in which
+  nothing judges integration at all; `umbrald` always wires the recorder. The test was written
+  first and failed on both of its assertions, the live session and the row (`"pending", want
+  "none"`); that failing state *is* the teeth check the Done line asks for, since it is the
+  code with `integrationTimer.Stop()` and nothing else.
+- **Measured against a real daemon (2026-09-26).** An isolated `umbrald`, two panes split
+  with `sh -c "sleep 1"`, the database read three seconds later — inside the five-second
+  window, so the timer cannot be what decided:
+  ```
+  ses_01M3FX2PAP6NK0HE7CYG7B95A3|alive|osc133|
+  ses_01M3FX2PAQ3Z89EEAHE51AZ8W8|exited|none|0
+  ses_01M3FX2PASAHB69P74YQE7FGQA|exited|none|0
+  ```
+  The same sequence left both on `exited|pending` twenty-five seconds later before the fix.
+  `TestACommandPaneGetsNoShellIntegration_REQ_BLK_003` now settles at the process's exit or
+  the window, whichever comes first, instead of racing them.
+- **Not covered, found by the review:** crash recovery. `store.Recover` turns `alive` into
+  `exited` and leaves `integration` alone, so a session still `pending` at a `kill -9` stays
+  `exited|pending` in its row, as do rows written before this fix. Data Model §6 step 1 does
+  not mention `integration`, so settling it there is a spec decision, not part of this task's
+  What; left for a delta.
 
 ## Traceability matrix (F0)
 
@@ -508,6 +538,7 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | T-F0-21 | done | A one-line fix to a defect that made the gate a coin flip: the exit now settles REQ-BLK-003's verdict instead of cancelling the only thing that ever wrote it. Test first, red on both the live session and its row, then green; measured on a real daemon inside the window. The same session ratified delta `2026-09-cli-workspace-surface` and fixed a hygiene-gate false positive, and found that API §2 does not let the `cli` client kind call `workspace.*`/`tab.*`/`pane.*`/`layout.*` at all — a gap the delta missed, which blocks `T-F0-20` until a delta of its own. |
 | 2026-09-21 | F0 validation | phase **not** closed | Asked whether F0 could be closed now that `T-F0-19` had shipped; measured rather than argued, and the answer is still no. Exit criterion 6 was the one item nobody had ever put a number to, so it was measured: an isolated `umbrald` with five live panes (five `zsh` children, all `osc133`) held a steady **VmRSS of 37.6 MiB / PSS 36.0 MiB across 90 s**, against the 80 MiB of PRD §7 — met, with more than half the budget unused, though still ungated, which is what T-F0-13 already records. Criterion 3 needs a week of a human using the TUI and has had one walkthrough. Criterion 4 needs `T-F0-20`, which is blocked on the ratification of `2026-09-cli-workspace-surface`. The run also turned up a MUST defect nobody had looked for: a session whose process exits inside the five-second integration window never reaches `integration: none`, because `finish` stops the only timer that would have said so. It is `T-F0-21`, it is pre-existing at `c7d7e18`, and it is the reason `TestACommandPaneGetsNoShellIntegration_REQ_BLK_003` is a coin flip under load. |
 | 2026-09-21 | T-F0-19 | done | The sweep is safe because of *where* it is called, not because of anything it decides: under the instance lock this daemon is the only one of its installation, so every `shellinteg-*` beside the socket belongs to a process that is gone — no age heuristic, no ownership check. The ordering carries the other half: it runs before `Restore`, because the shells the restore launches write their own directories there and a sweep afterwards would delete the files they were started with. That is the mutation worth remembering — moved below `Restore` every other test stays green, and every restored pane comes back without shell integration, silently. `Prepare` refusing an empty parent is the second load-bearing detail: `bootstrap` degrades a `Prepare` error into a session without integration, so a mis-wired adapter would otherwise show up only as blocks that stopped working. |
 | 2026-09-20 | F0 verification | phase **not** closed | The task list is complete and `task ci` is green; two of the plan's six F0 exit criteria are not met. The TUI has not been used for a week, and **no CLI for the workspace tree exists** — `umb` serves `status`, `block last`, `api schema`, `version`, `help` and nothing else — so "a script creates a workspace, splits, exports and reapplies a layout using only the CLI" cannot be performed. No task builds it and no REQ requires it, while Art. 6's amendment justifies the `w<n>` identifiers on `umb pane split w1:t1` being "the feature": a Delta, not a quiet task. Verified by running rather than reading: 43/43 matrix tests exist, and a real daemon was driven through create, split, rename, export, apply, `kill -9` and restart — five panes back with labels, cwds, fresh sessions and focus, the sentinel absent and the stored command sitting typed at a real shell's prompt. That run also found two defects in the suite itself: `cmd/umbrald/bootstrap_test.go` overrode only `XDG_RUNTIME_DIR`, so its daemon wrote to the developer's real database (2484 tabs, 2490 sessions accumulated there), and it leaked one `umbrald` per run, four found alive holding that database open. Both fixed and verified; the rows already written are not cleaned. `docs/checkpoints/2026-09-20-f0-closure.md`. |
