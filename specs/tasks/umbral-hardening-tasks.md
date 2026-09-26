@@ -55,6 +55,16 @@ its matrix lists commands.
 - **Done:** `dpkg -c umbral_*.deb` lists the 11 icon files and the `.desktop` file; smoke test in an
   Ubuntu 26.04 container.
 
+### [ ] T-REL-01 · A week of the TUI as the main terminal, before release 0.1
+- **What:** the TUI used for one week as the main terminal without blocking regressions —
+  F0's third exit criterion, moved here by delta `2026-09-defer-tui-week` so the week is spent
+  on the TUI that ships, agent panel included. A human's to perform; no code.
+- **REQ:** Art. 9 — a release gate set by the plan (delta `2026-09-defer-tui-week`); no REQ.
+- **Files:** `docs/qa/` (the record of the week, beside `docs/qa/f0-tui.md`)
+- **Depends on:** the F1 TUI work (T-F1-20)
+- **Done:** seven days of the TUI as the daily driver with no blocking regression, recorded
+  where `docs/qa/f0-tui.md` was. Release 0.1 does not ship without it.
+
 ## Traceability matrix (hardening)
 
 | REQ | Tasks | Verification |

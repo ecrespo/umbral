@@ -32,7 +32,9 @@ does not ship without it.
 - **Plan §Hardening and release 0.1:** gains the criterion as a release gate.
 - **Plan changelog:** 1.7.
 - `docs/f0-closure-plan.md` item 4 points to the release gate.
+- **Hardening tasks:** `T-REL-01` carries the criterion with its exact text as the Done line,
+  so a tasks file — not only a plan bullet — holds release 0.1 to it.
 
 ## Phase
 
-Moves an item from F0 to the Hardening phase. No REQ, task or test changes.
+Moves an item from F0 to the Hardening phase. No REQ or test changes; one task, `T-REL-01`.

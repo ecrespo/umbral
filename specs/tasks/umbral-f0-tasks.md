@@ -581,14 +581,14 @@
 - **What:** `config.AcquireDatabaseLock` takes `<database>.lock` beside the database after the
   instance lock and before `store.Open`; held elsewhere, `umbrald` logs it and exits 75
   (`EX_TEMPFAIL`) without opening the database. The two locks share one implementation.
-- **REQ:** none — Data Model §6's premise, which the instance lock already protected
-  (infrastructure, like the instance lock's own tests).
+- **REQ:** Art. 6 — Data Model §6's recovery premise, which the instance lock already
+  protected (infrastructure, like the instance lock's own tests).
 - **Files:** `internal/config/instancelock.go`, `internal/config/instancelock_test.go`,
   `cmd/umbrald/main.go`, `cmd/umbrald/dblock_test.go`,
   `specs/technical/umbral-architecture.md`
 - **Depends on:** T-F0-02, T-F0-22
 - **Done:** `TestOnlyOneDatabaseLockIsGranted`, `TestDatabaseLockIsReleasedForTheNextDaemon`
-  and `TestASecondRuntimeCannotRecoverALiveDatabase` green.
+  and `TestASecondRuntimeCannotRecoverALiveDatabase` green, plus `TestAReleasedLockKeepsItsFile` and `TestASymlinkedDataDirectorySharesTheLock` from the review.
 - **Why it exists:** the `spec-guardian` review of T-F0-22 found the instance lock guards the
   runtime directory while recovery's premise is about the database. Delta
   `2026-09-database-lock`.
@@ -599,6 +599,14 @@
   The config tests were red on a stub that granted every lock. Writing them caught a defect in
   the test itself first: a probe that *held* a wrongly granted lock parked the subprocess until
   the test timed out, instead of failing it; the database probe now tries, reports and exits.
+- **Result (review).** `spec-guardian` found `Release` closed the lock and then unlinked it,
+  which lets two daemons each hold "the" lock (see the delta's decision 4); the refactor had
+  carried that race from the instance lock onto the database's. Neither lock file is removed
+  any more. `TestAReleasedLockKeepsItsFile` reproduces the three-daemon sequence in one process
+  and was red on the old `Release`. `TestASymlinkedDataDirectorySharesTheLock` was written to
+  add path resolution, and passed on the old code: the lock lives in the database's directory,
+  so a symlinked directory already shares it. The resolution was dropped as unneeded and the
+  test kept as a pin.
 
 ## Traceability matrix (F0)
 
@@ -649,6 +657,7 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | — | F0 criterion 3 moved | The Tech Lead moved the TUI's week to the release 0.1 gate (delta `2026-09-defer-tui-week`, `T-REL-01`); F0 closes on the other five criteria and REQ-BLK-003. |
 | 2026-09-26 | T-F0-24 | done | The instance lock guarded the socket's directory; recovery's premise is about the database. A second daemon with another `--socket` and the same `--db` recovered over a live session — measured, `sessions_recovered: 1` — and now exits 75 instead. |
 | 2026-09-26 | T-F0-23 | done | A test that passed for a year's worth of reasons except the one that mattered: it handed `run` a writer that returned EPIPE, which the real binary never received — Go killed it with SIGPIPE first. One `signal.Notify`. |
 | 2026-09-26 | T-F0-22 | done | The last path to a `pending` verdict on a gone process was a crash: T-F0-21 fixed the exit, and a daemon that dies has none. Data Model §6 said nothing about integration, so it took a delta before one line of SQL. |

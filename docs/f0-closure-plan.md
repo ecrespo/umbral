@@ -11,9 +11,9 @@
 
 ## Where F0 stands
 
-Every implementation task from `T-F0-01` to `T-F0-19` is done, plus `T-PKG-01/02`. Four
-things are between here and a closed phase, and **two of them are a human's** — no amount of
-code shortens them.
+Every implementation task from `T-F0-01` to `T-F0-24` is done, plus `T-PKG-01/02`. The four
+items this file was written for, on 2026-09-21, are settled as the table shows; only the
+closing checklist at the end remains.
 
 | # | Item | Owner | Blocked on | Closes |
 |---|---|---|---|---|
@@ -26,16 +26,17 @@ Items 1 to 3 are done (2026-09-26), and item 4 — the TUI's week — was moved 
 to the release 0.1 gate (delta `2026-09-defer-tui-week`). Nothing F0 needs is open; what is
 left is the closing checklist below.
 
-## The six exit criteria, and what each one still needs
+## The exit criteria, and what closed each
 
-From `specs/plans/umbral-mvp-plan.md` §F0. The phase closes when all six are met **and**
-REQ-BLK-003 holds.
+From `specs/plans/umbral-mvp-plan.md` §F0. Since delta `2026-09-defer-tui-week` the phase
+closes when the five that remain are met **and** REQ-BLK-003 holds; criterion 3 is a release
+0.1 gate now.
 
 | # | Criterion | Status | What closes it |
 |---|---|---|---|
 | 1 | VT conformance suite 100 % MUST green (REQ-TERM-002) | ☑ met | `T-F0-07`, 20 MUST cases |
 | 2 | Correct blocks in bash, zsh and fish in CI | ☑ met | `TestBlocksInEveryShell_REQ_BLK_005`; the Linux job installs all three |
-| 3 | The TUI used one week as the main terminal, no blocking regressions | ☐ **open** | item 4 below |
+| 3 | The TUI used one week as the main terminal, no blocking regressions | ➜ moved | release 0.1 gate, `T-REL-01` (delta `2026-09-defer-tui-week`) |
 | 4 | A script creates a workspace, splits, exports and reapplies a layout using only the CLI | ☑ met | `T-F0-20`; `scripts/cli_roundtrip.sh` (`task roundtrip`) performs it against a real daemon |
 | 5 | The structure comes back after `kill` on the daemon | ☑ met | verified end to end 2026-09-20: `kill -9`, restart, five panes with labels, cwds, fresh sessions, focus preserved |
 | 6 | Benchmarks within the NFRs | ☑ met | three of four are gates; idle memory measured 2026-09-21 at 37,6 MiB against 80 |
@@ -127,7 +128,11 @@ but no code is written before a human approves it.
 `scripts/cli_roundtrip.sh` passes against a real daemon — which *is* exit criterion 4,
 performed rather than argued.
 
-## 4 · A week of the TUI as the main terminal (human)
+## 4 · A week of the TUI as the main terminal (human) — ➜ moved to the release 0.1 gate
+
+Moved by the Tech Lead on 2026-09-26 (delta `2026-09-defer-tui-week`) and tracked as
+`T-REL-01` in `specs/tasks/umbral-hardening-tasks.md`: the week is spent on the TUI that ships.
+What follows is kept as the record of what the criterion asks.
 
 `docs/qa/f0-tui.md` was walked once on 2026-09-20 with no step failing, and that is what
 closed `T-F0-12`. One session is not one week, and the criterion is deliberately about
@@ -135,16 +140,16 @@ sustained use: raw mode, a real keyboard, a real font, and the regressions that 
 on day four.
 
 **Done when:** seven days of the TUI as the daily driver with no blocking regression, recorded
-where the previous walkthrough was. Start it now and run it in parallel with items 1 to 3;
-it is the longest pole and nothing else depends on it.
+where the previous walkthrough was.
 
 ## Before calling F0 closed
 
-- [ ] `task ci` green, on a tree where `T-F0-21` has landed — the full gate, not `go test`.
+- [ ] `task ci` green, on a tree where `T-F0-21` to `T-F0-24` have landed — the full gate, not `go test`.
 - [ ] `python3 tools/sdd_check.py` with no CRITICAL and no HIGH.
 - [ ] `spec-guardian` run on the final diff.
 - [x] `changes/2026-09-cli-workspace-surface/` archived (2026-09-26).
-- [ ] All six criteria marked in `specs/plans/umbral-mvp-plan.md`, with what closed each.
+- [ ] The five remaining criteria marked in `specs/plans/umbral-mvp-plan.md`, with what closed
+      each, and criterion 3 shown as moved to the release gate.
 - [ ] `AGENTS.md`'s known status rewritten to say the phase is closed — and *only* then, since
       it has claimed that once before while two criteria were open.
 - [ ] A closing checkpoint in `docs/checkpoints/`, verified against the filesystem and a

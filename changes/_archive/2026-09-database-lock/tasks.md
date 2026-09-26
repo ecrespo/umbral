@@ -4,7 +4,7 @@
 - **What:** `config.AcquireDatabaseLock` takes `<database>.lock` beside the database after the
   instance lock and before `store.Open`; held elsewhere, `umbrald` exits 75. Tech §9.4 says so
   (1.12).
-- **REQ:** none — Data Model §6's premise, as the instance lock (infrastructure).
+- **REQ:** Art. 6 — Data Model §6's recovery premise, as the instance lock (infrastructure).
 - **Files:** `internal/config/instancelock.go`, `internal/config/instancelock_test.go`,
   `cmd/umbrald/main.go`, `cmd/umbrald/dblock_test.go`,
   `specs/technical/umbral-architecture.md`

@@ -86,7 +86,8 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 | T-F0-23 | A closed pipe ends `umb` with 0, not with SIGPIPE (REQ-CLI-004) | 0.1d | T-F0-11 | ✅ 2026-09-26 |
 | T-F0-24 | A daemon locks the database it recovers (Data Model §6) | 0.25d | T-F0-02, T-F0-22 | ✅ 2026-09-26 |
 
-**F0 is open.** Reviewed against a running daemon on 2026-09-20
+**F0 meets its exit criteria; the closing checklist of `docs/f0-closure-plan.md` is pending.**
+Reviewed against a running daemon on 2026-09-20
 (`docs/checkpoints/2026-09-20-f0-closure.md`) and again on 2026-09-21
 (`docs/checkpoints/2026-09-21-f0-validation.md`): `T-F0-19` closed on 2026-09-21, verified
 against a real daemon with `kill -9`; `T-F0-20`, `T-F0-21` and `T-F0-22` closed on 2026-09-26,
@@ -99,8 +100,7 @@ daemon and reproduced at `c7d7e18`; the exit now settles the verdict, measured t
 closed by that run — idle memory, measured for the first time — and criterion 4 by
 `T-F0-20`; the TUI's week moved to the release 0.1 gate (delta `2026-09-defer-tui-week`), so
 F0 closes on the other five criteria **and REQ-BLK-003**, all of which hold.
-`docs/f0-closure-plan.md` is the hand-off: the four remaining items in the order they can be
-worked, with an owner and an acceptance criterion each.
+`docs/f0-closure-plan.md` records how each item was settled and holds the closing checklist.
 
 - VT conformance suite 100 % MUST green (REQ-TERM-002) — ☑ met by T-F0-07, 20 MUST cases.
 - Correct blocks in bash, zsh and fish in CI — ☑ met by T-F0-09,
@@ -234,4 +234,4 @@ Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), 
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds T-F1-30/31 and the hardening tasks file; F1 grows to 7-8 weeks; the deltas are folded and archived; the structure tables take migration `0003` and the agent subdomain `0004` |
 | 1.5 | 2026-09-21 | E. Crespo (assisted draft) | `T-F0-19` closes; `T-F0-20` is added from delta `2026-09-cli-workspace-surface` and `T-F0-21` from the 2026-09-21 F0 validation, which also measured exit criterion 6 for the first time — idle daemon memory, 37.6 MiB against a budget of 80 |
 | 1.6 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-20` and `T-F0-21` close; exit criterion 4 is met by `scripts/cli_roundtrip.sh` against a real daemon, after delta `2026-09-cli-allowlist` let `umb` reach the tree. `T-F0-22` (delta `2026-09-recovery-integration`) settles on restart the verdict a crash interrupted. Only criterion 3, the TUI's week, remains |
-| 1.7 | 2026-09-26 | E. Crespo | delta `2026-09-defer-tui-week`: F0's third exit criterion, the TUI's week as the main terminal, becomes a release 0.1 gate; F0 closes on the other five and REQ-BLK-003. `T-F0-23` and `T-F0-24` added and closed |
+| 1.7 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-defer-tui-week`: F0's third exit criterion, the TUI's week as the main terminal, becomes a release 0.1 gate; F0 closes on the other five and REQ-BLK-003. `T-F0-23` and `T-F0-24` added and closed |

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -144,6 +145,71 @@ func TestDatabaseLockIsReleasedForTheNextDaemon(t *testing.T) {
 		t.Fatalf("the database lock was not released for the next daemon: %v", err)
 	}
 	_ = second.Release()
+}
+
+// TestAReleasedLockKeepsItsFile closes the unlink race the `spec-guardian` review of T-F0-24
+// found. Release used to close the file and then remove it: a daemon B that had already opened
+// the old file took the lock the moment A closed it, A then unlinked that file, and a daemon C
+// created a new one and locked that too — two owners of one database, and C's recovery over
+// B's live sessions. With the file left in place there is one inode, and C is refused.
+//
+// flock is per open file description, so three descriptors in one process contend exactly as
+// three daemons would.
+func TestAReleasedLockKeepsItsFile(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "umbral.db")
+
+	a, err := AcquireDatabaseLock(db)
+	if err != nil {
+		t.Fatalf("A: %v", err)
+	}
+	// B has opened the lock file and is about to flock it when A lets go.
+	b, err := os.OpenFile(db+DatabaseLockSuffix, os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("B opens the lock file: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	if err := a.Release(); err != nil {
+		t.Fatalf("A releases: %v", err)
+	}
+	if err := syscall.Flock(int(b.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("B could not take the lock A released: %v", err)
+	}
+
+	c, err := AcquireDatabaseLock(db)
+	if err == nil {
+		_ = c.Release()
+		t.Fatal("C took the database lock while B holds it: the file B locked was unlinked under it")
+	}
+	if !errors.Is(err, ErrDatabaseInUse) {
+		t.Fatalf("C failed with %v, want ErrDatabaseInUse", err)
+	}
+}
+
+// TestASymlinkedDataDirectorySharesTheLock: a data directory reached through a symlink is
+// the same database, so it must be the same lock — or `--db ~/link/umbral.db` would walk past
+// a daemon holding `~/real/umbral.db`. It holds because the lock file lives in that directory;
+// this pins it against a change that moved the lock somewhere keyed on the path's spelling.
+func TestASymlinkedDataDirectorySharesTheLock(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	if err := os.MkdirAll(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	held, err := AcquireDatabaseLock(filepath.Join(real, "umbral.db"))
+	if err != nil {
+		t.Fatalf("lock through the real path: %v", err)
+	}
+	defer func() { _ = held.Release() }()
+
+	if err := tryDatabaseLockInSubprocess(t, filepath.Join(link, "umbral.db")); !errors.Is(err, errSubprocessBusy) {
+		t.Errorf("the same database through a symlinked directory got its own lock (%v)", err)
+	}
 }
 
 var errSubprocessBusy = errors.New("the subprocess reported the lock was already held")
