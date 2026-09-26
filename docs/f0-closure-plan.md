@@ -18,13 +18,14 @@ code shortens them.
 | # | Item | Owner | Blocked on | Closes |
 |---|---|---|---|---|
 | 1 | ~~Ratify `changes/2026-09-cli-workspace-surface/`~~ — ratified 2026-09-26 | human | — | unblocks item 3 |
-| 2 | `T-F0-21` — REQ-BLK-003's verdict at exit | code | — | a MUST, and a reliable `task ci` |
-| 3 | `T-F0-20` — `umb workspace`/`tab`/`pane`/`layout` | code | item 1 | exit criterion 4 |
+| 2 | ~~`T-F0-21` — REQ-BLK-003's verdict at exit~~ — done 2026-09-26 | code | — | a MUST, and a reliable `task ci` |
+| 3 | `T-F0-20` — `umb workspace`/`tab`/`pane`/`layout` | code | an API §2 delta: the `cli` client kind may not call those methods | exit criterion 4 |
 | 4 | A week of the TUI as the main terminal | human | — | exit criterion 3 |
 
-Items 1 and 4 can start today and run alongside everything else. Item 2 should go first among
-the code, because until it lands `task ci` is a coin flip and no other work can be trusted
-green.
+Items 1 and 2 are done. Item 4 can run alongside everything else. Item 3's five tests exist,
+red, on `feat/T-F0-20-cli-workspace`; before any code, API §2 has to let `umb` (`client_kind:
+cli`) call `workspace.*`, `tab.*`, `pane.*` and `layout.*` — found on 2026-09-26, missed by the
+CLI delta, which said the API Specification was not touched.
 
 ## The six exit criteria, and what each one still needs
 
@@ -68,7 +69,7 @@ the requirements are already in the PRD (1.11), which is this repo's convention 
 awaiting approval, and the checker reads pending deltas, so leaving them out of `specs/` is
 what produces HIGH findings.
 
-## 2 · `T-F0-21` — settle the integration verdict at exit (code, next)
+## 2 · `T-F0-21` — settle the integration verdict at exit (code) — ✅ done 2026-09-26
 
 Full task in `specs/tasks/umbral-f0-tasks.md`. Summary:
 
