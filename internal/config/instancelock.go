@@ -15,6 +15,31 @@ import (
 // lifetime: the directory is cleared at logout and the lock goes with it.
 const LockFileName = "umbrald.lock"
 
+// ErrDatabaseInUse reports that another daemon holds the database's lock.
+var ErrDatabaseInUse = errors.New("config: another umbrald is using this database")
+
+// DatabaseLockSuffix names the database's lock file: `umbral.db.lock` beside `umbral.db`.
+const DatabaseLockSuffix = ".lock"
+
+// AcquireDatabaseLock takes the exclusive, non-blocking lock that makes a daemon the only one
+// using a database, and returns ErrDatabaseInUse when someone else holds it (delta
+// `2026-09-database-lock`).
+//
+// The instance lock guards the runtime directory, and recovery's premise — every `alive`
+// row belongs to a process that is gone — is about the database. The two coincide only while
+// both paths are defaulted: a daemon started with another `--socket` and the same `--db`
+// holds an instance lock of its own and would recover over the first daemon's live sessions.
+// A separate file rather than the database itself, because SQLite takes POSIX locks on that
+// file and mixing lock families on one file behaves differently across platforms.
+func AcquireDatabaseLock(dbPath string) (*InstanceLock, error) {
+	dir := filepath.Dir(dbPath)
+	//nolint:gosec // dbPath is the operator's -db flag or the XDG data directory, never a peer's input
+	if err := os.MkdirAll(dir, RuntimeDirMode); err != nil {
+		return nil, fmt.Errorf("config: create the database directory: %w", err)
+	}
+	return acquireLock(dbPath+DatabaseLockSuffix, ErrDatabaseInUse)
+}
+
 // ErrAlreadyRunning reports that another daemon holds the installation.
 var ErrAlreadyRunning = errors.New("config: another umbrald already owns this installation")
 
@@ -43,18 +68,22 @@ func AcquireInstanceLock(dir string) (*InstanceLock, error) {
 	if err := os.MkdirAll(dir, RuntimeDirMode); err != nil {
 		return nil, fmt.Errorf("config: create the runtime directory: %w", err)
 	}
-	path := filepath.Join(dir, LockFileName)
+	return acquireLock(filepath.Join(dir, LockFileName), ErrAlreadyRunning)
+}
 
-	//nolint:gosec // dir comes from the operator's -socket flag or from RuntimeDir, never from a peer
+// acquireLock takes an exclusive, non-blocking flock on path, answering busy when another
+// open file description holds it.
+func acquireLock(path string, busy error) (*InstanceLock, error) {
+	//nolint:gosec // path is derived from the operator's -socket or -db flag, or from the XDG directories, never from a peer
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("config: open the instance lock %s: %w", path, err)
+		return nil, fmt.Errorf("config: open the lock %s: %w", path, err)
 	}
 
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, fmt.Errorf("%w: %s", ErrAlreadyRunning, path)
+			return nil, fmt.Errorf("%w: %s", busy, path)
 		}
 		return nil, fmt.Errorf("config: lock %s: %w", path, err)
 	}
@@ -71,6 +100,7 @@ func (l *InstanceLock) Release() error {
 	name := l.f.Name()
 	err := l.f.Close()
 	l.f = nil
+	//nolint:gosec // name is the lock this process created and holds, from the operator's -socket or -db flag or the XDG directories
 	if rmErr := os.Remove(name); rmErr != nil && !os.IsNotExist(rmErr) && err == nil {
 		err = rmErr
 	}

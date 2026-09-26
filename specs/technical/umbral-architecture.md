@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.11 |
+| **Version** | 1.12 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -597,6 +597,15 @@ the previous process is gone; a second daemon running it over a first one's sess
 destroy state that is not stale, and autostart makes two daemons starting at once ordinary.
 `flock` rather than a pid file, so a killed daemon leaves nothing to clean up.
 
+Recovery's premise is about the database, and that lock is about the runtime directory; the two
+coincide only while both are defaulted. So, after the instance lock and before opening the
+database, a daemon also takes an exclusive `flock` on `<database>.lock` beside the database file
+(`umbral.db.lock` by default) — a file of its own, because SQLite takes POSIX locks on the
+database and mixing lock families on one file differs across platforms. A daemon that cannot
+take it is one of *another* runtime directory pointed at a database already in use: it logs
+which database, does not open it, and exits **75** (`EX_TEMPFAIL`) — not 0, since nothing serves
+the caller's socket (delta `2026-09-database-lock`).
+
 A shell's bootstrap files — the generated rc that injects the OSC 133 markers — live in
 `shellinteg-<random>/` inside that same runtime directory, not in the shared temporary
 directory. The session removes its own when the shell exits, which is what keeps a
@@ -655,6 +664,7 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds the `workspaces`, `waits`, `integrations` and `notify` modules, DD-009 to DD-015, the injected environment and the new test levels |
 | 1.10 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-bootstrap-sweeper`: §9.2 places a shell's bootstrap files in the runtime directory and specifies the sweep at start, with the instance lock as the argument for why it needs no age heuristic |
 | 1.11 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-cli-allowlist`: §9.4 writes down the grammar of `umb workspace`/`tab`/`pane`/`layout` — positionals, flags, defaults, the `--` rule for `pane split`, what `layout apply --from` accepts and where its warnings go — and lists `umb api schema`, which it had omitted |
+| 1.12 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-database-lock`: §9.4 adds the database lock — `<database>.lock` beside the database, taken after the instance lock and before opening it, exit 75 when a daemon of another runtime directory holds it — so recovery cannot run over live sessions through a shared `--db` |
 | 1.9 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-restore-semantics`: a Configuration section specifies `$XDG_CONFIG_HOME/umbral/config.toml`, its `[experimental] pane_history` key and that a malformed file stops the daemon rather than falling back to defaults |
 | 1.8 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-tui-renderer`: §5.1 lists the TUI's `ports` and `adapters`, §5.2 gains their rows, and DD-001 records which renderer the client uses and why it is the daemon's |
 | 1.7 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-cli-surface`: §5.1 lists the packages that existed but were unlisted, §5.2 gains the `api`, `client` and `tui` rows, and §9.4 records the `umb` surface, the daemon log and the instance lock |

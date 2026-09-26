@@ -49,6 +49,7 @@ const (
 	exitDataErr     = 65 // EX_DATAERR: the database is unusable, for example a newer schema
 	exitUnavailable = 69 // EX_UNAVAILABLE: the socket could not be served
 	exitCantCreate  = 73 // EX_CANTCREAT: a required file or directory could not be created
+	exitTempFail    = 75 // EX_TEMPFAIL: the database is held by a daemon of another runtime directory
 	exitConfig      = 78 // EX_CONFIG: the settings file is there and cannot be read
 )
 
@@ -136,6 +137,34 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		logger.Info("removed the bootstrap directories left by a previous run",
 			slog.Int("removed", removed))
 	}
+
+	// The database has an owner too (delta `2026-09-database-lock`). The instance lock above
+	// serialises daemons of one runtime directory; recovery's premise is about this file, and
+	// a daemon of another runtime directory pointed at it with -db would otherwise recover
+	// over live sessions. Held elsewhere, nothing is serving the caller's socket and nothing
+	// failed to be created, so this is EX_TEMPFAIL rather than 0 or 73.
+	if *dbPath == "" {
+		if *dbPath, err = store.DefaultPath(); err != nil {
+			logger.Error("cannot locate the database", slog.Any("error", err))
+			return exitCantCreate
+		}
+	}
+	dbLock, err := config.AcquireDatabaseLock(*dbPath)
+	if err != nil {
+		if errors.Is(err, config.ErrDatabaseInUse) {
+			logger.Error("another umbrald, of a different runtime directory, is using this "+
+				"database; refusing to recover over its live sessions",
+				slog.String("database", *dbPath), slog.String("socket", socket))
+			return exitTempFail
+		}
+		logger.Error("cannot take the database lock", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer func() {
+		if err := dbLock.Release(); err != nil {
+			logger.Error("cannot release the database lock", slog.Any("error", err))
+		}
+	}()
 
 	db, err := store.Open(ctx, store.Options{Path: *dbPath})
 	if err != nil {
