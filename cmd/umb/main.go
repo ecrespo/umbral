@@ -46,6 +46,14 @@ const callTimeout = 10 * time.Second
 
 func main() {
 	client.Version = buildVersion()
+
+	// A write to a closed stdout must come back as EPIPE, which the printer already treats
+	// as "the reader has enough" (REQ-CLI-004). Without this, Go's runtime answers it with
+	// SIGPIPE and the process dies of the signal before the printer sees anything, so
+	// `umb api schema --json | head -c1` reported a failure. Asking for the signal is what
+	// turns that default off (os/signal, "SIGPIPE"); nothing needs to read the channel.
+	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
+
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 

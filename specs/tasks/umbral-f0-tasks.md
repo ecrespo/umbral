@@ -557,6 +557,26 @@
   window, as they should. **No data migration:** the rule runs on every start, so the first
   start of a daemon carrying it repairs the rows older daemons left behind.
 
+### [x] 2026-09-26 T-F0-23 · A closed pipe ends `umb` with 0, not with SIGPIPE
+- **What:** `umb` asks for `SIGPIPE`, so Go's runtime returns `EPIPE` to the write instead of
+  killing the process, and the printer's existing rule — a closed pipe is not a failure —
+  finally runs in the binary and not only in the test.
+- **REQ:** REQ-CLI-004
+- **Files:** `cmd/umb/main.go`, `cmd/umb/main_test.go`
+- **Depends on:** T-F0-11
+- **Done:** `TestAClosedPipeEndsTheRealBinaryWithZero_REQ_CLI_004` green, and
+  `umb api schema --json | head -c1` exits 0 from a real shell.
+- **Why it exists:** found by the `spec-guardian` review of T-F0-20. REQ-CLI-004 says a closed
+  pipe is "what `| head` does deliberately" and must not fail the command, and Tech §9.4
+  repeats it; `TestBrokenPipeIsNotAFailure_REQ_CLI_004` passed because it hands `run` a writer
+  that returns `EPIPE`. A real stdout never did: Go ends a program that writes to a closed
+  pipe on fd 1 with `SIGPIPE` unless it has asked for that signal, so the shell saw 141.
+  No delta: the requirement was right, the binary did not keep it.
+- **Result.** The test builds the binary, closes the pipe's reader before the first byte and
+  runs `umb api schema --json` into it; it was red with `signal: broken pipe`, then green once
+  `main` called `signal.Notify` for `SIGPIPE`. Checked from a real shell as well:
+  `bin/umb api schema --json | head -c1` → `pipestatus` 0.
+
 ## Traceability matrix (F0)
 
 | REQ | Tasks | Tests citing it |
@@ -580,7 +600,7 @@
 | REQ-SEC-007 | T-F0-03 | TestSocketPermissions0600_REQ_SEC_007 |
 | REQ-CLI-002 | T-F0-10, T-F0-11 | TestBlockGetLast_REQ_CLI_002 |
 | REQ-CLI-003 | T-F0-11 | TestUmbAutostartFailsWith69_REQ_CLI_003, TestAutostartFailureExits69_REQ_CLI_003 |
-| REQ-CLI-004 | T-F0-11 | TestBlockLastExits69WhenTheDaemonIsUnavailable_REQ_CLI_003, TestWriteFailureIsNotReportedAsSuccess_REQ_CLI_004, TestBrokenPipeIsNotAFailure_REQ_CLI_004 |
+| REQ-CLI-004 | T-F0-11, T-F0-23 | TestBlockLastExits69WhenTheDaemonIsUnavailable_REQ_CLI_003, TestWriteFailureIsNotReportedAsSuccess_REQ_CLI_004, TestBrokenPipeIsNotAFailure_REQ_CLI_004, TestAClosedPipeEndsTheRealBinaryWithZero_REQ_CLI_004 |
 | REQ-CLI-005 | T-F0-20 | TestWorkspaceCreatePrintsTheTree_REQ_CLI_005, TestPaneSplitAddressesByPublicId_REQ_CLI_005, TestUnknownSubcommandExitsOne_REQ_CLI_005, TestCliClientMayDriveTheWorkspaceTree_REQ_CLI_005, TestCliClientStillMayNotMovePanesOrDriveSessions_REQ_CLI_005, TestTreeFlagsBecomeTheMethodsParameters_REQ_CLI_005, TestTreeCommandsRejectWhatTheyCannotSend_REQ_CLI_005 |
 | REQ-CLI-006 | T-F0-20 | TestLayoutExportApplyThroughAPipe_REQ_CLI_006, TestLayoutApplyReportsWarnings_REQ_CLI_006, TestLayoutApplyReadsEitherFormOfTheTree_REQ_CLI_006 |
 | REQ-TUI-001 | T-F0-12 (+ T-F1-20) | TestTUIBlockNavigation_REQ_TUI_001, TestTabsAndSwitching_REQ_TUI_001, TestSplitResizesBothPanes_REQ_TUI_001 |
@@ -606,6 +626,7 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | T-F0-23 | done | A test that passed for a year's worth of reasons except the one that mattered: it handed `run` a writer that returned EPIPE, which the real binary never received — Go killed it with SIGPIPE first. One `signal.Notify`. |
 | 2026-09-26 | T-F0-22 | done | The last path to a `pending` verdict on a gone process was a crash: T-F0-21 fixed the exit, and a daemon that dies has none. Data Model §6 said nothing about integration, so it took a delta before one line of SQL. |
 | 2026-09-26 | T-F0-20 | done after a `spec-guardian` round | F0 exit criterion 4, performed: `scripts/cli_roundtrip.sh` creates, splits, exports and reapplies a layout against a real daemon using only `umb`. The CLI was the easy half. The other half was a protocol gap the ratified CLI delta had declared absent — API §2 refused the whole tree to `cli` — and five tests on a fake daemon could not see it; delta `2026-09-cli-allowlist` closed it by exactly the surface the CLI uses. The review then found the script's own wrapper leaking a flag into a pane's command, and a grammar nobody had specified. |
 | 2026-09-26 | T-F0-21 | done | A one-line fix to a defect that made the gate a coin flip: the exit now settles REQ-BLK-003's verdict instead of cancelling the only thing that ever wrote it. Test first, red on both the live session and its row, then green; measured on a real daemon inside the window. The same session ratified delta `2026-09-cli-workspace-surface` and fixed a hygiene-gate false positive, and found that API §2 does not let the `cli` client kind call `workspace.*`/`tab.*`/`pane.*`/`layout.*` at all — a gap the delta missed, which blocks `T-F0-20` until a delta of its own. |
