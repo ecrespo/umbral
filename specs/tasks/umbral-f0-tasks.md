@@ -522,7 +522,40 @@
   `exited` and leaves `integration` alone, so a session still `pending` at a `kill -9` stays
   `exited|pending` in its row, as do rows written before this fix. Data Model §6 step 1 does
   not mention `integration`, so settling it there is a spec decision, not part of this task's
-  What; left for a delta.
+  What; left for a delta. **Closed by `T-F0-22`** (delta `2026-09-recovery-integration`).
+
+### [x] 2026-09-26 T-F0-22 · A restart settles the integration verdict a crash interrupted
+- **What:** `store.Recover` settles every `pending` session row once step 1 has marked the
+  alive ones exited — `osc133` when the session has blocks, `none` otherwise — in the same
+  transaction, and `RecoveryReport` counts
+  them as `IntegrationSettled`; `umbrald` logs it beside the other recovery counts.
+- **REQ:** REQ-BLK-003
+- **Files:** `internal/store/recovery.go`, `internal/store/recovery_test.go`,
+  `cmd/umbrald/main.go`
+- **Depends on:** T-F0-02, T-F0-21
+- **Done:** `TestRecoverySettlesAPendingIntegration_REQ_BLK_003` green — an `alive|pending` and
+  an `exited|pending` row come back `none`, a `pending` row with a block comes back `osc133`,
+  `osc133` and `none` rows are untouched, the report counts three, and a second recovery
+  settles nothing — plus the measured check: a `kill -9`
+  inside a session's window, a restart, and the old row read back as `exited|none`.
+- **Why it exists:** T-F0-21 settles the verdict when a session exits; a daemon that dies runs
+  no `finish`, and Data Model §6 step 1 did not mention `integration`, so a crash inside the
+  window left the row `exited|pending` forever, as did every row an older daemon wrote. Delta
+  `2026-09-recovery-integration`, raised by the T-F0-21 review.
+- **Result.** Two updates inside the recovery transaction, after step 1: `pending` with blocks
+  → `osc133`, then the remaining `pending` → `none`. The first was added after the
+  `spec-guardian` review: a block row is written before the `osc133` verdict that follows it,
+  so a crash between the two, or a failed verdict write, leaves blocks under a `pending` row,
+  and settling that as `none` would write the very disagreement REQ-BLK-003 forbids. The new
+  test row was red (`"none", want "osc133"`) before the fix. The test was red on its assertions first
+  (`IntegrationSettled = 0, want 2`, both rows still `pending`) once the report field existed
+  to compile against, then green; an `osc133` row is untouched and a second recovery settles
+  nothing. **Measured against a real daemon:** a workspace and a pane running
+  `sh -c 'sleep 600'`, `kill -9` before either left its window — both rows `alive|pending` —
+  then a restart, which logged `sessions_recovered=2 integration_settled=2` and left both
+  `exited|none`. The two sessions the restore then opened start `alive|pending` in their own
+  window, as they should. **No data migration:** the rule runs on every start, so the first
+  start of a daemon carrying it repairs the rows older daemons left behind.
 
 ## Traceability matrix (F0)
 
@@ -538,7 +571,7 @@
 | REQ-TERM-008 | T-F0-05 | TestInputLockedRejected_REQ_TERM_008 |
 | REQ-BLK-001 | T-F0-09 | TestBlockStartsOnOSC133C_REQ_BLK_001 |
 | REQ-BLK-002 | T-F0-09 | TestBlockClosedOnOSC133D_REQ_BLK_002 |
-| REQ-BLK-003 | T-F0-09, T-F0-21 | TestIntegrationNoneAfter5s_REQ_BLK_003, TestACommandPaneGetsNoShellIntegration_REQ_BLK_003, TestAnExitInsideTheWindowStillSettlesIntegration_REQ_BLK_003 |
+| REQ-BLK-003 | T-F0-09, T-F0-21, T-F0-22 | TestIntegrationNoneAfter5s_REQ_BLK_003, TestACommandPaneGetsNoShellIntegration_REQ_BLK_003, TestAnExitInsideTheWindowStillSettlesIntegration_REQ_BLK_003, TestRecoverySettlesAPendingIntegration_REQ_BLK_003 |
 | REQ-BLK-004 | T-F0-09 | TestAltScreenMarksInteractive_REQ_BLK_004 |
 | REQ-BLK-005 | T-F0-08 | TestBootstrapEmitsOSC133_REQ_BLK_005 |
 | REQ-BLK-006 | T-F0-10 | BenchmarkBlockSearch100k_REQ_BLK_006 |
@@ -573,6 +606,7 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | T-F0-22 | done | The last path to a `pending` verdict on a gone process was a crash: T-F0-21 fixed the exit, and a daemon that dies has none. Data Model §6 said nothing about integration, so it took a delta before one line of SQL. |
 | 2026-09-26 | T-F0-20 | done after a `spec-guardian` round | F0 exit criterion 4, performed: `scripts/cli_roundtrip.sh` creates, splits, exports and reapplies a layout against a real daemon using only `umb`. The CLI was the easy half. The other half was a protocol gap the ratified CLI delta had declared absent — API §2 refused the whole tree to `cli` — and five tests on a fake daemon could not see it; delta `2026-09-cli-allowlist` closed it by exactly the surface the CLI uses. The review then found the script's own wrapper leaking a flag into a pane's command, and a grammar nobody had specified. |
 | 2026-09-26 | T-F0-21 | done | A one-line fix to a defect that made the gate a coin flip: the exit now settles REQ-BLK-003's verdict instead of cancelling the only thing that ever wrote it. Test first, red on both the live session and its row, then green; measured on a real daemon inside the window. The same session ratified delta `2026-09-cli-workspace-surface` and fixed a hygiene-gate false positive, and found that API §2 does not let the `cli` client kind call `workspace.*`/`tab.*`/`pane.*`/`layout.*` at all — a gap the delta missed, which blocks `T-F0-20` until a delta of its own. |
 | 2026-09-21 | F0 validation | phase **not** closed | Asked whether F0 could be closed now that `T-F0-19` had shipped; measured rather than argued, and the answer is still no. Exit criterion 6 was the one item nobody had ever put a number to, so it was measured: an isolated `umbrald` with five live panes (five `zsh` children, all `osc133`) held a steady **VmRSS of 37.6 MiB / PSS 36.0 MiB across 90 s**, against the 80 MiB of PRD §7 — met, with more than half the budget unused, though still ungated, which is what T-F0-13 already records. Criterion 3 needs a week of a human using the TUI and has had one walkthrough. Criterion 4 needs `T-F0-20`, which is blocked on the ratification of `2026-09-cli-workspace-surface`. The run also turned up a MUST defect nobody had looked for: a session whose process exits inside the five-second integration window never reaches `integration: none`, because `finish` stops the only timer that would have said so. It is `T-F0-21`, it is pre-existing at `c7d7e18`, and it is the reason `TestACommandPaneGetsNoShellIntegration_REQ_BLK_003` is a coin flip under load. |

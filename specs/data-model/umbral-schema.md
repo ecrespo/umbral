@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.7 |
+| **Version** | 1.8 |
 | **Date** | 2026-09-11 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -578,7 +578,15 @@ earlier drafts named.
 
 ## 6. Recovery after a daemon restart
 
-1. `sessions.state = 'alive'` → `exited`, with `exit_code = NULL` and `exited_at = now`.
+1. `sessions.state = 'alive'` → `exited`, with `exit_code = NULL` and `exited_at = now`; then
+   every `sessions.integration = 'pending'` is settled: → `osc133` when the session has blocks,
+   → `none` otherwise. No session is alive at this point, so a verdict still pending belongs to
+   a process that can no longer be judged. A session with blocks spoke OSC 133 — its block row
+   is written before the verdict, and a crash or a failed write can fall between them — and
+   the only verdict REQ-BLK-003 allows for one that emitted no marker is `none`; an `osc133`
+   row is never touched. The rule covers the whole table, not only the rows this step just exited, so rows
+   left `pending` by a daemon older than T-F0-21 are repaired too. Steps 1 and 2 share one
+   transaction (delta `2026-09-recovery-integration`).
 2. `blocks.state IN ('running','interactive')` → `abandoned`.
 3. `threads.state IN ('running','awaiting_approval')` → `stopped`.
 4. `approvals.state = 'pending'` → `expired`.
@@ -608,3 +616,4 @@ earlier drafts named.
 | 1.5 | 2026-09-20 | Closes the Analyze findings: `client_msg_id` gains its unique index (A-04) and the `trust_keys` / `rule_bundles` tables arrive |
 | 1.6 | 2026-09-20 | delta `2026-09-art6-structural-ids`: `workspaces`, `tabs`, `panes` and `pane_aliases` enforce the structural identifier grammar with a `CHECK` (C-05) |
 | 1.7 | 2026-09-20 | delta `2026-09-restore-semantics`: §6 step 5 stops launching a restored pane's stored command; `panes.command_pending` and `workspaces.focused_tab_id`/`focused_at` in §2.4b; `pane_history` (§2.4d) moves to migration `0004_restore` and the agent subdomain to `0005_agent`, superseding the note in 1.4 |
+| 1.8 | 2026-09-26 | delta `2026-09-recovery-integration`: §6 step 1 settles every `pending` integration once no session is alive — `osc133` for a session with blocks, `none` otherwise — so a crash inside a session's five-second window — and any row an older daemon left `pending` — ends on the verdict REQ-BLK-003 requires |
