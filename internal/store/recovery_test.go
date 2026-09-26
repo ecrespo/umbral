@@ -130,3 +130,71 @@ func TestRecoveryIsIdempotent(t *testing.T) {
 		t.Errorf("exited_at = %d after a second recovery, want the first timestamp %d", exitedAt, first.UnixMilli())
 	}
 }
+
+// TestRecoverySettlesAPendingIntegration_REQ_BLK_003 is Data Model §6 step 1 as delta
+// `2026-09-recovery-integration` completes it.
+//
+// REQ-BLK-003 gives a session that emits no OSC 133 the verdict `none`. T-F0-21 settles it when
+// a session exits, but a daemon that dies runs no exit path: a session still inside its
+// five-second window at a `kill -9` came back `exited|pending`, and nothing would ever judge
+// it again. Rows an older daemon wrote carry the same lie, which is why the exited one here
+// is repaired too, not only the one this recovery exits.
+func TestRecoverySettlesAPendingIntegration_REQ_BLK_003(t *testing.T) {
+	t.Parallel()
+
+	s := openTestStore(t)
+	for _, row := range []struct{ id, state, integration string }{
+		{"ses_crashed_in_window", "alive", "pending"},
+		{"ses_left_by_old_daemon", "exited", "pending"},
+		{"ses_integrated", "alive", "osc133"},
+		{"ses_judged", "exited", "none"},
+		{"ses_blocks_before_verdict", "alive", "pending"},
+	} {
+		insertSession(t, s, row.id, row.state)
+		if _, err := s.DB().ExecContext(t.Context(),
+			"UPDATE sessions SET integration = ? WHERE id = ?", row.integration, row.id); err != nil {
+			t.Fatalf("set %s integration: %v", row.id, err)
+		}
+	}
+
+	// A block row is written before the osc133 verdict that follows it, and that write can
+	// fail or be cut off by the crash. A session with blocks spoke OSC 133 whatever its row
+	// says, and calling it `none` would be the disagreement REQ-BLK-003 exists to prevent.
+	insertBlock(t, s, "blk_before_verdict", "ses_blocks_before_verdict", "finished", "ls", "a")
+
+	report, err := s.Recover(t.Context(), time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if report.IntegrationSettled != 3 {
+		t.Errorf("IntegrationSettled = %d, want 3", report.IntegrationSettled)
+	}
+
+	for id, want := range map[string]string{
+		"ses_crashed_in_window":     "none",
+		"ses_left_by_old_daemon":    "none",
+		"ses_integrated":            "osc133", // the one-way rule: never back to none
+		"ses_judged":                "none",
+		"ses_blocks_before_verdict": "osc133",
+	} {
+		var state, integration string
+		if err := s.DB().QueryRowContext(t.Context(),
+			"SELECT state, integration FROM sessions WHERE id = ?", id).Scan(&state, &integration); err != nil {
+			t.Fatalf("read %s: %v", id, err)
+		}
+		if integration != want {
+			t.Errorf("%s integration = %q, want %q", id, integration, want)
+		}
+		if state != "exited" {
+			t.Errorf("%s state = %q, want exited", id, state)
+		}
+	}
+
+	again, err := s.Recover(t.Context(), time.Date(2026, 9, 26, 13, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("second Recover: %v", err)
+	}
+	if again.IntegrationSettled != 0 {
+		t.Errorf("a second recovery settled %d verdicts, want 0", again.IntegrationSettled)
+	}
+}
