@@ -6,10 +6,10 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.10 |
+| **Version** | 1.11 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
-| **Last updated** | 2026-09-20 |
+| **Last updated** | 2026-09-21 |
 | **Source** | `docs/ARCHITECTURE.md` v0.1 |
 
 ---
@@ -233,6 +233,8 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-CLI-002** · MUST · event — WHEN `umb block last --json` runs, THE SYSTEM SHALL print the last closed block of the current session as JSON, following the API `Block` schema. The current session is the one named by `UMBRAL_SESSION_ID`, the variable the daemon injects into every managed pane (REQ-INT-001). WHERE that variable is absent, because the command was run outside a managed pane, THE SYSTEM SHALL print the last closed block of the whole history instead, which is what "the last thing that ran" means to someone in a plain terminal; THE SYSTEM SHALL NOT fail for want of a session.
 - **REQ-CLI-004** · MUST · ubiquitous — THE SYSTEM SHALL use these exit codes in `umb`, so that a script can tell the three outcomes apart: `0` the command answered, `1` the daemon reported an error or the request was rejected, `69` (`EX_UNAVAILABLE`) the daemon is unavailable and could not be started. A command whose output could not be written SHALL exit `1` rather than `0`, except when the failure is a closed pipe, which is what `| head` does deliberately.
 - **REQ-CLI-003** · MUST · unwanted — IF the daemon is not running, THEN `umb` SHALL try to start it and, if that fails within 3 s, exit with code 69 and an actionable message.
+- **REQ-CLI-005** · MUST · event — WHEN `umb workspace`, `umb tab`, `umb pane` or `umb layout` runs with one of the subcommands the daemon serves, THE SYSTEM SHALL invoke the JSON-RPC method of the same name and print its result, addressing workspaces, tabs and panes by the public identifiers of REQ-WS-002 given as positional arguments, so that the addressing surface that Art. 6's exception is justified by exists. THE SYSTEM SHALL print the daemon's answer as JSON WHERE `--json` is given, and SHALL use the exit codes of REQ-CLI-004.
+- **REQ-CLI-006** · MUST · event — WHEN `umb layout export --json` runs, THE SYSTEM SHALL write the layout to stdout in the form `umb layout apply` consumes, and WHEN `umb layout apply --from <file>` runs, THE SYSTEM SHALL read the layout from that file, or from stdin WHERE the file is `-`, so that a script reproduces a tab in another workspace through a pipe and without a shared filesystem location.
 - **REQ-TUI-001** · MUST · ubiquitous — THE SYSTEM SHALL provide in the TUI tabs, splits, jumping between blocks and an agent panel with pending approvals.
 - **REQ-TUI-002** · MUST · event — WHEN the user presses the mode shortcut (`ctrl+space` by default), the TUI SHALL toggle input between shell and agent.
 - **REQ-TUI-003** · MUST · event — WHEN the user picks "attach to agent" on a block, the TUI SHALL open the agent panel with `@block:<id>` preloaded in the input.
@@ -451,12 +453,13 @@ TUI as text:
 | 1.2 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-visual-identity`: §6.10 with REQ-PKG-001, 002, 003 and 006; REQ-PKG-004, 005, 007 and 008 moved to the F2 PRD per finding A-12 |
 | 1.3 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-block-lifecycle-decisions`: REQ-BLK-003 gains the late-marker promotion and the one-way rule |
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds the WS, API, AUT, INT and NTF areas, REQ-TERM-009/010, REQ-AGT-016/017 and REQ-SEC-009/010/011, plus the glossary. Rationale in `docs/adr/ADR-0002-orchestration-surface.md` |
-| 1.10 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-bootstrap-sweeper`: REQ-TERM-012 — the daemon sweeps the shell bootstrap directories a killed run left in its runtime directory, and creates them there rather than in the shared temporary directory |
-| 1.9 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-restore-semantics`: REQ-TERM-010 names `$XDG_CONFIG_HOME/umbral/config.toml` as the file the setting lives in, and REQ-TERM-011 states that a restored pane's command is left visible and never run, `layout.apply` included |
-| 1.8 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-notification-sequencing`: REQ-API-002 counts per daemon run, shared by every connection, instead of "per session" — a word that in this system already names a PTY |
-| 1.7 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-cli-surface`: REQ-CLI-002 says what the current session is and what happens without one; REQ-CLI-004 fixes the `umb` exit codes |
-| 1.6 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-art6-structural-ids`: the Constitution check names the Art. 6 exception for structural identifiers (C-05) |
 | 1.5 | 2026-09-20 | E. Crespo (assisted draft) | Closes the Analyze findings: folds the two pending deltas (REQ-SEC-008, REQ-AGT-015, PKG area), adds signing and key management (SEC-011/013/014/015/016), the environment fallback (SEC-012), wait monitoring (AUT-005…008), `fetch_url` limits (AGT-018), authority for its own agent (INT-006), metrics (OBS-004), reference hardware and redaction thresholds |
+| 1.6 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-art6-structural-ids`: the Constitution check names the Art. 6 exception for structural identifiers (C-05) |
+| 1.7 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-cli-surface`: REQ-CLI-002 says what the current session is and what happens without one; REQ-CLI-004 fixes the `umb` exit codes |
+| 1.8 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-notification-sequencing`: REQ-API-002 counts per daemon run, shared by every connection, instead of "per session" — a word that in this system already names a PTY |
+| 1.9 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-restore-semantics`: REQ-TERM-010 names `$XDG_CONFIG_HOME/umbral/config.toml` as the file the setting lives in, and REQ-TERM-011 states that a restored pane's command is left visible and never run, `layout.apply` included |
+| 1.10 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-bootstrap-sweeper`: REQ-TERM-012 — the daemon sweeps the shell bootstrap directories a killed run left in its runtime directory, and creates them there rather than in the shared temporary directory |
+| 1.11 | 2026-09-21 | E. Crespo (assisted draft) | delta `2026-09-cli-workspace-surface` (**pending ratification**): REQ-CLI-005 and REQ-CLI-006 — `umb workspace`/`tab`/`pane`/`layout` over the methods of the same name, addressed by the `w<n>` identifiers, and a layout round trip through a pipe. Without them F0 exit criterion 4 cannot be performed and Art. 6's exception cites a command that does not exist |
 
 ## Approvals
 

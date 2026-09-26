@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.4 |
+| **Version** | 1.5 |
 | **Date** | 2026-09-11 |
 | **PRD** | `specs/prd/umbral-mvp.md` |
 | **Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -80,12 +80,24 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 | T-F0-17 | Protocol schema and capability degradation | 1.5d | T-F0-03 | ✅ 2026-09-20 |
 | T-F0-18 | Structure restore after restart (+ optional pane history) | 2d | T-F0-14 | ✅ 2026-09-20 |
 | T-F0-19 | Bootstrap files in the runtime directory, and a sweep at start | 0.5d | T-F0-08, T-F0-18 | ✅ 2026-09-21 |
+| T-F0-20 | `umb workspace`, `tab`, `pane` and `layout` (exit criterion 4) | 1.5d | T-F0-11, T-F0-14, T-F0-15 | ⬜ blocked on the delta |
+| T-F0-21 | A shell that exits inside the integration window still gets a verdict (REQ-BLK-003) | 0.5d | T-F0-09 | ⬜ |
 
 **F0 is open.** Reviewed against a running daemon on 2026-09-20
-(`docs/checkpoints/2026-09-20-f0-closure.md`): `T-F0-01` … `T-F0-18` are done and the gate is
-green, but two exit criteria are unmet and `T-F0-19` was added afterwards from the same
-verification. The phase closes when the criteria below are met, not when the table above is
-full.
+(`docs/checkpoints/2026-09-20-f0-closure.md`) and again on 2026-09-21
+(`docs/checkpoints/2026-09-21-f0-validation.md`): `T-F0-19` closed on 2026-09-21, verified
+against a real daemon with `kill -9`, and **two tasks are open**. `T-F0-20` is open because
+the feature exit criterion 4 asks for was never specified; its delta,
+`2026-09-cli-workspace-surface`, is applied to the PRD and **awaiting ratification**, and no
+code is written before a human approves it. `T-F0-21` is open because the 2026-09-21
+validation found a MUST that the code does not keep: a session whose process exits inside the
+five-second integration window never reaches `integration: none`, measured against a real
+daemon and reproduced at `c7d7e18`, so it is older than this branch. One exit criterion was
+closed by that run — idle memory, measured for the first time — and two are still unmet. The
+phase closes when the criteria below are met **and REQ-BLK-003 holds**, not when the table
+above is full.
+`docs/f0-closure-plan.md` is the hand-off: the four remaining items in the order they can be
+worked, with an owner and an acceptance criterion each.
 
 - VT conformance suite 100 % MUST green (REQ-TERM-002) — ☑ met by T-F0-07, 20 MUST cases.
 - Correct blocks in bash, zsh and fish in CI — ☑ met by T-F0-09,
@@ -98,14 +110,24 @@ full.
   `api schema`, `version` and `help` and nothing else, so the workspace tree is reachable only
   over raw JSON-RPC. No task builds it and no REQ requires it, while the Art. 6 amendment
   justifies the `w<n>` identifiers on the strength of `umb pane split w1:t1` being "the
-  feature". A Delta, not a new task added quietly.
+  feature". Raised as the Delta it wanted on 2026-09-21:
+  `changes/2026-09-cli-workspace-surface/` carries REQ-CLI-005, REQ-CLI-006 and `T-F0-20`,
+  applied to the PRD and the task list the way this repo applies a delta that is still
+  **awaiting ratification**. The criterion closes when `T-F0-20` ships and
+  `scripts/cli_roundtrip.sh` performs it against a real daemon.
 - After `kill` on the daemon, the structure comes back with its cwd and labels — ☑ verified
   end to end on 2026-09-20: `kill -9`, restart, 5 panes back with their labels, cwds and fresh
   sessions, focus preserved, and the two stored commands typed at their prompts without
   running.
-- Benchmarks within the NFRs — ◐ three of the four are gates (`task perf`, and
-  `scripts/perf_selftest.sh` proves they still bite). Idle daemon memory (§7, 80 MiB with five
-  sessions) carries no REQ id and is ungated, as T-F0-13 records.
+- Benchmarks within the NFRs — ☑ **met**, ungated for one of the four. Three are gates
+  (`task perf`, and `scripts/perf_selftest.sh` proves they still bite). Idle daemon memory
+  (§7, 80 MiB with five sessions) carries no REQ id and is still ungated, as T-F0-13 records,
+  but it had never been measured either; on 2026-09-21 it was. An isolated `umbrald` with five
+  live panes — five `zsh` children, all `osc133` — held **VmRSS 37.6 MiB and PSS 36.0 MiB,
+  unchanged over 90 s of idling**, against a budget of 80 MiB. The number is the daemon's own:
+  the shells are separate processes, which is what "daemon memory" means. Measured on the
+  developer's machine rather than the reference hardware of PRD §7, so it is evidence and not
+  a gate; the headroom is large enough that the distinction does not change the verdict.
 
 ---
 
@@ -204,3 +226,4 @@ Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), 
 | 1.2 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-block-query-performance`: the agent migration is renumbered because `idx_blocks_started` takes one of its own |
 | 1.3 | 2026-09-20 | E. Crespo (assisted draft) | Adds T-F0-14…18 and T-F1-23…29, extends the phase durations and the F2 orchestration horizon |
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds T-F1-30/31 and the hardening tasks file; F1 grows to 7-8 weeks; the deltas are folded and archived; the structure tables take migration `0003` and the agent subdomain `0004` |
+| 1.5 | 2026-09-21 | E. Crespo (assisted draft) | `T-F0-19` closes; `T-F0-20` is added from delta `2026-09-cli-workspace-surface` and `T-F0-21` from the 2026-09-21 F0 validation, which also measured exit criterion 6 for the first time — idle daemon memory, 37.6 MiB against a budget of 80 |
