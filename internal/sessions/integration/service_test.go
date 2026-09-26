@@ -65,11 +65,14 @@ func newHarnessForShell(t *testing.T, name string) *harness {
 	t.Cleanup(func() { _ = blocks.Close() })
 
 	service, err := sessions.New(sessions.Config{
-		Store:      db,
-		Bus:        eventBus,
-		NewPTY:     pty.Open,
-		NewEmu:     ghostty.NewEmulator,
-		Bootstrap:  shellinteg.Adapter{},
+		Store:  db,
+		Bus:    eventBus,
+		NewPTY: pty.Open,
+		NewEmu: ghostty.NewEmulator,
+		// Its own directory, like the daemon's runtime directory: an Adapter with no Dir
+		// refuses to prepare, and every session here would start without integration —
+		// which is exactly the silent degradation REQ-TERM-012's refusal exists to expose.
+		Bootstrap:  shellinteg.Adapter{Dir: t.TempDir()},
 		Blocks:     blocks,
 		NewScanner: func() ports.Scanner { return shellinteg.NewScanner() },
 		Host:       "test-host",

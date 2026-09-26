@@ -35,6 +35,16 @@ if ! ./scripts/test_hygiene.sh true >/dev/null 2>&1; then
 fi
 echo "── clean run accepted"
 
+# --- 0b. the gate is not its own leak ---------------------------------------------------
+# `pgrep -f` matches whole command lines, and the gate's own command line holds the command
+# it wraps. Wrap one that names the pattern — `go test ./cmd/umbrald/` does, which is how this
+# was found — and every subshell the gate forks to take its snapshots matched too: a fresh pid
+# after the run, gone by the time the report tried to print it, and a FAIL naming nothing.
+if ! ./scripts/test_hygiene.sh true "$PROBE_NAME" >/dev/null 2>&1; then
+  fail "a clean run whose arguments name the pattern was reported as a leak: the gate caught itself"
+fi
+echo "── the gate's own processes are not counted"
+
 # --- 1. a leaked process ---------------------------------------------------------------
 # A script rather than a copy of `sleep`: coreutils ships as a multi-call binary that
 # dispatches on argv[0], so a renamed copy exits at once with "unknown program" and the probe

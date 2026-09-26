@@ -36,14 +36,49 @@ TMP_DIR="${TMPDIR:-/tmp}"
 
 # `pgrep -u` so another user's processes on a shared machine are never counted, and `|| true`
 # because pgrep exits 1 when nothing matches, which is the ordinary case.
-processes() { pgrep -u "$(id -u)" -f "$PROC_PATTERN" 2>/dev/null | sort || true; }
+#
+# `LC_ALL=C` on every sort and every comm below, and never on the command being run: `sort`
+# under en_US.UTF-8 orders `shellinteg-…` before `Test…` while `comm` reads the same list as
+# unsorted, so the comparison silently produced an empty difference and the gate stopped
+# catching anything. It was latent until T-F0-19 added a lower-case pattern.
+#
+# Minus the gate's own process tree. `pgrep -f` matches whole command lines, and this script's
+# command line carries the command it wraps, so `go test ./cmd/umbrald/` made every subshell it
+# forks for these snapshots match the pattern: a fresh pid after the run, gone before the report
+# could print it, and a FAIL naming nothing. So the matches are cross-checked against a process
+# table taken afterwards, and kept only when they are still alive and do not descend from this
+# script. That loses no real leak: once the wrapped command has exited, whatever it left behind
+# has been reparented away from this tree.
+processes() {
+  local matches table
+  matches=$(pgrep -u "$(id -u)" -f "$PROC_PATTERN" 2>/dev/null || true)
+  [ -n "$matches" ] || return 0
+  table=$(ps -A -o pid= -o ppid=)
+  awk -v root="$$" '
+    NR == FNR { parent[$1] = $2; next }
+    ($1 in parent) {
+      p = $1
+      while (p != "" && p != 0 && p != 1) {
+        if (p == root) next
+        p = parent[p]
+      }
+      print $1
+    }
+  ' <(printf '%s\n' "$table") <(printf '%s\n' "$matches") | LC_ALL=C sort
+}
 
 # The two shapes a leak takes in the temporary directory: our own bootstrap directories,
 # whose name is unambiguous, and Go's `t.TempDir` leftovers, which only survive a killed
 # binary.
+#
+# Both spellings of the bootstrap directory are matched. `umbral-shellinteg-*` is what every
+# binary built before T-F0-19 writes, and what this gate's own selftest plants;
+# `shellinteg-*` is the name used since — those belong in the daemon's runtime directory now
+# (REQ-TERM-012), so one appearing here at all means something put it back in the shared
+# temporary directory, which is exactly the regression worth failing on.
 temp_dirs() {
-  find "$TMP_DIR" -maxdepth 1 \( -name 'umbral-shellinteg-*' -o -name 'Test*' \) \
-    -newermt '1970-01-01' 2>/dev/null | sort || true
+  find "$TMP_DIR" -maxdepth 1 \( -name 'umbral-shellinteg-*' -o -name 'shellinteg-*' -o -name 'Test*' \) \
+    -newermt '1970-01-01' 2>/dev/null | LC_ALL=C sort || true
 }
 
 # mtime and size together: a write that happens to preserve the mtime still moves the size,
@@ -82,7 +117,7 @@ after_db=$(db_fingerprint)
 
 failed=0
 
-leaked_procs=$(comm -13 <(printf '%s\n' "$before_procs") <(printf '%s\n' "$after_procs") | sed '/^$/d')
+leaked_procs=$(LC_ALL=C comm -13 <(printf '%s\n' "$before_procs") <(printf '%s\n' "$after_procs") | sed '/^$/d')
 if [ -n "$leaked_procs" ]; then
   failed=1
   echo "test:hygiene: FAIL — the run left $(printf '%s\n' "$leaked_procs" | wc -l) '$PROC_PATTERN' process(es) behind:" >&2
@@ -93,7 +128,7 @@ if [ -n "$leaked_procs" ]; then
   echo "  (REQ-TERM-003) and there is no system.shutdown." >&2
 fi
 
-leaked_dirs=$(comm -13 <(printf '%s\n' "$before_dirs") <(printf '%s\n' "$after_dirs") | sed '/^$/d')
+leaked_dirs=$(LC_ALL=C comm -13 <(printf '%s\n' "$before_dirs") <(printf '%s\n' "$after_dirs") | sed '/^$/d')
 if [ -n "$leaked_dirs" ]; then
   failed=1
   echo "test:hygiene: FAIL — the run left $(printf '%s\n' "$leaked_dirs" | wc -l) directory/directories in $TMP_DIR:" >&2

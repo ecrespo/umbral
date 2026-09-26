@@ -320,7 +320,7 @@
 - **Result (the restore focus had two defects, one of them latent).** `focused_tab_id` is `ON DELETE SET NULL`, which reads like it covers a closed tab and does not, for the same reason as above — so a restart adopted focus on a tab that was gone and `layout.export` with no `tab_id` answered that it does not exist. Fixing it exposed the second: `focused_at` is epoch milliseconds (Art. 6), two workspaces focused inside the same millisecond tied, and SQLite returned whichever the plan preferred. `TestRestoreKeepsFocus_REQ_TERM_009` had been passing on that coin flip. The order is now fully determined and the closed tab falls back to the workspace's first open one.
 - **Also closed in the same round:** `TestApplyReturnsCommandsAsPending_REQ_TERM_011`, which the delta's Verification section names and which had never been written, so `-run REQ_TERM_011` never reached the `layout.apply` path at all; `command_pending`'s wire contract, present and omitted, which `task schema` cannot see because it compares §5's methods and not §4's members; the conditionality of `PendingCommandWarning`; the four specs that changed with no version bump or changelog row (PRD 1.9, API v1.12, Tech 1.9, Data Model 1.7); `ClearCommandPending`, declared on the port and called by nothing, now removed with the reason written down; and migration 0004, which no gate had been exercising.
 
-### [ ] T-F0-19 · Bootstrap files in the runtime directory, and a sweep at start
+### [x] 2026-09-21 T-F0-19 · Bootstrap files in the runtime directory, and a sweep at start
 - **What:**
   - `shellinteg.Prepare` creates its directory under the daemon's runtime directory instead
     of `os.TempDir()`;
@@ -328,13 +328,20 @@
     before `Restore`;
   - a removal that fails is logged and startup continues.
 - **REQ:** REQ-TERM-012
-- **Files:** `internal/sessions/adapters/shellinteg/bootstrap.go`, `cmd/umbrald/main.go`,
-  `internal/config/paths.go`
+- **Files:** `internal/sessions/adapters/shellinteg/bootstrap.go`,
+  `internal/sessions/adapters/shellinteg/sweep.go`,
+  `internal/sessions/adapters/shellinteg/{sweep,bootstrap}_test.go`, `cmd/umbrald/main.go`,
+  `cmd/umbrald/{sweep,bootstrap}_test.go`, `internal/sessions/integration/{service,bench}_test.go`,
+  `scripts/test_hygiene.sh`
+  > `internal/config/paths.go` was named here when the task was written and needed no change:
+  > `filepath.Dir(socket)` already resolves the directory `AcquireInstanceLock` is taken on, so
+  > the sweeper and the lock cannot point at different places without the socket moving too.
 - **Depends on:** T-F0-08, T-F0-18
 - **Done:** `TestBootstrapDirectoriesLiveInTheRuntimeDirectory_REQ_TERM_012`,
   `TestStartSweepsOrphanedBootstrapDirectories_REQ_TERM_012`,
   `TestSweepLeavesTheRunningSessionsAlone_REQ_TERM_012` and
-  `TestSweepFailureDoesNotStopTheDaemon_REQ_TERM_012` green, plus the measured teeth check:
+  `TestSweepFailureDoesNotStopTheDaemon_REQ_TERM_012` green (and, since the review,
+  `TestBootstrapSurvivesASpaceInTheRuntimeDirectory_REQ_TERM_012`), plus the measured teeth check:
   `kill -9` a daemon with live sessions, confirm the directories are there, restart, confirm
   they are gone.
 - **Why it exists:** the F0 verification of 2026-09-20 found 2515 orphaned bootstrap
@@ -342,6 +349,115 @@
   `SIGTERM` with two live sessions leaks nothing, measured — but `kill -9` leaks one per live
   session and nothing recorded the name, so the residue was permanent. Delta
   `2026-09-bootstrap-sweeper`.
+- **Result.** `shellinteg` no longer chooses where its files go: `Prepare` takes the parent
+  directory and **refuses an empty one** rather than letting `os.MkdirTemp("")` put them back
+  in `/tmp`, and `cmd/umbrald` — the only place allowed to resolve paths — passes
+  `filepath.Dir(socket)` through `shellinteg.Adapter{Dir: …}`. A mis-wired adapter now fails
+  at the first session instead of quietly littering the shared temporary directory again,
+  which matters because `Service.bootstrap` degrades a `Prepare` error into "start without
+  shell integration" (DD-002): without that refusal, the wiring mistake would have been
+  invisible except as blocks that stopped working.
+- **Result (one constant, two readers).** `dirPrefix = "shellinteg-"` is written by `Prepare`
+  and matched by `Sweep`. A sweeper that agrees with the writer only by inspection is a
+  sweeper that will one day delete nothing, or everything.
+- **Result (what the sweep must not take).** The socket, the token, `umbrald.lock` and
+  `umbrald.log` live in the same directory. `TestSweepRemovesOrphansAndNothingElse_REQ_TERM_012`
+  asserts they survive, because `os.RemoveAll(runtimeDir)` passes every test that only checks
+  the orphan is gone — and destroys the installation it was tidying. One failed removal does
+  not stop the others either: the errors are joined and returned, and the daemon logs them.
+- **Teeth, all four mutations measured rather than assumed.** Moving the `Sweep` call below
+  `workspaceService.Restore` → `TestSweepLeavesTheRunningSessionsAlone_REQ_TERM_012` fails
+  ("no bootstrap directory belongs to the restored pane"); sweeping the whole directory →
+  `TestSweepRemovesOrphansAndNothingElse_REQ_TERM_012` fails on the socket, the token and the
+  lock; turning the sweep's error into a `return exitCantCreate` →
+  `TestSweepFailureDoesNotStopTheDaemon_REQ_TERM_012` fails because the socket never appears;
+  restoring `os.MkdirTemp("")` →
+  `TestBootstrapDirectoriesLiveInTheRuntimeDirectory_REQ_TERM_012` fails with the `/tmp` path
+  it produced.
+- **Teeth, against a real daemon (the check the Done line asks for).** Isolated `XDG_*`, a
+  workspace created over the socket so a `bash` session is live: one `shellinteg-3064631233`
+  in the runtime directory. `kill -9` — it survives, which is the permanent residue. Restart:
+  the daemon logs `removed the bootstrap directories left by a previous run removed=1`, then
+  `structure restored panes=1`, and that directory is **gone** while the restored pane's fresh
+  shell has one of its own. A clean stop afterwards removes that one too, leaving only the
+  token behind. Before this task the same sequence left the directory forever.
+- **Result (review, 2026-09-26).** `spec-guardian` found the move had a cost the old
+  location hid: on macOS the runtime directory is `~/Library/Application Support/Umbral`, and
+  fish's `--init-command` is a line of fish, so the unquoted `source` split at the space and
+  every fish session there would have started without integration, silently. `Prepare` now
+  quotes the path for fish; `TestBootstrapSurvivesASpaceInTheRuntimeDirectory_REQ_TERM_012`
+  runs all three shells from a directory with a space and a quote, and failed on fish before
+  the fix. The same review showed `TestSweepLeavesTheRunningSessionsAlone_REQ_TERM_012` ended
+  its first run cleanly, which leaves no orphan to sweep: it now kills that daemon, asserts
+  the kill left a directory behind — reverting to a clean stop fails on exactly that — and its
+  panes get their own `HOME`. That exposed a race in the helper: a killed daemon's socket made
+  the next start look ready before it had swept, so `startStoppableDaemon` removes a stale
+  socket before it waits for one, and its stop is bounded instead of waiting forever.
+- **Not changed:** `Service.Shutdown` still does not run the bootstrap cleanup, and still does
+  not need to — the clean path already leaks nothing, measured on 2026-09-20. The reasoning is
+  in the delta under "Not modified"; it is repeated here because the code looks like it has a
+  bug and does not.
+
+### [ ] T-F0-20 · `umb workspace`, `tab`, `pane` and `layout`
+- **What:**
+  - `umb workspace create|list|focus|rename|close`, `umb tab create|list|focus|rename|close`,
+    `umb pane split|list|get|focus|rename|close`, `umb layout export|apply`, each one call to
+    the JSON-RPC method of the same name and no client-side model (DD-001);
+  - objects addressed positionally by `w<n>`, `w<n>:t<m>` and `w<n>:p<m>`, which is the
+    grammar Art. 6's exception is written for;
+  - `--json` and the REQ-CLI-004 exit codes, as every other `umb` command;
+  - `umb layout apply --from <file|->`, so the round trip is a pipe.
+- **REQ:** REQ-CLI-005, REQ-CLI-006
+- **Files:** `cmd/umb/workspace.go`, `cmd/umb/layout.go`, `cmd/umb/main.go`,
+  `cmd/umb/*_test.go`, `scripts/cli_roundtrip.sh`
+- **Depends on:** T-F0-11, T-F0-14, T-F0-15
+- **Done:** `TestWorkspaceCreatePrintsTheTree_REQ_CLI_005`,
+  `TestPaneSplitAddressesByPublicId_REQ_CLI_005`, `TestUnknownSubcommandExitsOne_REQ_CLI_005`,
+  `TestLayoutExportApplyThroughAPipe_REQ_CLI_006` and
+  `TestLayoutApplyReportsWarnings_REQ_CLI_006` green, and `scripts/cli_roundtrip.sh` passing
+  against a real daemon — which *is* F0 exit criterion 4, performed rather than argued.
+- **Out of scope, deliberately:** `pane.move`, whose `destination` is a tagged union that has
+  more than one defensible flag syntax; it is not needed by the criterion and a CLI verb is
+  kept forever.
+- **Unblocked** on 2026-09-26: delta `2026-09-cli-workspace-surface` was ratified and
+  archived.
+
+### [ ] T-F0-21 · A shell that exits inside the integration window still gets a verdict
+- **What:** `Service.finish` calls `live.integrationTimer.Stop()`, and the timer is the only
+  thing that ever writes `integration: none`. A session whose process exits before the five
+  second window closes therefore stays `pending` for the rest of the daemon's life, and the
+  session stays in the live map by design, so `session.list` and the `sessions` row both go on
+  saying `pending` about a process that is gone. REQ-BLK-003 says such a session SHALL be
+  marked `integration: none`. Settle the verdict at exit instead of cancelling it: `pending`
+  becomes `none`, and a session that already reached `osc133` is untouched, which
+  `setIntegration`'s existing transition rule already guarantees.
+- **REQ:** REQ-BLK-003
+- **Files:** `internal/sessions/lifecycle.go`, `internal/sessions/blocks.go`,
+  `internal/sessions/integration/command_test.go`
+- **Depends on:** T-F0-09
+- **Done:** `TestAnExitInsideTheWindowStillSettlesIntegration_REQ_BLK_003` green — a session
+  whose command exits in about a second reaches `integration: none` and never sits on
+  `pending` — and `TestACommandPaneGetsNoShellIntegration_REQ_BLK_003` passing without its
+  sixty-second wait, because once the verdict is settled at exit there is nothing left to wait
+  for. The teeth check is the deletion itself: put `integrationTimer.Stop()` back and the
+  first test reddens.
+- **Why it is a task and not a delta:** REQ-BLK-003 is in the PRD and says what should
+  happen; the code does not do it. Nothing about the requirement needs to change.
+- **Evidence (2026-09-21, against a real daemon, not a fake):** an isolated `umbrald` was
+  given two panes launched with `sh -c "sleep 1"`. Twenty-five seconds later, five times the
+  window, its own database answered:
+  ```
+  ses_01M33B3GKWBH5MFVDTWT6A0SEW|exited|pending|0
+  ses_01M33B1WQ29Q82PV3BP3XCEBNF|exited|pending|0
+  ```
+  The same defect was reproduced at `c7d7e18` in a detached worktree, so it predates
+  `T-F0-19` and no change on this branch caused it.
+- **It is also why the gate is unreliable.**
+  `TestACommandPaneGetsNoShellIntegration_REQ_BLK_003` launches `sh -c "sleep 5"` against a
+  five-second window, so whether the verdict lands before the process exits is a race that
+  machine load decides. It passes in isolation and under its own package, and it failed after
+  60.52 s inside a full `task ci` on 2026-09-21. The test is not flaky about nothing: it is a
+  coin flip over a real defect, and it can only be made deterministic by fixing the defect.
 
 ## Traceability matrix (F0)
 
@@ -357,7 +473,7 @@
 | REQ-TERM-008 | T-F0-05 | TestInputLockedRejected_REQ_TERM_008 |
 | REQ-BLK-001 | T-F0-09 | TestBlockStartsOnOSC133C_REQ_BLK_001 |
 | REQ-BLK-002 | T-F0-09 | TestBlockClosedOnOSC133D_REQ_BLK_002 |
-| REQ-BLK-003 | T-F0-09 | TestIntegrationNoneAfter5s_REQ_BLK_003 |
+| REQ-BLK-003 | T-F0-09, T-F0-21 | TestIntegrationNoneAfter5s_REQ_BLK_003, TestACommandPaneGetsNoShellIntegration_REQ_BLK_003, TestAnExitInsideTheWindowStillSettlesIntegration_REQ_BLK_003 |
 | REQ-BLK-004 | T-F0-09 | TestAltScreenMarksInteractive_REQ_BLK_004 |
 | REQ-BLK-005 | T-F0-08 | TestBootstrapEmitsOSC133_REQ_BLK_005 |
 | REQ-BLK-006 | T-F0-10 | BenchmarkBlockSearch100k_REQ_BLK_006 |
@@ -367,6 +483,8 @@
 | REQ-CLI-002 | T-F0-10, T-F0-11 | TestBlockGetLast_REQ_CLI_002 |
 | REQ-CLI-003 | T-F0-11 | TestUmbAutostartFailsWith69_REQ_CLI_003, TestAutostartFailureExits69_REQ_CLI_003 |
 | REQ-CLI-004 | T-F0-11 | TestBlockLastExits69WhenTheDaemonIsUnavailable_REQ_CLI_003, TestWriteFailureIsNotReportedAsSuccess_REQ_CLI_004, TestBrokenPipeIsNotAFailure_REQ_CLI_004 |
+| REQ-CLI-005 | T-F0-20 | TestWorkspaceCreatePrintsTheTree_REQ_CLI_005, TestPaneSplitAddressesByPublicId_REQ_CLI_005, TestUnknownSubcommandExitsOne_REQ_CLI_005 |
+| REQ-CLI-006 | T-F0-20 | TestLayoutExportApplyThroughAPipe_REQ_CLI_006, TestLayoutApplyReportsWarnings_REQ_CLI_006 |
 | REQ-TUI-001 | T-F0-12 (+ T-F1-20) | TestTUIBlockNavigation_REQ_TUI_001, TestTabsAndSwitching_REQ_TUI_001, TestSplitResizesBothPanes_REQ_TUI_001 |
 | REQ-WS-001 | T-F0-14 | TestWorkspaceCreateReturnsTree_REQ_WS_001 |
 | REQ-WS-002 | T-F0-14 | TestPaneIdsStable_REQ_WS_002 |
@@ -382,7 +500,7 @@
 | REQ-TERM-009 | T-F0-18 | TestRestoreRebuildsStructure_REQ_TERM_009 |
 | REQ-TERM-010 | T-F0-18 | TestPaneHistoryDisabledByDefault_REQ_TERM_010 |
 | REQ-TERM-011 | T-F0-18 | TestRestoreNeverRunsStoredCommand_REQ_TERM_011 |
-| REQ-TERM-012 | T-F0-19 | TestStartSweepsOrphanedBootstrapDirectories_REQ_TERM_012 |
+| REQ-TERM-012 | T-F0-19 | TestStartSweepsOrphanedBootstrapDirectories_REQ_TERM_012, TestBootstrapDirectoriesLiveInTheRuntimeDirectory_REQ_TERM_012, TestSweepLeavesTheRunningSessionsAlone_REQ_TERM_012, TestSweepFailureDoesNotStopTheDaemon_REQ_TERM_012, TestBootstrapSurvivesASpaceInTheRuntimeDirectory_REQ_TERM_012 |
 
 **Deferred:** REQ-BLK-008 (SHOULD, PowerShell) moves to F2 together with Windows.
 
@@ -390,6 +508,8 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-21 | F0 validation | phase **not** closed | Asked whether F0 could be closed now that `T-F0-19` had shipped; measured rather than argued, and the answer is still no. Exit criterion 6 was the one item nobody had ever put a number to, so it was measured: an isolated `umbrald` with five live panes (five `zsh` children, all `osc133`) held a steady **VmRSS of 37.6 MiB / PSS 36.0 MiB across 90 s**, against the 80 MiB of PRD §7 — met, with more than half the budget unused, though still ungated, which is what T-F0-13 already records. Criterion 3 needs a week of a human using the TUI and has had one walkthrough. Criterion 4 needs `T-F0-20`, which is blocked on the ratification of `2026-09-cli-workspace-surface`. The run also turned up a MUST defect nobody had looked for: a session whose process exits inside the five-second integration window never reaches `integration: none`, because `finish` stops the only timer that would have said so. It is `T-F0-21`, it is pre-existing at `c7d7e18`, and it is the reason `TestACommandPaneGetsNoShellIntegration_REQ_BLK_003` is a coin flip under load. |
+| 2026-09-21 | T-F0-19 | done | The sweep is safe because of *where* it is called, not because of anything it decides: under the instance lock this daemon is the only one of its installation, so every `shellinteg-*` beside the socket belongs to a process that is gone — no age heuristic, no ownership check. The ordering carries the other half: it runs before `Restore`, because the shells the restore launches write their own directories there and a sweep afterwards would delete the files they were started with. That is the mutation worth remembering — moved below `Restore` every other test stays green, and every restored pane comes back without shell integration, silently. `Prepare` refusing an empty parent is the second load-bearing detail: `bootstrap` degrades a `Prepare` error into a session without integration, so a mis-wired adapter would otherwise show up only as blocks that stopped working. |
 | 2026-09-20 | F0 verification | phase **not** closed | The task list is complete and `task ci` is green; two of the plan's six F0 exit criteria are not met. The TUI has not been used for a week, and **no CLI for the workspace tree exists** — `umb` serves `status`, `block last`, `api schema`, `version`, `help` and nothing else — so "a script creates a workspace, splits, exports and reapplies a layout using only the CLI" cannot be performed. No task builds it and no REQ requires it, while Art. 6's amendment justifies the `w<n>` identifiers on `umb pane split w1:t1` being "the feature": a Delta, not a quiet task. Verified by running rather than reading: 43/43 matrix tests exist, and a real daemon was driven through create, split, rename, export, apply, `kill -9` and restart — five panes back with labels, cwds, fresh sessions and focus, the sentinel absent and the stored command sitting typed at a real shell's prompt. That run also found two defects in the suite itself: `cmd/umbrald/bootstrap_test.go` overrode only `XDG_RUNTIME_DIR`, so its daemon wrote to the developer's real database (2484 tabs, 2490 sessions accumulated there), and it leaked one `umbrald` per run, four found alive holding that database open. Both fixed and verified; the rows already written are not cleaned. `docs/checkpoints/2026-09-20-f0-closure.md`. |
 | 2026-09-20 | T-F0-18 | done, then reworked after a `spec-guardian` round | Two MUSTs contradicted each other and one was a safety rule. Data Model §6 step 5 said a restored pane launches "a fresh shell, **or its `command_json` when it has one**"; REQ-TERM-011 says "leave it visible in the pane **without running it** … so that a restart never re-executes commands on its own". The code followed §6 — `layout.apply` had been launching stored commands since T-F0-15 — and the danger is concrete: a pane whose command was `terraform apply` re-runs unattended on every start, possibly after a crash that command caused. Delta `2026-09-restore-semantics`. "Visible in the pane" turned out to mean literally that: the command is typed at the new shell's prompt without a newline, and pressing Enter is the confirmation the requirement asks for — no method, no dialog, no client change. It lives in `sessions` because writing before the prompt loses the bytes and only the module owning the PTY sees the OSC 133 marker. Three more things were specified nowhere and are now: where the settings file is and what a malformed one does (it refuses to start, because falling back to defaults is how `pane_history = true` silently becomes false), which column focus lives in, and which migration `pane_history` belongs to — it was in F1's, which an F0 requirement cannot wait for. Six teeth checks, five of which bit; the sixth could not, and saying why led to the test that matters: turning pane history off deletes what was captured, which is a privacy promise rather than housekeeping. One defect found by a test rather than by me — the pane-history wiring never reached the constructor because a formatter had rewritten the line my edit matched on, so capture silently did nothing. The review afterwards returned FIX FIRST and was right: every gate was green while the requirement had no teeth, and it proved it by mutation — appending `\n` in `shellLine` makes every restart run the stored command, and the whole suite stayed green. `internal/sessions/pending.go`, which is the delivery mechanism, had no test at all. Both now redden, the second against a real PTY. It also found that `pane_history` was kept forever because closing a pane is an UPDATE and the cascade never fires, that restored focus could name a closed tab, and that the four specs had changed without a version bump. Fixing the focus exposed a latent coin flip: two workspaces focused in the same millisecond tied on `focused_at` and the test had been passing on the query plan. |
 | 2026-09-20 | T-F0-17 | done | The task read as plumbing and was not. Generating the schema from the Go types is what made the daemon's actual contract legible, and three things did not survive the reading: seven methods shared a params struct with their namespace, so `workspace.close` published a `label` it ignores; `blockPayload` and `toWireBlock` were two renderings of one §4 object that agreed only by inspection; and every handler returned `map[string]any`, which marshals but cannot be reflected, so the response half of REQ-API-004 was unreachable without typing them. Separately, REQ-API-003's second sentence had never been implemented — an unserved method answered `METHOD_NOT_FOUND`, which says "this daemon is too old" when the truth is "this build lacks the module" — and fixing it made §2's capability clause measure the wrong thing, since it counts registered methods and now every method is registered in every build. Delta `2026-09-capability-degradation`. The comparison found eighteen places where the daemon's idea of a required parameter disagreed with §5; each one is now reconciled, which is the whole value of having two independent derivations of one contract. The Done line's own requirement was verified by doing it: a `session.hibernate` registered in the code turned CI red. Five teeth checks, including the two that guard the generator — a method registered with no shapes, and an emitted notification the shape table omits — because a schema that is quietly wrong is worse than none. |

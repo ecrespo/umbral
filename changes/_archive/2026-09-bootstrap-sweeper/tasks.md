@@ -10,7 +10,7 @@
 - **Done:** `python3 tools/sdd_check.py` green with REQ-TERM-012 carrying a task;
   `T-F0-19` present in the F0 task list, the traceability matrix and the plan's F0 table.
 
-### [ ] T-F0-19 · Bootstrap files in the runtime directory, and a sweep at start
+### [x] 2026-09-21 T-F0-19 · Bootstrap files in the runtime directory, and a sweep at start
 > The implementation. Lives in `specs/tasks/umbral-f0-tasks.md`; repeated here so the delta
 > carries its own record of what it asked for.
 - **What:** `shellinteg.Prepare` creates its directory under the daemon's runtime directory
