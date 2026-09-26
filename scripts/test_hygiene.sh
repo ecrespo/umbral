@@ -41,7 +41,31 @@ TMP_DIR="${TMPDIR:-/tmp}"
 # under en_US.UTF-8 orders `shellinteg-…` before `Test…` while `comm` reads the same list as
 # unsorted, so the comparison silently produced an empty difference and the gate stopped
 # catching anything. It was latent until T-F0-19 added a lower-case pattern.
-processes() { pgrep -u "$(id -u)" -f "$PROC_PATTERN" 2>/dev/null | LC_ALL=C sort || true; }
+#
+# Minus the gate's own process tree. `pgrep -f` matches whole command lines, and this script's
+# command line carries the command it wraps, so `go test ./cmd/umbrald/` made every subshell it
+# forks for these snapshots match the pattern: a fresh pid after the run, gone before the report
+# could print it, and a FAIL naming nothing. So the matches are cross-checked against a process
+# table taken afterwards, and kept only when they are still alive and do not descend from this
+# script. That loses no real leak: once the wrapped command has exited, whatever it left behind
+# has been reparented away from this tree.
+processes() {
+  local matches table
+  matches=$(pgrep -u "$(id -u)" -f "$PROC_PATTERN" 2>/dev/null || true)
+  [ -n "$matches" ] || return 0
+  table=$(ps -A -o pid= -o ppid=)
+  awk -v root="$$" '
+    NR == FNR { parent[$1] = $2; next }
+    ($1 in parent) {
+      p = $1
+      while (p != "" && p != 0 && p != 1) {
+        if (p == root) next
+        p = parent[p]
+      }
+      print $1
+    }
+  ' <(printf '%s\n' "$table") <(printf '%s\n' "$matches") | LC_ALL=C sort
+}
 
 # The two shapes a leak takes in the temporary directory: our own bootstrap directories,
 # whose name is unambiguous, and Go's `t.TempDir` leftovers, which only survive a killed
