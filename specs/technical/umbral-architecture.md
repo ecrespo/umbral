@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.10 |
+| **Version** | 1.11 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -550,9 +550,35 @@ enforces both rules, with `mustCases` pinned to the 20 MUST rows above.
 
 ### 9.4 The `umb` surface
 
-Commands: `umb status`, `umb block last`, `umb version`, `umb help`. Flags shared by every
-command: `--socket PATH` (default: the runtime directory of API Spec §2), `--daemon-path
-PATH` (default: `PATH`, then the directory holding `umb`), `--no-autostart`, and `--json`.
+Commands: `umb status`, `umb block last`, `umb api schema`, `umb version`, `umb help`, and the
+workspace tree below. Flags shared by every command: `--socket PATH` (default: the runtime
+directory of API Spec §2), `--daemon-path PATH` (default: `PATH`, then the directory holding
+`umb`), `--no-autostart`, and `--json`.
+
+**The workspace tree** (REQ-CLI-005, REQ-CLI-006; deltas `2026-09-cli-workspace-surface` and
+`2026-09-cli-allowlist`). Every command is one call to the method named `<family>.<subcommand>`
+and prints its result; `--json` prints the daemon's answer verbatim. Identifiers are positional
+and passed through untouched — resolving them, aliases included, is the daemon's (REQ-WS-007).
+Positionals may come before or after the flags.
+
+| Command | Parameters sent |
+|---|---|
+| `umb workspace create [dir] [--label L] [--tab-label L] [--no-focus]` | `cwd` = `dir` made absolute against the shell's directory, default the shell's directory |
+| `umb workspace list` · `focus <w>` · `rename <w> <label>` · `close <w>` | `workspace_id`, `label` |
+| `umb tab create <w> [--label L] [--no-focus]` · `list <w>` · `focus <t>` · `rename <t> <label>` · `close <t>` | `workspace_id` / `tab_id`, `label` |
+| `umb pane split <p> [--direction right\|down] [--ratio R] [--cwd D] [--no-focus] [-- cmd args…]` | `direction` defaults to `right`; `ratio` only when given, zero included; `cwd` made absolute; everything after `--` is `command`, verbatim |
+| `umb pane list <t>` · `get <p>` · `focus <p>` · `rename <p> <label>` · `close <p>` | `tab_id` / `pane_id`, `label` |
+| `umb layout export [t]` | `tab_id`; without one the daemon's focused tab (API Spec §5.7) |
+| `umb layout apply <w> --from FILE\|- [--tab-label L] [--no-focus]` | `workspace_id`, and `root` read from the file or stdin |
+
+`--no-focus` sends `focus: false`; an omitted flag is an omitted parameter, so the daemon's
+default applies. Only `pane split` takes a command after `--`; any other command given one is
+exit 1. `layout apply --from` accepts what `layout export --json` writes — a whole Layout, of
+which only `root` is portable — or a bare node, and refuses anything else before connecting.
+Its warnings (API Spec §5.8) go to stderr in human mode, so a person sees them and a pipe does
+not carry them; with `--json` they are in the object. A misspelled subcommand is exit 1 with
+the family's usage, and never opens a connection. `pane.move` has no command (the CLI delta's
+decision 3). A label that begins with `-` cannot be given, since it parses as a flag.
 
 Exit codes are REQ-CLI-004. Two output rules go with them: `--json` prints one object per
 line, so the output composes with a shell loop and with `jq`; and a write that fails is
@@ -628,6 +654,7 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.3 | 2026-09-11 | E. Crespo (assisted draft) | delta `2026-09-block-lifecycle-decisions`: `klauspost/compress/zstd` recorded as a `sessions` dependency in §3.2 |
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds the `workspaces`, `waits`, `integrations` and `notify` modules, DD-009 to DD-015, the injected environment and the new test levels |
 | 1.10 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-bootstrap-sweeper`: §9.2 places a shell's bootstrap files in the runtime directory and specifies the sweep at start, with the instance lock as the argument for why it needs no age heuristic |
+| 1.11 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-cli-allowlist`: §9.4 writes down the grammar of `umb workspace`/`tab`/`pane`/`layout` — positionals, flags, defaults, the `--` rule for `pane split`, what `layout apply --from` accepts and where its warnings go — and lists `umb api schema`, which it had omitted |
 | 1.9 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-restore-semantics`: a Configuration section specifies `$XDG_CONFIG_HOME/umbral/config.toml`, its `[experimental] pane_history` key and that a malformed file stops the daemon rather than falling back to defaults |
 | 1.8 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-tui-renderer`: §5.1 lists the TUI's `ports` and `adapters`, §5.2 gains their rows, and DD-001 records which renderer the client uses and why it is the daemon's |
 | 1.7 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-cli-surface`: §5.1 lists the packages that existed but were unlisted, §5.2 gains the `api`, `client` and `tui` rows, and §9.4 records the `umb` surface, the daemon log and the instance lock |

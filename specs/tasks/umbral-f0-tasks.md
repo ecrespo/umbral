@@ -398,7 +398,7 @@
   in the delta under "Not modified"; it is repeated here because the code looks like it has a
   bug and does not.
 
-### [ ] T-F0-20 · `umb workspace`, `tab`, `pane` and `layout`
+### [x] 2026-09-26 T-F0-20 · `umb workspace`, `tab`, `pane` and `layout`
 - **What:**
   - `umb workspace create|list|focus|rename|close`, `umb tab create|list|focus|rename|close`,
     `umb pane split|list|get|focus|rename|close`, `umb layout export|apply`, each one call to
@@ -409,7 +409,8 @@
   - `umb layout apply --from <file|->`, so the round trip is a pipe.
 - **REQ:** REQ-CLI-005, REQ-CLI-006
 - **Files:** `cmd/umb/workspace.go`, `cmd/umb/layout.go`, `cmd/umb/main.go`,
-  `cmd/umb/*_test.go`, `scripts/cli_roundtrip.sh`
+  `cmd/umb/*_test.go`, `scripts/cli_roundtrip.sh`, `internal/api/system.go`,
+  `internal/api/{workspaces,layout}_wire_test.go` (delta `2026-09-cli-allowlist`)
 - **Depends on:** T-F0-11, T-F0-14, T-F0-15
 - **Done:** `TestWorkspaceCreatePrintsTheTree_REQ_CLI_005`,
   `TestPaneSplitAddressesByPublicId_REQ_CLI_005`, `TestUnknownSubcommandExitsOne_REQ_CLI_005`,
@@ -419,13 +420,47 @@
 - **Out of scope, deliberately:** `pane.move`, whose `destination` is a tagged union that has
   more than one defensible flag syntax; it is not needed by the criterion and a CLI verb is
   kept forever.
-- **Blocked** on an API delta. Delta `2026-09-cli-workspace-surface` was ratified on
-  2026-09-26, but API §2's allowlist does not let the `cli` client kind call `workspace.*`,
-  `tab.*`, `pane.*` or `layout.*` — `umb` would get `METHOD_NOT_FOUND` for every one of them,
-  measured against a real daemon — and that delta said the API Specification was not touched.
-  §2 has to change first, by a delta of its own. The five tests are written and red on
-  `feat/T-F0-20-cli-workspace` (`c025050`); they use a fake daemon, so they cannot see the
-  allowlist, and `scripts/cli_roundtrip.sh` is where it would surface.
+- **Unblocked by delta `2026-09-cli-allowlist`** (2026-09-26). The CLI delta said the API
+  Specification was not touched, but API §2's allowlist did not let the `cli` client kind call
+  `workspace.*`, `tab.*`, `pane.*` or `layout.*` — `umb` got `METHOD_NOT_FOUND` for every one
+  of them, measured against a real daemon. That delta widens the row to exactly this surface
+  (bar `pane.move`), so this task also touches `internal/api/system.go` and its two tests.
+- **Result.** The five tests were written first, by the `test-author` agent against a fake
+  daemon, and red with `unknown command "workspace"`; the agent checked each against a
+  throwaway implementation broken six ways. The two allowlist tests replace the two that
+  pinned the refusal, and were red on all eighteen methods before `treeClients` existed.
+  `cmd/umb` holds one table of families and subcommands — method, positionals, flags,
+  parameters, human printer — from which dispatch and usage are both generated, so a command
+  cannot exist unlisted. `--json` prints the daemon's answer verbatim rather than through a
+  struct, because a CLI that re-encodes drops whatever field it does not know yet. Positionals
+  may sit before or after flags, which the standard parser does not allow, and a command for
+  `pane split` follows `--`. `layout apply` accepts what `layout export --json` writes — a
+  whole Layout, of which it sends only `root` — or a bare node. The warnings go to stderr, so
+  a human sees them and a pipe does not carry them.
+- **Result (the criterion, performed).** `scripts/cli_roundtrip.sh` against a real `umbrald`,
+  every `XDG_*` and `HOME` redirected: a workspace, a split at 0.6, a second split carrying
+  `sh -c 'sleep 600'`, two labels, `layout export` to a file, a second workspace, and
+  `layout export | layout apply --from -` into it. The applied tab's tree matches the exported
+  one in shape, direction, ratio, label, cwd and command; the command came back
+  `command_pending` and the warning said so (REQ-TERM-011). **Teeth:** putting
+  `workspace.create` back to interactive-only fails the script on its first command with
+  `METHOD_NOT_FOUND` — the exact gap every fake-daemon test passed through. It runs as
+  `task roundtrip`, last in `task ci`, and in the GitHub test job on Linux and macOS — the
+  macOS run has not been observed yet; the script sets `XDG_RUNTIME_DIR` and passes `--socket`
+  to both binaries so the socket is in the same place on either.
+- **Result (review).** `spec-guardian` returned FIX FIRST: the script waited for the macOS
+  default socket although `XDG_RUNTIME_DIR` wins on every OS; its `umb` wrapper appended
+  `--no-autostart` after a `--`, so one call stored it as part of the pane's command and was
+  free to autostart; and the CLI's grammar was written nowhere, so delta
+  `2026-09-cli-allowlist` now puts it in Tech §9.4 (1.11). All fixed. Three tests pin the
+  grammar — `TestTreeFlagsBecomeTheMethodsParameters_REQ_CLI_005`,
+  `TestTreeCommandsRejectWhatTheyCannotSend_REQ_CLI_005`,
+  `TestLayoutApplyReadsEitherFormOfTheTree_REQ_CLI_006` — and the first caught a real bug:
+  `--ratio 0` was swallowed instead of sent for the daemon to reject; a `--cwd` that cannot be
+  resolved is now an error rather than silently dropped. **Not changed:** a label beginning
+  with `-` cannot be given (it parses as a flag), and `umb` does not catch `SIGPIPE`, so Go ends
+  it with that signal on a closed stdout — which predates this task and makes Tech §9.4's
+  `EPIPE` rule reachable only through a writer, not a real pipe.
 
 ### [x] 2026-09-26 T-F0-21 · A shell that exits inside the integration window still gets a verdict
 - **What:** `Service.finish` calls `live.integrationTimer.Stop()`, and the timer is the only
@@ -513,8 +548,8 @@
 | REQ-CLI-002 | T-F0-10, T-F0-11 | TestBlockGetLast_REQ_CLI_002 |
 | REQ-CLI-003 | T-F0-11 | TestUmbAutostartFailsWith69_REQ_CLI_003, TestAutostartFailureExits69_REQ_CLI_003 |
 | REQ-CLI-004 | T-F0-11 | TestBlockLastExits69WhenTheDaemonIsUnavailable_REQ_CLI_003, TestWriteFailureIsNotReportedAsSuccess_REQ_CLI_004, TestBrokenPipeIsNotAFailure_REQ_CLI_004 |
-| REQ-CLI-005 | T-F0-20 | TestWorkspaceCreatePrintsTheTree_REQ_CLI_005, TestPaneSplitAddressesByPublicId_REQ_CLI_005, TestUnknownSubcommandExitsOne_REQ_CLI_005 |
-| REQ-CLI-006 | T-F0-20 | TestLayoutExportApplyThroughAPipe_REQ_CLI_006, TestLayoutApplyReportsWarnings_REQ_CLI_006 |
+| REQ-CLI-005 | T-F0-20 | TestWorkspaceCreatePrintsTheTree_REQ_CLI_005, TestPaneSplitAddressesByPublicId_REQ_CLI_005, TestUnknownSubcommandExitsOne_REQ_CLI_005, TestCliClientMayDriveTheWorkspaceTree_REQ_CLI_005, TestCliClientStillMayNotMovePanesOrDriveSessions_REQ_CLI_005, TestTreeFlagsBecomeTheMethodsParameters_REQ_CLI_005, TestTreeCommandsRejectWhatTheyCannotSend_REQ_CLI_005 |
+| REQ-CLI-006 | T-F0-20 | TestLayoutExportApplyThroughAPipe_REQ_CLI_006, TestLayoutApplyReportsWarnings_REQ_CLI_006, TestLayoutApplyReadsEitherFormOfTheTree_REQ_CLI_006 |
 | REQ-TUI-001 | T-F0-12 (+ T-F1-20) | TestTUIBlockNavigation_REQ_TUI_001, TestTabsAndSwitching_REQ_TUI_001, TestSplitResizesBothPanes_REQ_TUI_001 |
 | REQ-WS-001 | T-F0-14 | TestWorkspaceCreateReturnsTree_REQ_WS_001 |
 | REQ-WS-002 | T-F0-14 | TestPaneIdsStable_REQ_WS_002 |
@@ -538,6 +573,7 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | T-F0-20 | done after a `spec-guardian` round | F0 exit criterion 4, performed: `scripts/cli_roundtrip.sh` creates, splits, exports and reapplies a layout against a real daemon using only `umb`. The CLI was the easy half. The other half was a protocol gap the ratified CLI delta had declared absent — API §2 refused the whole tree to `cli` — and five tests on a fake daemon could not see it; delta `2026-09-cli-allowlist` closed it by exactly the surface the CLI uses. The review then found the script's own wrapper leaking a flag into a pane's command, and a grammar nobody had specified. |
 | 2026-09-26 | T-F0-21 | done | A one-line fix to a defect that made the gate a coin flip: the exit now settles REQ-BLK-003's verdict instead of cancelling the only thing that ever wrote it. Test first, red on both the live session and its row, then green; measured on a real daemon inside the window. The same session ratified delta `2026-09-cli-workspace-surface` and fixed a hygiene-gate false positive, and found that API §2 does not let the `cli` client kind call `workspace.*`/`tab.*`/`pane.*`/`layout.*` at all — a gap the delta missed, which blocks `T-F0-20` until a delta of its own. |
 | 2026-09-21 | F0 validation | phase **not** closed | Asked whether F0 could be closed now that `T-F0-19` had shipped; measured rather than argued, and the answer is still no. Exit criterion 6 was the one item nobody had ever put a number to, so it was measured: an isolated `umbrald` with five live panes (five `zsh` children, all `osc133`) held a steady **VmRSS of 37.6 MiB / PSS 36.0 MiB across 90 s**, against the 80 MiB of PRD §7 — met, with more than half the budget unused, though still ungated, which is what T-F0-13 already records. Criterion 3 needs a week of a human using the TUI and has had one walkthrough. Criterion 4 needs `T-F0-20`, which is blocked on the ratification of `2026-09-cli-workspace-surface`. The run also turned up a MUST defect nobody had looked for: a session whose process exits inside the five-second integration window never reaches `integration: none`, because `finish` stops the only timer that would have said so. It is `T-F0-21`, it is pre-existing at `c7d7e18`, and it is the reason `TestACommandPaneGetsNoShellIntegration_REQ_BLK_003` is a coin flip under load. |
 | 2026-09-21 | T-F0-19 | done | The sweep is safe because of *where* it is called, not because of anything it decides: under the instance lock this daemon is the only one of its installation, so every `shellinteg-*` beside the socket belongs to a process that is gone — no age heuristic, no ownership check. The ordering carries the other half: it runs before `Restore`, because the shells the restore launches write their own directories there and a sweep afterwards would delete the files they were started with. That is the mutation worth remembering — moved below `Restore` every other test stays green, and every restored pane comes back without shell integration, silently. `Prepare` refusing an empty parent is the second load-bearing detail: `bootstrap` degrades a `Prepare` error into a session without integration, so a mis-wired adapter would otherwise show up only as blocks that stopped working. |

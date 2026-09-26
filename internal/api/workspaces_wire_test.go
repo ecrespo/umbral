@@ -532,9 +532,22 @@ func TestWorkspaceNotificationsCarryTheObject(t *testing.T) {
 	}
 }
 
-// TestWorkspaceMethodsRequireAnInteractiveClient pins API Spec §2: `cli` gets `system.*`,
-// `block.*`, three `thread.*` and `model.list`, and nothing that arranges windows.
-func TestWorkspaceMethodsRequireAnInteractiveClient(t *testing.T) {
+// cliTreeMethods is the surface delta `2026-09-cli-allowlist` grants the `cli` client kind:
+// what REQ-CLI-005 and REQ-CLI-006 have `umb` call, and nothing else.
+var cliTreeMethods = []string{
+	"workspace.create", "workspace.list", "workspace.focus", "workspace.rename", "workspace.close",
+	"tab.create", "tab.list", "tab.focus", "tab.rename", "tab.close",
+	"pane.split", "pane.list", "pane.get", "pane.focus", "pane.rename", "pane.close",
+	"layout.export", "layout.apply",
+}
+
+// TestCliClientMayDriveTheWorkspaceTree_REQ_CLI_005: "WHEN `umb workspace`, `umb tab`,
+// `umb pane` or `umb layout` runs …, THE SYSTEM SHALL invoke the JSON-RPC method of the same
+// name". Until delta `2026-09-cli-allowlist`, API §2 refused every one of those methods to
+// `cli`, which is the kind `umb` declares, so the requirement could not be met by any client
+// code at all. Each call here carries no parameters: a validation error means the method was
+// dispatched, and only METHOD_NOT_FOUND means the allowlist stopped it.
+func TestCliClientMayDriveTheWorkspaceTree_REQ_CLI_005(t *testing.T) {
 	t.Parallel()
 
 	s := testServerWithTree(t, &fakeTree{tree: sampleTree()})
@@ -543,17 +556,39 @@ func TestWorkspaceMethodsRequireAnInteractiveClient(t *testing.T) {
 		t.Fatalf("handshake: %+v", resp.Error)
 	}
 
-	for _, method := range []string{
-		"workspace.create", "workspace.list", "tab.create", "pane.split", "pane.get",
+	for i, method := range cliTreeMethods {
+		resp := c.call(i+2, method, nil)
+		if resp.Error != nil && resp.Error.Code == codeMethodNotFound {
+			t.Errorf("%s refused to a cli client with METHOD_NOT_FOUND; REQ-CLI-005 has `umb` call it", method)
+		}
+	}
+}
+
+// TestCliClientStillMayNotMovePanesOrDriveSessions_REQ_CLI_005 is the other edge of the same
+// row: the allowlist grows by exactly the CLI's surface. `pane.move` has no `umb` verb (the
+// CLI delta's decision 3), and `umb` never drives a PTY, so a `cli` connection that asks for
+// either is a client that has drifted out of its role.
+func TestCliClientStillMayNotMovePanesOrDriveSessions_REQ_CLI_005(t *testing.T) {
+	t.Parallel()
+
+	s := testServerWithTree(t, &fakeTree{tree: sampleTree()})
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientCLI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+
+	for i, method := range []string{
+		"pane.move",
+		"session.create", "session.list", "session.input", "session.resize", "session.close",
+		"session.snapshot", "session.subscribe", "session.unsubscribe",
 	} {
-		resp := c.call(2, method, nil)
+		resp := c.call(i+2, method, nil)
 		if resp.Error == nil {
 			t.Errorf("a cli client was allowed to call %s", method)
 			continue
 		}
 		if resp.Error.Code != codeMethodNotFound {
-			t.Errorf("%s gave code %d, want METHOD_NOT_FOUND (%d)",
-				method, resp.Error.Code, codeMethodNotFound)
+			t.Errorf("%s gave code %d, want METHOD_NOT_FOUND (%d)", method, resp.Error.Code, codeMethodNotFound)
 		}
 	}
 }

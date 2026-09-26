@@ -158,6 +158,14 @@ tasks:
       - go build -ldflags '{{.LDFLAGS}}' -o {{.BIN}}/umb ./cmd/umb
       - go build -ldflags '{{.LDFLAGS}}' -o {{.BIN}}/umbral-tui ./cmd/umbral-tui
 
+  roundtrip:
+    desc: F0 exit criterion 4 against a real daemon, using only the CLI (T-F0-20)
+    deps: [build]
+    cmds:
+      # A fake daemon cannot see what the real one refuses: the `cli` allowlist gap that
+      # blocked T-F0-20 passed every cmd/umb test and fails here on the first command.
+      - UMBRALD={{.BIN}}/umbrald UMB={{.BIN}}/umb ./scripts/cli_roundtrip.sh
+
   clean:
     desc: Remove build and coverage artifacts
     cmds:
@@ -177,6 +185,7 @@ tasks:
       - task: test:hygiene:selftest
       - task: perf
       - task: build
+      - task: roundtrip
 
   deps:ghostty:
     desc: Build libghostty-vt, which the sessions emulator links through cgo (needs Zig)

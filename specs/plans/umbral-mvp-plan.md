@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.5 |
+| **Version** | 1.6 |
 | **Date** | 2026-09-11 |
 | **PRD** | `specs/prd/umbral-mvp.md` |
 | **Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -80,20 +80,21 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 | T-F0-17 | Protocol schema and capability degradation | 1.5d | T-F0-03 | ✅ 2026-09-20 |
 | T-F0-18 | Structure restore after restart (+ optional pane history) | 2d | T-F0-14 | ✅ 2026-09-20 |
 | T-F0-19 | Bootstrap files in the runtime directory, and a sweep at start | 0.5d | T-F0-08, T-F0-18 | ✅ 2026-09-21 |
-| T-F0-20 | `umb workspace`, `tab`, `pane` and `layout` (exit criterion 4) | 1.5d | T-F0-11, T-F0-14, T-F0-15 | ⬜ |
+| T-F0-20 | `umb workspace`, `tab`, `pane` and `layout` (exit criterion 4) | 1.5d | T-F0-11, T-F0-14, T-F0-15 | ✅ 2026-09-26 |
 | T-F0-21 | A shell that exits inside the integration window still gets a verdict (REQ-BLK-003) | 0.5d | T-F0-09 | ✅ 2026-09-26 |
 
 **F0 is open.** Reviewed against a running daemon on 2026-09-20
 (`docs/checkpoints/2026-09-20-f0-closure.md`) and again on 2026-09-21
 (`docs/checkpoints/2026-09-21-f0-validation.md`): `T-F0-19` closed on 2026-09-21, verified
-against a real daemon with `kill -9`, and `T-F0-21` closed on 2026-09-26, so **one task is open**. `T-F0-20` is open because
-the feature exit criterion 4 asks for was never specified; its delta,
-`2026-09-cli-workspace-surface`, was ratified on 2026-09-26. `T-F0-21` was opened because the 2026-09-21
+against a real daemon with `kill -9`; `T-F0-20` and `T-F0-21` closed on 2026-09-26, so **no
+F0 task is open**. `T-F0-20` was opened because the feature exit criterion 4 asks for was never
+specified; its delta, `2026-09-cli-workspace-surface`, and the API §2 delta it turned out to
+need, `2026-09-cli-allowlist`, were both ratified on 2026-09-26. `T-F0-21` was opened because the 2026-09-21
 validation found a MUST that the code did not keep: a session whose process exits inside the
 five-second integration window never reached `integration: none`, measured against a real
 daemon and reproduced at `c7d7e18`; the exit now settles the verdict, measured the same way. One exit criterion was
-closed by that run — idle memory, measured for the first time — and two are still unmet. The
-phase closes when the criteria below are met **and REQ-BLK-003 holds**, not when the table
+closed by that run — idle memory, measured for the first time — and criterion 4 by
+`T-F0-20`; one, the TUI's week, is still unmet. The phase closes when the criteria below are met **and REQ-BLK-003 holds**, not when the table
 above is full.
 `docs/f0-closure-plan.md` is the hand-off: the four remaining items in the order they can be
 worked, with an owner and an acceptance criterion each.
@@ -105,14 +106,13 @@ worked, with an owner and an acceptance criterion each.
   and a human's to close. `docs/qa/f0-tui.md` was walked once on 2026-09-20, which closed
   T-F0-12; one session is not one week.
 - A script creates a workspace, splits, exports and reapplies a layout using only the CLI —
-  ☐ **not met: the feature does not exist.** `umb` serves `status`, `block last`,
-  `api schema`, `version` and `help` and nothing else, so the workspace tree is reachable only
-  over raw JSON-RPC. No task builds it and no REQ requires it, while the Art. 6 amendment
-  justifies the `w<n>` identifiers on the strength of `umb pane split w1:t1` being "the
-  feature". Raised as the Delta it wanted on 2026-09-21:
-  `changes/_archive/2026-09-cli-workspace-surface/` carries REQ-CLI-005, REQ-CLI-006 and `T-F0-20`,
-  applied to the PRD and the task list, and ratified on 2026-09-26. The criterion closes when `T-F0-20` ships and
-  `scripts/cli_roundtrip.sh` performs it against a real daemon.
+  ☑ **met by `T-F0-20` on 2026-09-26.** Until then `umb` served `status`, `block last`,
+  `api schema`, `version` and `help` and nothing else. Delta
+  `2026-09-cli-workspace-surface` added REQ-CLI-005 and REQ-CLI-006; delta
+  `2026-09-cli-allowlist` let the `cli` client kind reach the methods they name.
+  `scripts/cli_roundtrip.sh` performs the criterion against a real daemon — create, split,
+  export, apply through a pipe, compare the trees — and runs as `task roundtrip` in `task ci`
+  and in the GitHub test job.
 - After `kill` on the daemon, the structure comes back with its cwd and labels — ☑ verified
   end to end on 2026-09-20: `kill -9`, restart, 5 panes back with their labels, cwds and fresh
   sessions, focus preserved, and the two stored commands typed at their prompts without
@@ -225,3 +225,4 @@ Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), 
 | 1.3 | 2026-09-20 | E. Crespo (assisted draft) | Adds T-F0-14…18 and T-F1-23…29, extends the phase durations and the F2 orchestration horizon |
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds T-F1-30/31 and the hardening tasks file; F1 grows to 7-8 weeks; the deltas are folded and archived; the structure tables take migration `0003` and the agent subdomain `0004` |
 | 1.5 | 2026-09-21 | E. Crespo (assisted draft) | `T-F0-19` closes; `T-F0-20` is added from delta `2026-09-cli-workspace-surface` and `T-F0-21` from the 2026-09-21 F0 validation, which also measured exit criterion 6 for the first time — idle daemon memory, 37.6 MiB against a budget of 80 |
+| 1.6 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-20` and `T-F0-21` close; exit criterion 4 is met by `scripts/cli_roundtrip.sh` against a real daemon, after delta `2026-09-cli-allowlist` let `umb` reach the tree. Only criterion 3, the TUI's week, remains |

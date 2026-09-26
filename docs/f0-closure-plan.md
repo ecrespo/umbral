@@ -19,13 +19,11 @@ code shortens them.
 |---|---|---|---|---|
 | 1 | ~~Ratify `changes/2026-09-cli-workspace-surface/`~~ — ratified 2026-09-26 | human | — | unblocks item 3 |
 | 2 | ~~`T-F0-21` — REQ-BLK-003's verdict at exit~~ — done 2026-09-26 | code | — | a MUST, and a reliable `task ci` |
-| 3 | `T-F0-20` — `umb workspace`/`tab`/`pane`/`layout` | code | an API §2 delta: the `cli` client kind may not call those methods | exit criterion 4 |
+| 3 | ~~`T-F0-20` — `umb workspace`/`tab`/`pane`/`layout`~~ — done 2026-09-26, with delta `2026-09-cli-allowlist` | code | — | exit criterion 4 |
 | 4 | A week of the TUI as the main terminal | human | — | exit criterion 3 |
 
-Items 1 and 2 are done. Item 4 can run alongside everything else. Item 3's five tests exist,
-red, on `feat/T-F0-20-cli-workspace`; before any code, API §2 has to let `umb` (`client_kind:
-cli`) call `workspace.*`, `tab.*`, `pane.*` and `layout.*` — found on 2026-09-26, missed by the
-CLI delta, which said the API Specification was not touched.
+Items 1 to 3 are done (2026-09-26). Item 4, the TUI's week, is the only one left, and it is a
+human's.
 
 ## The six exit criteria, and what each one still needs
 
@@ -37,7 +35,7 @@ REQ-BLK-003 holds.
 | 1 | VT conformance suite 100 % MUST green (REQ-TERM-002) | ☑ met | `T-F0-07`, 20 MUST cases |
 | 2 | Correct blocks in bash, zsh and fish in CI | ☑ met | `TestBlocksInEveryShell_REQ_BLK_005`; the Linux job installs all three |
 | 3 | The TUI used one week as the main terminal, no blocking regressions | ☐ **open** | item 4 below |
-| 4 | A script creates a workspace, splits, exports and reapplies a layout using only the CLI | ☐ **open** | items 1 and 3 below |
+| 4 | A script creates a workspace, splits, exports and reapplies a layout using only the CLI | ☑ met | `T-F0-20`; `scripts/cli_roundtrip.sh` (`task roundtrip`) performs it against a real daemon |
 | 5 | The structure comes back after `kill` on the daemon | ☑ met | verified end to end 2026-09-20: `kill -9`, restart, five panes with labels, cwds, fresh sessions, focus preserved |
 | 6 | Benchmarks within the NFRs | ☑ met | three of four are gates; idle memory measured 2026-09-21 at 37,6 MiB against 80 |
 
@@ -111,7 +109,7 @@ ses_01M33B1WQ29Q82PV3BP3XCEBNF|exited|pending|0
 
 Reproduced independently at `c7d7e18` in a detached worktree.
 
-## 3 · `T-F0-20` — the CLI for the workspace tree (code, after item 1)
+## 3 · `T-F0-20` — the CLI for the workspace tree (code) — ✅ done 2026-09-26
 
 Full task in `specs/tasks/umbral-f0-tasks.md`. It is the one open criterion that code can
 close. Do not start it before the delta is ratified: its requirements are in the PRD already,

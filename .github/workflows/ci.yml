@@ -138,3 +138,8 @@ jobs:
       - run: go test -race ./...
       - name: Build every binary
         run: go build ./...
+      - name: F0 exit criterion 4 — the CLI round trip against a real daemon (T-F0-20)
+        run: |
+          go build -o bin/umbrald ./cmd/umbrald
+          go build -o bin/umb ./cmd/umb
+          ./scripts/cli_roundtrip.sh

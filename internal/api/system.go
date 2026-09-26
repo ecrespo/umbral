@@ -12,6 +12,11 @@ import (
 // interactiveClients are the kinds allowed to drive a terminal.
 var interactiveClients = []ClientKind{ClientTUI, ClientDesktop}
 
+// treeClients are the kinds allowed to arrange the workspace tree: the interactive ones, and
+// `umb`, whose `workspace`/`tab`/`pane`/`layout` commands are REQ-CLI-005 and REQ-CLI-006
+// (API Spec §2, delta `2026-09-cli-allowlist`).
+var treeClients = []ClientKind{ClientTUI, ClientDesktop, ClientCLI}
+
 // registry is the method table. Adding a method here is the only way to expose one, and
 // the kinds field is where API Spec §2's per-client-kind allowlist lives.
 //
@@ -70,33 +75,33 @@ func hasWorkspaces(cfg Config) bool { return cfg.Workspaces != nil }
 // §5.6.
 func workspaceMethods() map[string]method {
 	return map[string]method{
-		// The workspace tree is interactive-only for the same reason session.* is: API
-		// Spec §2 gives `cli` `system.*`, `block.*`, three `thread.*` and `model.list`,
-		// and nothing that arranges windows.
-		"workspace.create": {handle: handleWorkspaceCreate, kinds: interactiveClients, params: createWorkspaceParams{}, result: workspaceCreateResult{}},
-		"workspace.list":   {handle: handleWorkspaceList, kinds: interactiveClients, params: emptyResult{}, result: workspaceListResult{}},
-		"workspace.focus":  {handle: handleWorkspaceFocus, kinds: interactiveClients, params: workspaceIDParams{}, result: workspaceResult{}},
-		"workspace.rename": {handle: handleWorkspaceRename, kinds: interactiveClients, params: workspaceRenameParams{}, result: workspaceResult{}},
-		"workspace.close":  {handle: handleWorkspaceClose, kinds: interactiveClients, params: workspaceCloseParams{}, result: closedResult{}},
+		// API Spec §2 gives `cli` the tree, because `umb` addresses it (REQ-CLI-005), but
+		// not `pane.move`, which has no `umb` verb, and not session.*: `umb` arranges panes
+		// and never drives the PTY inside one.
+		"workspace.create": {handle: handleWorkspaceCreate, kinds: treeClients, params: createWorkspaceParams{}, result: workspaceCreateResult{}},
+		"workspace.list":   {handle: handleWorkspaceList, kinds: treeClients, params: emptyResult{}, result: workspaceListResult{}},
+		"workspace.focus":  {handle: handleWorkspaceFocus, kinds: treeClients, params: workspaceIDParams{}, result: workspaceResult{}},
+		"workspace.rename": {handle: handleWorkspaceRename, kinds: treeClients, params: workspaceRenameParams{}, result: workspaceResult{}},
+		"workspace.close":  {handle: handleWorkspaceClose, kinds: treeClients, params: workspaceCloseParams{}, result: closedResult{}},
 
-		"tab.create": {handle: handleTabCreate, kinds: interactiveClients, params: tabCreateParams{}, result: tabCreateResult{}},
-		"tab.list":   {handle: handleTabList, kinds: interactiveClients, params: workspaceIDParams{}, result: tabListResult{}},
-		"tab.focus":  {handle: handleTabFocus, kinds: interactiveClients, params: tabParams{}, result: tabResult{}},
-		"tab.rename": {handle: handleTabRename, kinds: interactiveClients, params: tabRenameParams{}, result: tabResult{}},
-		"tab.close":  {handle: handleTabClose, kinds: interactiveClients, params: tabParams{}, result: closedResult{}},
+		"tab.create": {handle: handleTabCreate, kinds: treeClients, params: tabCreateParams{}, result: tabCreateResult{}},
+		"tab.list":   {handle: handleTabList, kinds: treeClients, params: workspaceIDParams{}, result: tabListResult{}},
+		"tab.focus":  {handle: handleTabFocus, kinds: treeClients, params: tabParams{}, result: tabResult{}},
+		"tab.rename": {handle: handleTabRename, kinds: treeClients, params: tabRenameParams{}, result: tabResult{}},
+		"tab.close":  {handle: handleTabClose, kinds: treeClients, params: tabParams{}, result: closedResult{}},
 
-		"pane.split":  {handle: handlePaneSplit, kinds: interactiveClients, params: splitParams{}, result: paneSplitResult{}},
-		"pane.list":   {handle: handlePaneList, kinds: interactiveClients, params: tabParams{}, result: paneListResult{}},
-		"pane.get":    {handle: handlePaneGet, kinds: interactiveClients, params: paneParams{}, result: paneResult{}},
-		"pane.focus":  {handle: handlePaneFocus, kinds: interactiveClients, params: paneParams{}, result: paneResult{}},
-		"pane.rename": {handle: handlePaneRename, kinds: interactiveClients, params: paneRenameParams{}, result: paneResult{}},
+		"pane.split":  {handle: handlePaneSplit, kinds: treeClients, params: splitParams{}, result: paneSplitResult{}},
+		"pane.list":   {handle: handlePaneList, kinds: treeClients, params: tabParams{}, result: paneListResult{}},
+		"pane.get":    {handle: handlePaneGet, kinds: treeClients, params: paneParams{}, result: paneResult{}},
+		"pane.focus":  {handle: handlePaneFocus, kinds: treeClients, params: paneParams{}, result: paneResult{}},
+		"pane.rename": {handle: handlePaneRename, kinds: treeClients, params: paneRenameParams{}, result: paneResult{}},
 		"pane.move":   {handle: handlePaneMove, kinds: interactiveClients, params: moveParams{}, result: paneMoveResult{}},
-		"pane.close":  {handle: handlePaneClose, kinds: interactiveClients, params: paneParams{}, result: closedResult{}},
+		"pane.close":  {handle: handlePaneClose, kinds: treeClients, params: paneParams{}, result: closedResult{}},
 
 		// §2 lists `layouts` as a capability of its own, which is why these two are not
 		// folded into the workspace surface above.
-		"layout.export": {handle: handleLayoutExport, kinds: interactiveClients, params: layoutExportParams{}, result: Layout{}},
-		"layout.apply":  {handle: handleLayoutApply, kinds: interactiveClients, params: applyParams{}, result: layoutApplyResult{}},
+		"layout.export": {handle: handleLayoutExport, kinds: treeClients, params: layoutExportParams{}, result: Layout{}},
+		"layout.apply":  {handle: handleLayoutApply, kinds: treeClients, params: applyParams{}, result: layoutApplyResult{}},
 	}
 }
 
