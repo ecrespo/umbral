@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -427,5 +428,43 @@ func TestAPISchemaRequiresJSON_REQ_API_004(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--json") {
 		t.Errorf("stderr does not say what is missing: %q", stderr.String())
+	}
+}
+
+// TestAClosedPipeEndsTheRealBinaryWithZero_REQ_CLI_004 is the same promise as
+// TestBrokenPipeIsNotAFailure_REQ_CLI_004, held against a real process and a real pipe.
+//
+// The in-process test hands `run` a writer that returns EPIPE, and passes. The binary never
+// got that far: Go's runtime answers a write to a closed pipe on stdout with SIGPIPE and the
+// process dies of it, exit 141 from a shell, before the printer can see the error — so
+// `umb api schema --json | head -c1` reported a failure REQ-CLI-004 says it is not. Only a
+// real pipe with its reader gone shows the difference.
+func TestAClosedPipeEndsTheRealBinaryWithZero_REQ_CLI_004(t *testing.T) {
+	t.Parallel()
+
+	umb := buildUmb(t)
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	// The reader is gone before the first byte: the exact state `| head` leaves behind once
+	// it has read enough, without depending on buffer sizes or timing.
+	_ = pr.Close()
+
+	cmd := exec.CommandContext(t.Context(), umb, "api", "schema", "--json")
+	cmd.Env = isolatedEnv(t)
+	cmd.Stdout = pw
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	_ = pw.Close()
+
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		t.Fatalf("`umb api schema --json` into a closed pipe ended with %v, want exit 0 (REQ-CLI-004); stderr: %s",
+			exit.ProcessState, stderr.String())
+	}
+	if err != nil {
+		t.Fatalf("run: %v", err)
 	}
 }
