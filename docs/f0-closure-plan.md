@@ -17,7 +17,7 @@ code shortens them.
 
 | # | Item | Owner | Blocked on | Closes |
 |---|---|---|---|---|
-| 1 | Ratify `changes/2026-09-cli-workspace-surface/` | human | — | unblocks item 3 |
+| 1 | ~~Ratify `changes/2026-09-cli-workspace-surface/`~~ — ratified 2026-09-26 | human | — | unblocks item 3 |
 | 2 | `T-F0-21` — REQ-BLK-003's verdict at exit | code | — | a MUST, and a reliable `task ci` |
 | 3 | `T-F0-20` — `umb workspace`/`tab`/`pane`/`layout` | code | item 1 | exit criterion 4 |
 | 4 | A week of the TUI as the main terminal | human | — | exit criterion 3 |
@@ -44,10 +44,10 @@ Criterion 6 is met but **ungated** — it carries no REQ id, so `task perf` does
 That is recorded in `T-F0-13` and is deliberate; the measurement below is the evidence, not a
 regression test.
 
-## 1 · Ratify the CLI delta (human)
+## 1 · Ratify the CLI delta (human) — ✅ done 2026-09-26
 
-`changes/2026-09-cli-workspace-surface/` — `delta-spec.md` and `tasks.md`. Status line reads
-`PENDING APPROVAL — applied to specs/ on 2026-09-21, awaiting ratification`.
+`changes/_archive/2026-09-cli-workspace-surface/` — `delta-spec.md` and `tasks.md`. Ratified
+and archived on 2026-09-26; what follows is kept as the record of what was approved.
 
 It exists because F0 exit criterion 4 asks for a feature nobody specified, and because Art. 6's
 amendment justifies the `w<n>` identifiers on the strength of `umb pane split w1:t1` being
@@ -143,7 +143,7 @@ it is the longest pole and nothing else depends on it.
 - [ ] `task ci` green, on a tree where `T-F0-21` has landed — the full gate, not `go test`.
 - [ ] `python3 tools/sdd_check.py` with no CRITICAL and no HIGH.
 - [ ] `spec-guardian` run on the final diff.
-- [ ] `changes/2026-09-cli-workspace-surface/` archived.
+- [x] `changes/2026-09-cli-workspace-surface/` archived (2026-09-26).
 - [ ] All six criteria marked in `specs/plans/umbral-mvp-plan.md`, with what closed each.
 - [ ] `AGENTS.md`'s known status rewritten to say the phase is closed — and *only* then, since
       it has claimed that once before while two criteria were open.

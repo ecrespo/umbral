@@ -419,9 +419,8 @@
 - **Out of scope, deliberately:** `pane.move`, whose `destination` is a tagged union that has
   more than one defensible flag syntax; it is not needed by the criterion and a CLI verb is
   kept forever.
-- **Blocked until** delta `2026-09-cli-workspace-surface` is ratified. Its requirements are
-  already in the PRD, which is this repo's convention for a delta awaiting approval, but no
-  code is written before a human approves it.
+- **Unblocked** on 2026-09-26: delta `2026-09-cli-workspace-surface` was ratified and
+  archived.
 
 ### [ ] T-F0-21 · A shell that exits inside the integration window still gets a verdict
 - **What:** `Service.finish` calls `live.integrationTimer.Stop()`, and the timer is the only

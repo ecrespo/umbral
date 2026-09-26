@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PENDING APPROVAL — applied to specs/ on 2026-09-21, awaiting ratification` |
+| **Status** | `RATIFIED 2026-09-26 — applied to specs/ and archived` |
 | **Date** | 2026-09-21 |
 | **Task** | T-F0-20 (new) |
 | **Raised by** | Gap 1 of the F0 final verification (`docs/checkpoints/2026-09-20-f0-closure.md`), left there for "the next session to raise". This is that raise. |

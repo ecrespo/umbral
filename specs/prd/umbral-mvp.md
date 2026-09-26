@@ -459,7 +459,7 @@ TUI as text:
 | 1.8 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-notification-sequencing`: REQ-API-002 counts per daemon run, shared by every connection, instead of "per session" — a word that in this system already names a PTY |
 | 1.9 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-restore-semantics`: REQ-TERM-010 names `$XDG_CONFIG_HOME/umbral/config.toml` as the file the setting lives in, and REQ-TERM-011 states that a restored pane's command is left visible and never run, `layout.apply` included |
 | 1.10 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-bootstrap-sweeper`: REQ-TERM-012 — the daemon sweeps the shell bootstrap directories a killed run left in its runtime directory, and creates them there rather than in the shared temporary directory |
-| 1.11 | 2026-09-21 | E. Crespo (assisted draft) | delta `2026-09-cli-workspace-surface` (**pending ratification**): REQ-CLI-005 and REQ-CLI-006 — `umb workspace`/`tab`/`pane`/`layout` over the methods of the same name, addressed by the `w<n>` identifiers, and a layout round trip through a pipe. Without them F0 exit criterion 4 cannot be performed and Art. 6's exception cites a command that does not exist |
+| 1.11 | 2026-09-21 | E. Crespo (assisted draft) | delta `2026-09-cli-workspace-surface` (ratified 2026-09-26): REQ-CLI-005 and REQ-CLI-006 — `umb workspace`/`tab`/`pane`/`layout` over the methods of the same name, addressed by the `w<n>` identifiers, and a layout round trip through a pipe. Without them F0 exit criterion 4 cannot be performed and Art. 6's exception cites a command that does not exist |
 
 ## Approvals
 
