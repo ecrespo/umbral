@@ -20,10 +20,11 @@ code shortens them.
 | 1 | ~~Ratify `changes/2026-09-cli-workspace-surface/`~~ — ratified 2026-09-26 | human | — | unblocks item 3 |
 | 2 | ~~`T-F0-21` — REQ-BLK-003's verdict at exit~~ — done 2026-09-26 | code | — | a MUST, and a reliable `task ci` |
 | 3 | ~~`T-F0-20` — `umb workspace`/`tab`/`pane`/`layout`~~ — done 2026-09-26, with delta `2026-09-cli-allowlist` | code | — | exit criterion 4 |
-| 4 | A week of the TUI as the main terminal | human | — | exit criterion 3 |
+| 4 | ~~A week of the TUI as the main terminal~~ — moved to the release 0.1 gate (delta `2026-09-defer-tui-week`) | human | — | exit criterion 3 |
 
-Items 1 to 3 are done (2026-09-26). Item 4, the TUI's week, is the only one left, and it is a
-human's.
+Items 1 to 3 are done (2026-09-26), and item 4 — the TUI's week — was moved by the Tech Lead
+to the release 0.1 gate (delta `2026-09-defer-tui-week`). Nothing F0 needs is open; what is
+left is the closing checklist below.
 
 ## The six exit criteria, and what each one still needs
 

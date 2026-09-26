@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.6 |
+| **Version** | 1.7 |
 | **Date** | 2026-09-11 |
 | **PRD** | `specs/prd/umbral-mvp.md` |
 | **Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -97,17 +97,18 @@ validation found a MUST that the code did not keep: a session whose process exit
 five-second integration window never reached `integration: none`, measured against a real
 daemon and reproduced at `c7d7e18`; the exit now settles the verdict, measured the same way. One exit criterion was
 closed by that run — idle memory, measured for the first time — and criterion 4 by
-`T-F0-20`; one, the TUI's week, is still unmet. The phase closes when the criteria below are met **and REQ-BLK-003 holds**, not when the table
-above is full.
+`T-F0-20`; the TUI's week moved to the release 0.1 gate (delta `2026-09-defer-tui-week`), so
+F0 closes on the other five criteria **and REQ-BLK-003**, all of which hold.
 `docs/f0-closure-plan.md` is the hand-off: the four remaining items in the order they can be
 worked, with an owner and an acceptance criterion each.
 
 - VT conformance suite 100 % MUST green (REQ-TERM-002) — ☑ met by T-F0-07, 20 MUST cases.
 - Correct blocks in bash, zsh and fish in CI — ☑ met by T-F0-09,
   `TestBlocksInEveryShell_REQ_BLK_005`; the Linux test job installs all three shells.
-- The TUI is used for one week as the main terminal without blocking regressions — ☐ **open**,
-  and a human's to close. `docs/qa/f0-tui.md` was walked once on 2026-09-20, which closed
-  T-F0-12; one session is not one week.
+- The TUI is used for one week as the main terminal without blocking regressions — ➜ **moved
+  to the release 0.1 gate** on 2026-09-26 by the Tech Lead (delta `2026-09-defer-tui-week`):
+  the week that matters is the one on the TUI that ships, with F1's agent panel in it.
+  `docs/qa/f0-tui.md` was walked once on 2026-09-20, which closed T-F0-12.
 - A script creates a workspace, splits, exports and reapplies a layout using only the CLI —
   ☑ **met by `T-F0-20` on 2026-09-26.** Until then `umb` served `status`, `block last`,
   `api schema`, `version` and `help` and nothing else. Delta
@@ -189,6 +190,10 @@ Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), 
 - `systemd --user` unit and `launchd` plist.
 - Installation guide and provider configuration guide (includes HF and OmniRoute presets).
 - `code-audit` on the repo (SAST, SCA and secrets) as a release gate.
+- **The TUI used for one week as the main terminal without blocking regressions**, recorded
+  where `docs/qa/f0-tui.md` was — F0's third exit criterion, moved here on 2026-09-26 (delta
+  `2026-09-defer-tui-week`) so the week is spent on the TUI that ships. Release 0.1 does not
+  ship without it.
 
 ## 4. Horizon (outside this plan)
 
@@ -229,3 +234,4 @@ Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), 
 | 1.4 | 2026-09-20 | E. Crespo (assisted draft) | Adds T-F1-30/31 and the hardening tasks file; F1 grows to 7-8 weeks; the deltas are folded and archived; the structure tables take migration `0003` and the agent subdomain `0004` |
 | 1.5 | 2026-09-21 | E. Crespo (assisted draft) | `T-F0-19` closes; `T-F0-20` is added from delta `2026-09-cli-workspace-surface` and `T-F0-21` from the 2026-09-21 F0 validation, which also measured exit criterion 6 for the first time — idle daemon memory, 37.6 MiB against a budget of 80 |
 | 1.6 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-20` and `T-F0-21` close; exit criterion 4 is met by `scripts/cli_roundtrip.sh` against a real daemon, after delta `2026-09-cli-allowlist` let `umb` reach the tree. `T-F0-22` (delta `2026-09-recovery-integration`) settles on restart the verdict a crash interrupted. Only criterion 3, the TUI's week, remains |
+| 1.7 | 2026-09-26 | E. Crespo | delta `2026-09-defer-tui-week`: F0's third exit criterion, the TUI's week as the main terminal, becomes a release 0.1 gate; F0 closes on the other five and REQ-BLK-003. `T-F0-23` and `T-F0-24` added and closed |
