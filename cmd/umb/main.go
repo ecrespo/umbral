@@ -68,6 +68,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return finish(cmdBlock(ctx, args[1:], out, errOut), out, stderr)
 	case "api":
 		return finish(cmdAPI(args[1:], out, errOut), out, stderr)
+	case famWorkspace, famTab, famPane, famLayout:
+		return finish(cmdTree(ctx, args[0], args[1:], out, errOut), out, stderr)
 	case "version", "--version", "-version":
 		out.println(buildVersion())
 		return finish(exitOK, out, stderr)
@@ -88,6 +90,11 @@ Usage:
   umb status [--json]            the daemon's health, providers and MCP servers
   umb block last [--json]        the last closed block of this session (REQ-CLI-002)
   umb api schema --json          the protocol this binary speaks (REQ-API-004)
+  umb workspace create|list|focus|rename|close
+  umb tab create|list|focus|rename|close
+  umb pane split|list|get|focus|rename|close
+  umb layout export|apply        the workspace tree, addressed as w1, w1:t2, w1:p3
+                                 (REQ-CLI-005, REQ-CLI-006); "umb <family>" lists each
   umb version
 
 Flags common to every command:

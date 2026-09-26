@@ -19,7 +19,7 @@
 - **Note:** the API Specification is **not** touched. No method changes, so `task schema`
   compares the same 33 methods before and after.
 
-### [ ] T-F0-20 · `umb workspace`, `tab`, `pane` and `layout`
+### [x] 2026-09-26 T-F0-20 · `umb workspace`, `tab`, `pane` and `layout`
 > The implementation. Lives in `specs/tasks/umbral-f0-tasks.md`;
 > repeated here so the delta carries its own record of what it asked for.
 - **What:**

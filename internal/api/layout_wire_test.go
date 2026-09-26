@@ -182,28 +182,6 @@ func TestLayoutsAreAdvertisedAsTheirOwnCapability(t *testing.T) {
 	}
 }
 
-// TestLayoutMethodsRequireAnInteractiveClient: §2 keeps the `cli` client out of anything
-// that arranges windows, and a layout is a window arrangement.
-func TestLayoutMethodsRequireAnInteractiveClient(t *testing.T) {
-	t.Parallel()
-
-	s := testServerWithTree(t, &fakeTree{tree: sampleTree()})
-	c := dial(t, s)
-	if resp := c.hello(s.Token(), ClientCLI); resp.Error != nil {
-		t.Fatalf("handshake: %+v", resp.Error)
-	}
-	for _, method := range []string{"layout.export", "layout.apply"} {
-		resp := c.call(2, method, nil)
-		if resp.Error == nil {
-			t.Errorf("a cli client was allowed to call %s", method)
-			continue
-		}
-		if resp.Error.Code != codeMethodNotFound {
-			t.Errorf("%s gave code %d, want METHOD_NOT_FOUND", method, resp.Error.Code)
-		}
-	}
-}
-
 // TestEveryWorkspaceEventIsDispatched closes a hole that no other test can see.
 //
 // A bus event reaches a client only if two things line up: `toNotification` knows its wire
