@@ -36,14 +36,25 @@ TMP_DIR="${TMPDIR:-/tmp}"
 
 # `pgrep -u` so another user's processes on a shared machine are never counted, and `|| true`
 # because pgrep exits 1 when nothing matches, which is the ordinary case.
-processes() { pgrep -u "$(id -u)" -f "$PROC_PATTERN" 2>/dev/null | sort || true; }
+#
+# `LC_ALL=C` on every sort and every comm below, and never on the command being run: `sort`
+# under en_US.UTF-8 orders `shellinteg-…` before `Test…` while `comm` reads the same list as
+# unsorted, so the comparison silently produced an empty difference and the gate stopped
+# catching anything. It was latent until T-F0-19 added a lower-case pattern.
+processes() { pgrep -u "$(id -u)" -f "$PROC_PATTERN" 2>/dev/null | LC_ALL=C sort || true; }
 
 # The two shapes a leak takes in the temporary directory: our own bootstrap directories,
 # whose name is unambiguous, and Go's `t.TempDir` leftovers, which only survive a killed
 # binary.
+#
+# Both spellings of the bootstrap directory are matched. `umbral-shellinteg-*` is what every
+# binary built before T-F0-19 writes, and what this gate's own selftest plants;
+# `shellinteg-*` is the name used since — those belong in the daemon's runtime directory now
+# (REQ-TERM-012), so one appearing here at all means something put it back in the shared
+# temporary directory, which is exactly the regression worth failing on.
 temp_dirs() {
-  find "$TMP_DIR" -maxdepth 1 \( -name 'umbral-shellinteg-*' -o -name 'Test*' \) \
-    -newermt '1970-01-01' 2>/dev/null | sort || true
+  find "$TMP_DIR" -maxdepth 1 \( -name 'umbral-shellinteg-*' -o -name 'shellinteg-*' -o -name 'Test*' \) \
+    -newermt '1970-01-01' 2>/dev/null | LC_ALL=C sort || true
 }
 
 # mtime and size together: a write that happens to preserve the mtime still moves the size,
@@ -82,7 +93,7 @@ after_db=$(db_fingerprint)
 
 failed=0
 
-leaked_procs=$(comm -13 <(printf '%s\n' "$before_procs") <(printf '%s\n' "$after_procs") | sed '/^$/d')
+leaked_procs=$(LC_ALL=C comm -13 <(printf '%s\n' "$before_procs") <(printf '%s\n' "$after_procs") | sed '/^$/d')
 if [ -n "$leaked_procs" ]; then
   failed=1
   echo "test:hygiene: FAIL — the run left $(printf '%s\n' "$leaked_procs" | wc -l) '$PROC_PATTERN' process(es) behind:" >&2
@@ -93,7 +104,7 @@ if [ -n "$leaked_procs" ]; then
   echo "  (REQ-TERM-003) and there is no system.shutdown." >&2
 fi
 
-leaked_dirs=$(comm -13 <(printf '%s\n' "$before_dirs") <(printf '%s\n' "$after_dirs") | sed '/^$/d')
+leaked_dirs=$(LC_ALL=C comm -13 <(printf '%s\n' "$before_dirs") <(printf '%s\n' "$after_dirs") | sed '/^$/d')
 if [ -n "$leaked_dirs" ]; then
   failed=1
   echo "test:hygiene: FAIL — the run left $(printf '%s\n' "$leaked_dirs" | wc -l) directory/directories in $TMP_DIR:" >&2

@@ -320,7 +320,7 @@
 - **Result (the restore focus had two defects, one of them latent).** `focused_tab_id` is `ON DELETE SET NULL`, which reads like it covers a closed tab and does not, for the same reason as above — so a restart adopted focus on a tab that was gone and `layout.export` with no `tab_id` answered that it does not exist. Fixing it exposed the second: `focused_at` is epoch milliseconds (Art. 6), two workspaces focused inside the same millisecond tied, and SQLite returned whichever the plan preferred. `TestRestoreKeepsFocus_REQ_TERM_009` had been passing on that coin flip. The order is now fully determined and the closed tab falls back to the workspace's first open one.
 - **Also closed in the same round:** `TestApplyReturnsCommandsAsPending_REQ_TERM_011`, which the delta's Verification section names and which had never been written, so `-run REQ_TERM_011` never reached the `layout.apply` path at all; `command_pending`'s wire contract, present and omitted, which `task schema` cannot see because it compares §5's methods and not §4's members; the conditionality of `PendingCommandWarning`; the four specs that changed with no version bump or changelog row (PRD 1.9, API v1.12, Tech 1.9, Data Model 1.7); `ClearCommandPending`, declared on the port and called by nothing, now removed with the reason written down; and migration 0004, which no gate had been exercising.
 
-### [ ] T-F0-19 · Bootstrap files in the runtime directory, and a sweep at start
+### [x] 2026-09-21 T-F0-19 · Bootstrap files in the runtime directory, and a sweep at start
 - **What:**
   - `shellinteg.Prepare` creates its directory under the daemon's runtime directory instead
     of `os.TempDir()`;
@@ -328,13 +328,20 @@
     before `Restore`;
   - a removal that fails is logged and startup continues.
 - **REQ:** REQ-TERM-012
-- **Files:** `internal/sessions/adapters/shellinteg/bootstrap.go`, `cmd/umbrald/main.go`,
-  `internal/config/paths.go`
+- **Files:** `internal/sessions/adapters/shellinteg/bootstrap.go`,
+  `internal/sessions/adapters/shellinteg/sweep.go`,
+  `internal/sessions/adapters/shellinteg/{sweep,bootstrap}_test.go`, `cmd/umbrald/main.go`,
+  `cmd/umbrald/{sweep,bootstrap}_test.go`, `internal/sessions/integration/{service,bench}_test.go`,
+  `scripts/test_hygiene.sh`
+  > `internal/config/paths.go` was named here when the task was written and needed no change:
+  > `filepath.Dir(socket)` already resolves the directory `AcquireInstanceLock` is taken on, so
+  > the sweeper and the lock cannot point at different places without the socket moving too.
 - **Depends on:** T-F0-08, T-F0-18
 - **Done:** `TestBootstrapDirectoriesLiveInTheRuntimeDirectory_REQ_TERM_012`,
   `TestStartSweepsOrphanedBootstrapDirectories_REQ_TERM_012`,
   `TestSweepLeavesTheRunningSessionsAlone_REQ_TERM_012` and
-  `TestSweepFailureDoesNotStopTheDaemon_REQ_TERM_012` green, plus the measured teeth check:
+  `TestSweepFailureDoesNotStopTheDaemon_REQ_TERM_012` green (and, since the review,
+  `TestBootstrapSurvivesASpaceInTheRuntimeDirectory_REQ_TERM_012`), plus the measured teeth check:
   `kill -9` a daemon with live sessions, confirm the directories are there, restart, confirm
   they are gone.
 - **Why it exists:** the F0 verification of 2026-09-20 found 2515 orphaned bootstrap
@@ -342,6 +349,54 @@
   `SIGTERM` with two live sessions leaks nothing, measured — but `kill -9` leaks one per live
   session and nothing recorded the name, so the residue was permanent. Delta
   `2026-09-bootstrap-sweeper`.
+- **Result.** `shellinteg` no longer chooses where its files go: `Prepare` takes the parent
+  directory and **refuses an empty one** rather than letting `os.MkdirTemp("")` put them back
+  in `/tmp`, and `cmd/umbrald` — the only place allowed to resolve paths — passes
+  `filepath.Dir(socket)` through `shellinteg.Adapter{Dir: …}`. A mis-wired adapter now fails
+  at the first session instead of quietly littering the shared temporary directory again,
+  which matters because `Service.bootstrap` degrades a `Prepare` error into "start without
+  shell integration" (DD-002): without that refusal, the wiring mistake would have been
+  invisible except as blocks that stopped working.
+- **Result (one constant, two readers).** `dirPrefix = "shellinteg-"` is written by `Prepare`
+  and matched by `Sweep`. A sweeper that agrees with the writer only by inspection is a
+  sweeper that will one day delete nothing, or everything.
+- **Result (what the sweep must not take).** The socket, the token, `umbrald.lock` and
+  `umbrald.log` live in the same directory. `TestSweepRemovesOrphansAndNothingElse_REQ_TERM_012`
+  asserts they survive, because `os.RemoveAll(runtimeDir)` passes every test that only checks
+  the orphan is gone — and destroys the installation it was tidying. One failed removal does
+  not stop the others either: the errors are joined and returned, and the daemon logs them.
+- **Teeth, all four mutations measured rather than assumed.** Moving the `Sweep` call below
+  `workspaceService.Restore` → `TestSweepLeavesTheRunningSessionsAlone_REQ_TERM_012` fails
+  ("no bootstrap directory belongs to the restored pane"); sweeping the whole directory →
+  `TestSweepRemovesOrphansAndNothingElse_REQ_TERM_012` fails on the socket, the token and the
+  lock; turning the sweep's error into a `return exitCantCreate` →
+  `TestSweepFailureDoesNotStopTheDaemon_REQ_TERM_012` fails because the socket never appears;
+  restoring `os.MkdirTemp("")` →
+  `TestBootstrapDirectoriesLiveInTheRuntimeDirectory_REQ_TERM_012` fails with the `/tmp` path
+  it produced.
+- **Teeth, against a real daemon (the check the Done line asks for).** Isolated `XDG_*`, a
+  workspace created over the socket so a `bash` session is live: one `shellinteg-3064631233`
+  in the runtime directory. `kill -9` — it survives, which is the permanent residue. Restart:
+  the daemon logs `removed the bootstrap directories left by a previous run removed=1`, then
+  `structure restored panes=1`, and that directory is **gone** while the restored pane's fresh
+  shell has one of its own. A clean stop afterwards removes that one too, leaving only the
+  token behind. Before this task the same sequence left the directory forever.
+- **Result (review, 2026-09-26).** `spec-guardian` found the move had a cost the old
+  location hid: on macOS the runtime directory is `~/Library/Application Support/Umbral`, and
+  fish's `--init-command` is a line of fish, so the unquoted `source` split at the space and
+  every fish session there would have started without integration, silently. `Prepare` now
+  quotes the path for fish; `TestBootstrapSurvivesASpaceInTheRuntimeDirectory_REQ_TERM_012`
+  runs all three shells from a directory with a space and a quote, and failed on fish before
+  the fix. The same review showed `TestSweepLeavesTheRunningSessionsAlone_REQ_TERM_012` ended
+  its first run cleanly, which leaves no orphan to sweep: it now kills that daemon, asserts
+  the kill left a directory behind — reverting to a clean stop fails on exactly that — and its
+  panes get their own `HOME`. That exposed a race in the helper: a killed daemon's socket made
+  the next start look ready before it had swept, so `startStoppableDaemon` removes a stale
+  socket before it waits for one, and its stop is bounded instead of waiting forever.
+- **Not changed:** `Service.Shutdown` still does not run the bootstrap cleanup, and still does
+  not need to — the clean path already leaks nothing, measured on 2026-09-20. The reasoning is
+  in the delta under "Not modified"; it is repeated here because the code looks like it has a
+  bug and does not.
 
 ## Traceability matrix (F0)
 
@@ -382,7 +437,7 @@
 | REQ-TERM-009 | T-F0-18 | TestRestoreRebuildsStructure_REQ_TERM_009 |
 | REQ-TERM-010 | T-F0-18 | TestPaneHistoryDisabledByDefault_REQ_TERM_010 |
 | REQ-TERM-011 | T-F0-18 | TestRestoreNeverRunsStoredCommand_REQ_TERM_011 |
-| REQ-TERM-012 | T-F0-19 | TestStartSweepsOrphanedBootstrapDirectories_REQ_TERM_012 |
+| REQ-TERM-012 | T-F0-19 | TestStartSweepsOrphanedBootstrapDirectories_REQ_TERM_012, TestBootstrapDirectoriesLiveInTheRuntimeDirectory_REQ_TERM_012, TestSweepLeavesTheRunningSessionsAlone_REQ_TERM_012, TestSweepFailureDoesNotStopTheDaemon_REQ_TERM_012, TestBootstrapSurvivesASpaceInTheRuntimeDirectory_REQ_TERM_012 |
 
 **Deferred:** REQ-BLK-008 (SHOULD, PowerShell) moves to F2 together with Windows.
 

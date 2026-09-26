@@ -93,7 +93,7 @@ func BenchmarkSessionCreate_REQ_TERM_001(b *testing.B) {
 
 	service, err := sessions.New(sessions.Config{
 		Store: db, Bus: eventBus, NewPTY: pty.Open, NewEmu: ghostty.NewEmulator,
-		Bootstrap: shellinteg.Adapter{},
+		Bootstrap: shellinteg.Adapter{Dir: b.TempDir()},
 	})
 	if err != nil {
 		b.Fatalf("sessions.New: %v", err)

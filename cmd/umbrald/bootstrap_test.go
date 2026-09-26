@@ -40,21 +40,14 @@ func buildDaemon(t *testing.T) string {
 func TestNoGapBetweenSnapshotAndStream_REQ_API_002(t *testing.T) {
 	bin := buildDaemon(t)
 
+	// One copy of the isolation rule, in `isolatedRuntime`: every directory the daemon
+	// writes to is redirected, not only the socket's. Overriding `XDG_RUNTIME_DIR` alone
+	// moved the socket and left the *database* where the developer's own is, which is how
+	// this test came to write 2490 sessions into `~/.local/share/umbral/umbral.db`. Two
+	// copies of that rule is how it drifted the first time, so this test uses the helper
+	// rather than repeating it.
+	runtime, _ := isolatedRuntime(t)
 	dir := t.TempDir()
-	runtime := filepath.Join(dir, "run")
-	if err := os.MkdirAll(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	// Every directory the daemon writes to, not only the socket's.
-	//
-	// Overriding `XDG_RUNTIME_DIR` alone moved the socket and left the *database* where the
-	// developer's own is: an autostarted daemon inherits `XDG_DATA_HOME`, so this test was
-	// creating its workspaces, tabs, panes and sessions in `~/.local/share/umbral/umbral.db`
-	// and holding it open with a WAL. A test may not write to the data of the machine it
-	// runs on, and a CI runner hid it because its home is thrown away.
-	t.Setenv("XDG_RUNTIME_DIR", runtime)
-	t.Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
@@ -228,34 +221,72 @@ func createWorkspace(ctx context.Context, t *testing.T, c *client.Client, cwd st
 // autostarts one and closes its connections has not stopped anything, and there is no
 // `system.shutdown` to ask politely with. The process is therefore owned here — signalled on
 // cleanup, and killed if it does not go — so the suite leaves nothing behind.
-func startDaemon(t *testing.T, bin, runtime string) {
+func startDaemon(t *testing.T, bin, runtime string, extraEnv ...string) {
+	t.Helper()
+
+	startStoppableDaemon(t, bin, runtime, extraEnv...)
+}
+
+// startStoppableDaemon is startDaemon for a test that has to stop the daemon in the middle
+// of its run — a restart, for instance — and returns the function that does it. Calling it
+// more than once is safe, and the test's cleanup calls it too, so a test that fails before
+// its stop still leaves nothing behind.
+func startStoppableDaemon(t *testing.T, bin, runtime string, extraEnv ...string) (stop func(sig os.Signal)) {
 	t.Helper()
 
 	// Tied to the test's context, which Go cancels just before the cleanups run, and
 	// cancelled with SIGINT rather than SIGKILL so the daemon closes its database instead
 	// of leaving a hot WAL behind. `WaitDelay` is the promise that it goes either way.
+	// The readiness check below waits for the socket to appear, so it must not be there
+	// already: a daemon killed earlier in the same test leaves its socket behind, and
+	// finding it would report this one ready before it had swept, restored or listened.
+	// The daemon removes a stale socket itself on start, so this takes nothing from it.
+	socket := filepath.Join(runtime, "umbral", "umbral.sock")
+	if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove the stale socket %s: %v", socket, err)
+	}
+
 	cmd := exec.CommandContext(t.Context(), bin)
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 	cmd.WaitDelay = 10 * time.Second
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), extraEnv...)
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start umbrald: %v", err)
 	}
+
+	var once sync.Once
 	// Reaped here: cancelling the context terminates the process but does not wait for it,
-	// and an unwaited child stays as a zombie for the life of the test binary.
-	t.Cleanup(func() { _ = cmd.Wait() })
+	// and an unwaited child stays as a zombie for the life of the test binary. The signal is
+	// the caller's — os.Interrupt for a clean stop, os.Kill for the crash a sweep cleans up
+	// after — and a daemon that ignores it is killed after ten seconds rather than left to
+	// hang the test until `go test -timeout`: WaitDelay only starts counting once the
+	// context is cancelled, which is not what happens here.
+	stop = func(sig os.Signal) {
+		once.Do(func() {
+			_ = cmd.Process.Signal(sig)
+			done := make(chan struct{})
+			go func() { _ = cmd.Wait(); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				_ = cmd.Process.Kill()
+				<-done
+			}
+		})
+	}
+	t.Cleanup(func() { stop(os.Interrupt) })
 
 	// The socket appears a moment after the process does, and connecting before it exists
 	// would send the client down its autostart path — starting the second daemon this
 	// function exists to avoid.
-	socket := filepath.Join(runtime, "umbral", "umbral.sock")
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(socket); err == nil {
-			return
+			return stop
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("umbrald did not open %s", socket)
+	return stop
 }

@@ -85,6 +85,40 @@ func TestBootstrapEmitsOSC133_REQ_BLK_005(t *testing.T) {
 	}
 }
 
+// TestBootstrapSurvivesASpaceInTheRuntimeDirectory_REQ_TERM_012 follows the bootstrap into
+// the directory REQ-TERM-012 puts it in, whatever that path looks like.
+//
+// On macOS the runtime directory is `~/Library/Application Support/Umbral`: it has a space
+// in it, and a user's home can have a quote. The shared temporary directory it replaced had
+// neither, so a path passed to a shell unquoted worked by accident until the move. fish is
+// the one that parses it — `--init-command` is a line of fish, not an argv entry — and a
+// broken `source` there costs every fish session its integration with nothing logged.
+func TestBootstrapSurvivesASpaceInTheRuntimeDirectory_REQ_TERM_012(t *testing.T) {
+	t.Parallel()
+
+	for _, sh := range shellsUnderTest {
+		t.Run(string(sh.kind), func(t *testing.T) {
+			t.Parallel()
+
+			bin, err := exec.LookPath(sh.bin)
+			if err != nil {
+				t.Skipf("%s is not installed: %v", sh.bin, err)
+			}
+
+			parent := filepath.Join(t.TempDir(), "Application Support", "it's Umbral")
+			if err := os.MkdirAll(parent, 0o700); err != nil {
+				t.Fatalf("create %q: %v", parent, err)
+			}
+
+			sequences := oscSequences(runShellFrom(t, bin, sh.extraArgs, parent, "", "printf hi\n"))
+			// fish 4 emits a 133;C of its own, with a cmdline_url suffix; the bare marker and
+			// 633;E are ours, so they are what proves the bootstrap was sourced.
+			assertSequence(t, sequences, "133;C", "OSC 133;C from a bootstrap under "+parent)
+			assertPrefix(t, sequences, "633;E;", "OSC 633;E from a bootstrap under "+parent)
+		})
+	}
+}
+
 // TestBootstrapPreservesTheUserConfiguration is the property that keeps this from being a
 // terminal people refuse to use: injecting the integration must not drop the user's own
 // rc file.
@@ -206,7 +240,7 @@ func TestDetectKind(t *testing.T) {
 func TestPrepareCleansUpAfterItself(t *testing.T) {
 	t.Parallel()
 
-	b, err := Prepare("/bin/bash")
+	b, err := Prepare("/bin/bash", t.TempDir())
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -232,7 +266,7 @@ func TestPrepareCleansUpAfterItself(t *testing.T) {
 func TestPrepareZshUsesATemporaryZDOTDIR(t *testing.T) {
 	t.Parallel()
 
-	b, err := Prepare("/usr/bin/zsh")
+	b, err := Prepare("/usr/bin/zsh", t.TempDir())
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -264,8 +298,15 @@ func runShell(t *testing.T, bin string, extraArgs []string, input string) string
 
 func runShellInHome(t *testing.T, bin string, extraArgs []string, home, input string) string {
 	t.Helper()
+	return runShellFrom(t, bin, extraArgs, t.TempDir(), home, input)
+}
 
-	b, err := Prepare(bin)
+// runShellFrom is runShellInHome with the bootstrap's parent directory chosen by the caller,
+// for the tests that care what that path looks like.
+func runShellFrom(t *testing.T, bin string, extraArgs []string, parentDir, home, input string) string {
+	t.Helper()
+
+	b, err := Prepare(bin, parentDir)
 	if err != nil {
 		t.Fatalf("Prepare(%s): %v", bin, err)
 	}

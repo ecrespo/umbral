@@ -123,6 +123,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}()
 
+	// Under the lock, so this daemon is the only one of its installation and every
+	// bootstrap directory beside the socket belongs to a process that is gone — no age
+	// heuristic, no ownership check, no race to lose (REQ-TERM-012). Before the restore
+	// below, because the shells that restore launches write their own directories here and
+	// sweeping afterwards would delete the files they were started with.
+	if removed, err := shellinteg.Sweep(filepath.Dir(socket)); err != nil {
+		// Litter, not an outage: the user is waiting for a terminal, not for tidiness.
+		logger.Warn("could not remove every bootstrap directory left by a previous run",
+			slog.Int("removed", removed), slog.Any("error", err))
+	} else if removed > 0 {
+		logger.Info("removed the bootstrap directories left by a previous run",
+			slog.Int("removed", removed))
+	}
+
 	db, err := store.Open(ctx, store.Options{Path: *dbPath})
 	if err != nil {
 		logger.Error("cannot open the database", slog.Any("error", err))
@@ -184,7 +198,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Bus:       eventBus,
 		NewPTY:    pty.Open,
 		NewEmu:    ghostty.NewEmulator,
-		Bootstrap: shellinteg.Adapter{},
+		Bootstrap: shellinteg.Adapter{Dir: filepath.Dir(socket)},
 		Blocks:    blocks,
 		// A scanner per session: it carries the state of a sequence split across two
 		// PTY reads, so one shared between sessions would mix their streams.

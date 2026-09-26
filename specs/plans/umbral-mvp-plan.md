@@ -79,7 +79,7 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 | T-F0-16 | `session.snapshot` and event sequencing | 1.5d | T-F0-14 | ✅ 2026-09-20 |
 | T-F0-17 | Protocol schema and capability degradation | 1.5d | T-F0-03 | ✅ 2026-09-20 |
 | T-F0-18 | Structure restore after restart (+ optional pane history) | 2d | T-F0-14 | ✅ 2026-09-20 |
-| T-F0-19 | Bootstrap files in the runtime directory, and a sweep at start | 0.5d | T-F0-08, T-F0-18 | ⬜ |
+| T-F0-19 | Bootstrap files in the runtime directory, and a sweep at start | 0.5d | T-F0-08, T-F0-18 | ✅ 2026-09-21 |
 
 **F0 is open.** Reviewed against a running daemon on 2026-09-20
 (`docs/checkpoints/2026-09-20-f0-closure.md`): `T-F0-01` … `T-F0-18` are done and the gate is

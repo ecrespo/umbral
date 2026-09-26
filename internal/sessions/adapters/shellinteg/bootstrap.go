@@ -20,6 +20,10 @@ import (
 	"github.com/ecrespo/umbral/shell"
 )
 
+// dirPrefix names a bootstrap's directory. Prepare writes it and Sweep matches on it, so
+// the two cannot disagree about what belongs to Umbral (REQ-TERM-012).
+const dirPrefix = "shellinteg-"
+
 // ErrUnsupportedShell reports a shell Umbral has no bootstrap for. The caller starts the
 // session anyway; REQ-BLK-003 then marks it `integration: none` after five seconds.
 var ErrUnsupportedShell = errors.New("shellinteg: unsupported shell")
@@ -105,14 +109,20 @@ func (b *Bootstrap) Close() error {
 //     restores it before sourcing anything.
 //   - fish: --init-command, which runs after config.fish rather than instead of it, so
 //     nothing needs restoring.
-func Prepare(shellPath string) (*Bootstrap, error) {
+func Prepare(shellPath, parentDir string) (*Bootstrap, error) {
 	kind, err := DetectKind(shellPath)
 	if err != nil {
 		return nil, err
 	}
+	// An empty parent is what os.MkdirTemp turns into the shared temporary directory, which
+	// is the behaviour REQ-TERM-012 exists to end. Refusing it makes a mis-wired adapter
+	// fail at the first session instead of quietly littering /tmp again.
+	if parentDir == "" {
+		return nil, errors.New("shellinteg: no bootstrap directory: the daemon's runtime directory is required")
+	}
 
 	// 0700: the directory holds a file the shell will execute.
-	dir, err := os.MkdirTemp("", "umbral-shellinteg-")
+	dir, err := os.MkdirTemp(parentDir, dirPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("shellinteg: create the bootstrap directory: %w", err)
 	}
@@ -143,10 +153,18 @@ func Prepare(shellPath string) (*Bootstrap, error) {
 		if err != nil {
 			return nil, err
 		}
-		b.Args = []string{"--init-command", "source " + path}
+		// --init-command is a line of fish, not an argv entry, so the path is quoted for fish:
+		// the runtime directory on macOS is ~/Library/Application Support/Umbral.
+		b.Args = []string{"--init-command", "source " + fishQuote(path)}
 	}
 
 	return b, nil
+}
+
+// fishQuote makes s one fish word. Inside single quotes fish gives meaning to only `\\` and
+// `\'`, so escaping those two is the whole of it.
+func fishQuote(s string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'"
 }
 
 // materialise copies one embedded script into the bootstrap directory.
@@ -182,11 +200,18 @@ func userBashRC() string {
 
 // Adapter implements ports.Bootstrapper by preparing a Bootstrap and flattening it into
 // the shape the sessions service wants.
-type Adapter struct{}
+//
+// Dir is where the bootstrap directories are created: the daemon's own runtime directory,
+// beside the socket and the token (REQ-TERM-012). It is injected rather than read from the
+// environment here because `cmd/umbrald` is the only place allowed to resolve paths and wire
+// modules together, and because the sweeper at start has to be pointed at the same place.
+type Adapter struct {
+	Dir string
+}
 
 // Prepare satisfies ports.Bootstrapper.
-func (Adapter) Prepare(shellPath string) (args, env []string, cleanup func() error, err error) {
-	b, err := Prepare(shellPath)
+func (a Adapter) Prepare(shellPath string) (args, env []string, cleanup func() error, err error) {
+	b, err := Prepare(shellPath, a.Dir)
 	if err != nil {
 		return nil, nil, nil, err
 	}
