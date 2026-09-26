@@ -577,6 +577,29 @@
   `main` called `signal.Notify` for `SIGPIPE`. Checked from a real shell as well:
   `bin/umb api schema --json | head -c1` → `pipestatus` 0.
 
+### [x] 2026-09-26 T-F0-24 · A daemon locks the database it recovers
+- **What:** `config.AcquireDatabaseLock` takes `<database>.lock` beside the database after the
+  instance lock and before `store.Open`; held elsewhere, `umbrald` logs it and exits 75
+  (`EX_TEMPFAIL`) without opening the database. The two locks share one implementation.
+- **REQ:** none — Data Model §6's premise, which the instance lock already protected
+  (infrastructure, like the instance lock's own tests).
+- **Files:** `internal/config/instancelock.go`, `internal/config/instancelock_test.go`,
+  `cmd/umbrald/main.go`, `cmd/umbrald/dblock_test.go`,
+  `specs/technical/umbral-architecture.md`
+- **Depends on:** T-F0-02, T-F0-22
+- **Done:** `TestOnlyOneDatabaseLockIsGranted`, `TestDatabaseLockIsReleasedForTheNextDaemon`
+  and `TestASecondRuntimeCannotRecoverALiveDatabase` green.
+- **Why it exists:** the `spec-guardian` review of T-F0-22 found the instance lock guards the
+  runtime directory while recovery's premise is about the database. Delta
+  `2026-09-database-lock`.
+- **Result.** The daemon-level test reproduced the hazard before the fix, against real
+  daemons: a first daemon serving a live bash session, a second with another `--socket`, the
+  same `--db` and `--check`, which exited 0 after logging `sessions_recovered: 1` — the first
+  daemon's live session marked exited under it. After: exit 75 and the session still `alive`.
+  The config tests were red on a stub that granted every lock. Writing them caught a defect in
+  the test itself first: a probe that *held* a wrongly granted lock parked the subprocess until
+  the test timed out, instead of failing it; the database probe now tries, reports and exits.
+
 ## Traceability matrix (F0)
 
 | REQ | Tasks | Tests citing it |
@@ -626,6 +649,7 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | T-F0-24 | done | The instance lock guarded the socket's directory; recovery's premise is about the database. A second daemon with another `--socket` and the same `--db` recovered over a live session — measured, `sessions_recovered: 1` — and now exits 75 instead. |
 | 2026-09-26 | T-F0-23 | done | A test that passed for a year's worth of reasons except the one that mattered: it handed `run` a writer that returned EPIPE, which the real binary never received — Go killed it with SIGPIPE first. One `signal.Notify`. |
 | 2026-09-26 | T-F0-22 | done | The last path to a `pending` verdict on a gone process was a crash: T-F0-21 fixed the exit, and a daemon that dies has none. Data Model §6 said nothing about integration, so it took a delta before one line of SQL. |
 | 2026-09-26 | T-F0-20 | done after a `spec-guardian` round | F0 exit criterion 4, performed: `scripts/cli_roundtrip.sh` creates, splits, exports and reapplies a layout against a real daemon using only `umb`. The CLI was the easy half. The other half was a protocol gap the ratified CLI delta had declared absent — API §2 refused the whole tree to `cli` — and five tests on a fake daemon could not see it; delta `2026-09-cli-allowlist` closed it by exactly the surface the CLI uses. The review then found the script's own wrapper leaking a flag into a pane's command, and a grammar nobody had specified. |

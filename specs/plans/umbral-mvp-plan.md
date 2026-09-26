@@ -84,6 +84,7 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 | T-F0-21 | A shell that exits inside the integration window still gets a verdict (REQ-BLK-003) | 0.5d | T-F0-09 | ✅ 2026-09-26 |
 | T-F0-22 | A restart settles the integration verdict a crash interrupted (REQ-BLK-003) | 0.25d | T-F0-02, T-F0-21 | ✅ 2026-09-26 |
 | T-F0-23 | A closed pipe ends `umb` with 0, not with SIGPIPE (REQ-CLI-004) | 0.1d | T-F0-11 | ✅ 2026-09-26 |
+| T-F0-24 | A daemon locks the database it recovers (Data Model §6) | 0.25d | T-F0-02, T-F0-22 | ✅ 2026-09-26 |
 
 **F0 is open.** Reviewed against a running daemon on 2026-09-20
 (`docs/checkpoints/2026-09-20-f0-closure.md`) and again on 2026-09-21

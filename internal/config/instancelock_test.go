@@ -109,11 +109,64 @@ func TestConcurrentAcquireGrantsExactlyOne(t *testing.T) {
 	}
 }
 
+// TestOnlyOneDatabaseLockIsGranted is the instance lock's invariant moved onto the file it is
+// about. Recovery rewrites the database's live rows; two daemons with different runtime
+// directories and the same `--db` each hold an instance lock, and without this the second
+// one recovers over the first one's running sessions (delta `2026-09-database-lock`).
+func TestOnlyOneDatabaseLockIsGranted(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "data", "umbral.db")
+
+	first, err := AcquireDatabaseLock(db)
+	if err != nil {
+		t.Fatalf("the first lock was refused: %v", err)
+	}
+	defer func() { _ = first.Release() }()
+
+	if err := tryDatabaseLockInSubprocess(t, db); !errors.Is(err, errSubprocessBusy) {
+		t.Errorf("a second process took the database lock (%v); it would then recover over live sessions", err)
+	}
+}
+
+// TestDatabaseLockIsReleasedForTheNextDaemon: a daemon that stopped must not lock its
+// database away from the next one.
+func TestDatabaseLockIsReleasedForTheNextDaemon(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "umbral.db")
+
+	first, err := AcquireDatabaseLock(db)
+	if err != nil {
+		t.Fatalf("first lock: %v", err)
+	}
+	if err := first.Release(); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	second, err := AcquireDatabaseLock(db)
+	if err != nil {
+		t.Fatalf("the database lock was not released for the next daemon: %v", err)
+	}
+	_ = second.Release()
+}
+
 var errSubprocessBusy = errors.New("the subprocess reported the lock was already held")
 
-const lockHelperEnv = "UMBRAL_CONFIG_TEST_LOCK_DIR"
+const (
+	lockHelperEnv   = "UMBRAL_CONFIG_TEST_LOCK_DIR"
+	dbLockHelperEnv = "UMBRAL_CONFIG_TEST_DB_LOCK"
+)
 
 func TestMain(m *testing.M) {
+	if db := os.Getenv(dbLockHelperEnv); db != "" {
+		// Try and report, never hold: a lock that is wrongly granted must end the
+		// subprocess with 0 and fail the test, not park it for the test's timeout.
+		lock, err := AcquireDatabaseLock(db)
+		if err != nil {
+			if errors.Is(err, ErrDatabaseInUse) {
+				os.Exit(3)
+			}
+			os.Exit(1)
+		}
+		_ = lock.Release()
+		os.Exit(0)
+	}
 	if dir := os.Getenv(lockHelperEnv); dir != "" {
 		lock, err := AcquireInstanceLock(dir)
 		if err != nil {
@@ -146,6 +199,22 @@ func tryLockInSubprocess(t *testing.T, dir string) error {
 	t.Helper()
 	cmd := lockHolderCmd(t, dir)
 	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
+		return errSubprocessBusy
+	}
+	return err
+}
+
+func tryDatabaseLockInSubprocess(t *testing.T, db string) error {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locate the test binary: %v", err)
+	}
+	cmd := exec.CommandContext(t.Context(), self)
+	cmd.Env = append(os.Environ(), dbLockHelperEnv+"="+db)
+	err = cmd.Run()
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
 		return errSubprocessBusy
