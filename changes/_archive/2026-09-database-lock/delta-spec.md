@@ -42,13 +42,20 @@ logs which database is taken and exits **75** (`EX_TEMPFAIL`) without opening it
 because nothing is serving the caller's socket, and not 73, because nothing failed to be
 created.
 
-**4. Released like the instance lock.** The descriptor closing is what drops it, so a killed
-daemon leaves nothing that blocks the next one.
+**4. Released by closing, and the file is never removed — for either lock.** The descriptor
+closing is what drops it, so a killed daemon leaves nothing that blocks the next one. Removing
+the file, as the instance lock used to, is a race: a daemon that had already opened it locks
+that inode the moment the holder closes, the removal unlinks it, and a third daemon creates and
+locks a fresh one — two owners of one database. Found by the `spec-guardian` review of the
+merge; `TestAReleasedLockKeepsItsFile` reproduces it. The lock is keyed on the database's
+directory, so a symlinked data directory shares it
+(`TestASymlinkedDataDirectorySharesTheLock`); a symlink to the database file from elsewhere
+does not, and Tech §9.4 says so.
 
 ## Specification changes
 
-- **Tech Design §9.4**, the lock paragraph gains the database lock: its file, its order, and
-  exit 75 when it is held. Tech 1.12.
+- **Tech Design §9.4**, the lock paragraph gains the database lock: its file, its order, exit
+  75 when it is held, that no lock file is ever removed, and the symlink limit. Tech 1.12.
 
 No REQ changes: the property is Data Model §6's premise, which the instance lock was already
 written to protect; this makes the protection cover the file the premise is about.

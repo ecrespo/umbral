@@ -37,6 +37,9 @@ func AcquireDatabaseLock(dbPath string) (*InstanceLock, error) {
 	if err := os.MkdirAll(dir, RuntimeDirMode); err != nil {
 		return nil, fmt.Errorf("config: create the database directory: %w", err)
 	}
+	// The lock file sits in the database's directory, so a data directory reached through a
+	// symlink is the same directory and the same lock. Only a symlink to the database file
+	// itself, from somewhere else, gets a lock of its own; Tech §9.4 states that limit.
 	return acquireLock(dbPath+DatabaseLockSuffix, ErrDatabaseInUse)
 }
 
@@ -90,19 +93,18 @@ func acquireLock(path string, busy error) (*InstanceLock, error) {
 	return &InstanceLock{f: f}, nil
 }
 
-// Release drops the lock. The file is removed as a courtesy; the lock itself is gone the
-// moment the descriptor closes, so a daemon that is killed instead of stopped leaves the
-// file behind and the next daemon takes it over without noticing.
+// Release drops the lock by closing its descriptor, and leaves the file where it is.
+//
+// Removing it would open a race: a daemon that had already opened the file takes the lock the
+// moment this one closes it, the removal then unlinks that file, and a third daemon creates a
+// fresh one and locks it too — two owners, and recovery by the second over the first's live
+// sessions. Under flock a leftover file means nothing, which is also why a killed daemon,
+// that never gets here, leaves nothing to clean up.
 func (l *InstanceLock) Release() error {
 	if l == nil || l.f == nil {
 		return nil
 	}
-	name := l.f.Name()
 	err := l.f.Close()
 	l.f = nil
-	//nolint:gosec // name is the lock this process created and holds, from the operator's -socket or -db flag or the XDG directories
-	if rmErr := os.Remove(name); rmErr != nil && !os.IsNotExist(rmErr) && err == nil {
-		err = rmErr
-	}
 	return err
 }
