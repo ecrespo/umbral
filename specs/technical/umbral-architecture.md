@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.29 |
+| **Version** | 1.30 |
 | **Date** | 2026-09-27 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -398,7 +398,45 @@ people leave running for days.
   The local override directory is never touched by any of this.
 - **Rejected:** TLS alone. The threat is a compromised endpoint, and TLS does not address it.
 - **Cost accepted:** key management (creation, rotation, revocation) and the release process that
-  signs each bundle.
+  signs each bundle. `docs/runbooks/rule-signing.md` carries it: the Tech Lead is the sole signer,
+  the key lives only in an `age`-encrypted offline file with a separate backup, it never enters
+  CI, and it rotates yearly. Delta `2026-09-rule-signing-custody` states what follows.
+- **Formats:**
+  - A bundle is the exact bytes of a UTF-8 JSON document whose top-level `version` is a positive
+    integer. The built-in rules are version 0.
+  - Its signature is fetched from `[update] rules_url` + `.sig` and holds
+    `{"signatures":[{"fingerprint":"SHA256:…","sig":"<base64>"}]}`: Ed25519 over the bundle's
+    exact bytes.
+  - A public key is its 32 raw bytes in standard base64. Its fingerprint is `SHA256:` and the
+    unpadded standard base64 of SHA-256 over those bytes.
+  - A bundle verifies when some entry names the fingerprint of a valid key (no `revoked_at`) and
+    checks out; `verified_with` records the most recently added such key. It is `unknown_key`
+    only when no entry names one.
+  - A fetched bundle whose SHA-256 equals the active one's is up to date. It is not a rejection:
+    nothing is notified and nothing counts toward the three failures.
+  - A fetch that fails — network, HTTP error, 404 — is logged and retried at the next check. It is
+    not a failed verification: only a bundle that arrived and was rejected counts.
+  - Keys are named by fingerprint on the wire. Their ids are `key_` + ULID (Art. 6).
+- **Trust on a fresh install:**
+  - The binary embeds the project's public keys, a `retired` list and a `revoked` list
+    (`internal/security/rules/trustseed`), matched by fingerprint. `retired` only keeps a
+    rotated-out key's `source` as `builtin`.
+  - On start the daemon adds each seed key `trust_keys` lacks, and revokes each listed one not
+    yet revoked.
+  - The seed never re-enables updates that REQ-SEC-015 disabled. Only a manual
+    `rules.key.add` does, and it does so even for a key the seed already inserted.
+  - Removing a key sets `revoked_at` rather than deleting the row, so a removed seed key stays
+    removed.
+- **Planned rotation never revokes:** during the overlap, bundles carry both signatures. The
+  retired key moves to the seed's `retired` list, but installed stores keep it. Revocation is for a compromise.
+- **Revoking a key discards what it verified:**
+  - Every bundle the key verified goes, together with the memory of downgrade rejections.
+  - The active bundle stays if it survives. Otherwise the newest remaining `remote` bundle, or
+    the built-in rules, becomes active. It is never a `local` row, and the override directory is
+    never touched.
+  - That bundle's version becomes REQ-SEC-013's floor.
+  - Without this, a stolen key could sign an enormous version and lock every legitimate bundle
+    out.
 
 ### DD-017: Waits are observable and cancellable, and a stall is not a failure
 
@@ -475,6 +513,11 @@ rewritten through its target so the link survives.
 
 `[secrets] allow_env` (off by default) lets `env:<VAR>` stand in for a keyring the machine does
 not have (REQ-SEC-012).
+
+`[update] rules_check` (off by default) turns on signed rule updates (REQ-SEC-011, DD-016).
+`[update] rules_url` is where they come from. Its default is the project's latest release asset,
+`https://github.com/ecrespo/umbral/releases/latest/download/rules.json`, and the signature is at
+the same URL plus `.sig`. Neither is contacted while `rules_check` is off (Art. 4).
 
 **Providers: `models.toml`.** Beside `config.toml`, in the same directory. It names the
 providers, the model classes and the routing policy, and never a key: a credential is a
@@ -1058,3 +1101,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.27 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-13: §5.3d describes the agent runtime — `thread.send`'s idempotency and transaction, a turn's loop and limits, persist-before-notify for streamed text and tool calls, and `storage_error` for a failed write (Analyze C-01). Delta `2026-09-agent-runtime` (proposed). |
 | 1.28 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-14: §5.3d adds the approval flow — pause, persist-then-resume, what `thread` and `always` remember, which decisions stay `once`, and what a cancel leaves. Delta `2026-09-approvals` (proposed). |
 | 1.29 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies the four deltas of T-F1-11…T-F1-14 as written: `2026-09-context-assembly` (§5.3c), `2026-09-context-budget` (§3, §5.3c, Q-03), `2026-09-agent-runtime` (§5.3d, DD-007) and `2026-09-approvals` (§5.3d). Analyze C-01 is closed by `storage_error`. |
+| 1.30 | 2026-09-27 | E. Crespo (assisted draft) | Closes Analyze C-02: DD-016 points at `docs/runbooks/rule-signing.md` for custody, and states the bundle and signature formats, the trust seed built into the binary, rotation with two signatures instead of revocation, removal as revocation, and revocation discarding the bundles a key verified; §4 gains `[update] rules_check`/`rules_url`. Delta `2026-09-rule-signing-custody` (ratified). |

@@ -2,8 +2,8 @@
 
 This folder holds all Spec-Driven Development artifacts that precede code.
 
-**Status:** PRD 1.15, API 1.21, Technical Design 1.29, Data Model 1.13, Plan 1.10, constitution 1.2.
-Every finding that blocked implementation is folded, thirty-eight deltas are archived, none is pending, and the quality
+**Status:** PRD 1.15, API 1.22, Technical Design 1.30, Data Model 1.14, Plan 1.10, constitution 1.2.
+Every finding that blocked implementation is folded, thirty-nine deltas are archived, none is pending, and the quality
 gate passes with no CRITICAL findings. What remains are
 MEDIUM and LOW items tracked as issues. The specs carry both lineages: the orchestration surface of
 2026-09-20 and the deltas raised while F0 was being built.

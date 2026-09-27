@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.13 |
+| **Version** | 1.14 |
 | **Date** | 2026-09-27 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -317,7 +317,29 @@ CREATE UNIQUE INDEX idx_rule_bundles_active ON rule_bundles(active) WHERE active
 ```
 
 Umbral keeps the active bundle and the previous one so `rules.rollback` works offline; older ones
-are pruned. A `remote` bundle without `verified_with` cannot exist: the DDL allows it, and the
+are pruned.
+
+The trust store and the bundle history change in these ways (delta `2026-09-rule-signing-custody`):
+
+- **Seeding:** `trust_keys` is seeded from the binary and matched by `fingerprint`. On start,
+  each key the build embeds and the table lacks is inserted with the id the seed fixes (`key_` +
+  ULID). Each key the build lists as revoked gets `revoked_at` if it has none. Keys the build
+  lists as retired are never inserted.
+- **Removal:** `rules.key.remove` sets `revoked_at` instead of deleting the row, so a seed key
+  the user removed is not brought back. A "valid" key is one with no `revoked_at`.
+- **Adding:**
+  - `rules.key.add` of a fingerprint on the seed's `revoked` list is refused.
+  - Otherwise, adding a revoked fingerprint clears `revoked_at`, and adding a valid one changes
+    no row.
+  - Both are recorded with their timestamp, and both reopen updates that were failed closed.
+- **Revocation:**
+  - Revoking a key deletes the `rule_bundles` rows it verified.
+  - The active row stays active if it survives. Otherwise the newest remaining `remote` row, or
+    `builtin`, becomes active. A `local` row is never chosen.
+  - The next newest remaining `remote` row is the previous bundle.
+  - The active row's `version` is the floor a new bundle must exceed.
+- **Built-in rules:** the `builtin` row has version 0 and is rewritten when a binary carries
+  different rules. Remote versions start at 1. A `remote` bundle without `verified_with` cannot exist: the DDL allows it, and the
 `store` layer rejects it.
 
 ### 2.4f `skills` (migration 0005)
@@ -652,3 +674,4 @@ earlier drafts named.
 | 1.11 | 2026-09-27 | Ratifies delta `2026-09-builtin-tools`; §2.12 no longer calls it proposed. |
 | 1.12 | 2026-09-27 | T-F1-13: `tool_calls.result_json` holds `{"text", "tainted"}`. No DDL change. Delta `2026-09-agent-runtime` (proposed). |
 | 1.13 | 2026-09-27 | Ratifies delta `2026-09-agent-runtime` (§2.6's `result_json`). No DDL change. |
+| 1.14 | 2026-09-27 | §2.4e: `trust_keys` is seeded from the binary by fingerprint, removal is revocation, a re-add clears it, revocation discards the bundles a key verified, and `builtin` is version 0. No DDL change. Delta `2026-09-rule-signing-custody`. |
