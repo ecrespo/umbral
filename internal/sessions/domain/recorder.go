@@ -63,6 +63,8 @@ type Recorder struct {
 	current *Block
 	plain   PlainText
 	stored  int64
+	// claim is the thread the next block to start belongs to (REQ-AGT-003), or "".
+	claim string
 }
 
 // NewRecorder builds a recorder. It starts with no open block, which is the state a shell
@@ -73,6 +75,11 @@ func NewRecorder(cfg RecorderConfig) *Recorder {
 	}
 	return &Recorder{cfg: cfg}
 }
+
+// Claim gives the next block to start to the agent working for threadID: its origin is
+// `agent` and it carries the thread (REQ-AGT-003). Only that block: the claim is spent when it
+// opens.
+func (r *Recorder) Claim(threadID string) { r.claim = threadID }
 
 // CWD reports the working directory the shell last announced through OSC 7.
 func (r *Recorder) CWD() string { return r.cwd }
@@ -140,6 +147,10 @@ func (r *Recorder) start(actions []Action) []Action {
 		Host:      r.cfg.Host,
 		State:     state,
 		StartedAt: r.cfg.Now(),
+	}
+	if r.claim != "" {
+		block.Origin, block.ThreadID = OriginAgent, r.claim
+		r.claim = ""
 	}
 	r.pendingCommand = ""
 	r.current = &block

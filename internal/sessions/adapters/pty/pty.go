@@ -7,12 +7,18 @@
 package pty
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	creack "github.com/creack/pty"
 
@@ -59,6 +65,8 @@ type session struct {
 	waitOnce sync.Once
 	waitErr  error
 	exitCode int
+	// exited is set once the child has been reaped, after which its pid is not ours.
+	exited atomic.Bool
 }
 
 // Read returns PTY output. On Linux, reading a PTY whose child has exited yields EIO
@@ -99,6 +107,7 @@ func (s *session) Resize(size domain.Size) error {
 func (s *session) Wait() (int, error) {
 	s.waitOnce.Do(func() {
 		err := s.cmd.Wait()
+		s.exited.Store(true)
 		var exitErr *exec.ExitError
 		switch {
 		case err == nil:
@@ -126,6 +135,13 @@ func (s *session) Signal(sig ports.SignalKind) error {
 		return errors.New("pty: the process is not running")
 	}
 
+	switch sig {
+	case ports.SignalTermForeground:
+		return s.signalForeground(syscall.SIGTERM)
+	case ports.SignalKillForeground:
+		return s.signalForeground(syscall.SIGKILL)
+	}
+
 	var signal syscall.Signal
 	switch sig {
 	case ports.SignalHangup:
@@ -145,6 +161,82 @@ func (s *session) Signal(sig ports.SignalKind) error {
 		return fmt.Errorf("pty: signal %v: %w", signal, err)
 	}
 	return nil
+}
+
+// signalForeground signals what the shell is running without touching the shell: the
+// process group of every child of the shell — the command in the foreground, whose processes
+// are all the shell's children, and a job put in the background (`sleep 60 & wait`) that a
+// builtin is waiting on. With SIGTERM the shell also gets SIGINT, which an interactive shell
+// turns into abandoning a loop of builtins and printing a new prompt. A shell that has
+// already exited is left alone: its pid may belong to someone else by now.
+func (s *session) signalForeground(signal syscall.Signal) error {
+	if s.cmd.Process == nil || s.exited.Load() {
+		return nil
+	}
+	shell := s.cmd.Process.Pid
+	groups := map[int]bool{}
+	for _, child := range childrenOf(shell) {
+		if pgid, err := syscall.Getpgid(child); err == nil && pgid != shell {
+			groups[pgid] = true
+		} else if err == nil {
+			// A child in the shell's own group (no job control): only it.
+			_ = syscall.Kill(child, signal)
+		}
+	}
+	for pgid := range groups {
+		if err := syscall.Kill(-pgid, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("pty: signal group %d: %w", pgid, err)
+		}
+	}
+	if signal == syscall.SIGTERM {
+		if err := syscall.Kill(shell, syscall.SIGINT); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("pty: interrupt the shell: %w", err)
+		}
+	}
+	return nil
+}
+
+// childrenOf lists the processes whose parent is pid: from /proc where there is one, from
+// pgrep elsewhere (macOS).
+func childrenOf(pid int) []int {
+	if entries, err := os.ReadDir("/proc"); err == nil {
+		var out []int
+		for _, e := range entries {
+			child, err := strconv.Atoi(e.Name())
+			if err != nil {
+				continue
+			}
+			stat, err := os.ReadFile("/proc/" + e.Name() + "/stat")
+			if err != nil {
+				continue
+			}
+			// The command name is in parentheses and may hold spaces; the fields after the
+			// last ')' are state, then the parent's pid.
+			i := bytes.LastIndexByte(stat, ')')
+			if i < 0 {
+				continue
+			}
+			fields := strings.Fields(string(stat[i+1:]))
+			if len(fields) > 1 && fields[1] == strconv.Itoa(pid) {
+				out = append(out, child)
+			}
+		}
+		return out
+	}
+	// Bounded: the cancel it serves has 500 ms in all.
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	outb, err := exec.CommandContext(ctx, "pgrep", "-P", strconv.Itoa(pid)).Output() //nolint:gosec // a fixed program and a pid, nothing a caller can shape
+	if err != nil {
+		return nil
+	}
+	var out []int
+	for _, f := range strings.Fields(string(outb)) {
+		if child, err := strconv.Atoi(f); err == nil {
+			out = append(out, child)
+		}
+	}
+	return out
 }
 
 func winsize(size domain.Size) *creack.Winsize {

@@ -1,6 +1,6 @@
 // Package builtin holds the tools Umbral offers the model without an MCP server
-// (REQ-AGT-002): read_file, write_file, edit_file, grep, glob, list_dir and fetch_url.
-// run_command, which needs a thread's PTY, arrives with T-F1-10.
+// (REQ-AGT-002): run_command, read_file, write_file, edit_file, grep, glob, list_dir and
+// fetch_url.
 package builtin
 
 import (
@@ -8,18 +8,23 @@ import (
 	"fmt"
 	"path/filepath"
 
+	sessionsports "github.com/ecrespo/umbral/internal/sessions/ports"
 	"github.com/ecrespo/umbral/internal/tools/domain"
 	"github.com/ecrespo/umbral/internal/tools/ports"
 )
 
-// Config tunes the built-ins; the zero value is what the daemon uses.
+// Config tunes the built-ins. The daemon sets the terminal and fetch_url's egress log and
+// redaction rules; a tool missing what it needs refuses to run.
 type Config struct {
 	Fetch FetchConfig
+	// Terminal runs run_command in a thread's PTY; without it run_command refuses to run.
+	Terminal sessionsports.AgentTerminal
 }
 
 // All returns every built-in tool.
 func All(cfg Config) []ports.Tool {
 	return []ports.Tool{
+		runCommand{term: cfg.Terminal},
 		readFile{},
 		writeFile{},
 		editFile{},

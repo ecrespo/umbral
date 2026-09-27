@@ -160,7 +160,7 @@ The six exit criteria, and what closed each:
 | T-F1-07 | Router, fallback, `usage`, redaction and egress hooks | 2d | T-F1-04, T-F1-06 | ✅ 2026-09-27 |
 | T-F1-08 | HF router and OmniRoute presets | 0.5d | T-F1-05 | ✅ 2026-09-27 |
 | T-F1-09 | Tool registry + built-in file/search/network tools | 3d | T-F1-03 | ✅ 2026-09-27 |
-| T-F1-10 | `run_command` in the thread PTY as an agent block | 1.5d | T-F1-09 | ☐ |
+| T-F1-10 | `run_command` in the thread PTY as an agent block | 1.5d | T-F1-09 | ✅ 2026-09-27 |
 | T-F1-11 | Context: rules, attachments, git | 2d | T-F1-01 | ☐ |
 | T-F1-12 | Token budget and compaction | 2d | T-F1-11 | ☐ |
 | T-F1-13 | Agent runtime and `thread.*` methods | 4d | T-F1-07, T-F1-10, T-F1-12 | ☐ |

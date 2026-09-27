@@ -31,11 +31,74 @@ func (s *Service) recordOutput(live *liveSession, chunk []byte) {
 	// into, which is the first prompt that ends (REQ-TERM-011).
 	s.notePrompt(live, events)
 
+	// The claim is handed over here, on the goroutine that owns the recorder.
+	live.mu.Lock()
+	if live.agent != nil && !live.agent.claimed {
+		live.recorder.Claim(live.agent.threadID)
+		live.agent.claimed = true
+	}
+	live.mu.Unlock()
+
 	actions := live.recorder.Feed(events)
 	for _, action := range actions {
 		s.applyBlockAction(live, action)
 	}
+	s.releaseAbandoned(live, events)
 	s.noteIntegration(live)
+}
+
+// noteAgentBlock remembers the block the agent's claim opened.
+func (s *Service) noteAgentBlock(live *liveSession, block domain.Block) {
+	if block.Origin != domain.OriginAgent {
+		return
+	}
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	if live.agent != nil && live.agent.blockID == "" && live.agent.threadID == block.ThreadID {
+		live.agent.blockID = block.ID
+	}
+}
+
+// deliverAgentBlock hands a closed block to the agent waiting for it, if one is.
+func (s *Service) deliverAgentBlock(live *liveSession, action domain.Action) {
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	if live.agent == nil || live.agent.blockID != action.Block.ID {
+		return
+	}
+	if !live.agent.abandoned {
+		live.agent.done <- domain.AgentRun{Block: action.Block, Output: action.Plain, Persisted: !live.agent.unsaved}
+	}
+	live.agent = nil
+}
+
+// markAgentUnsaved records that the agent's block has no complete row.
+func (s *Service) markAgentUnsaved(live *liveSession, blockID string) {
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	if live.agent != nil && live.agent.blockID == blockID {
+		live.agent.unsaved = true
+	}
+}
+
+// releaseAbandoned frees the PTY of a cancelled run whose block never opened, once the shell
+// shows a prompt again, and withdraws its claim.
+func (s *Service) releaseAbandoned(live *liveSession, events []domain.Event) {
+	prompt := false
+	for _, e := range events {
+		if e.Kind == domain.EventPromptStart {
+			prompt = true
+		}
+	}
+	if !prompt {
+		return
+	}
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	if live.agent != nil && live.agent.abandoned && live.agent.blockID == "" {
+		live.agent = nil
+		live.recorder.Claim("")
+	}
 }
 
 // applyBlockAction carries out one instruction from the recorder.
@@ -47,6 +110,7 @@ func (s *Service) recordOutput(live *liveSession, chunk []byte) {
 func (s *Service) applyBlockAction(live *liveSession, action domain.Action) {
 	switch action.Kind {
 	case domain.ActionOpen:
+		s.noteAgentBlock(live, action.Block)
 		live.chunkBlockID = ""
 		live.chunkSeq = 0
 		live.pendingRaw = live.pendingRaw[:0]
@@ -57,6 +121,7 @@ func (s *Service) applyBlockAction(live *liveSession, action domain.Action) {
 		// key errors against a block that was never created.
 		if err := s.cfg.Blocks.Create(live.ctx, action.Block); err != nil {
 			s.logBlock(live, "create the block", err)
+			s.markAgentUnsaved(live, action.Block.ID)
 			return
 		}
 		live.chunkBlockID = action.Block.ID
@@ -79,10 +144,14 @@ func (s *Service) applyBlockAction(live *liveSession, action domain.Action) {
 		s.cfg.Bus.Publish(ports.BlockUpdated{BlockID: action.Block.ID, State: action.Block.State})
 
 	case domain.ActionClose:
+		// The agent gets its result whether or not the row could be written: the command
+		// ended either way, and a turn must not wait for a block the store lost.
+		defer s.deliverAgentBlock(live, action)
 		s.flushChunk(live)
 		live.chunkBlockID = ""
 		if err := s.cfg.Blocks.Finish(live.ctx, action.Block, action.Plain); err != nil {
 			s.logBlock(live, "close the block", err)
+			s.markAgentUnsaved(live, action.Block.ID)
 			return
 		}
 		s.cfg.Bus.Publish(ports.BlockClosed{Block: action.Block})

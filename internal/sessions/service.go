@@ -52,7 +52,9 @@ type Config struct {
 
 // Service implements ports.Sessions.
 type Service struct {
-	cfg Config
+	// threadMu serialises finding or creating a thread's PTY (REQ-AGT-003).
+	threadMu sync.Mutex
+	cfg      Config
 
 	mu   sync.RWMutex
 	live map[string]*liveSession
@@ -98,6 +100,26 @@ type liveSession struct {
 
 	done     chan struct{}
 	doneOnce sync.Once
+
+	// agent is the command the agent is waiting on in this session (REQ-AGT-003), guarded by
+	// mu; nil when none is.
+	agent *agentRun
+}
+
+// agentRun is one command the agent typed and is waiting for. claimed turns true once the
+// drain goroutine has told the recorder the next block is the agent's; blockID is that block
+// once it opens; the closed block arrives on done.
+type agentRun struct {
+	threadID string
+	claimed  bool
+	blockID  string
+	done     chan domain.AgentRun
+	// unsaved is set when the block's row failed to be written or closed.
+	unsaved bool
+	// abandoned is a cancelled run whose block did not close in time. It keeps the PTY busy
+	// until that block closes or the shell shows its next prompt, so its late block cannot
+	// be taken for the next run's.
+	abandoned bool
 }
 
 // New builds a service. It does not start anything: sessions come into being through Create.
@@ -191,6 +213,9 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 		InputOwner:  domain.InputOwnerHuman,
 		CreatedAt:   time.Now(),
 	}
+	if params.OwnerThreadID != "" {
+		session.OwnerThreadID, session.InputOwner = params.OwnerThreadID, domain.InputOwnerAgent
+	}
 
 	if err := s.persistCreate(ctx, session); err != nil {
 		_ = pty.Close()
@@ -240,7 +265,7 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 // List reports every session the daemon knows, live or historical.
 func (s *Service) List(ctx context.Context) ([]domain.Session, error) {
 	rows, err := s.cfg.Store.DB().QueryContext(ctx, `
-		SELECT id, shell, cwd, cols, rows, state, integration, input_owner,
+		SELECT id, shell, cwd, cols, rows, state, integration, input_owner, owner_thread_id,
 		       exit_code, created_at, exited_at
 		FROM sessions ORDER BY created_at DESC`)
 	if err != nil {
@@ -270,7 +295,7 @@ func (s *Service) Get(ctx context.Context, id string) (domain.Session, error) {
 	}
 
 	row := s.cfg.Store.DB().QueryRowContext(ctx, `
-		SELECT id, shell, cwd, cols, rows, state, integration, input_owner,
+		SELECT id, shell, cwd, cols, rows, state, integration, input_owner, owner_thread_id,
 		       exit_code, created_at, exited_at
 		FROM sessions WHERE id = ?`, id)
 	session, err := scanSession(row)
