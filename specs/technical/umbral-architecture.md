@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.15 Delta `2026-09-provider-config` (proposed). |
+| **Version** | 1.16 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -516,6 +516,41 @@ has none, and a shell with no `TERM` runs readline as a dumb terminal (delta
 the agent's write boundary and has nothing to do with the structural workspace of §3.2 (finding
 B-09).
 
+**How the table and DD-006 meet** (T-F1-03, `internal/security/domain/policy*.go`; delta
+`2026-09-policy-precedence`, proposed):
+
+- **Step 0, exposure, comes first.** A tool the mode does not show the model is `deny` with
+  reason `not_exposed`: `ask` shows ReadOnly only (REQ-AGT-009) — a destructive command
+  included, which is what the `—` cell means — and an unknown mode shows nothing.
+- **A destructive pattern is a floor:** at least `ask`, never offered as `always`, and a matching
+  `deny` rule still denies. Otherwise DD-006's order holds.
+- **`auto-edit` decides writes at step 4 both ways:** inside the write root `allow`, outside it
+  `ask` with `outside_write_root`, whatever the `allow` rules say (REQ-AGT-013). In `normal`, an
+  `allow` rule may allow a write anywhere (REQ-AGT-014).
+- **Rules** match a glob over the tool name and a glob over the target (the command line, the
+  path or the URL); `*` spans `/`. A rule with a `thread_id` applies to that thread only. For a
+  command line, split at the separators below: a `deny` rule matches the whole line or any part;
+  `allow` rules must match every part; a line with no command is never allowed by a rule.
+- **The trace is complete:** every step is evaluated whatever decided; one is marked as
+  deciding, and every other match notes that it was overridden (API §5.36, REQ-SEC-009).
+- **Destructive patterns** are matched against each simple command of an `Exec` target after
+  normalisation: the line is split at `;`, `&&`, `||`, `|`, `&`, newlines, backticks,
+  parentheses and braces; quotes are dropped; leading `VAR=value` words and the wrappers `sudo`,
+  `doas`, `env`, `xargs`, `nice`, `nohup`, `time`, `command`, `exec` and `builtin` are removed
+  with their flags — also `ionice`, `stdbuf`, `timeout` (and its duration), `chroot` (and its root),
+  `watch`, `parallel`, `eval` and `busybox`; the program is reduced to its base name; and
+  `sh`/`bash`/`zsh -c '…'` and find's `-exec`/`-execdir`/`-ok`/`-okdir` are normalised again as
+  lines of their own. The built-in list: recursive `rm`; `git push` with
+  `--force`, `-f`, `--force-with-lease`, `--mirror` or a `+refspec`; `git reset --hard`;
+  `git clean -f`; `mkfs`; `dd of=`; `kubectl delete`; `terraform destroy`/`apply -destroy`;
+  `helm uninstall`; `docker`/`podman system prune` and `volume rm|prune`; `find -delete`;
+  `shred`, `wipefs`; `shutdown`, `reboot`, `halt`, `poweroff`; SQL `DROP TABLE|DATABASE|SCHEMA`;
+  a redirection onto a block device; recursive `chmod`/`chown` of `/`. A rule bundle replaces
+  it (REQ-SEC-010).
+- **The write-root test is lexical**: the target is resolved against the thread's cwd and
+  cleaned, so `..` cannot escape, and a sibling sharing the root's prefix is outside. Resolving
+  symlinks is the caller's (the tool, T-F1-09), which does I/O.
+
 ### 5.4 Error Handling
 
 ```go
@@ -794,4 +829,5 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.12 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-database-lock`: §9.4 adds the database lock — `<database>.lock` beside the database, taken after the instance lock and before opening it, exit 75 when a daemon of another runtime directory holds it — so recovery cannot run over live sessions through a shared `--db` |
 | 1.13 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-pane-term`: §5.2b gains `TERM` and `COLORTERM` (REQ-TERM-013) and their precedence |
 | 1.14 | 2026-09-27 | E. Crespo (assisted draft) | delta `2026-09-frame-limit-monitoring` (T-F1-33): §5.1 names live keys — today only `api.max_message_bytes`, changed by `limits.set` — adds the `[api]` table and says how a quoted value and its comment are read; §7.2 adds `umbral_frames_refused_total`; §9.4 adds `umb limits`, `umb limits set`, the `frames` line of `umb status` and the `RESULT_TOO_LARGE` hint |
-| 1.15 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-02: §5.1 specifies `[secrets] allow_env` and `models.toml` — the reference architecture's shape, real TOML validated by an embedded JSON Schema, credentials as references, a plaintext key refusing its entry, the keyring probed only when needed, the REQ-SEC-008/012 outcomes and what `config.reload` applies; §9.4's `umb status` shows each provider's reason |
+| 1.15 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-02: §5.1 specifies `[secrets] allow_env` and `models.toml` — the reference architecture's shape, real TOML validated by an embedded JSON Schema, credentials as references, a plaintext key refusing its entry, the keyring probed only when needed, the REQ-SEC-008/012 outcomes and what `config.reload` applies; §9.4's `umb status` shows each provider's reason. Delta `2026-09-provider-config` (proposed). |
+| 1.16 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-03: §5.3 writes down how the table's "not exposed" cells and DD-006's precedence meet — in `ask` mode a tool that is not ReadOnly is denied as `not_exposed` before any step, destructive included — lists the built-in destructive patterns and how a command line is normalised, and states how rules read a compound line and what the trace holds. Delta `2026-09-policy-precedence` (proposed). |
