@@ -21,9 +21,20 @@ type RecoveryReport struct {
 	// On the first start after upgrading past T-F0-21 it also counts the rows an older
 	// daemon left pending.
 	IntegrationSettled int64
+	// ThreadsStopped is how many threads were running or awaiting an approval. The turn
+	// died with the previous process; the thread keeps its history and accepts
+	// `thread.send` again (REQ-AGT-017).
+	ThreadsStopped int64
+	// ApprovalsExpired is how many approvals were still pending. Nothing is waiting for
+	// their decision any more, so none may be offered as if it were (REQ-AGT-011).
+	ApprovalsExpired int64
+	// PaneReportsCleared is how many pane state reports and metadata keys were dropped. The
+	// processes that reported them are not this daemon's to vouch for after a restart
+	// (REQ-INT-002, REQ-INT-004).
+	PaneReportsCleared int64
 }
 
-// Recover applies steps 1 and 2 of Data Model §6 after a daemon restart, step 1 including
+// Recover applies steps 1 to 4 and step 8 of Data Model §6 after a daemon restart, step 1 including
 // the integration verdict a crash interrupted (delta `2026-09-recovery-integration`).
 //
 // A session row only ever means "there is a live PTY behind it", and a restart kills
@@ -31,11 +42,23 @@ type RecoveryReport struct {
 // advertise sessions that cannot receive input. The blocks those sessions had open are
 // marked abandoned rather than deleted: their output is the user's history (REQ-TERM-005).
 //
-// Steps 3 and 4 of §6, for threads and approvals, arrive with the agent subdomain in
-// T-F1-01. The tables exist but F0 never writes to them.
+// Steps 3 and 4 are the agent's version of the same lie. A thread `running` or
+// `awaiting_approval` had a turn in the previous process, and that turn is gone: the thread
+// becomes `stopped`, keeping every message, and `thread.send` resumes it (REQ-AGT-017). An
+// approval still `pending` was persisted before any client saw it (REQ-AGT-011), so it
+// outlives the turn that was waiting for it; it becomes `expired`, and no client is offered
+// a decision nothing will read. Decided approvals are history and are not touched. Only the
+// state changes: an expiry sets no decided_at, since nobody decided, and a stop leaves
+// updated_at alone, so a crash does not reorder `thread.list`.
+//
+// Step 8 drops every pane state report and metadata key. Whoever reported them did so to
+// the previous process; a restored pane still saying `working` on their word would hold a
+// wait open with nobody behind it (REQ-INT-002, REQ-INT-004). Steps 5 to 7 are the
+// workspaces service's restore and the agent's resume; step 9 is the skill store's.
 //
 // The updates share one transaction so a crash mid-recovery cannot leave sessions exited
-// while their blocks still claim to be running, or their verdict still pending.
+// while their blocks still claim to be running, their verdict still pending, or a thread
+// stopped with its approval still on offer.
 func (s *Store) Recover(ctx context.Context, now time.Time) (RecoveryReport, error) {
 	var report RecoveryReport
 
@@ -84,6 +107,35 @@ func (s *Store) Recover(ctx context.Context, now time.Time) (RecoveryReport, err
 	}
 	if report.BlocksAbandoned, err = blocks.RowsAffected(); err != nil {
 		return report, fmt.Errorf("store: count recovered blocks: %w", err)
+	}
+
+	for _, step := range []struct {
+		what  string
+		query string
+		count *int64
+	}{
+		{
+			"stop the threads a restart interrupted",
+			`UPDATE threads SET state = 'stopped' WHERE state IN ('running','awaiting_approval')`,
+			&report.ThreadsStopped,
+		},
+		{
+			"expire the approvals nothing is waiting for",
+			`UPDATE approvals SET state = 'expired' WHERE state = 'pending'`,
+			&report.ApprovalsExpired,
+		},
+		{"clear the pane state reports", `DELETE FROM pane_state_reports`, &report.PaneReportsCleared},
+		{"clear the pane metadata", `DELETE FROM pane_metadata`, &report.PaneReportsCleared},
+	} {
+		result, err := tx.ExecContext(ctx, step.query)
+		if err != nil {
+			return report, fmt.Errorf("store: %s: %w", step.what, err)
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return report, fmt.Errorf("store: count after %s: %w", step.what, err)
+		}
+		*step.count += n
 	}
 
 	if err := tx.Commit(); err != nil {

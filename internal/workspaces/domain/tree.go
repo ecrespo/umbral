@@ -13,8 +13,8 @@ const (
 	AttentionDone    AttentionState = "done"
 	AttentionIdle    AttentionState = "idle"
 	// AttentionUnknown is the absence of a report, not a report of nothing. It is the
-	// state every pane starts in and the only one F0 produces: `pane_state_reports` is
-	// migration 0005 and threads are F1, so nothing reports yet (delta
+	// state every pane starts in and, until T-F1-25, the only one produced:
+	// `pane_state_reports` exists since migration 0005 but has no writer yet (delta
 	// `2026-09-pane-attention-state`).
 	AttentionUnknown AttentionState = "unknown"
 )
@@ -115,8 +115,8 @@ type Pane struct {
 	// and they stay resolvable for the life of the terminal (REQ-WS-007). The current id is
 	// included, so a client can render the whole set without appending it.
 	Aliases []string
-	// AttentionState is `unknown` in F0 and StateSource is empty with it: nothing reports
-	// a pane state until migration 0005 brings `pane_state_reports`.
+	// AttentionState is `unknown` and StateSource is empty with it until T-F1-25 gives
+	// `pane_state_reports`, which migration 0005 created, a writer.
 	AttentionState AttentionState
 	StateSource    string
 	CreatedAt      time.Time

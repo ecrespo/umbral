@@ -200,7 +200,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		slog.Int("schema_version", schemaVersion),
 		slog.Int64("sessions_recovered", report.SessionsExited),
 		slog.Int64("blocks_abandoned", report.BlocksAbandoned),
-		slog.Int64("integration_settled", report.IntegrationSettled))
+		slog.Int64("integration_settled", report.IntegrationSettled),
+		slog.Int64("threads_stopped", report.ThreadsStopped),
+		slog.Int64("approvals_expired", report.ApprovalsExpired),
+		slog.Int64("pane_reports_cleared", report.PaneReportsCleared))
 
 	if *oneShot {
 		return 0
