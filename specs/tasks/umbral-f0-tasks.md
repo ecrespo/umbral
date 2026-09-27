@@ -625,7 +625,7 @@
   `COLORTERM`; it was red on both of its cases, then green once `environ` appended the pane's
   terminal. The whole integration package passes with `TERM` unset.
 
-### [~] T-F0-26 · The CI gate runs green on the runners, not only on this machine
+### [x] 2026-09-26 T-F0-26 · The CI gate runs green on the runners, not only on this machine
 - **What:** tests put their sockets in short directories (`socketDir`, under `/tmp`) instead of
   `t.TempDir()`; `task test:portability` runs the four socket packages under a macOS-length
   `TMPDIR` inside `task ci`; the GitHub Linux job closes zsh's insecure completion directories
@@ -682,6 +682,11 @@
   7.3 ms, as it had in run 35554547683 before any of this: a wall-clock percentile under `-race`
   beside the rest of the package measures the scheduler. It is no longer parallel; the
   benchmark in `task perf` remains REQ-TERM-006's gate of record and was green every run.
+- **The fourth run** (36286671540, `ea130d6`) was the first green on both OSes. The fifth
+  (36287309770, `a541ca3`, T-F0-27's commit) was red on macOS, and the cause was a test T-F0-27
+  had just added: it sent a message one byte past the limit through the plain helper, and got
+  EPIPE when the daemon hung up. Every refused write now goes through `sendPastTheLimit`. Run
+  36287708369 on `4d77c19` is green on both OSes, and that run meets **Done**.
 
 ### [x] 2026-09-26 T-F0-27 · The frame limit says what happens past it
 - **What:** API Spec §1, §2 step 3 and §8 now say three things (1.14):
@@ -759,6 +764,8 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | F0 | **closed** | Closing checkpoint `docs/checkpoints/2026-09-26-f0-closed.md`. The GitHub gate was green on both OSes on the closing tree (run 36287708369, `4d77c19`). `sdd_check` reported no CRITICAL and no HIGH. An isolated daemon was taken through `kill -9` and a restart and brought its structure back. `docs/f0-closure-plan.md` is deleted, as its own checklist asked. |
+| 2026-09-26 | T-F0-26 | done | Run 36286671540 (`ea130d6`) was the first green on both OSes. A test that T-F0-27 added then broke macOS once more with the same EPIPE pattern; `sendPastTheLimit` now carries every refused write, and run 36287708369 (`4d77c19`) is green on both. |
 | 2026-09-26 | T-F0-27 | done after a `spec-guardian` round | Written down what the daemon did past the 4 MiB frame limit, and on the way found it breaking REQ-SEC-003. Before the handshake, invalid JSON and non-JSON-RPC lines got a protocol error and an open connection; an oversized one was about to be specified as `VALIDATION_ERROR`. All three are `UNAUTHORIZED` and a close now. |
 | 2026-09-26 | T-F0-26 | runners, second and third runs → fixed | Run 36284097081: macOS red in `TestOversizedMessageIsRejected`, the first run of that test on macOS — the client's write got EPIPE after the daemon's answer and hang-up; the test now reads the answer anyway. Run 36284836147: Ubuntu red because `Notify` subscribed to the bus inside its own goroutine and lost everything published before it was scheduled; `Listen` takes the subscription now, and a new test that publishes before starting `Notify` was red before the move. `TestOutputLatencyUnder5ms_REQ_TERM_006` is serial, since a wall-clock p95 beside its siblings measured the scheduler. |
 | 2026-09-26 | T-F0-26 | runner: macOS green, Ubuntu red → fixed | The first run on the runners after the merge found a real ordering bug in T-F0-06's fan-out, not a flake: a chunk queued while `session.subscribe` took its snapshot could be written before the reply, against API Spec §5.11. Subscriptions now start held and are released after the response is written; the new test was red 3/3 before the fix, and `spec-guardian` broke the hold and the release in turn to confirm both are guarded. |

@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.8 |
-| **Date** | 2026-09-11 |
+| **Version** | 1.9 |
+| **Date** | 2026-09-26 |
 | **PRD** | `specs/prd/umbral-mvp.md` |
 | **Tech Design** | `specs/technical/umbral-architecture.md` |
 | **Data Model** | `specs/data-model/umbral-schema.md` |
@@ -86,24 +86,27 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 | T-F0-23 | A closed pipe ends `umb` with 0, not with SIGPIPE (REQ-CLI-004) | 0.1d | T-F0-11 | ✅ 2026-09-26 |
 | T-F0-24 | A daemon locks the database it recovers (Data Model §6) | 0.25d | T-F0-02, T-F0-22 | ✅ 2026-09-26 |
 | T-F0-25 | A pane says which terminal it is (REQ-TERM-013) | 0.1d | T-F0-05 | ✅ 2026-09-26 |
-| T-F0-26 | The CI gate runs green on the runners, not only on this machine (Art. 1) | 0.25d | T-F0-25 | ◐ local green, runner pending |
+| T-F0-26 | The CI gate runs green on the runners, not only on this machine (Art. 1) | 0.25d | T-F0-25 | ✅ 2026-09-26 |
 | T-F0-27 | The frame limit says what happens past it (API §1, REQ-SEC-003) | 0.25d | T-F0-26 | ✅ 2026-09-26 |
 
-**F0 meets its exit criteria; the closing checklist of `docs/f0-closure-plan.md` is pending.**
-Reviewed against a running daemon on 2026-09-20
-(`docs/checkpoints/2026-09-20-f0-closure.md`) and again on 2026-09-21
-(`docs/checkpoints/2026-09-21-f0-validation.md`): `T-F0-19` closed on 2026-09-21, verified
-against a real daemon with `kill -9`; `T-F0-20`, `T-F0-21` and `T-F0-22` closed on 2026-09-26,
-so **no F0 task is open**. `T-F0-20` was opened because the feature exit criterion 4 asks for was never
-specified; its delta, `2026-09-cli-workspace-surface`, and the API §2 delta it turned out to
-need, `2026-09-cli-allowlist`, were both ratified on 2026-09-26. `T-F0-21` was opened because the 2026-09-21
-validation found a MUST that the code did not keep: a session whose process exits inside the
-five-second integration window never reached `integration: none`, measured against a real
-daemon and reproduced at `c7d7e18`; the exit now settles the verdict, measured the same way. One exit criterion was
-closed by that run — idle memory, measured for the first time — and criterion 4 by
-`T-F0-20`; the TUI's week moved to the release 0.1 gate (delta `2026-09-defer-tui-week`), so
-F0 closes on the other five criteria **and REQ-BLK-003**, all of which hold.
-`docs/f0-closure-plan.md` records how each item was settled and holds the closing checklist.
+**F0 is closed (2026-09-26).** The closing checkpoint is
+`docs/checkpoints/2026-09-26-f0-closed.md`. It was verified by running, as the two before it
+were (`docs/checkpoints/2026-09-20-f0-closure.md`, `docs/checkpoints/2026-09-21-f0-validation.md`):
+
+- every task from `T-F0-01` to `T-F0-27` is done;
+- `task ci` is green on the development machine;
+- the GitHub `CI` workflow is green on `ubuntu-latest` and `macos-latest` in the same run on the
+  closing tree (run 36287708369, `4d77c19`), for
+  the first time since `eeab3fb`. Getting there took `T-F0-25`, `T-F0-26`, and three defects
+  that only the runners exposed;
+- `python3 tools/sdd_check.py` reports no CRITICAL and no HIGH findings;
+- an isolated daemon, given a `kill -9`, brought its structure back.
+
+Five exit criteria are met, together with REQ-BLK-003. The sixth, a week of the TUI as the main
+terminal, is a release 0.1 gate (`T-REL-01`, delta `2026-09-defer-tui-week`), and F0 does not
+wait for it.
+
+The six exit criteria, and what closed each:
 
 - VT conformance suite 100 % MUST green (REQ-TERM-002) — ☑ met by T-F0-07, 20 MUST cases.
 - Correct blocks in bash, zsh and fish in CI — ☑ met by T-F0-09,
@@ -123,7 +126,9 @@ F0 closes on the other five criteria **and REQ-BLK-003**, all of which hold.
 - After `kill` on the daemon, the structure comes back with its cwd and labels — ☑ verified
   end to end on 2026-09-20: `kill -9`, restart, 5 panes back with their labels, cwds and fresh
   sessions, focus preserved, and the two stored commands typed at their prompts without
-  running.
+  running. Measured again at the close on 2026-09-26, against an isolated daemon built from `4d77c19`: five panes,
+  one of them labelled, came back after `kill -9` with their labels, cwds and five fresh
+  sessions.
 - Benchmarks within the NFRs — ☑ **met**, ungated for one of the four. Three are gates
   (`task perf`, and `scripts/perf_selftest.sh` proves they still bite). Idle daemon memory
   (§7, 80 MiB with five sessions) carries no REQ id and is still ungated, as T-F0-13 records,
@@ -133,6 +138,7 @@ F0 closes on the other five criteria **and REQ-BLK-003**, all of which hold.
   the shells are separate processes, which is what "daemon memory" means. Measured on the
   developer's machine rather than the reference hardware of PRD §7, so it is evidence and not
   a gate; the headroom is large enough that the distinction does not change the verdict.
+  At the close on 2026-09-26, on a `4d77c19` build, it measured VmRSS 33.8 MiB.
 
 ---
 
@@ -239,3 +245,4 @@ Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), 
 | 1.6 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-20` and `T-F0-21` close; exit criterion 4 is met by `scripts/cli_roundtrip.sh` against a real daemon, after delta `2026-09-cli-allowlist` let `umb` reach the tree. `T-F0-22` (delta `2026-09-recovery-integration`) settles on restart the verdict a crash interrupted. Only criterion 3, the TUI's week, remains |
 | 1.7 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-defer-tui-week`: F0's third exit criterion, the TUI's week as the main terminal, becomes a release 0.1 gate; F0 closes on the other five and REQ-BLK-003. `T-F0-23` and `T-F0-24` added and closed |
 | 1.8 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-25` (REQ-TERM-013, delta `2026-09-pane-term`) and `T-F0-26` added: the GitHub CI of `develop` had been red on both OSes for eight runs |
+| 1.9 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-26` closed on the runners and `T-F0-27` added (delta `2026-09-oversized-message`); **F0 closed**, with the checkpoint `docs/checkpoints/2026-09-26-f0-closed.md` |
