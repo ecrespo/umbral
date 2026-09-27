@@ -132,6 +132,9 @@ type StatusResult struct {
 type ProviderStatus struct {
 	ID     string `json:"id"`
 	Health string `json:"health"`
+	// Reason says why Health is down or degraded — `keyring_unavailable`, `env_secret` —
+	// and is absent otherwise (REQ-SEC-008, REQ-SEC-012).
+	Reason string `json:"reason,omitempty"`
 }
 
 // MCPStatus is one MCP server's state in system.status.

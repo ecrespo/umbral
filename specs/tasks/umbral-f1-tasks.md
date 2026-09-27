@@ -66,7 +66,7 @@ default CI.
 - **Depends on:** F0 complete, T-F1-32, T-F1-33 — the two protocol tasks go first
 - **Done:** `TestMigration0005Constraints` and `TestRecoveryExpiresPendingApprovals_REQ_AGT_011` green.
 
-### [ ] T-F1-02 · Keyring and configuration loader
+### [x] 2026-09-27 T-F1-02 · Keyring and configuration loader
 - **What:**
   - TOML loader with JSON Schema;
   - resolution of `keyring:<path>` with go-keyring;
@@ -78,7 +78,9 @@ default CI.
     `[secrets] allow_env = true`, reported as `degraded` with reason `env_secret` (REQ-SEC-012);
   - `config.get` and `config.reload`.
 - **REQ:** REQ-SEC-004, REQ-SEC-008, REQ-SEC-012
-- **Files:** `internal/config/**`, `internal/security/adapters/keyring/**`
+- **Files:** `internal/config/**`, `internal/security/{domain,ports}/**`,
+  `internal/security/adapters/keyring/**`, `internal/api/config*.go`, `cmd/umbrald/providers*.go`,
+  `cmd/umb/main.go`, `specs/api/umbral-daemon-api-v1.md`, `specs/technical/umbral-architecture.md`
 - **Depends on:** T-F1-01
 - **Done:** `TestPlaintextKeyRejected_REQ_SEC_004`, `TestKeyringUnavailableDisablesProviders_REQ_SEC_008` and `TestEnvFallbackOnlyWhenEnabled_REQ_SEC_012` green; with `allow_env = false` and no keyring, no provider starts with a credential.
 
@@ -101,11 +103,16 @@ default CI.
   - `Provider` port (architecture §6) with normalized events;
   - `llamacpp`, `lmstudio`, `openrouter` and `openai-compat` adapters on top of Fantasy;
   - discovery through `/v1/models`;
-  - `model.list` with `refresh`.
-- **REQ:** REQ-LLM-001, REQ-LLM-002
+  - `model.list` with `refresh`;
+  - the models of a provider T-F1-02 left `down` (no keyring, a refused `env:`, a missing
+    secret) are listed `health = down` with that provider's reason, and are never called —
+    REQ-SEC-008's second clause, which T-F1-02 could not close before the model rows existed.
+    Delta `2026-09-provider-config` decides whether the reason is read from the provider or
+    needs its own column.
+- **REQ:** REQ-LLM-001, REQ-LLM-002, REQ-SEC-008
 - **Files:** `internal/llmgw/{ports,catalog,adapters/openaicompat,adapters/openrouter}/**`
 - **Depends on:** T-F1-02
-- **Done:** tests with a fake server `TestDiscoverModels_REQ_LLM_002` and `TestStreamNormalized_REQ_LLM_001` green.
+- **Done:** tests with a fake server `TestDiscoverModels_REQ_LLM_002` and `TestStreamNormalized_REQ_LLM_001` green; `TestModelsOfADownProviderAreDown_REQ_SEC_008` green.
 
 ### [ ] T-F1-06 · Native Ollama adapter
 - **What:**
@@ -452,7 +459,7 @@ default CI.
 | REQ-LLM-006 | T-F1-06 | TestOllamaSendsNumCtx_REQ_LLM_006 |
 | REQ-SEC-001 | T-F1-04, T-F1-07 | TestRedactionCorpus_REQ_SEC_001 |
 | REQ-SEC-002 | T-F1-01, T-F1-07, T-F1-21 | TestEgressLoggedForRemote_REQ_SEC_002 |
-| REQ-SEC-004 | T-F1-02 | TestPlaintextKeyRejected_REQ_SEC_004 |
+| REQ-SEC-004 | T-F1-02 | TestPlaintextKeyRejected_REQ_SEC_004, TestASecretInOptionsIsRejected_REQ_SEC_004 |
 | REQ-SEC-005 | T-F1-03, T-F1-14 | TestDestructiveAlwaysAsk_REQ_SEC_005 |
 | REQ-SEC-006 | T-F1-03, T-F1-09 | TestTaintedRequiresAsk_REQ_SEC_006, TestFetchMarksTaint_REQ_SEC_006 |
 | REQ-MCP-001 | T-F1-17 | TestMcpToolsPrefixed_REQ_MCP_001 |
@@ -481,12 +488,12 @@ default CI.
 | REQ-SEC-009 | T-F1-28 | TestExplainNamesDecidingRule_REQ_SEC_009 |
 | REQ-SEC-010 | T-F1-29 | TestLocalRulesWin_REQ_SEC_010 |
 | REQ-SEC-011 | T-F1-29, T-F1-30 | TestBundleRequiresValidSignature_REQ_SEC_011 |
-| REQ-SEC-012 | T-F1-02 | TestEnvFallbackOnlyWhenEnabled_REQ_SEC_012 |
+| REQ-SEC-012 | T-F1-02 | TestEnvFallbackOnlyWhenEnabled_REQ_SEC_012, TestAnEnvProviderAsksTheKeyringFirst_REQ_SEC_012 |
 | REQ-SEC-013 | T-F1-30 | TestRejectsUnknownKeyAndDowngrade_REQ_SEC_013 |
 | REQ-SEC-014 | T-F1-30 | TestKeyLifecycleRequiresFingerprint_REQ_SEC_014 |
 | REQ-SEC-015 | T-F1-30 | TestFailClosedAfterThreeFailures_REQ_SEC_015 |
 | REQ-SEC-016 | T-F1-30 | TestRollbackAndResetWorkOffline_REQ_SEC_016 |
-| REQ-SEC-008 | T-F1-02 | TestKeyringUnavailableDisablesProviders_REQ_SEC_008 |
+| REQ-SEC-008 | T-F1-02 | TestKeyringUnavailableDisablesProviders_REQ_SEC_008, TestAnUnreachableKeyringIsUnavailable_REQ_SEC_008, TestStatusCarriesEachProvidersReason_REQ_SEC_008, TestStatusShowsWhyAProviderIsDown_REQ_SEC_008, TestADaemonWithoutAKeyringStartsDegraded_REQ_SEC_008; T-F1-05: TestModelsOfADownProviderAreDown_REQ_SEC_008 |
 | REQ-AGT-015 | T-F1-13 | TestSendIdempotentByClientMsgID_REQ_AGT_015 |
 | REQ-AGT-018 | T-F1-09 | TestFetchUrlRefusesPrivateRanges_REQ_AGT_018 |
 | REQ-INT-006 | T-F1-25 | TestOwnAgentCannotBeDisplaced_REQ_INT_006 |
@@ -528,4 +535,5 @@ default CI.
 | 2026-09-27 | T-F1-32 | done | The deadline is an absolute read deadline set at accept and cleared by a successful `system.hello`, so it lives on the read goroutine with the handshake state and cannot race a hello. An id-less or null-id hello is refused in `handleLine`, before the method table and the token. API 1.15 writes §1's JSON-RPC deviation, §2 steps 3/3a/5/6, §7's `UNAUTHORIZED` row and §8's deadline row. Each test was seen red against its own break (deadline removed, id check removed, pre-hello notification left silent, deadline not cleared). The `spec-guardian` review found the last one untested; the case `an authenticated connection outlives the deadline` closes it. It also found that §8's cap of 32 concurrent connections is **not enforced** by `Serve`: pre-existing, outside this task, still open. `task ci` green. |
 | 2026-09-27 | T-F1-33 | done | Every outbound frame is serialised once in `conn.frame` and measured there: a response over the connection's limit becomes `RESULT_TOO_LARGE` (-32014) under its id, a notification becomes `limits.notification_dropped` under its `seq`, and `block.get` shortens its one output field first (raw on a 3-byte boundary, plain by bisection over the encoded JSON). The inbound limit moved from the scanner's buffer size into a split function reading the connection's own limit, so it can rise at `system.hello` without resizing a buffer mid-scan; before the handshake it stays 4 MiB. `limits.set` writes through `config.WriteMaxMessageBytes`, which implements the delta's file-cases table. Writing the real-daemon test found a **parser defect**: a quoted value followed by a comment (`max_message_bytes = "4MiB"  # why`) was read with the comment as part of the value, and the daemon refused to start; fixed in `parseTOMLSubset`, with cases in `TestMaxMessageBytesIsReadAndBounded`. Mutations: outbound refusal off, `block.get` fit off, each counter off, a payload in the warn line, hello keeping 4 MiB, the daemon not reading the setting, `limits.set` without a settings path and the `umb` hint off — each reddens its test. One survives and is equivalent: without `runeStart` the plain cut still lands on a rune boundary, because `encoding/json` makes every stray byte a 6-byte `\ufffd`, so a mid-rune cut is never the longest that fits; `runeStart` stays because it keeps the bisection's predicate monotone. The `spec-guardian` review found four more things, all fixed test-first: the inbound refusal's warn line named no size (it now logs `size_bytes_at_least`, and §5.2 says why it has no method); `api = { max_message_bytes = 128 }` was read as an unknown key and started the daemon at 4 MiB (inline tables and arrays are now refused as outside the subset); `ParseSize` called 100MiB "not a size" instead of out of range; and a CRLF file lost its `\r` on the rewritten line. The delta's Verification names `umb block get`, which does not exist; the hint test runs `umb block last`, `umb status` and `umb workspace list`. `umb limits set` itself runs only against a fake daemon; the real-daemon test drives `limits.set` through `internal/client`. API 1.16, Tech 1.14. `task ci` green. |
 | 2026-09-27 | T-F1-01 | done | `0005_agent.sql` is the Data Model's DDL extracted from its `sql` blocks rather than retyped: 13 tables, 10 indexes and the two `ALTER TABLE threads` of §2.5, 25 statements that the `spec-guardian` review compared one by one with §2.4c–§2.13, identical and in the same order. `TestMigration0005Constraints` drives every `CHECK`, foreign key, unique and partial index, the safe defaults (`mcp_servers.trust` untrusted, `messages.tainted` 0) and the cascades (a thread takes its messages, its `usage` rows stay with `thread_id` NULL); `TestMigration0005AddsTheAttentionColumnsToExistingThreads` upgrades a database holding a thread at 0004. Recovery gains §6 steps 3 and 4 and — **beyond the task's letter** — step 8, because the tables now exist and no task owned clearing them. Only the state changes: an expiry sets no `decided_at` and a stop leaves `updated_at` alone, so a crash does not reorder `thread.list`. The review also found T-F1-24's text telling it to write the attention columns into 0005, which would edit an applied migration; T-F1-24 now writes to the columns T-F1-01 created. Open: `sdd_check.py` runs the spec's DDL but does not compare it with the migration files, so only this task's test and review prove 0005 matches. `task ci` green. |
+| 2026-09-27 | T-F1-02 | done | The specs never gave the provider configuration a shape: Tech §5.1 named only `config.toml`. The reference architecture did (`docs/ARCHITECTURE.md` §7: `models.toml`, `[[providers]]`, `api_key = "keyring:…"`, go-toml/v2 + JSON Schema + go-keyring), and T-F1-08 already names `examples/models.toml`, so this task followed it and wrote it into Tech 1.15 §5.1 rather than inventing one; spec-guardian ruled that this needs a delta (Art. 9), so it is written up as **`changes/2026-09-provider-config/`, pending the Tech Lead's ratification**; the code follows it. `models.toml` is real TOML validated by an embedded schema; `config.toml` keeps its subset parser and gains `[secrets] allow_env`. Credential resolution is a pure function in `security/domain` over two injected lookups; the keyring is a port with a go-keyring adapter that times out a wedged D-Bus, and is probed only when a provider names it, since a locked desktop keyring can prompt. At start a plaintext key refuses its entry (reported `down`/`plaintext_secret`); on `config.reload` it refuses the reload and nothing is applied. `TestADaemonWithoutAKeyringStartsDegraded_REQ_SEC_008` runs all three REQs against a real daemon whose D-Bus points at nothing, and checks neither secret reaches its log. API 1.17 (§5.28, §5.2 `reason`, `config` capability), Tech 1.15. Models' own `health = down` (REQ-SEC-008's second clause) waits for T-F1-05, which creates the model rows; until then the provider carries it, and T-F1-05 now owns it with a named test. The review also hardened three things: a malformed `keyring:`/`env:` reference no longer echoes its value, an option named like a credential (`[providers.options] token = …`) refuses its entry like a plaintext `api_key`, and a reload of a file that does not parse names the file in `details`. `task ci` green. |
 | — | — | — | — |

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.14 |
+| **Version** | 1.15 Delta `2026-09-provider-config` (proposed). |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -401,6 +401,63 @@ the same honesty: the key's own line under `[api]`, or a new `[api]` section; a 
 inline table holding it is refused as `CONFIG_INVALID` naming the line, and a symlinked file is
 rewritten through its target so the link survives.
 
+`[secrets] allow_env` (off by default) lets `env:<VAR>` stand in for a keyring the machine does
+not have (REQ-SEC-012).
+
+**Providers: `models.toml`.** Beside `config.toml`, in the same directory. It names the
+providers, the model classes and the routing policy, and never a key: a credential is a
+reference. The shape is the reference architecture's (`docs/ARCHITECTURE.md` §7):
+
+```toml
+[router]
+policy = "local-first"          # local-first | cost | quality
+offline = false                 # REQ-LLM-004: local providers only
+max_cost_usd_per_thread = 1.5   # converted to micro-USD at load (Art. 6)
+
+[classes]                       # fast | code | plan | embed: candidates in order
+code = ["ollama/gpt-oss:20b", "openrouter/moonshotai/kimi-k2"]
+
+[[providers]]
+id = "ollama"                   # [a-z0-9_-], unique
+type = "ollama"                 # ollama | openai-compat | lmstudio | openrouter | yzma
+base_url = "http://127.0.0.1:11434"
+[providers.options]             # passed to the adapter, e.g. num_ctx, keep_alive
+num_ctx = 32768
+
+[[providers]]
+id = "openrouter"
+type = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allows it
+```
+
+- **It is real TOML**, read with `pelletier/go-toml/v2` and validated against a JSON Schema
+  embedded in the binary (`internal/config/models.schema.json`): unknown keys, unknown types,
+  classes or policies, a provider without `id` or `base_url` and duplicate ids are refused. A
+  file the schema refuses stops the daemon, like any other malformed setting, and an absent
+  file is no providers.
+- **A plaintext key refuses its entry, not the file** (REQ-SEC-004). Any `api_key` that is not
+  `keyring:<path>` or `env:<VAR>` is a key in the clear: that provider is left out, reported as
+  `down` with `plaintext_secret`, and logged with the field and what to write instead, never
+  the value. The rest of the file loads. So does an option under `[providers.options]` whose
+  name says it is a credential (`key`, `token`, `secret`, `password`, `passwd`, `auth`,
+  `credential`, `bearer`): options tune the adapter and never carry a key.
+  `max_cost_usd_per_thread` is at most 1e6. A malformed `keyring:` or `env:` reference is a
+  malformed file, and its message names the provider and the field, not the value.
+- **Credentials resolve at start and on `config.reload`** (API Spec §5.28). `keyring:<path>` is
+  `service/account` in the OS keyring (a path without `/` is an account of the `umbral`
+  service). The keyring is probed only when a provider names one — asking a locked keyring for
+  anything can raise an unlock prompt. If it is unreachable, the daemon starts anyway and every
+  keyring provider is `down` with `keyring_unavailable` (REQ-SEC-008). `env:<VAR>` is accepted
+  only where the keyring is unavailable and `allow_env` is on, and the provider is then
+  `degraded` with `env_secret` (REQ-SEC-012); anywhere else it is `down` with
+  `env_secret_not_allowed`. A resolved key lives in memory in a type that prints as
+  `[REDACTED]` under every format verb.
+- **`config.reload` validates both files before applying anything**, and an entry it would
+  refuse refuses the reload, with one `details` entry per entry, or one naming the file that
+  does not parse. It applies the providers and `allow_env`; the other keys of
+  `config.toml` still need a restart, as above.
+
 ### 5.2 Dependency rules (Art. 3, verified by `go-arch-lint`)
 
 | From | May import |
@@ -597,6 +654,9 @@ directory of API Spec §2), `--daemon-path PATH` (default: `PATH`, then the dire
 - `umb limits set --max-message <size>` reads the size — bytes, or with `KiB` or `MiB` — and calls
   `limits.set` with it in bytes. A size `umb` cannot read is exit 1 before connecting; the range
   check and the write are the daemon's, so there is nothing for `umb` to roll back.
+- `umb status` shows each provider's health with its reason when it has one —
+  `providers: hf (down: keyring_unavailable), openrouter (degraded: env_secret)` (REQ-SEC-008,
+  REQ-SEC-012).
 - `umb status` gains one line, the same one `umb limits` prints:
 
   ```
@@ -734,3 +794,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.12 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-database-lock`: §9.4 adds the database lock — `<database>.lock` beside the database, taken after the instance lock and before opening it, exit 75 when a daemon of another runtime directory holds it — so recovery cannot run over live sessions through a shared `--db` |
 | 1.13 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-pane-term`: §5.2b gains `TERM` and `COLORTERM` (REQ-TERM-013) and their precedence |
 | 1.14 | 2026-09-27 | E. Crespo (assisted draft) | delta `2026-09-frame-limit-monitoring` (T-F1-33): §5.1 names live keys — today only `api.max_message_bytes`, changed by `limits.set` — adds the `[api]` table and says how a quoted value and its comment are read; §7.2 adds `umbral_frames_refused_total`; §9.4 adds `umb limits`, `umb limits set`, the `frames` line of `umb status` and the `RESULT_TOO_LARGE` hint |
+| 1.15 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-02: §5.1 specifies `[secrets] allow_env` and `models.toml` — the reference architecture's shape, real TOML validated by an embedded JSON Schema, credentials as references, a plaintext key refusing its entry, the keyring probed only when needed, the REQ-SEC-008/012 outcomes and what `config.reload` applies; §9.4's `umb status` shows each provider's reason |

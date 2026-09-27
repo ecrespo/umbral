@@ -35,6 +35,17 @@ func (s *Server) registry() map[string]method {
 		methodHello:     {handle: handleHello, beforeHello: true, params: helloParams{}, result: helloResult{}},
 		"system.status": {handle: handleStatus, params: emptyResult{}, result: StatusResult{}},
 
+		// The configuration and its providers (API Spec §5.28). Interactive clients only:
+		// §2 gives `umb` limits.* and not config.*.
+		"config.get": {
+			handle: handleConfigGet, kinds: interactiveClients, available: configWired,
+			params: emptyResult{}, result: ConfigView{},
+		},
+		"config.reload": {
+			handle: handleConfigReload, kinds: interactiveClients, available: configWired,
+			params: emptyResult{}, result: ConfigView{},
+		},
+
 		// The frame limit's two narrow methods (REQ-OBS-005, REQ-CLI-007). Every client kind
 		// may call them, `umb` included: raising the limit is what its hint tells a user to do.
 		"limits.get": {handle: handleLimitsGet, params: emptyResult{}, result: limitsResult{}},

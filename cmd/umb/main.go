@@ -168,6 +168,7 @@ type statusResult struct {
 	Providers      []struct {
 		ID     string `json:"id"`
 		Health string `json:"health"`
+		Reason string `json:"reason,omitempty"`
 	} `json:"providers"`
 	MCP []struct {
 		Name  string `json:"name"`
@@ -210,7 +211,11 @@ func cmdStatus(ctx context.Context, args []string, stdout, stderr *printer) int 
 	if len(result.Providers) > 0 {
 		names := make([]string, 0, len(result.Providers))
 		for _, p := range result.Providers {
-			names = append(names, p.ID+" ("+p.Health+")")
+			state := p.Health
+			if p.Reason != "" {
+				state += ": " + p.Reason
+			}
+			names = append(names, p.ID+" ("+state+")")
 		}
 		stdout.printf("providers: %s\n", strings.Join(names, ", "))
 	}

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.16 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.17 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -137,7 +137,7 @@ before the daemon starts.
 ```json
 {"jsonrpc":"2.0","id":1,"result":{
   "daemon_version":"0.1.0","protocol_version":1,
-  "capabilities":["sessions","blocks","threads","mcp","models","workspaces","layouts","waits","integrations","notifications","policy_explain","wait_admin","rules","limits"],
+  "capabilities":["sessions","blocks","threads","mcp","models","workspaces","layouts","waits","integrations","notifications","policy_explain","wait_admin","rules","limits","config"],
   "connection_id":"con_01J9Z3K8T2QH6W4V5X7Y8Z9A0B","max_message_bytes":4194304}}
 ```
 
@@ -146,7 +146,7 @@ before the daemon starts.
   compatible would silently pair this daemon with a client built for a version it never declared.
 - Each entry of `capabilities` names a method namespace (`sessions`, `blocks`, `threads`, `mcp`,
   `models`, `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`,
-  `wait_admin`, `rules`, `limits`) whose methods the daemon **serves at that moment**. THE SYSTEM SHALL derive
+  `wait_admin`, `rules`, `limits`, `config`) whose methods the daemon **serves at that moment**. THE SYSTEM SHALL derive
   the list from its method table rather than declaring it statically, SHALL advertise a namespace
   when at least one of its methods is served by this build, and SHALL NOT advertise one whose
   methods are all unserved: a client that branches on the advertisement must not be sent down a path
@@ -385,7 +385,9 @@ and for the order they are validated in. REQ-SEC-003.
 `max_message_bytes` is this connection's frame limit from now on, in both directions (§1).
 
 ### 5.2 `system.status`
-**Params:** `{}`. Returns `{daemon_version, uptime_ms, sessions_alive, threads_running, providers:[{id, health}], mcp:[{name, state}], frames}`.
+**Params:** `{}`. Returns `{daemon_version, uptime_ms, sessions_alive, threads_running, providers:[{id, health, reason?}], mcp:[{name, state}], frames}`.
+A provider's `reason` says why it is `down` or `degraded` — `keyring_unavailable`
+(REQ-SEC-008), `env_secret` (REQ-SEC-012) and the others of §5.28 — and is absent otherwise.
 Used by `umb status` (REQ-CLI-003).
 
 `frames` reports how close traffic has come to the frame limit **this daemon run** (REQ-OBS-005);
@@ -607,9 +609,28 @@ Rules:
 `env_refs` maps environment variable names to `keyring:<path>` references (column `mcp_servers.env_refs_json`); plaintext values are rejected with `CONFIG_INVALID` (REQ-SEC-004). When the keyring is unavailable and the fallback is enabled, an `env:<VAR>` reference is accepted instead and the daemon reports the degraded mode (REQ-SEC-012, Art. 5 amendment of 2026-09-20).
 Errors: `VALIDATION_ERROR`, `CONFIG_INVALID`.
 
-### 5.28 `config.get` / `config.reload`
-- `config.reload` validates before applying.
-- **Errors:** `CONFIG_INVALID` with `details` per rejected entry (REQ-SEC-004).
+### 5.28 `config.get` / `reload` — REQ-SEC-004, REQ-SEC-008, REQ-SEC-012
+`get` params: `{}`. `reload` params: `{}`. Interactive clients only (§2). Both return
+`{settings, providers, rejected}`:
+
+- `settings`: `{pane_history, max_message_bytes, allow_env}`, as `config.toml` sets them.
+- `providers`: one per entry of `models.toml` (Tech Design §5.1), `{id, type, base_url?,
+  credential?, health, reason?}`. `credential` is the reference the file writes —
+  `keyring:<path>` or `env:<VAR>` — and never a value. `health` is `unknown`, `degraded` or
+  `down`, with `reason` saying why: `keyring_unavailable` (REQ-SEC-008), `env_secret`
+  (REQ-SEC-012), `env_secret_not_allowed`, `secret_not_found`, `keyring_error`, or
+  `plaintext_secret` for an entry refused at start.
+- `rejected`: `[{provider_id, field, issue}]`, the entries refused at start. The daemon starts
+  without them rather than aborting; the issue names what to write instead and never repeats
+  the value it refused (REQ-SEC-004).
+
+`config.reload` re-reads `config.toml` and `models.toml`, validates both **before applying
+anything**, probes the keyring again and resolves every credential afresh. A malformed file, or
+any provider entry it would refuse, is `CONFIG_INVALID` with one `details` entry per problem — `providers.<id>.<field>` for an
+entry, the file's name for a file that does not parse — and
+the daemon keeps the configuration it had. It applies the providers and `[secrets] allow_env`;
+every other key still needs a restart, except the live `api.max_message_bytes`, which `limits.set`
+changes (§5.38).
 
 ### 5.29 `thread.wait` — REQ-AUT-001, REQ-AUT-004
 **Params:** `{thread_id, until: string[], timeout_ms}`.
@@ -868,7 +889,7 @@ stateDiagram-v2
 - **Optional capabilities:** `system.hello` returns the namespaces the daemon **serves** at that
   moment (§2). The protocol's namespaces are `sessions`, `blocks`, `threads`, `mcp`, `models`,
   `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`, `wait_admin`,
-  `rules` and `limits`; `worktrees`, `graphics`, `plugins` and `federation` are reserved for later. The §2
+  `rules`, `limits` and `config`; `worktrees`, `graphics`, `plugins` and `federation` are reserved for later. The §2
   example shows the full list and is illustrative: what a given daemon returns is whatever it can
   actually do, which is narrower than what its method table holds whenever a module is absent.
 - **Which error a missing method gets.** A name this build does not know receives
@@ -925,3 +946,4 @@ printf '%s\n' \
 | 1.14 | 2026-09-26 | delta `2026-09-oversized-message`: §1 says the 4 MiB limit counts the `\n`, and that past it the daemon replies `VALIDATION_ERROR` with a null id and closes; §2 step 3 names unparseable, non-JSON-RPC and oversized lines as earlier calls, which get `UNAUTHORIZED`; §8's row says both |
 | 1.15 | 2026-09-27 | delta `2026-09-handshake-hardening` (T-F1-32): §1 records the one deviation from JSON-RPC 2.0 §4.1 — an unauthenticated peer's notification and an id-less `system.hello` are answered; §2 step 3 names notifications among the earlier calls, new step 3a sets the 5 s handshake deadline, step 5 requires a non-null `id` on `system.hello` before the token is compared, and step 6's repeated hello is answered even without an id; §8 gains the deadline row. `protocol_version` unchanged: every conforming client already sends an id and completes the handshake in milliseconds |
 | 1.16 | 2026-09-27 | delta `2026-09-frame-limit-monitoring` (T-F1-33): §1 makes the frame limit per connection and two-way — 4 MiB and fixed before the handshake, the configured `[api] max_message_bytes` (1–64 MiB) after it — and says what the daemon writes instead of an oversized response or notification; §2's `cli` row gains `limits.get` and `limits.set` and the capability list gains `limits`; §3 adds `RESULT_TOO_LARGE` (-32014); §4 adds `output_response_truncated_bytes`; §5.1 documents the hello result with `max_message_bytes`; §5.2 adds `frames`; §5.17 shortens instead of failing; new §5.38 `limits.get`/`limits.set`; §6 adds `limits.notification_dropped`; §8 and §9 gain the limit row and the capability. Additive within `protocol_version = 1` |
+| 1.17 | 2026-09-27 | T-F1-02: §5.28 specifies `config.get` and `config.reload` — `{settings, providers, rejected}`, credentials as references only, the health reasons, and a reload that validates before applying and answers `CONFIG_INVALID` per entry; §5.2's providers gain `reason`; the capability lists of §2 and §9 gain `config`. Additive within `protocol_version = 1` Delta `2026-09-provider-config` (proposed). |

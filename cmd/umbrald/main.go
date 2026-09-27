@@ -27,6 +27,7 @@ import (
 	"github.com/ecrespo/umbral/internal/api"
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/config"
+	"github.com/ecrespo/umbral/internal/security/adapters/keyring"
 	"github.com/ecrespo/umbral/internal/sessions"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/blockstore"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/ghostty"
@@ -99,6 +100,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		logger.Error("the settings file cannot be read; refusing to start with defaults "+
 			"the user did not ask for", slog.Any("error", err))
+		return exitConfig
+	}
+
+	// The providers, with the same rule: a models file the schema refuses stops the daemon.
+	// A plaintext key refuses only its own entry (REQ-SEC-004), and a keyring this machine
+	// cannot reach disables only the providers that need it (REQ-SEC-008).
+	modelsPath, err := config.ModelsPath()
+	if err != nil {
+		logger.Error("cannot locate the models file", slog.Any("error", err))
+		return exitCantCreate
+	}
+	providers, err := loadProviders(ctx, logger, settingsPath, modelsPath, settings, keyring.New())
+	if err != nil {
+		logger.Error("the models file cannot be read; refusing to start with providers "+
+			"the user did not configure", slog.Any("error", err))
 		return exitConfig
 	}
 
@@ -307,7 +323,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		SocketPath:    socket,
 		TokenPath:     tokenPath,
 		DaemonVersion: buildVersion(),
-		Status:        statusFromStore(db),
+		Status:        withProviders(statusFromStore(db), providers),
+		Configuration: providers,
 		Sessions:      sessionService,
 		Blocks:        blockReader,
 		Workspaces:    workspaceService,
@@ -378,6 +395,18 @@ func statusFromStore(db *store.Store) api.StatusFunc {
 			return api.StatusResult{}, fmt.Errorf("count sessions and threads: %w", err)
 		}
 		return api.StatusResult{SessionsAlive: alive, ThreadsRunning: running}, nil
+	}
+}
+
+// withProviders adds the providers' health and reasons to system.status (REQ-SEC-008).
+func withProviders(status api.StatusFunc, providers *providerConfig) api.StatusFunc {
+	return func(ctx context.Context) (api.StatusResult, error) {
+		result, err := status(ctx)
+		if err != nil {
+			return result, err
+		}
+		result.Providers = providers.Statuses()
+		return result, nil
 	}
 }
 
