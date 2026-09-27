@@ -114,10 +114,18 @@ func (s *Service) bootstrap(params domain.CreateParams) (args, env []string, cle
 	return args, append(env, extraEnv...), cleanup, nil
 }
 
-// environ builds the child's environment: the daemon's own, plus the caller's overrides,
-// plus the marker that tells a bootstrap it is running under Umbral.
+// paneTerminal is what every pane says it is: the emulator that renders it (REQ-TERM-013).
+// xterm-256color rather than a Ghostty-specific name because its terminfo entry is installed
+// everywhere, and truecolor because REQ-TERM-002's conformance suite includes it.
+var paneTerminal = []string{"TERM=xterm-256color", "COLORTERM=truecolor"}
+
+// environ builds the child's environment: the daemon's own, then the pane's terminal, then
+// the caller's overrides, then the marker that tells a bootstrap it is running under Umbral.
+// Later entries win (os/exec keeps the last value of a duplicated key), so the daemon's own
+// TERM — none under systemd or launchd, `screen` inside tmux — never reaches a pane, while a
+// layout that declares one keeps it.
 func environ(overrides map[string]string) []string {
-	env := append([]string{}, os.Environ()...)
+	env := append(append([]string{}, os.Environ()...), paneTerminal...)
 	for key, value := range overrides {
 		env = append(env, key+"="+value)
 	}

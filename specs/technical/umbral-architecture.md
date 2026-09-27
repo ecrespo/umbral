@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.12 |
+| **Version** | 1.13 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -406,8 +406,14 @@ check. T-F0-14, T-F0-15 and T-F0-16 name that file for exactly this reason.
 | `UMBRAL_BIN_PATH` | absolute path of the `umb` binary |
 | `UMBRAL_WORKSPACE_ID`, `UMBRAL_TAB_ID`, `UMBRAL_PANE_ID` | location of the pane |
 | `UMBRAL_SESSION_ID` | terminal session attached to the pane |
+| `TERM` | `xterm-256color` (REQ-TERM-013) |
+| `COLORTERM` | `truecolor` (REQ-TERM-013) |
 
-Umbral's values win over any caller-supplied value. An integration reports only when
+Umbral's values win over any caller-supplied value — except `TERM` and `COLORTERM`, which
+replace only the daemon's own inherited values: a pane or layout that declares them in its `env`
+keeps what it declared. The daemon's terminal is never a pane's; under `systemd` or `launchd` it
+has none, and a shell with no `TERM` runs readline as a dumb terminal (delta
+`2026-09-pane-term`). An integration reports only when
 `UMBRAL_ENV=1`, so the same hook is inert outside Umbral.
 
 ### 5.3 Default policies
@@ -674,3 +680,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.10 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-bootstrap-sweeper`: §9.2 places a shell's bootstrap files in the runtime directory and specifies the sweep at start, with the instance lock as the argument for why it needs no age heuristic |
 | 1.11 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-cli-allowlist`: §9.4 writes down the grammar of `umb workspace`/`tab`/`pane`/`layout` — positionals, flags, defaults, the `--` rule for `pane split`, what `layout apply --from` accepts and where its warnings go — and lists `umb api schema`, which it had omitted |
 | 1.12 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-database-lock`: §9.4 adds the database lock — `<database>.lock` beside the database, taken after the instance lock and before opening it, exit 75 when a daemon of another runtime directory holds it — so recovery cannot run over live sessions through a shared `--db` |
+| 1.13 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-pane-term`: §5.2b gains `TERM` and `COLORTERM` (REQ-TERM-013) and their precedence |
