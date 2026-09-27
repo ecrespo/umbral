@@ -155,7 +155,7 @@ The six exit criteria, and what closed each:
 | T-F1-02 | Keyring and config loader that rejects plaintext secrets | 1d | T-F1-01 | ✅ 2026-09-27 |
 | T-F1-03 | Policy engine (pure function) | 2d | T-F1-01 | ✅ 2026-09-27 |
 | T-F1-04 | Secret redaction | 1.5d | T-F1-01 | ✅ 2026-09-27 |
-| T-F1-05 | `llmgw`: ports, catalog, openai-compat adapters through Fantasy | 3d | T-F1-02 | ☐ |
+| T-F1-05 | `llmgw`: ports, catalog, openai-compat adapters through Fantasy | 3d | T-F1-02 | ✅ 2026-09-27 |
 | T-F1-06 | Native Ollama adapter | 1.5d | T-F1-05 | ☐ |
 | T-F1-07 | Router, fallback, `usage`, redaction and egress hooks | 2d | T-F1-04, T-F1-06 | ☐ |
 | T-F1-08 | HF router and OmniRoute presets | 0.5d | T-F1-05 | ☐ |

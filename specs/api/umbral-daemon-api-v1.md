@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.17 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.18 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -366,6 +366,12 @@ method and the ordering that produced it, so one handed to a different method is
  "price_in_micro_usd_per_mtok":0,"price_out_micro_usd_per_mtok":0,"health":"ok"}
 ```
 - `health`: `ok` | `degraded` | `down` | `unknown`
+- `reason` (absent when there is nothing to say): why the model is not `ok`. It is its provider's —
+  a credential reason of §5.28 (`keyring_unavailable`, `env_secret`, …), `discovery_failed` when the
+  provider did not answer its model list, `no_adapter` for a provider type this build cannot call
+  yet, `invalid_config` for an entry no adapter accepts, `offline` for a remote provider while
+  `router.offline = true`.
+- `caps.context_window` is 0 when the provider does not say; prices are 0 when it publishes none.
 
 ### McpServer
 ```json
@@ -603,6 +609,17 @@ Rules:
 
 ### 5.26 `model.list` — REQ-LLM-002
 **Params:** `{refresh?: false}`. **Result:** `{items: Model[]}`.
+
+The catalog of every configured provider's models, ordered by id; a provider removed from
+`models.toml` takes its models with it. The daemon discovers them at start and after a
+`config.reload`, in the background, so an empty list right after start can mean discovery is still
+running. `refresh: true` discovers again before answering; a provider that does not answer is not an
+error of the call — its models come back `down` with `discovery_failed`. A provider down for its
+credential is never contacted, not even to list models (REQ-SEC-008), and neither is a remote
+provider while `router.offline = true` (REQ-LLM-004). Every discovery request to a host that is not
+loopback is recorded in `egress_log` before it is sent, like a model call (REQ-SEC-002). A provider
+that was never discovered has no models to list. Open to `umb` (§2). A daemon with no gateway
+answers `NOT_IMPLEMENTED`.
 
 ### 5.27 `mcp.server.list` / `mcp.server.add` / `mcp.server.remove` — REQ-MCP-001, REQ-MCP-002
 `add` params: `{name, transport, command?, args?, url?, env_refs?, trust?:"untrusted"}`.
@@ -947,3 +964,4 @@ printf '%s\n' \
 | 1.15 | 2026-09-27 | delta `2026-09-handshake-hardening` (T-F1-32): §1 records the one deviation from JSON-RPC 2.0 §4.1 — an unauthenticated peer's notification and an id-less `system.hello` are answered; §2 step 3 names notifications among the earlier calls, new step 3a sets the 5 s handshake deadline, step 5 requires a non-null `id` on `system.hello` before the token is compared, and step 6's repeated hello is answered even without an id; §8 gains the deadline row. `protocol_version` unchanged: every conforming client already sends an id and completes the handshake in milliseconds |
 | 1.16 | 2026-09-27 | delta `2026-09-frame-limit-monitoring` (T-F1-33): §1 makes the frame limit per connection and two-way — 4 MiB and fixed before the handshake, the configured `[api] max_message_bytes` (1–64 MiB) after it — and says what the daemon writes instead of an oversized response or notification; §2's `cli` row gains `limits.get` and `limits.set` and the capability list gains `limits`; §3 adds `RESULT_TOO_LARGE` (-32014); §4 adds `output_response_truncated_bytes`; §5.1 documents the hello result with `max_message_bytes`; §5.2 adds `frames`; §5.17 shortens instead of failing; new §5.38 `limits.get`/`limits.set`; §6 adds `limits.notification_dropped`; §8 and §9 gain the limit row and the capability. Additive within `protocol_version = 1` |
 | 1.17 | 2026-09-27 | T-F1-02: §5.28 specifies `config.get` and `config.reload` — `{settings, providers, rejected}`, credentials as references only, the health reasons, and a reload that validates before applying and answers `CONFIG_INVALID` per entry; §5.2's providers gain `reason`; the capability lists of §2 and §9 gain `config`. Additive within `protocol_version = 1` Delta `2026-09-provider-config` (proposed). |
+| 1.18 | 2026-09-27 | T-F1-05: §4's Model gains `reason`, and says what 0 means for the context window and prices; §5.26 describes `model.list` — background discovery at start and on reload, `refresh`, a provider down for its credential or remote while offline never contacted, and discovery recorded in `egress_log`. Delta `2026-09-provider-config` (proposed). Additive within `protocol_version = 1` |

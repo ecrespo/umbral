@@ -27,6 +27,8 @@ import (
 	"github.com/ecrespo/umbral/internal/api"
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/config"
+	"github.com/ecrespo/umbral/internal/llmgw/adapters/egresslog"
+	"github.com/ecrespo/umbral/internal/llmgw/adapters/modelstore"
 	"github.com/ecrespo/umbral/internal/security/adapters/keyring"
 	"github.com/ecrespo/umbral/internal/sessions"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/blockstore"
@@ -319,12 +321,28 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			slog.Any("error", err))
 	}
 
+	// The model catalog (REQ-LLM-002). Discovery runs in the background: a provider that is
+	// slow or down must not hold up the socket.
+	modelStore, err := modelstore.New(db)
+	if err != nil {
+		logger.Error("cannot build the model store", slog.Any("error", err))
+		return exitCantCreate
+	}
+	egress, err := egresslog.New(db)
+	if err != nil {
+		logger.Error("cannot build the egress log", slog.Any("error", err))
+		return exitCantCreate
+	}
+	models := newGateway(ctx, logger, modelStore, egress)
+	providers.observe(models.configure)
+
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
 		TokenPath:     tokenPath,
 		DaemonVersion: buildVersion(),
 		Status:        withProviders(statusFromStore(db), providers),
 		Configuration: providers,
+		Models:        models,
 		Sessions:      sessionService,
 		Blocks:        blockReader,
 		Workspaces:    workspaceService,

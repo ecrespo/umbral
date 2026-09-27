@@ -41,7 +41,7 @@ const e2eModels = `
 [[providers]]
 id = "ollama"
 type = "ollama"
-base_url = "http://127.0.0.1:11434"
+base_url = "http://127.0.0.1:9"
 
 [[providers]]
 id = "hf"
@@ -49,10 +49,12 @@ type = "openai-compat"
 base_url = "https://router.huggingface.co/v1"
 api_key = "keyring:umbral/hf_token"
 
+# The daemon discovers the models of every provider it may run (REQ-LLM-002), so a test
+# never names a real endpoint: port 9 on loopback refuses at once.
 [[providers]]
 id = "openrouter"
 type = "openrouter"
-base_url = "https://openrouter.ai/api/v1"
+base_url = "http://127.0.0.1:9/api/v1"
 api_key = "env:UMBRAL_E2E_OPENROUTER_KEY"
 
 [[providers]]

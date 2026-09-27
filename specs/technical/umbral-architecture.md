@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.17 |
+| **Version** | 1.18 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -248,7 +248,10 @@ sequenceDiagram
 
 - **Decision:** redaction happens in `security` right before `llmgw` serializes the request. Local
   providers also receive redacted content (defense in depth and consistent prompts).
-- **`egress_log`** only records non-loopback destinations.
+- **`egress_log`** only records non-loopback destinations. It is written by an HTTP transport
+  under every adapter (T-F1-05, `llmgw/adapters/fantasyconv`), so model discovery is recorded as
+  well as model calls; the row is written before the request is sent, and a row that cannot be
+  written stops the request. The daemon's own requests, such as discovery, carry no thread.
 - **The rules** (T-F1-04, `internal/security/domain/redact.go`) run in order, each match — or,
   for a `KEY=value` rule, the value only — becoming `[REDACTED:<rule>]`, and a match that already
   is nothing but placeholders is left alone, so redacting twice changes nothing — any other match
@@ -445,7 +448,7 @@ code = ["ollama/gpt-oss:20b", "openrouter/moonshotai/kimi-k2"]
 
 [[providers]]
 id = "ollama"                   # [a-z0-9_-], unique
-type = "ollama"                 # ollama | openai-compat | lmstudio | openrouter | yzma
+type = "ollama"                 # ollama | openai-compat | lmstudio | llamacpp | openrouter | yzma
 base_url = "http://127.0.0.1:11434"
 [providers.options]             # passed to the adapter, e.g. num_ctx, keep_alive
 num_ctx = 32768
@@ -479,6 +482,19 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
   `degraded` with `env_secret` (REQ-SEC-012); anywhere else it is `down` with
   `env_secret_not_allowed`. A resolved key lives in memory in a type that prints as
   `[REDACTED]` under every format verb.
+- **The catalog** (T-F1-05, `internal/llmgw`). Each provider becomes an adapter —
+  `openai-compat`, `lmstudio` and `llamacpp` through Fantasy's openaicompat provider, `openrouter`
+  through its OpenRouter provider (whose built-in URL the adapter's HTTP client rewrites to
+  `base_url`); `ollama` arrives with T-F1-06 and `yzma` later, and until then they are listed with
+  reason `no_adapter`. A provider down for its credential gets no adapter at all, so nothing can
+  call it. Discovery reads `<base_url>/models` at start and after every reload, in the background,
+  and stores the result in `models`; the models of a provider that does not answer stay, `down`
+  with `discovery_failed`. A model's health and reason are its provider's — `ok` once it answered,
+  `degraded` when its key came from the environment — with no column of their own. `local` is true
+  for a loopback `base_url` only. With `router.offline = true` a remote provider is not contacted
+  at all and its models are listed `down` with `offline`. The rows of a provider removed from
+  `models.toml` are deleted on the next refresh. A provider's key stays in a type that prints as
+  `[REDACTED]` up to the call that puts it in a header.
 - **`config.reload` validates both files before applying anything**, and an entry it would
   refuse refuses the reload, with one `details` entry per entry, or one naming the file that
   does not parse. It applies the providers and `allow_env`; the other keys of
@@ -858,3 +874,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.15 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-02: §5.1 specifies `[secrets] allow_env` and `models.toml` — the reference architecture's shape, real TOML validated by an embedded JSON Schema, credentials as references, a plaintext key refusing its entry, the keyring probed only when needed, the REQ-SEC-008/012 outcomes and what `config.reload` applies; §9.4's `umb status` shows each provider's reason. Delta `2026-09-provider-config` (proposed). |
 | 1.16 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-03: §5.3 writes down how the table's "not exposed" cells and DD-006's precedence meet — in `ask` mode a tool that is not ReadOnly is denied as `not_exposed` before any step, destructive included — lists the built-in destructive patterns and how a command line is normalised, and states how rules read a compound line and what the trace holds. Delta `2026-09-policy-precedence` (proposed). |
 | 1.17 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-04: DD-008 lists the built-in redaction rules and how the generic detector reads REQ-SEC-001's thresholds — as necessary conditions, with Umbral ids and identifier-shaped tokens left alone — and records the recall the 4.5-bit floor allows at each length. Delta `2026-09-redaction-thresholds` (proposed). |
+| 1.18 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-05: §5.1 gains the `llamacpp` provider type (REQ-LLM-001 names it; the reference architecture's list did not) and describes the catalog: which adapter serves each type, background discovery, a down or offline-remote provider never contacted, and the reasons `discovery_failed`, `no_adapter`, `invalid_config` and `offline`; DD-008 says `egress_log` is written at the HTTP transport, discovery included, and fails closed. Delta `2026-09-provider-config` (proposed). |

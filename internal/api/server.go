@@ -137,8 +137,10 @@ type Config struct {
 	// Configuration serves config.get and config.reload. A nil value leaves them answering
 	// NOT_IMPLEMENTED.
 	Configuration ConfigService
-	Bus           *bus.Bus
-	Logger        *slog.Logger
+	// Models serves model.list. A nil value leaves it answering NOT_IMPLEMENTED.
+	Models ModelService
+	Bus    *bus.Bus
+	Logger *slog.Logger
 
 	// MaxMessageBytes is the frame limit a connection gets once it completes the handshake
 	// (`[api] max_message_bytes`, API Spec §1). Zero means config.DefaultMaxMessageBytes.

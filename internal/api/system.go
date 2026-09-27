@@ -46,6 +46,12 @@ func (s *Server) registry() map[string]method {
 			params: emptyResult{}, result: ConfigView{},
 		},
 
+		// The model catalog (API Spec §5.26); `umb` may list it too (§2).
+		"model.list": {
+			handle: handleModelList, available: modelsWired,
+			params: listModelsParams{}, result: modelsResult{},
+		},
+
 		// The frame limit's two narrow methods (REQ-OBS-005, REQ-CLI-007). Every client kind
 		// may call them, `umb` included: raising the limit is what its hint tells a user to do.
 		"limits.get": {handle: handleLimitsGet, params: emptyResult{}, result: limitsResult{}},

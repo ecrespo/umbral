@@ -35,6 +35,10 @@ components:
   # and outside adapters, which must stay replaceable.
   workspaces-service: { in: internal/workspaces }
 
+  # The model gateway's core — the catalog, and from T-F1-07 the router — for the same
+  # reason: it orchestrates llmgw's ports and belongs in neither domain nor adapters.
+  llmgw-service: { in: internal/llmgw }
+
   # The tree's integration tests wire the real store to the service, which is the job
   # Art. 3 reserves for a composition root — the same exception sessions-integration has.
   workspaces-integration: { in: internal/workspaces/integration }
@@ -213,6 +217,8 @@ deps:
   llmgw-adapters:
     anyVendorDeps: true
     mayDependOn:
+      # adapters/fantasyconv is what the adapters built on Fantasy share (T-F1-05).
+      - llmgw-adapters
       - llmgw-ports
       - store
       - bus
@@ -387,6 +393,7 @@ deps:
       - tui-adapters
       - sessions-service
       - workspaces-service
+      - llmgw-service
       - shellscripts
       - sessions-ports
       - sessions-adapters
@@ -448,6 +455,12 @@ deps:
       - workspaces-domain
       - sessions-domain
       - bus
+
+  llmgw-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - llmgw-ports
+      - llmgw-domain
 
   workspaces-integration:
     anyVendorDeps: true
