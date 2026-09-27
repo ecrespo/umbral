@@ -86,18 +86,21 @@ func (s *Service) RunForThread(ctx context.Context, threadID, cwd, command strin
 	}
 
 	// REQ-AGT-007 and Tech §3 step 3: SIGTERM, then SIGKILL 300 ms later, all inside 500 ms.
+	// A command the shell has not started yet is signalled when its block opens instead.
 	cancelled := time.Now()
 	budget := time.NewTimer(agentCancelBudget)
 	defer budget.Stop()
-	s.signalAgent(live, ports.SignalTermForeground)
-	term := time.NewTimer(agentTermGrace)
-	defer term.Stop()
+	live.mu.Lock()
+	run.cancelled = true
+	started := run.blockID != ""
+	live.mu.Unlock()
+	if started {
+		s.stopAgent(live, run)
+	}
 	for {
 		select {
 		case result := <-run.done:
 			return result, ctx.Err()
-		case <-term.C:
-			s.signalAgent(live, ports.SignalKillForeground)
 		case <-budget.C:
 			// The block has not closed. The run stays on the PTY, abandoned, until it does or
 			// the shell prompts again, so its block is never taken for the next run's.
@@ -135,6 +138,20 @@ func (s *Service) claimPTY(ctx context.Context, live *liveSession, run *agentRun
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
+}
+
+// stopAgent stops a cancelled run's command: SIGTERM to what the shell runs, and SIGKILL
+// agentTermGrace later if the run still holds the PTY.
+func (s *Service) stopAgent(live *liveSession, run *agentRun) {
+	s.signalAgent(live, ports.SignalTermForeground)
+	time.AfterFunc(agentTermGrace, func() {
+		live.mu.RLock()
+		current := live.agent == run
+		live.mu.RUnlock()
+		if current {
+			s.signalAgent(live, ports.SignalKillForeground)
+		}
+	})
 }
 
 func (s *Service) signalAgent(live *liveSession, sig ports.SignalKind) {

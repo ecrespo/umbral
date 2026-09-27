@@ -120,6 +120,10 @@ type agentRun struct {
 	// until that block closes or the shell shows its next prompt, so its late block cannot
 	// be taken for the next run's.
 	abandoned bool
+	// cancelled is a run whose caller gave up. Its command is signalled once the shell has
+	// started it (its block is open), never before: an interrupt that reaches a shell still
+	// reading the line is lost, and the command then runs unstopped.
+	cancelled bool
 }
 
 // New builds a service. It does not start anything: sessions come into being through Create.

@@ -180,6 +180,34 @@ func TestKillForegroundUnder500ms_REQ_AGT_007(t *testing.T) {
 	}
 }
 
+// TestACancelBeforeTheCommandStartsStillStopsIt_REQ_AGT_007: a run cancelled before the shell
+// has started its command — no OSC 133;C yet — is stopped once it does. Signalled at once,
+// the interrupt reached a shell that had not begun the loop and was lost, so the loop ran for
+// good and held the PTY: the macOS runner's slowness made that window wide enough to hit.
+func TestACancelBeforeTheCommandStartsStillStopsIt_REQ_AGT_007(t *testing.T) {
+	h := newHarness(t)
+	cwd := t.TempDir()
+	threadID := thread(t, h, cwd)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+	if _, err := h.RunForThread(ctx, threadID, cwd, "true"); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"while :; do :; done", "sleep 3174"} {
+		early, stop := context.WithCancel(ctx)
+		stop()
+		if _, err := h.RunForThread(early, threadID, cwd, command); !errors.Is(err, context.Canceled) {
+			t.Errorf("%s: err %v", command, err)
+		}
+		next, done := context.WithTimeout(ctx, 10*time.Second)
+		after, err := h.RunForThread(next, threadID, cwd, "echo still-here")
+		done()
+		if err != nil || !strings.Contains(after.Output, "still-here") {
+			t.Fatalf("after cancelling %q before it started: %q, %v", command, after.Output, err)
+		}
+	}
+}
+
 // TestParallelFirstUsesShareOnePTY_REQ_AGT_003: two commands of a thread that has no PTY yet,
 // started together, end up in one PTY — the thread's — rather than one each.
 func TestParallelFirstUsesShareOnePTY_REQ_AGT_003(t *testing.T) {
