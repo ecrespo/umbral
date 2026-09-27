@@ -63,7 +63,7 @@ func TestEveryProviderTypeGetsItsAdapter_REQ_LLM_001(t *testing.T) {
 		"compat": {true, llmdomain.HealthUnknown, ""},
 		"or":     {true, llmdomain.HealthDegraded, secdomain.ReasonEnvSecret},
 		"hf":     {false, llmdomain.HealthDown, secdomain.ReasonKeyringUnavailable},
-		"ollama": {false, llmdomain.HealthUnknown, llmdomain.ReasonNoAdapter},
+		"ollama": {true, llmdomain.HealthUnknown, ""},
 		"yz":     {false, llmdomain.HealthUnknown, llmdomain.ReasonNoAdapter},
 		"bad":    {false, llmdomain.HealthDown, llmdomain.ReasonInvalidConfig},
 	} {
