@@ -20,6 +20,7 @@ import (
 	"github.com/ecrespo/umbral/internal/config"
 	"github.com/ecrespo/umbral/internal/llmgw"
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/ollama"
+	"github.com/ecrespo/umbral/internal/llmgw/adapters/openaicompat"
 	llmdomain "github.com/ecrespo/umbral/internal/llmgw/domain"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 )
@@ -412,4 +413,35 @@ func (m *memModelsByProvider) List(context.Context) ([]llmdomain.Model, error) {
 		out = append(out, ms...)
 	}
 	return out, nil
+}
+
+// TestPresetsGetTheOpenAICompatAdapter_REQ_LLM_007: the Hugging Face router and OmniRoute
+// presets are served by the openai-compat adapter, with no adapter of their own, and every
+// provider of examples/models.toml gets an adapter. Building one contacts nothing.
+func TestPresetsGetTheOpenAICompatAdapter_REQ_LLM_007(t *testing.T) {
+	t.Parallel()
+
+	for _, preset := range config.Presets {
+		p, err := adapterFor(preset.Provider, llmdomain.APIKey{}, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", preset.Name, err)
+		}
+		if _, ok := p.(*openaicompat.Provider); !ok {
+			t.Errorf("%s is served by %T, want openai-compat", preset.Name, p)
+		}
+	}
+
+	models, err := config.LoadModels(filepath.Join("..", "..", "examples", "models.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := make([]secdomain.ResolvedCredential, 0, len(models.Providers))
+	for _, p := range models.Providers {
+		resolved = append(resolved, secdomain.ResolvedCredential{ProviderID: p.ID, Health: secdomain.HealthUnknown})
+	}
+	for _, e := range buildEntries(slog.New(slog.DiscardHandler), nil, models, resolved) {
+		if e.Provider == nil {
+			t.Errorf("example provider %s has no adapter: %s", e.ID, e.Reason)
+		}
+	}
 }

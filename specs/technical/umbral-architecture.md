@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.20 |
+| **Version** | 1.21 |
 | **Date** | 2026-09-27 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -527,10 +527,17 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
   and stores the result in `models`; the models of a provider that does not answer stay, `down`
   with `discovery_failed`. A model's health and reason are its provider's — `ok` once it answered,
   `degraded` when its key came from the environment — with no column of their own. `local` is true
-  for a loopback `base_url` only. With `router.offline = true` a remote provider is not contacted
+  for a loopback `base_url` only. A gateway on loopback that forwards to the cloud — a self-hosted OmniRoute —
+  is therefore local to Umbral: offline mode does not stop it and its onward requests are not in
+  `egress_log`, which `examples/models.toml` says next to the preset (delta
+  `2026-09-provider-config`, 8e, proposed). With `router.offline = true` a remote provider is not contacted
   at all and its models are listed `down` with `offline`. The rows of a provider removed from
   `models.toml` are deleted on the next refresh. A provider's key stays in a type that prints as
   `[REDACTED]` up to the call that puts it in a header.
+- **Presets** (T-F1-08, REQ-LLM-007): `config.Presets` holds the Hugging Face router
+  (`https://router.huggingface.co/v1`, key `keyring:umbral/huggingface`) and OmniRoute
+  (`http://127.0.0.1:20128/v1`, no key), both `openai-compat`. `examples/models.toml` carries
+  them beside Ollama and OpenRouter, commented, and a test loads it as shipped.
 - **`config.reload` validates both files before applying anything**, and an entry it would
   refuse refuses the reload, with one `details` entry per entry, or one naming the file that
   does not parse. It applies the providers and `allow_env`; the other keys of
@@ -913,3 +920,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.18 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-05: §5.1 gains the `llamacpp` provider type (REQ-LLM-001 names it; the reference architecture's list did not) and describes the catalog: which adapter serves each type, background discovery, a down or offline-remote provider never contacted, and the reasons `discovery_failed`, `no_adapter`, `invalid_config` and `offline`; DD-008 says `egress_log` is written at the HTTP transport, discovery included, and fails closed. Delta `2026-09-provider-config` (proposed). |
 | 1.19 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-06: DD-005 says which `num_ctx` every Ollama request carries when models.toml sets none (32768 capped at the model's window), where `keep_alive`, `think` and `format` go, and how a tool call's finish reason is reported; §5.1's catalog serves `ollama`. Delta `2026-09-provider-config` (proposed). |
 | 1.20 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-07: DD-004 says how the router walks candidates — which filters drop one, when a failure falls back and when it ends the call, when the first-token clock starts, redaction of all content once before the first candidate, and what `usage` records for each call, failures included. Delta `2026-09-router-fallback` (proposed). |
+| 1.21 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-08: §5.1 lists the REQ-LLM-007 presets and says that a loopback gateway which forwards to the cloud counts as local. Delta `2026-09-provider-config` (8e, proposed). |
