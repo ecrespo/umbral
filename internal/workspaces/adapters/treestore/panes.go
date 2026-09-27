@@ -421,8 +421,8 @@ func scanPane(row scanner) (domain.Pane, error) {
 	}
 	pane.CreatedAt = epoch(created)
 	pane.ClosedAt = epochPtr(closedAt)
-	// F0 has no producer of a pane state: `pane_state_reports` is migration 0005 and
-	// threads are F1 (delta `2026-09-pane-attention-state`).
+	// Nothing produces a pane state yet: `pane_state_reports` exists since migration 0005
+	// and has no writer until T-F1-25 (delta `2026-09-pane-attention-state`).
 	pane.AttentionState = domain.AttentionUnknown
 	return pane, nil
 }

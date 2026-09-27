@@ -151,7 +151,7 @@ The six exit criteria, and what closed each:
 |---|---|---|---|---|
 | T-F1-32 | The handshake has a deadline and always answers (REQ-SEC-017/018) | 0.5d | F0 | ✅ 2026-09-27 |
 | T-F1-33 | The frame limit enforced outbound, watched, adjustable from the CLI | 3.5d | T-F1-32 | ✅ 2026-09-27 |
-| T-F1-01 | Migration 0005 (agent, models, audit, MCP, skills) | 1d | T-F1-32, T-F1-33 | ☐ |
+| T-F1-01 | Migration 0005 (agent, models, audit, MCP, skills) | 1d | T-F1-32, T-F1-33 | ✅ 2026-09-27 |
 | T-F1-02 | Keyring and config loader that rejects plaintext secrets | 1d | T-F1-01 | ☐ |
 | T-F1-03 | Policy engine (pure function) | 2d | T-F1-01 | ☐ |
 | T-F1-04 | Secret redaction | 1.5d | T-F1-01 | ☐ |

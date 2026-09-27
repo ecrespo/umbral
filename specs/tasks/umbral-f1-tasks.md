@@ -54,7 +54,7 @@ default CI.
 - **Done:** the four tests of the delta's Verification are green, and each was seen red against
   its own break. `task schema` and `task ci` are green.
 
-### [ ] T-F1-01 · Migration 0005 (agent, models, audit, MCP, skills)
+### [x] 2026-09-27 T-F1-01 · Migration 0005 (agent, models, audit, MCP, skills)
 - **What:** Data Model tables §2.4c to §2.13 with their indexes, plus recovery §6 steps 3-4.
   `threads` (§2.5) is **not** created here: migration 0001 already created it (§5, finding A-01).
   The structure tables (§2.4b) are **not** created here either: migration 0003 owns them (T-F0-14).
@@ -286,9 +286,9 @@ default CI.
 - **Done:** tests `TestWaitPinsTurn_REQ_AUT_001`, `TestSendWaitRejectsBlocked_REQ_AUT_002`, `TestWaitOutputMatchesLine_REQ_AUT_003` and `TestWaitTimeoutReportsLastState_REQ_AUT_004` green.
 
 ### [ ] T-F1-24 · Attention state and thread resume
-- **What:** `attention_state` and `seen_at` on threads; `done` until a client focuses it; `thread.attention_changed` notification; restore threads after a restart with their history and `stopped` turns. The two columns are added by the `ALTER TABLE` statements of Data Model §2.5 inside migration **0005**, because 0001 created `threads` and is already applied (Art. 6). It was 0004 until delta `2026-09-restore-semantics` gave that number to the restore migration.
+- **What:** writing `attention_state` and `seen_at` on threads; `done` until a client focuses it; `thread.attention_changed` notification; restore threads after a restart with their history and `stopped` turns. The two columns already exist: T-F1-01 added them with the `ALTER TABLE` statements of Data Model §2.5 in migration **0005**, which is applied and is not edited again (Art. 6). This task writes to them; enforcing `attention_state`'s values is the writer's job, since SQLite cannot add a `CHECK` in an `ALTER`.
 - **REQ:** REQ-AGT-016, REQ-AGT-017
-- **Files:** `internal/agents/attention*.go`, `internal/store/migrations/0005_agent.sql`, `internal/store/**`
+- **Files:** `internal/agents/attention*.go`, `internal/store/**` (not `0005_agent.sql`, which T-F1-01 wrote)
 - **Depends on:** T-F1-13
 - **Done:** `TestDoneUntilFocused_REQ_AGT_016` and `TestThreadsResumeAfterRestart_REQ_AGT_017` green.
 
@@ -436,7 +436,7 @@ default CI.
 | REQ-AGT-008 | T-F1-13 | TestStopsAtMaxSteps_REQ_AGT_008 |
 | REQ-AGT-009 | T-F1-03, T-F1-13 | TestAskModeReadOnlyTools_REQ_AGT_009 |
 | REQ-AGT-010 | T-F1-13 | TestModelSwitchNextTurn_REQ_AGT_010 |
-| REQ-AGT-011 | T-F1-01, T-F1-13, T-F1-22 | TestPersistBeforeNotify_REQ_AGT_011, TestCrashRecovery_REQ_AGT_011 |
+| REQ-AGT-011 | T-F1-01, T-F1-13, T-F1-22 | TestRecoveryExpiresPendingApprovals_REQ_AGT_011, TestPersistBeforeNotify_REQ_AGT_011, TestCrashRecovery_REQ_AGT_011 |
 | REQ-AGT-013 | T-F1-03 | TestPolicyAutoEditWorkspace_REQ_AGT_013 |
 | REQ-AGT-014 | T-F1-03 | TestPolicyNormalDefaultAsk_REQ_AGT_014 |
 | REQ-CTX-001 | T-F1-11 | TestRulesFilesPrecedence_REQ_CTX_001 |
@@ -472,7 +472,7 @@ default CI.
 | REQ-AGT-016 | T-F1-24 | TestDoneUntilFocused_REQ_AGT_016 |
 | REQ-AGT-017 | T-F1-24 | TestThreadsResumeAfterRestart_REQ_AGT_017 |
 | REQ-INT-001 | T-F1-25 | TestEnvInjectedAndAuthoritative_REQ_INT_001 |
-| REQ-INT-002 | T-F1-25 | TestExternalReportDrivesRollup_REQ_INT_002 |
+| REQ-INT-002 | T-F1-01, T-F1-25 | TestRecoveryClearsPaneStateAndMetadata_REQ_INT_002, TestExternalReportDrivesRollup_REQ_INT_002 |
 | REQ-INT-003 | T-F1-25 | TestStaleSeqIgnored_REQ_INT_003 |
 | REQ-INT-004 | T-F1-26 | TestMetadataNeverChangesWaits_REQ_INT_004 |
 | REQ-INT-005 | T-F1-25 | TestReleaseRestoresOwnDetection_REQ_INT_005 |
@@ -527,4 +527,5 @@ default CI.
 | 2026-09-26 | T-F1-32 to T-F1-37 | added, not started | Four deltas ratified together and folded here. The fold drops the tasks' own "ratification bookkeeping" bullets and PRD entries, because ratification did that work: the REQs are in PRD 1.13, the `skills` table in Data Model 1.9, and the order in Plan 1.10. The API and Tech Design text stays with each task's Spec edits. API and Tech are bumped one step per task, in task order, and the versions each archived delta proposed are only a guide. |
 | 2026-09-27 | T-F1-32 | done | The deadline is an absolute read deadline set at accept and cleared by a successful `system.hello`, so it lives on the read goroutine with the handshake state and cannot race a hello. An id-less or null-id hello is refused in `handleLine`, before the method table and the token. API 1.15 writes §1's JSON-RPC deviation, §2 steps 3/3a/5/6, §7's `UNAUTHORIZED` row and §8's deadline row. Each test was seen red against its own break (deadline removed, id check removed, pre-hello notification left silent, deadline not cleared). The `spec-guardian` review found the last one untested; the case `an authenticated connection outlives the deadline` closes it. It also found that §8's cap of 32 concurrent connections is **not enforced** by `Serve`: pre-existing, outside this task, still open. `task ci` green. |
 | 2026-09-27 | T-F1-33 | done | Every outbound frame is serialised once in `conn.frame` and measured there: a response over the connection's limit becomes `RESULT_TOO_LARGE` (-32014) under its id, a notification becomes `limits.notification_dropped` under its `seq`, and `block.get` shortens its one output field first (raw on a 3-byte boundary, plain by bisection over the encoded JSON). The inbound limit moved from the scanner's buffer size into a split function reading the connection's own limit, so it can rise at `system.hello` without resizing a buffer mid-scan; before the handshake it stays 4 MiB. `limits.set` writes through `config.WriteMaxMessageBytes`, which implements the delta's file-cases table. Writing the real-daemon test found a **parser defect**: a quoted value followed by a comment (`max_message_bytes = "4MiB"  # why`) was read with the comment as part of the value, and the daemon refused to start; fixed in `parseTOMLSubset`, with cases in `TestMaxMessageBytesIsReadAndBounded`. Mutations: outbound refusal off, `block.get` fit off, each counter off, a payload in the warn line, hello keeping 4 MiB, the daemon not reading the setting, `limits.set` without a settings path and the `umb` hint off — each reddens its test. One survives and is equivalent: without `runeStart` the plain cut still lands on a rune boundary, because `encoding/json` makes every stray byte a 6-byte `\ufffd`, so a mid-rune cut is never the longest that fits; `runeStart` stays because it keeps the bisection's predicate monotone. The `spec-guardian` review found four more things, all fixed test-first: the inbound refusal's warn line named no size (it now logs `size_bytes_at_least`, and §5.2 says why it has no method); `api = { max_message_bytes = 128 }` was read as an unknown key and started the daemon at 4 MiB (inline tables and arrays are now refused as outside the subset); `ParseSize` called 100MiB "not a size" instead of out of range; and a CRLF file lost its `\r` on the rewritten line. The delta's Verification names `umb block get`, which does not exist; the hint test runs `umb block last`, `umb status` and `umb workspace list`. `umb limits set` itself runs only against a fake daemon; the real-daemon test drives `limits.set` through `internal/client`. API 1.16, Tech 1.14. `task ci` green. |
+| 2026-09-27 | T-F1-01 | done | `0005_agent.sql` is the Data Model's DDL extracted from its `sql` blocks rather than retyped: 13 tables, 10 indexes and the two `ALTER TABLE threads` of §2.5, 25 statements that the `spec-guardian` review compared one by one with §2.4c–§2.13, identical and in the same order. `TestMigration0005Constraints` drives every `CHECK`, foreign key, unique and partial index, the safe defaults (`mcp_servers.trust` untrusted, `messages.tainted` 0) and the cascades (a thread takes its messages, its `usage` rows stay with `thread_id` NULL); `TestMigration0005AddsTheAttentionColumnsToExistingThreads` upgrades a database holding a thread at 0004. Recovery gains §6 steps 3 and 4 and — **beyond the task's letter** — step 8, because the tables now exist and no task owned clearing them. Only the state changes: an expiry sets no `decided_at` and a stop leaves `updated_at` alone, so a crash does not reorder `thread.list`. The review also found T-F1-24's text telling it to write the attention columns into 0005, which would edit an applied migration; T-F1-24 now writes to the columns T-F1-01 created. Open: `sdd_check.py` runs the spec's DDL but does not compare it with the migration files, so only this task's test and review prove 0005 matches. `task ci` green. |
 | — | — | — | — |
