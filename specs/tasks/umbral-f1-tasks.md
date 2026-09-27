@@ -10,7 +10,7 @@ default CI.
 
 ## Tasks
 
-### [ ] T-F1-32 · The handshake has a deadline and always answers
+### [x] 2026-09-27 T-F1-32 · The handshake has a deadline and always answers
 - **What:**
   - a 5 s deadline from accept to a completed `system.hello`, then `UNAUTHORIZED` with a null id
     and a close;
@@ -20,8 +20,8 @@ default CI.
     before any token;
   - API §1 (the JSON-RPC deviation), §2 and §8.
 - **REQ:** REQ-SEC-017, REQ-SEC-018
-- **Files:** `internal/api/conn.go`, `internal/api/server.go`, `internal/api/server_test.go`,
-  `specs/api/umbral-daemon-api-v1.md`
+- **Files:** `internal/api/conn.go`, `internal/api/server.go`, `internal/api/system.go`,
+  `internal/api/jsonrpc.go`, `internal/api/server_test.go`, `specs/api/umbral-daemon-api-v1.md`
 - **Depends on:** F0 complete. **Goes before T-F1-01.**
 - **Delta:** `changes/_archive/2026-09-handshake-hardening/`
 - **Done:** `TestASilentConnectionIsClosedAfterTheDeadline_REQ_SEC_017` and
@@ -524,4 +524,5 @@ default CI.
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
 | 2026-09-26 | T-F1-32 to T-F1-37 | added, not started | Four deltas ratified together and folded here. The fold drops the tasks' own "ratification bookkeeping" bullets and PRD entries, because ratification did that work: the REQs are in PRD 1.13, the `skills` table in Data Model 1.9, and the order in Plan 1.10. The API and Tech Design text stays with each task's Spec edits. API and Tech are bumped one step per task, in task order, and the versions each archived delta proposed are only a guide. |
+| 2026-09-27 | T-F1-32 | done | The deadline is an absolute read deadline set at accept and cleared by a successful `system.hello`, so it lives on the read goroutine with the handshake state and cannot race a hello. An id-less or null-id hello is refused in `handleLine`, before the method table and the token. API 1.15 writes §1's JSON-RPC deviation, §2 steps 3/3a/5/6, §7's `UNAUTHORIZED` row and §8's deadline row. Each test was seen red against its own break (deadline removed, id check removed, pre-hello notification left silent, deadline not cleared). The `spec-guardian` review found the last one untested; the case `an authenticated connection outlives the deadline` closes it. It also found that §8's cap of 32 concurrent connections is **not enforced** by `Serve`: pre-existing, outside this task, still open. `task ci` green. |
 | — | — | — | — |

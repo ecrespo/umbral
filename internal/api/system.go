@@ -9,6 +9,10 @@ import (
 	"github.com/ecrespo/umbral/internal/store"
 )
 
+// methodHello is the handshake, the one method the connection code names: it is the only
+// call reachable unauthenticated and the only one that must carry an id (REQ-SEC-018).
+const methodHello = "system.hello"
+
 // interactiveClients are the kinds allowed to drive a terminal.
 var interactiveClients = []ClientKind{ClientTUI, ClientDesktop}
 
@@ -28,7 +32,7 @@ var treeClients = []ClientKind{ClientTUI, ClientDesktop, ClientCLI}
 // later should not be two sources of the same truth.
 func (s *Server) registry() map[string]method {
 	table := map[string]method{
-		"system.hello":  {handle: handleHello, beforeHello: true, params: helloParams{}, result: helloResult{}},
+		methodHello:     {handle: handleHello, beforeHello: true, params: helloParams{}, result: helloResult{}},
 		"system.status": {handle: handleStatus, params: emptyResult{}, result: StatusResult{}},
 
 		// api.schema prints the protocol this binary was built with (API Spec §5.37).
@@ -140,6 +144,13 @@ func handleHello(_ context.Context, c *conn, raw json.RawMessage) (any, error) {
 			ErrorField{Field: "client_kind", Issue: "must be tui, cli or desktop"})
 	}
 
+	// The handshake deadline (REQ-SEC-017) has done its job; an authenticated connection
+	// may stay silent for as long as it likes.
+	if err := c.netConn.SetReadDeadline(time.Time{}); err != nil {
+		// Refused rather than INTERNAL_ERROR, so the connection closes now instead of
+		// lingering unauthenticated until the deadline it could not clear.
+		return nil, fmt.Errorf("%w: could not clear the handshake deadline: %w", ErrUnauthorized, err)
+	}
 	c.authenticated = true
 	c.clientKind = kind
 	c.connectionID = store.NewID(store.PrefixConnection)
