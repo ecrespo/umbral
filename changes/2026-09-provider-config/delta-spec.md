@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | `PROPOSED 2026-09-27 — pending the Tech Lead's ratification. T-F1-02 implements it and is merged with it open, at the user's instruction to carry on through T-F1-10; nothing downstream may treat it as ratified until it is.` |
 | **Date** | 2026-09-27 |
-| **Task** | T-F1-02 (implements 1–7, 9); T-F1-05 (implements 8, 8a–8c; touches API 1.18 §4 and §5.26, Tech 1.18 §5.1 and DD-008); T-F1-06 (8d, Tech 1.19 DD-005) |
+| **Task** | T-F1-02 (implements 1–7, 9); T-F1-05 (implements 8, 8a–8c; touches API 1.18 §4 and §5.26, Tech 1.18 §5.1 and DD-008); T-F1-06 (8d, Tech 1.19 DD-005); T-F1-08 (8e, Tech 1.21 §5.1) |
 | **Raised by** | The `spec-guardian` review of T-F1-02, 2026-09-27 (Art. 9: "NEEDS A DELTA") |
 
 ## Evidence
@@ -70,6 +70,16 @@ API 1.17 §5.28; this delta is what makes that text normative instead of silent.
    `num_ctx`"; `[providers.options]` configures it per provider. With none configured, Ollama
    still gets one: 32768, capped at the model's own window from `/api/tags` — DD-005 exists to
    avoid Ollama's short default, so sending nothing is not an option.
+8e. **What "remote" means** (T-F1-08, raised by its review). REQ-LLM-004 discards "every
+   remote candidate" without defining remote. Since T-F1-05 a provider is local when its
+   `base_url` is loopback, and nothing else is looked at. The consequence, written down here
+   rather than left implicit: a loopback gateway that forwards to the cloud — a self-hosted
+   OmniRoute, a LiteLLM proxy — is local to Umbral. `offline = true` does not stop it, and its
+   onward requests never appear in `egress_log`, because Umbral's own request stops at
+   127.0.0.1 (it is still redacted first, T-F1-07). The example says so beside the preset and
+   keeps OmniRoute out of the default classes. **Open for the Tech Lead:** whether to add a
+   per-provider `local = false` override to `models.toml` (schema, catalog and API `Model.local`
+   would follow it), or to accept the gap as documented.
 9. **`config.get` result** is `{settings, providers, rejected}`; credentials appear only as
    their reference. `cli` is not given `config.*` (API §2 unchanged).
 

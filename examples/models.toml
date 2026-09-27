@@ -1,0 +1,85 @@
+# Umbral — example models.toml
+#
+# Copy it to $XDG_CONFIG_HOME/umbral/models.toml (usually ~/.config/umbral/models.toml) and
+# keep the providers you use. The daemon reads it at start and again on `config.reload`
+# (API Spec §5.28); `umb` has no command for that yet, so restart `umbrald` after a change.
+#
+# The file names providers, model classes and the routing policy, and never a key: a
+# credential is a reference, `keyring:<service>/<account>` in the OS keyring (REQ-SEC-004).
+# Store one with, for example:
+#
+#   secret-tool store --label "umbral huggingface" service umbral username huggingface  # Linux
+#   security add-generic-password -s umbral -a huggingface -w                          # macOS
+#
+# A key written here in the clear refuses its entry, and only that entry.
+
+[router]
+policy = "local-first"          # local-first | cost | quality
+offline = false                 # true: only providers with a loopback base_url (see OmniRoute below)
+max_cost_usd_per_thread = 1.5
+
+# Task classes: candidates in order, each `<provider id>/<model>`. The router takes the first
+# that is up and can do what the call needs, and falls back on a retryable failure (429, 5xx,
+# a transport error, an empty stream) or a slow first token.
+# The model names are examples: use what your providers list (API `model.list`).
+[classes]
+fast = ["ollama/qwen2.5-coder:1.5b", "hf/Qwen/Qwen2.5-Coder-7B-Instruct"]
+code = ["ollama/gpt-oss:20b", "hf/openai/gpt-oss-120b:cerebras"]
+plan = ["ollama/qwen3:8b", "openrouter/moonshotai/kimi-k2"]
+embed = ["ollama/nomic-embed-text"]
+
+# --- Local ------------------------------------------------------------------------------
+
+[[providers]]
+id = "ollama"
+type = "ollama"                 # the native adapter: sends num_ctx on every request
+base_url = "http://127.0.0.1:11434"
+[providers.options]
+num_ctx = 32768                 # without it: 32768, capped at the model's own window
+keep_alive = "10m"
+
+# [[providers]]
+# id = "lmstudio"
+# type = "lmstudio"
+# base_url = "http://127.0.0.1:1234/v1"
+
+# [[providers]]
+# id = "llamacpp"
+# type = "llamacpp"               # start llama-server with --jinja for tool calling
+# base_url = "http://127.0.0.1:8080/v1"
+
+# --- Preset: Hugging Face router (REQ-LLM-007) --------------------------------------------
+# One OpenAI-compatible endpoint in front of many inference providers. A `:<provider>` suffix
+# on the model pins the backend (`:cerebras`, `:together`, `:fireworks-ai`…); without one the
+# router picks. Needs a Hugging Face access token allowed to call Inference Providers.
+
+[[providers]]
+id = "hf"
+type = "openai-compat"
+base_url = "https://router.huggingface.co/v1"
+api_key = "keyring:umbral/huggingface"
+
+# --- Preset: OmniRoute, self-hosted (REQ-LLM-007) ------------------------------------------
+# An OpenAI-compatible gateway you run yourself, with intent aliases (such as `auto/…`) and
+# its own quota fallback, which Umbral does not duplicate (DD-004). Set base_url to where your
+# instance listens (the port below is only an example) and add its models to a class, e.g.
+# `code = ["ollama/gpt-oss:20b", "omniroute/<model or alias>"]`.
+#
+# Beware: Umbral judges locality by base_url alone. On loopback OmniRoute counts as local, so
+# offline = true does not stop it, and what it forwards to cloud providers is not in Umbral's
+# egress_log (the request stops at 127.0.0.1). That is why it is in no class above: keep it
+# out of your classes whenever a call must stay on the machine.
+
+[[providers]]
+id = "omniroute"
+type = "openai-compat"
+base_url = "http://127.0.0.1:20128/v1"
+# api_key = "keyring:umbral/omniroute"   # if your instance requires one
+
+# --- Remote meta-provider -----------------------------------------------------------------
+
+[[providers]]
+id = "openrouter"
+type = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+api_key = "keyring:umbral/openrouter"
