@@ -446,7 +446,7 @@ default CI.
 | REQ-AGT-004 | T-F1-09, T-F1-14 | TestAskPausesTurn_REQ_AGT_004, TestAThreadScopeRemembersTheDecision_REQ_AGT_004, TestAGlobInTheTargetIsNotRemembered_REQ_AGT_004, TestACompoundLineIsNotRemembered_REQ_AGT_004, TestACancelledTurnExpiresItsApproval_REQ_AGT_004, TestAnAnswerRacingACancelIsACancel_REQ_AGT_004, TestAnApprovalRoundTripsThroughARealDaemon_REQ_AGT_004; T-F1-09: TestNoToolRunsWithoutAGrant_REQ_AGT_004 |
 | REQ-AGT-005 | T-F1-14 | TestDenyReturnsDeniedByUser_REQ_AGT_005, TestARememberedDenyAppliesToTheRestOfTheTurn_REQ_AGT_005 |
 | REQ-AGT-006 | T-F1-15 | TestInvalidArgsRepairOnce_REQ_AGT_006 |
-| REQ-AGT-007 | T-F1-10, T-F1-16 | TestCancelUnder500ms_REQ_AGT_007 (T-F1-16, through `thread.cancel`); T-F1-10: TestKillForegroundUnder500ms_REQ_AGT_007 (the kill itself, from a cancelled context) |
+| REQ-AGT-007 | T-F1-10, T-F1-16 | TestCancelUnder500ms_REQ_AGT_007 (T-F1-16, through `thread.cancel`); T-F1-10: TestKillForegroundUnder500ms_REQ_AGT_007 (the kill itself, from a cancelled context), TestACancelBeforeTheCommandStartsStillStopsIt_REQ_AGT_007 (a cancel that lands before OSC 133;C waits for the command to start) |
 | REQ-AGT-008 | T-F1-13 | TestStopsAtMaxSteps_REQ_AGT_008 |
 | REQ-AGT-009 | T-F1-03, T-F1-13 | TestAskModeReadOnlyTools_REQ_AGT_009 |
 | REQ-AGT-010 | T-F1-13 | TestModelSwitchNextTurn_REQ_AGT_010 |

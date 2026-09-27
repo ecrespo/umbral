@@ -47,15 +47,22 @@ func (s *Service) recordOutput(live *liveSession, chunk []byte) {
 	s.noteIntegration(live)
 }
 
-// noteAgentBlock remembers the block the agent's claim opened.
+// noteAgentBlock remembers the block the agent's claim opened, and stops its command now if
+// the run was cancelled before the shell started it.
 func (s *Service) noteAgentBlock(live *liveSession, block domain.Block) {
 	if block.Origin != domain.OriginAgent {
 		return
 	}
 	live.mu.Lock()
-	defer live.mu.Unlock()
-	if live.agent != nil && live.agent.blockID == "" && live.agent.threadID == block.ThreadID {
-		live.agent.blockID = block.ID
+	run := live.agent
+	stop := false
+	if run != nil && run.blockID == "" && run.threadID == block.ThreadID {
+		run.blockID = block.ID
+		stop = run.cancelled
+	}
+	live.mu.Unlock()
+	if stop {
+		s.stopAgent(live, run)
 	}
 }
 

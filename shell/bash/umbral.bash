@@ -63,6 +63,14 @@ __umbral_cwd() {
 # The arrangement assumes this hook is the last element of PROMPT_COMMAND, which is how it
 # is installed below. Something appended afterwards would run inside the armed window and
 # be mistaken for a user command.
+#
+# Once it has fired, the trap removes itself until the next prompt (__umbral_debug_trap):
+# bash marks a trap "in progress" while it runs and clears the mark only when it returns, so
+# an interrupt that lands inside the trap — likely during a loop of builtins, which runs it
+# before every command — left it marked, and the trap never ran again: every later command
+# ran with no block. The daemon interrupts a cancelled agent command's shell, which made
+# this reproducible (1 in 5 on bash 3.2, 1 in 12 on bash 5). A command that runs with no
+# trap cannot be interrupted inside it, and a loop no longer pays for it on every pass.
 __umbral_preexec() {
 	[[ -z "${__umbral_armed-}" ]] && return 0
 	[[ "${BASH_COMMAND}" == __umbral_* ]] && return 0
@@ -97,10 +105,14 @@ __umbral_precmd() {
 	__umbral_cwd
 	__umbral_mark_prompt
 	# Arm last: everything the DEBUG trap sees from here until the next prompt is the
-	# command the user typed.
+	# command the user typed. The trap is put back here, and the status returned through a
+	# function the trap ignores: a plain `return` would be the first command it sees.
 	__umbral_armed=1
-	return "${exit_code}"
+	trap "${__umbral_debug_trap}" DEBUG
+	__umbral_return "${exit_code}"
 }
+
+__umbral_return() { return "$1"; }
 
 # __umbral_mark_prompt wraps PS1 in the prompt markers, every prompt rather than once.
 # Starship and powerlevel10k rewrite PS1 on each prompt, so a one-time wrap is lost after
@@ -125,5 +137,8 @@ fi
 __umbral_esc "133;A"
 __umbral_cwd
 
-# The trap goes last so it cannot fire for the announcement above.
-trap '__umbral_preexec' DEBUG
+# The trap goes last so it cannot fire for the announcement above. It is removed from the
+# trap's own command, not from __umbral_preexec: bash puts back a function's DEBUG trap when
+# the function returns.
+__umbral_debug_trap='__umbral_preexec; [[ -z "${__umbral_in_command-}" ]] || trap - DEBUG'
+trap "${__umbral_debug_trap}" DEBUG
