@@ -184,6 +184,40 @@ func TestSubscribeSnapshotBeforeLive_REQ_TERM_004(t *testing.T) {
 	}
 }
 
+// TestSubscribeAnswersBeforeItStreams_REQ_TERM_004 pins the order API Spec §5.11 promises:
+// the response first, and `session.output` only after it. The subscription exists before the
+// snapshot, so a chunk arriving in that window is queued — and its writer used to send it at
+// once, racing the reply. A client reading its response got a notification instead; the
+// Ubuntu runner lost that race in TestSubscribeSnapshotBeforeLive_REQ_TERM_004.
+//
+// The pause inside the snapshot is what makes the race certain rather than likely: it gives
+// an unheld writer all the time it needs to get there first.
+func TestSubscribeAnswersBeforeItStreams_REQ_TERM_004(t *testing.T) {
+	t.Parallel()
+
+	sessions := newFakeSessions()
+	s := testServerWithSessions(t, sessions)
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+	sessions.setSnapshot([]byte("screen"), 7, 0, 0)
+	sessions.duringSnapshot(func() {
+		s.dispatchTestOutput(fakeSessionID, 8, []byte("arrived mid-snapshot"))
+		time.Sleep(200 * time.Millisecond)
+	})
+
+	resp := c.call(2, "session.subscribe", map[string]any{"session_id": fakeSessionID})
+	if string(resp.ID) != "2" || resp.Error != nil {
+		t.Fatalf("the first message after session.subscribe was not its response: %+v", resp)
+	}
+	got := c.collectNotificationsUntil("session.output", 15*time.Second,
+		func(got []map[string]any) bool { return bytes.Contains(payload(got), []byte("arrived mid-snapshot")) })
+	if !bytes.Contains(payload(got), []byte("arrived mid-snapshot")) {
+		t.Errorf("the chunk held back until the response was never sent; got %q", payload(got))
+	}
+}
+
 // TestSessionSurvivesNoClients_REQ_TERM_003 checks the daemon's side of durability: output
 // published while nobody is subscribed is neither queued forever nor an error, and a client
 // that subscribes afterwards is served normally.

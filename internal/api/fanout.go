@@ -47,6 +47,11 @@ type subscription struct {
 	sentEnvelope uint64
 	closed       bool
 	overflow     bool
+	// held keeps the writer silent until the `session.subscribe` response is on the wire.
+	// API Spec §5.11 puts every `session.output` after that response, and the subscription
+	// exists before the snapshot is taken, so without this a chunk queued in that window
+	// could be written first — and a client reading its reply would get a notification.
+	held bool
 
 	wake   chan struct{}
 	done   chan struct{}
@@ -72,6 +77,7 @@ func newSubscription(c *conn, sessionID string, startSeq uint64) *subscription {
 		logger:    c.logger,
 		lastSeq:   startSeq,
 		sentSeq:   startSeq,
+		held:      true,
 		wake:      make(chan struct{}, 1),
 		done:      make(chan struct{}),
 	}
@@ -147,6 +153,15 @@ func (s *subscription) rebase(startSeq uint64) {
 	}
 }
 
+// release lets the writer send what it has queued. The connection calls it once the
+// subscribe response has been written.
+func (s *subscription) release() {
+	s.mu.Lock()
+	s.held = false
+	s.mu.Unlock()
+	s.signal()
+}
+
 // signal wakes the writer without blocking if it is already awake.
 func (s *subscription) signal() {
 	select {
@@ -172,6 +187,14 @@ func (s *subscription) run() {
 		case <-s.wake:
 		case <-s.conn.closedCh():
 			return
+		}
+
+		// Held, nothing may be written — not even an overflow notice. `release` wakes the
+		// writer again, so whatever piled up meanwhile is not forgotten.
+		if held, closed := s.state(); closed {
+			return
+		} else if held {
+			continue
 		}
 
 		if s.takeOverflow() {
@@ -246,6 +269,12 @@ func (s *subscription) takeOverflow() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.overflow
+}
+
+func (s *subscription) state() (held, closed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.held, s.closed
 }
 
 func (s *subscription) isClosed() bool {

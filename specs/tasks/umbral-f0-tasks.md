@@ -648,6 +648,14 @@
   before `socketDir` and green after, with `cmd/umbrald` too and nothing left in `/tmp`. The
   zsh cause cannot be reproduced here — this machine has no insecure completion directory —
   so its fix is confirmed only by the runner.
+- **The first runner run after the merge** (run 36283140086) was green on macOS and red on
+  Ubuntu in `TestSubscribeSnapshotBeforeLive_REQ_TERM_004`, and not as a flake: the daemon
+  broke API Spec §5.11. The subscription exists before the snapshot so that output in that
+  window is queued, and its writer then sent that output at once — racing the
+  `session.subscribe` reply, so a client could read a `session.output` where its response
+  should be. A subscription now starts held and is released once the reply is written
+  (`conn.afterReply`). `TestSubscribeAnswersBeforeItStreams_REQ_TERM_004` pauses inside the
+  snapshot to make the race certain: red 3/3 before the fix, green after.
 
 ## Traceability matrix (F0)
 
@@ -656,7 +664,7 @@
 | REQ-TERM-001 | T-F0-05, T-F0-13 | TestCreateSession_REQ_TERM_001, BenchmarkSessionCreate_REQ_TERM_001 |
 | REQ-TERM-002 | T-F0-07 | Conformance_REQ_TERM_002 |
 | REQ-TERM-003 | T-F0-06 | TestSessionSurvivesNoClients_REQ_TERM_003 |
-| REQ-TERM-004 | T-F0-04, T-F0-06 | TestSubscribeSnapshotBeforeLive_REQ_TERM_004, TestSnapshotRoundTrip_REQ_TERM_004, TestRebaseKeepsWhatTheSnapshotDoesNotContain_REQ_TERM_004 |
+| REQ-TERM-004 | T-F0-04, T-F0-06 | TestSubscribeSnapshotBeforeLive_REQ_TERM_004, TestSnapshotRoundTrip_REQ_TERM_004, TestRebaseKeepsWhatTheSnapshotDoesNotContain_REQ_TERM_004, TestSubscribeAnswersBeforeItStreams_REQ_TERM_004 |
 | REQ-TERM-005 | T-F0-02, T-F0-05 | TestExitedEmitsCode_REQ_TERM_005, TestRecoveryMarksOpenBlocksAbandoned_REQ_TERM_005 |
 | REQ-TERM-006 | T-F0-06, T-F0-13 | BenchmarkOutputLatency_REQ_TERM_006 |
 | REQ-TERM-007 | T-F0-05 | TestResizeNotifies_REQ_TERM_007 |
@@ -699,6 +707,7 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | T-F0-26 | runner: macOS green, Ubuntu red → fixed | The first run on the runners after the merge found a real ordering bug in T-F0-06's fan-out, not a flake: a chunk queued while `session.subscribe` took its snapshot could be written before the reply, against API Spec §5.11. Subscriptions now start held and are released after the response is written; the new test was red 3/3 before the fix, and `spec-guardian` broke the hold and the release in turn to confirm both are guarded. |
 | 2026-09-26 | T-F0-26 | done locally; runner pending | "The gate is green" had meant the local gate for weeks. The remote one was red on both OSes, for reasons none of which a Linux laptop with a terminal could see: no `TERM`, a long `TMPDIR`, a runner's zsh asking a question. |
 | 2026-09-26 | T-F0-25 | done | The GitHub CI had been red on both OSes for eight runs while `task ci` was green locally. Four of the failures were one missing line: the daemon never told a pane what terminal it was, and a runner has no `TERM` to inherit. |
 | 2026-09-26 | — | F0 criterion 3 moved | The Tech Lead moved the TUI's week to the release 0.1 gate (delta `2026-09-defer-tui-week`, `T-REL-01`); F0 closes on the other five criteria and REQ-BLK-003. |

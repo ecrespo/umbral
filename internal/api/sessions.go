@@ -218,6 +218,9 @@ func handleSessionSubscribe(ctx context.Context, c *conn, raw json.RawMessage) (
 		return nil, err
 	}
 	c.rebaseSubscription(params.SessionID, snapshot.Seq)
+	// Streaming starts only once this response is on the wire: §5.11 promises the client
+	// its snapshot before any output, and the chunks queued above are already waiting.
+	c.afterReply = append(c.afterReply, func() { c.releaseSubscription(params.SessionID) })
 
 	return sessionSubscribeResult{
 		Snapshot: screenSnapshot{

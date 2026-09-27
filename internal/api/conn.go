@@ -100,6 +100,12 @@ type conn struct {
 	subsMu sync.Mutex
 	subs   map[string]*subscription
 
+	// afterReply holds what the current handler scheduled for after `reply` returns — which
+	// has written the response, or nothing for a JSON-RPC notification. Hooks are dropped
+	// if the connection closes instead. It belongs to the read goroutine, which is the only
+	// one that dispatches and replies.
+	afterReply []func()
+
 	closed    chan struct{}
 	closeOnce sync.Once
 }
@@ -108,8 +114,9 @@ type conn struct {
 // writer learns to stop.
 func (c *conn) closedCh() <-chan struct{} { return c.closed }
 
-// subscribe starts streaming a session to this connection, replacing any existing
-// subscription to the same session.
+// subscribe registers a subscription to a session, replacing any existing one to the same
+// session. It starts held: nothing is written until `releaseSubscription`, which the
+// subscribe handler schedules for after its response (API Spec §5.11).
 func (c *conn) subscribe(sessionID string, startSeq uint64) {
 	c.subsMu.Lock()
 	defer c.subsMu.Unlock()
@@ -144,6 +151,17 @@ func (c *conn) rebaseSubscription(sessionID string, startSeq uint64) {
 
 	if sub != nil {
 		sub.rebase(startSeq)
+	}
+}
+
+// releaseSubscription lets a held subscription start writing.
+func (c *conn) releaseSubscription(sessionID string) {
+	c.subsMu.Lock()
+	sub := c.subs[sessionID]
+	c.subsMu.Unlock()
+
+	if sub != nil {
+		sub.release()
 	}
 }
 
@@ -282,6 +300,11 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 		return true
 	}
 	c.reply(req, result, err)
+	hooks := c.afterReply
+	c.afterReply = nil
+	for _, hook := range hooks {
+		hook()
+	}
 	return false
 }
 
