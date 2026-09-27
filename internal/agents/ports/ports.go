@@ -50,6 +50,19 @@ type Store interface {
 	// Rules are the persisted policy rules that apply to a thread: its own and the global
 	// ones (`policy_rules`).
 	Rules(ctx context.Context, threadID string) ([]secdomain.Rule, error)
+
+	// RequestApproval persists a pending approval and marks its thread awaiting_approval, in
+	// one transaction.
+	RequestApproval(ctx context.Context, a domain.Approval) error
+	// Approval reads one approval.
+	Approval(ctx context.Context, id string) (domain.Approval, error)
+	// Approvals lists approvals oldest first: the pending ones, or all with all set; of one
+	// thread when threadID is set.
+	Approvals(ctx context.Context, threadID string, all bool) ([]domain.Approval, error)
+	// DecideApproval records a decision on a pending approval — and the rule it remembers, when
+	// rule is set — and marks its thread running again, in one transaction. An approval that is
+	// not pending is domain.ErrConflict.
+	DecideApproval(ctx context.Context, id string, state domain.ApprovalState, scope domain.Scope, rule *secdomain.Rule, now int64) (domain.Approval, error)
 }
 
 // Publisher is where the runtime announces what it persisted: the daemon's bus.
@@ -78,20 +91,6 @@ type Models interface {
 	Available(ctx context.Context, class, model string) bool
 }
 
-// ApprovalRequest is a tool call the policy answered `ask` for (REQ-AGT-004).
-type ApprovalRequest struct {
-	Call     domain.ToolCall
-	Decision secdomain.Decision
-	Summary  string
-	Diff     string
-}
-
-// Approver pauses a turn on an `ask` until the user answers (T-F1-14). It returns whether the
-// call was approved.
-type Approver interface {
-	Approve(ctx context.Context, req ApprovalRequest) (bool, error)
-}
-
 // Threads is the module's inbound port, which internal/api serves as thread.*.
 type Threads interface {
 	Create(ctx context.Context, p domain.CreateParams) (domain.Thread, error)
@@ -100,6 +99,11 @@ type Threads interface {
 	List(ctx context.Context) ([]domain.Thread, error)
 	Update(ctx context.Context, id string, p domain.UpdateParams) (domain.Thread, error)
 	Messages(ctx context.Context, threadID string) ([]domain.Message, error)
+	// Approvals is approval.list (API §5.24).
+	Approvals(ctx context.Context, threadID string, all bool) ([]domain.Approval, error)
+	// Respond is approval.respond (API §5.25): it records the decision, and the rule a
+	// `thread` or `always` scope remembers, then resumes the paused turn.
+	Respond(ctx context.Context, r domain.Response) (domain.Approval, error)
 }
 
 // AttachmentRef is an attachment as thread.send names it.

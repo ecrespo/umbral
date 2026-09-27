@@ -54,6 +54,7 @@ var dispatchedKinds = []bus.Kind{
 	agentsports.KindThreadToolCall,
 	agentsports.KindThreadTurnFinished,
 	agentsports.KindContextCompacted,
+	agentsports.KindApprovalRequested,
 }
 
 // Notify forwards module events to connected clients as JSON-RPC notifications
@@ -161,6 +162,8 @@ func toNotification(event bus.Event) (string, any) {
 			ThreadID: e.ThreadID, TurnID: e.TurnID, StopReason: string(e.StopReason),
 			Usage: turnUsage{InTokens: e.Usage.InTokens, OutTokens: e.Usage.OutTokens, CostMicroUSD: e.Usage.CostMicroUSD},
 		}
+	case agentsports.ApprovalRequested:
+		return "approval.requested", toWireApproval(e.Approval)
 	case agentsports.ContextCompacted:
 		return "context.compacted", contextCompactedPayload{ThreadID: e.ThreadID, BeforeTokens: e.BeforeTokens, AfterTokens: e.AfterTokens}
 

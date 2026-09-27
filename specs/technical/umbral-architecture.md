@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.27 |
+| **Version** | 1.28 |
 | **Date** | 2026-09-27 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -746,8 +746,8 @@ gatherer — and publishes through a `Publisher`; `cmd/umbrald` wires them. Delt
   (REQ-AGT-010) — along with its rules, the tools its mode exposes (`ask`: ReadOnly only,
   REQ-AGT-009), the system prompt (§5.3c) and the history rebuilt from the stored messages and
   tool calls. Each step compacts if it must (§5.3c), calls the model, and runs the tools asked
-  for through `security.Decide` and the registry: `deny` is `denied_by_policy`, `ask` goes to the
-  approval flow (T-F1-14; without one, `denied_by_policy`), `allow` runs. It ends at the model's
+  for through `security.Decide` and the registry: `deny` is `denied_by_policy`, `ask` pauses the
+  turn on an approval (below), `allow` runs. It ends at the model's
   answer without tools, at `max_steps`, or when the thread's tokens reach its budget
   (REQ-AGT-008).
 - **Persist before notify** (DD-007): the assistant message is inserted with its first text
@@ -757,6 +757,13 @@ gatherer — and publishes through a `Publisher`; `cmd/umbrald` wires them. Delt
   published only. **A write that fails stops the turn** with `storage_error`, publishing and
   running nothing it could not record (Analyze C-01); `ErrContextOverflow` is `context_overflow`;
   a routing failure `provider_error`.
+- **Approvals** (REQ-AGT-004, 005, REQ-SEC-005, T-F1-14; delta `2026-09-approvals`): an `ask`
+  persists the approval — target as `summary`, the tool's diff for writes (REQ-AGT-012) — and the
+  thread as `awaiting_approval`, publishes `approval.requested`, and waits. `approval.respond`
+  writes the decision, and the rule a `thread` or `always` scope remembers (tool plus the exact
+  target), in one transaction, then resumes the turn; a destructive command, a target holding
+  `*` or `?`, or a compound command line is kept `once`. A denial is a `denied_by_user` result the model reads; a turn
+  cancelled while it waits leaves the approval `expired`.
 
 ### 5.4 Error Handling
 
@@ -1049,3 +1056,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.25 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-11: §5.3c describes context assembly — rules files from the cwd up to the write root, highest precedence first, never followed out of it; `file`, `dir` and `block` attachments capped at 256 KiB with the omitted bytes stated, binary content left out; git context run without any command a repository's config can name (fsmonitor, filter drivers, diff drivers), bounded, and a failing git stated. Delta `2026-09-context-assembly` (proposed). |
 | 1.26 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-12: §5.3c adds the budget and compaction; Q-03 is answered — no tokenizer, a deliberately high byte estimate — and §3's module table says so. Delta `2026-09-context-budget` (proposed). |
 | 1.27 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-13: §5.3d describes the agent runtime — `thread.send`'s idempotency and transaction, a turn's loop and limits, persist-before-notify for streamed text and tool calls, and `storage_error` for a failed write (Analyze C-01). Delta `2026-09-agent-runtime` (proposed). |
+| 1.28 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-14: §5.3d adds the approval flow — pause, persist-then-resume, what `thread` and `always` remember, which decisions stay `once`, and what a cancel leaves. Delta `2026-09-approvals` (proposed). |

@@ -11,7 +11,16 @@ const (
 	KindThreadToolCall     bus.Kind = "thread.tool_call"
 	KindThreadTurnFinished bus.Kind = "thread.turn_finished"
 	KindContextCompacted   bus.Kind = "context.compacted"
+	KindApprovalRequested  bus.Kind = "approval.requested"
 )
+
+// ApprovalRequested is a turn paused on a decision (REQ-AGT-004).
+type ApprovalRequested struct {
+	Approval domain.Approval
+}
+
+// EventKind implements bus.Event.
+func (ApprovalRequested) EventKind() bus.Kind { return KindApprovalRequested }
 
 // ThreadDelta is a chunk of the model's answer (REQ-AGT-001). Kind is "text" or "reasoning".
 type ThreadDelta struct {

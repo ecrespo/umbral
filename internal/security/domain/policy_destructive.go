@@ -157,6 +157,10 @@ func findCommand(words []string) (string, bool) {
 	return "", false
 }
 
+// CommandParts is a command line's simple commands as the rules read them — each part as
+// written — so a caller can tell whether a rule on the whole line would ever match again.
+func CommandParts(line string) []string { return commandParts(line) }
+
 // commandParts splits a command line at its separators, as simpleCommands does, but keeps
 // each part as written — rules match what the user would type, wrappers included.
 func commandParts(line string) []string {

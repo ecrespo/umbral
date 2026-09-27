@@ -189,3 +189,64 @@ func TestRulesAreTheThreadsAndTheGlobalOnes_REQ_AGT_014(t *testing.T) {
 		t.Fatalf("rules %+v %v", rules, err)
 	}
 }
+
+func TestApprovalsRoundTrip_REQ_AGT_004(t *testing.T) {
+	s := open(t)
+	th := thread(t, s, 1000)
+	ctx := t.Context()
+	if _, _, err := s.BeginTurn(ctx, userMessage(th, ""), 2); err != nil {
+		t.Fatal(err)
+	}
+	am := domain.Message{ID: store.NewID(store.PrefixMessage), ThreadID: th.ID, TurnID: "trn_1", Role: domain.RoleAssistant, CreatedAt: 3}
+	if err := s.AppendMessage(ctx, am); err != nil {
+		t.Fatal(err)
+	}
+	call := domain.ToolCall{
+		ID: store.NewID(store.PrefixToolCall), ThreadID: th.ID, MessageID: am.ID, Tool: "run_command",
+		Risk: "Exec", Args: json.RawMessage(`{"command":"make"}`), Status: domain.ToolPending, StartedAt: 3,
+	}
+	if err := s.SaveToolCall(ctx, call); err != nil {
+		t.Fatal(err)
+	}
+	a := domain.Approval{
+		ID: store.NewID(store.PrefixApproval), ThreadID: th.ID, ToolCallID: call.ID, Tool: "run_command",
+		Risk: "Exec", Reason: "policy", Summary: "make", Diff: "", State: domain.ApprovalPending, CreatedAt: 4,
+	}
+	if err := s.RequestApproval(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Thread(ctx, th.ID)
+	if got.State != domain.StateAwaitingApproval || got.AttentionState != "blocked" {
+		t.Fatalf("thread while waiting %+v", got)
+	}
+	pending, _ := s.Approvals(ctx, "", false)
+	if len(pending) != 1 || pending[0].ID != a.ID || pending[0].DecidedAt != nil {
+		t.Fatalf("pending %+v", pending)
+	}
+	rule := &secdomain.Rule{ThreadID: th.ID, Tool: "run_command", Pattern: "make", Decision: secdomain.VerdictAllow, Source: secdomain.RuleSourceUser}
+	decided, err := s.DecideApproval(ctx, a.ID, domain.ApprovalApproved, domain.ScopeThread, rule, 5)
+	if err != nil || decided.State != domain.ApprovalApproved || decided.Scope != domain.ScopeThread || *decided.DecidedAt != 5 {
+		t.Fatalf("decide %+v %v", decided, err)
+	}
+	if got, _ := s.Thread(ctx, th.ID); got.State != domain.StateRunning {
+		t.Fatalf("the thread did not resume: %s", got.State)
+	}
+	if rules, _ := s.Rules(ctx, th.ID); len(rules) != 1 || rules[0].Pattern != "make" {
+		t.Fatalf("rules %+v", rules)
+	}
+	if _, err := s.DecideApproval(ctx, a.ID, domain.ApprovalDenied, domain.ScopeOnce, nil, 6); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("a second decision: %v", err)
+	}
+	if _, err := s.Approval(ctx, "apr_nope"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("unknown: %v", err)
+	}
+	if pending, _ := s.Approvals(ctx, "", false); len(pending) != 0 {
+		t.Fatalf("still pending %+v", pending)
+	}
+	if all, _ := s.Approvals(ctx, th.ID, true); len(all) != 1 {
+		t.Fatalf("all %+v", all)
+	}
+	if other, _ := s.Approvals(ctx, "thr_other", true); len(other) != 0 {
+		t.Fatalf("another thread's %+v", other)
+	}
+}

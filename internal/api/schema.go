@@ -227,6 +227,7 @@ var notificationShapes = map[string]any{
 	"thread.tool_call":     ToolCall{},
 	"thread.turn_finished": turnFinishedPayload{},
 	"context.compacted":    contextCompactedPayload{},
+	"approval.requested":   Approval{},
 }
 
 func schemaNotifications() []SchemaNotification {
