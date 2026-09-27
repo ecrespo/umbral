@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | `PROPOSED 2026-09-27 — pending the Tech Lead's ratification. T-F1-02 implements it and is merged with it open, at the user's instruction to carry on through T-F1-10; nothing downstream may treat it as ratified until it is.` |
 | **Date** | 2026-09-27 |
-| **Task** | T-F1-02 (implements); T-F1-05 (inherits decision 8) |
+| **Task** | T-F1-02 (implements 1–7, 9); T-F1-05 (implements 8, 8a–8c; touches API 1.18 §4 and §5.26, Tech 1.18 §5.1 and DD-008) |
 | **Raised by** | The `spec-guardian` review of T-F1-02, 2026-09-27 (Art. 9: "NEEDS A DELTA") |
 
 ## Evidence
@@ -52,6 +52,20 @@ API 1.17 §5.28; this delta is what makes that text normative instead of silent.
    `health = down` with reason `keyring_unavailable`" is closed by T-F1-05, when model rows
    exist: a model's health and reason are read from its provider, with no new column, so no
    migration 0006. `TestModelsOfADownProviderAreDown_REQ_SEC_008`.
+8a. **Implemented by T-F1-05** with three more reasons a model can carry, all its provider's:
+   `discovery_failed`, `no_adapter` and `invalid_config` (API 1.18 §4). T-F1-05 also adds the
+   provider type `llamacpp`, which REQ-LLM-001 names and decision 2's list omitted.
+8b. **Offline means no traffic.** With `router.offline = true` a remote provider is not
+   contacted at all — no discovery either — and its models are listed `down` with `offline`.
+   REQ-LLM-004 speaks only of routing candidates; a user who sets offline expects silence.
+8c. **Discovery is egress.** Art. 4 records every request that leaves the machine, so the
+   `egress_log` hook REQ-SEC-002 assigns to T-F1-07 lands with the first request that leaves:
+   an HTTP transport under every adapter writes the row (thread NULL for the daemon's own
+   requests) before sending, and refuses to send when it cannot. A provider never discovered —
+   no keyring on the very first start — has no model rows, so "mark their models down" has
+   nothing to mark until it has been discovered once; `umb status` still shows the reason.
+   OpenRouter's variable price (`-1`) is stored as 0; T-F1-07's `cost` policy must not read it
+   as free.
 9. **`config.get` result** is `{settings, providers, rejected}`; credentials appear only as
    their reference. `cli` is not given `config.*` (API §2 unchanged).
 

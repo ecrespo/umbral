@@ -32,6 +32,18 @@ type providerConfig struct {
 	settings config.Settings
 	models   config.Models
 	resolved []secdomain.ResolvedCredential
+	// observers hear every configuration applied, at start and on each reload.
+	observers []func(config.Models, []secdomain.ResolvedCredential)
+}
+
+// observe calls fn with the configuration now in force and again after every reload. It is
+// how the gateway learns which providers to build without importing this file's types.
+func (p *providerConfig) observe(fn func(config.Models, []secdomain.ResolvedCredential)) {
+	p.mu.Lock()
+	p.observers = append(p.observers, fn)
+	models, resolved := p.models, p.resolved
+	p.mu.Unlock()
+	fn(models, resolved)
 }
 
 // loadProviders reads models.toml and resolves its credentials. A models file the schema
@@ -97,7 +109,11 @@ func (p *providerConfig) resolve(ctx context.Context, settings config.Settings, 
 func (p *providerConfig) apply(settings config.Settings, models config.Models, resolved []secdomain.ResolvedCredential) {
 	p.mu.Lock()
 	p.settings, p.models, p.resolved = settings, models, resolved
+	observers := p.observers
 	p.mu.Unlock()
+	for _, fn := range observers {
+		fn(models, resolved)
+	}
 
 	for _, r := range models.Rejected {
 		p.logger.Error("a provider entry was rejected",

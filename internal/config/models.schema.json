@@ -42,7 +42,7 @@
       "required": ["id", "type"],
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z0-9_-]{1,64}$" },
-        "type": { "enum": ["ollama", "openai-compat", "lmstudio", "openrouter", "yzma"] },
+        "type": { "enum": ["ollama", "openai-compat", "lmstudio", "llamacpp", "openrouter", "yzma"] },
         "base_url": { "type": "string", "minLength": 1 },
         "api_key": { "type": "string" },
         "options": { "type": "object" },
