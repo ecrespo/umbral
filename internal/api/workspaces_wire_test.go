@@ -197,7 +197,7 @@ func sampleTree() wsdomain.Tree {
 func testServerWithTree(t *testing.T, tree wsports.Workspaces) *Server {
 	t.Helper()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	eventBus := bus.New()
 	t.Cleanup(eventBus.Close)
 

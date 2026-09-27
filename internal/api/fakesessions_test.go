@@ -120,7 +120,7 @@ var _ sessports.Sessions = (*fakeSessions)(nil)
 func testServerWithSessions(t *testing.T, sessions sessports.Sessions) *Server {
 	t.Helper()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	eventBus := bus.New()
 	t.Cleanup(eventBus.Close)
 
@@ -166,7 +166,7 @@ func (s *Server) dispatchTestOutput(sessionID string, seq uint64, data []byte) {
 func benchServer(b *testing.B, sessions sessports.Sessions) *Server {
 	b.Helper()
 
-	dir := b.TempDir()
+	dir := socketDir(b)
 	eventBus := bus.New()
 	b.Cleanup(eventBus.Close)
 

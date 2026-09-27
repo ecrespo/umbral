@@ -170,7 +170,7 @@ func TestSweepFailureDoesNotStopTheDaemon_REQ_TERM_012(t *testing.T) {
 func isolatedRuntime(t *testing.T) (runtimeRoot, daemonDir string) {
 	t.Helper()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	runtimeRoot = filepath.Join(dir, "run")
 	daemonDir = filepath.Join(runtimeRoot, "umbral")
 	if err := os.MkdirAll(daemonDir, 0o700); err != nil {

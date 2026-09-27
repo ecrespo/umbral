@@ -65,7 +65,7 @@ func TestRunOpensTheDatabaseAndRecovers(t *testing.T) {
 func TestRunServesTheSocketUntilTheContextIsCancelled(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	socket := filepath.Join(dir, "umbral.sock")
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

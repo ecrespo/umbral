@@ -86,6 +86,7 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 | T-F0-23 | A closed pipe ends `umb` with 0, not with SIGPIPE (REQ-CLI-004) | 0.1d | T-F0-11 | ✅ 2026-09-26 |
 | T-F0-24 | A daemon locks the database it recovers (Data Model §6) | 0.25d | T-F0-02, T-F0-22 | ✅ 2026-09-26 |
 | T-F0-25 | A pane says which terminal it is (REQ-TERM-013) | 0.1d | T-F0-05 | ✅ 2026-09-26 |
+| T-F0-26 | The CI gate runs green on the runners, not only on this machine (Art. 1) | 0.25d | T-F0-25 | ✅ 2026-09-26 |
 
 **F0 meets its exit criteria; the closing checklist of `docs/f0-closure-plan.md` is pending.**
 Reviewed against a running daemon on 2026-09-20

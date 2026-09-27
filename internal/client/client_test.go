@@ -98,7 +98,7 @@ func TestDialSurfacesTheDaemonsError(t *testing.T) {
 func TestDialWithoutATokenLooksLikeAMissingDaemon(t *testing.T) {
 	t.Parallel()
 
-	_, err := Dial(context.Background(), filepath.Join(t.TempDir(), "umbral.sock"))
+	_, err := Dial(context.Background(), filepath.Join(socketDir(t), "umbral.sock"))
 	if !errors.Is(err, ErrNoSocket) {
 		t.Errorf("error = %v, want ErrNoSocket so the autostart path runs", err)
 	}
@@ -160,7 +160,7 @@ func fakeServer(t *testing.T, handle func(method string, id json.RawMessage, enc
 func fakeServerWithParams(t *testing.T, handle func(method string, params map[string]any, id json.RawMessage, enc *json.Encoder)) string {
 	t.Helper()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	socket := filepath.Join(dir, "umbral.sock")
 	if err := os.WriteFile(filepath.Join(dir, "token"), []byte("deadbeef"), 0o600); err != nil {
 		t.Fatalf("write the token: %v", err)

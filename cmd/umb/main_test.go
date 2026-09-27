@@ -132,7 +132,7 @@ func TestBlockLastExits69WhenTheDaemonIsUnavailable_REQ_CLI_003(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{
 		"block", "last", "--json", "--no-autostart",
-		"--socket", filepath.Join(t.TempDir(), "umbral.sock"),
+		"--socket", filepath.Join(socketDir(t), "umbral.sock"),
 	}, &stdout, &stderr)
 
 	if code != exitUnavailable {
@@ -176,7 +176,7 @@ func serveFakeDaemon(t *testing.T, results map[string]any) string {
 func serveFakeDaemonWithParams(t *testing.T, results map[string]any, seen chan<- map[string]any, watchHello ...bool) string {
 	t.Helper()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	socket := filepath.Join(dir, "umbral.sock")
 	if err := os.WriteFile(filepath.Join(dir, "token"), []byte("deadbeef"), 0o600); err != nil {
 		t.Fatalf("write the token: %v", err)
@@ -314,7 +314,7 @@ func TestBrokenPipeIsNotAFailure_REQ_CLI_004(t *testing.T) {
 func TestAutostartFailureExits69_REQ_CLI_003(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	var stdout, stderr bytes.Buffer
 	code := run([]string{
 		"status",

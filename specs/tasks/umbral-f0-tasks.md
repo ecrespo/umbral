@@ -625,6 +625,30 @@
   `COLORTERM`; it was red on both of its cases, then green once `environ` appended the pane's
   terminal. The whole integration package passes with `TERM` unset.
 
+### [x] 2026-09-26 T-F0-26 · The CI gate runs green on the runners, not only on this machine
+- **What:** tests put their sockets in short directories (`socketDir`, under `/tmp`) instead of
+  `t.TempDir()`; `task test:portability` runs the four socket packages under a macOS-length
+  `TMPDIR` inside `task ci`; the GitHub Linux job closes zsh's insecure completion directories
+  with `compaudit` before the tests.
+- **REQ:** Art. 1 — the CI gate (infrastructure).
+- **Files:** `{internal/api,internal/client,cmd/umb,cmd/umbrald}/sockdir_test.go` and the tests
+  that now use it, `Taskfile.yml`, `.github/workflows/ci.yml`
+- **Depends on:** T-F0-25
+- **Done:** `task test:portability` green, and the GitHub `CI` workflow green on
+  `ubuntu-latest` and `macos-latest`.
+- **Why it exists:** the GitHub CI of `develop` had been red on both OSes for at least eight
+  runs (since `eeab3fb`) while `task ci` was green locally, and nothing recorded it; the
+  T-F0-20 round trip had never run there, because `go test` failed first. Three causes. Four
+  failures were `TERM` (T-F0-25). On macOS every listener failed with `bind: invalid argument`:
+  `t.TempDir()` under `/var/folders/…/T/` plus a test's name passes the 104-byte socket cap.
+  On Linux the runner's zsh stopped at compinit's "insecure directories" question and took the
+  first byte a test typed as its answer — `printf` arrived as `rintf`.
+- **Result.** The macOS failure reproduces on any machine with a 100-byte `TMPDIR`, which is
+  what `test:portability` uses; it was red on `internal/client`, `internal/api` and `cmd/umb`
+  before `socketDir` and green after, with `cmd/umbrald` too and nothing left in `/tmp`. The
+  zsh cause cannot be reproduced here — this machine has no insecure completion directory —
+  so its fix is confirmed only by the runner.
+
 ## Traceability matrix (F0)
 
 | REQ | Tasks | Tests citing it |
@@ -675,6 +699,7 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | T-F0-26 | done locally; runner pending | "The gate is green" had meant the local gate for weeks. The remote one was red on both OSes, for reasons none of which a Linux laptop with a terminal could see: no `TERM`, a long `TMPDIR`, a runner's zsh asking a question. |
 | 2026-09-26 | T-F0-25 | done | The GitHub CI had been red on both OSes for eight runs while `task ci` was green locally. Four of the failures were one missing line: the daemon never told a pane what terminal it was, and a runner has no `TERM` to inherit. |
 | 2026-09-26 | — | F0 criterion 3 moved | The Tech Lead moved the TUI's week to the release 0.1 gate (delta `2026-09-defer-tui-week`, `T-REL-01`); F0 closes on the other five criteria and REQ-BLK-003. |
 | 2026-09-26 | T-F0-24 | done | The instance lock guarded the socket's directory; recovery's premise is about the database. A second daemon with another `--socket` and the same `--db` recovered over a live session — measured, `sessions_recovered: 1` — and now exits 75 instead. |

@@ -82,6 +82,19 @@ tasks:
       # run, and neither showed in CI because a runner's home is thrown away.
       - ./scripts/test_hygiene.sh go test -race ./...
 
+  test:portability:
+    desc: The socket-using packages under a macOS-length TMPDIR, so a long socket path fails here
+    cmds:
+      # macOS caps a socket path at 104 bytes and its $TMPDIR is /var/folders/…/T/; every
+      # listener built on t.TempDir failed there for weeks while Linux, with /tmp, passed.
+      # A 100-byte TMPDIR reproduces it on any machine (T-F0-26).
+      - |
+        base="$(mktemp -d)"
+        trap 'rm -rf "$base"' EXIT
+        long="$base/a-temporary-directory-as-long-as-the-one-macos-hands-every-process"
+        mkdir -p "$long"
+        TMPDIR="$long" go test -race -count=1 ./internal/client/ ./internal/api/ ./cmd/umb/ ./cmd/umbrald/
+
   test:hygiene:selftest:
     desc: Prove the hygiene gate rejects a leak
     cmds:
@@ -183,6 +196,7 @@ tasks:
       - task: arch:selftest
       - task: test:hygiene
       - task: test:hygiene:selftest
+      - task: test:portability
       - task: perf
       - task: build
       - task: roundtrip
