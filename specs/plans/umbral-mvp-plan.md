@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.7 |
+| **Version** | 1.8 |
 | **Date** | 2026-09-11 |
 | **PRD** | `specs/prd/umbral-mvp.md` |
 | **Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -86,7 +86,7 @@ work, and T-PKG-03 is blocked on a package to build rather than pending.
 | T-F0-23 | A closed pipe ends `umb` with 0, not with SIGPIPE (REQ-CLI-004) | 0.1d | T-F0-11 | ✅ 2026-09-26 |
 | T-F0-24 | A daemon locks the database it recovers (Data Model §6) | 0.25d | T-F0-02, T-F0-22 | ✅ 2026-09-26 |
 | T-F0-25 | A pane says which terminal it is (REQ-TERM-013) | 0.1d | T-F0-05 | ✅ 2026-09-26 |
-| T-F0-26 | The CI gate runs green on the runners, not only on this machine (Art. 1) | 0.25d | T-F0-25 | ✅ 2026-09-26 |
+| T-F0-26 | The CI gate runs green on the runners, not only on this machine (Art. 1) | 0.25d | T-F0-25 | ◐ local green, runner pending |
 
 **F0 meets its exit criteria; the closing checklist of `docs/f0-closure-plan.md` is pending.**
 Reviewed against a running daemon on 2026-09-20
@@ -237,3 +237,4 @@ Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), 
 | 1.5 | 2026-09-21 | E. Crespo (assisted draft) | `T-F0-19` closes; `T-F0-20` is added from delta `2026-09-cli-workspace-surface` and `T-F0-21` from the 2026-09-21 F0 validation, which also measured exit criterion 6 for the first time — idle daemon memory, 37.6 MiB against a budget of 80 |
 | 1.6 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-20` and `T-F0-21` close; exit criterion 4 is met by `scripts/cli_roundtrip.sh` against a real daemon, after delta `2026-09-cli-allowlist` let `umb` reach the tree. `T-F0-22` (delta `2026-09-recovery-integration`) settles on restart the verdict a crash interrupted. Only criterion 3, the TUI's week, remains |
 | 1.7 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-defer-tui-week`: F0's third exit criterion, the TUI's week as the main terminal, becomes a release 0.1 gate; F0 closes on the other five and REQ-BLK-003. `T-F0-23` and `T-F0-24` added and closed |
+| 1.8 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-25` (REQ-TERM-013, delta `2026-09-pane-term`) and `T-F0-26` added: the GitHub CI of `develop` had been red on both OSes for eight runs |

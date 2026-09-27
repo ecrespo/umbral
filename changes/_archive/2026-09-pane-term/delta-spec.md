@@ -41,10 +41,10 @@ never the pane's, so it is always replaced. A pane or layout that declares `TERM
 
 ## Specification changes
 
-- **PRD §6.1:** **REQ-TERM-013** · MUST · ubiquitous — THE SYSTEM SHALL set `TERM=xterm-256color`
-  and `COLORTERM=truecolor` in the environment of every process it launches in a pane, replacing
-  the values the daemon itself inherited, so that a program in a pane addresses the emulator that
-  renders it; a value the pane's own `env` declares SHALL take precedence. PRD 1.12.
+- **PRD §6.1**, verbatim as applied (PRD 1.12):
+
+  > **REQ-TERM-013** · MUST · ubiquitous — THE SYSTEM SHALL set `TERM=xterm-256color` and `COLORTERM=truecolor` in the environment of every process it launches in a pane, replacing the values the daemon itself inherited, so that a program in a pane addresses the emulator that renders it rather than whatever terminal — or none — the daemon was started from; a value the pane's own `env` declares (REQ-WS-005) SHALL take precedence.
+
 - **Tech §5.2b** gains the two variables and the precedence. Tech 1.13.
 
 ## Verification

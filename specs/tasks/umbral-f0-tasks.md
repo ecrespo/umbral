@@ -625,7 +625,7 @@
   `COLORTERM`; it was red on both of its cases, then green once `environ` appended the pane's
   terminal. The whole integration package passes with `TERM` unset.
 
-### [x] 2026-09-26 T-F0-26 · The CI gate runs green on the runners, not only on this machine
+### [~] T-F0-26 · The CI gate runs green on the runners, not only on this machine
 - **What:** tests put their sockets in short directories (`socketDir`, under `/tmp`) instead of
   `t.TempDir()`; `task test:portability` runs the four socket packages under a macOS-length
   `TMPDIR` inside `task ci`; the GitHub Linux job closes zsh's insecure completion directories
