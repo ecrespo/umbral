@@ -21,7 +21,7 @@ import (
 func TestUmbAutostartFailsWith69_REQ_CLI_003(t *testing.T) {
 	t.Parallel()
 
-	socket := filepath.Join(t.TempDir(), "umbral.sock")
+	socket := filepath.Join(socketDir(t), "umbral.sock")
 
 	start := time.Now()
 	c, err := Connect(context.Background(), Options{
@@ -58,7 +58,7 @@ func TestUmbAutostartFailsWith69_REQ_CLI_003(t *testing.T) {
 func TestAutostartLaunchesTheDaemon_REQ_CLI_003(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	socket := filepath.Join(dir, "umbral.sock")
 	token := "3f1c" // the fake accepts anything; the client still has to send one
 	if err := os.WriteFile(filepath.Join(dir, "token"), []byte(token), 0o600); err != nil {
@@ -89,7 +89,7 @@ func TestConnectDoesNotAutostartWhenAskedNotTo(t *testing.T) {
 
 	start := time.Now()
 	_, err := Connect(context.Background(), Options{
-		SocketPath:  filepath.Join(t.TempDir(), "umbral.sock"),
+		SocketPath:  filepath.Join(socketDir(t), "umbral.sock"),
 		NoAutostart: true,
 	})
 	if err == nil {
@@ -109,7 +109,7 @@ func TestConnectDoesNotAutostartWhenAskedNotTo(t *testing.T) {
 func TestConnectDoesNotAutostartOnARealError(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	socket := filepath.Join(dir, "umbral.sock")
 	if err := os.WriteFile(filepath.Join(dir, "token"), []byte("tok"), 0o600); err != nil {
 		t.Fatalf("write the token: %v", err)
@@ -156,7 +156,7 @@ func TestConnectDoesNotAutostartOnARealError(t *testing.T) {
 func TestAutostartBudgetExpiringMidDialStillReports69_REQ_CLI_003(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	socket := filepath.Join(dir, "umbral.sock")
 	if err := os.WriteFile(filepath.Join(dir, "token"), []byte("tok"), 0o600); err != nil {
 		t.Fatalf("write the token: %v", err)

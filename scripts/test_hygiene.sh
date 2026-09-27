@@ -76,9 +76,15 @@ processes() {
 # `shellinteg-*` is the name used since — those belong in the daemon's runtime directory now
 # (REQ-TERM-012), so one appearing here at all means something put it back in the shared
 # temporary directory, which is exactly the regression worth failing on.
+#
+# /tmp as well when TMPDIR points elsewhere: tests put their sockets under /tmp on purpose
+# (`socketDir`, T-F0-26), because macOS's TMPDIR is too long for a socket path.
 temp_dirs() {
-  find "$TMP_DIR" -maxdepth 1 \( -name 'umbral-shellinteg-*' -o -name 'shellinteg-*' -o -name 'Test*' \) \
-    -newermt '1970-01-01' 2>/dev/null | LC_ALL=C sort || true
+  {
+    find "$TMP_DIR" -maxdepth 1 \( -name 'umbral-shellinteg-*' -o -name 'shellinteg-*' -o -name 'Test*' \) \
+      -newermt '1970-01-01' 2>/dev/null
+    [ "$TMP_DIR" = /tmp ] || find /tmp -maxdepth 1 -name 'TestSock*' -newermt '1970-01-01' 2>/dev/null
+  } | LC_ALL=C sort || true
 }
 
 # mtime and size together: a write that happens to preserve the mtime still moves the size,

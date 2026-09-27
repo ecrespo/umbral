@@ -47,7 +47,7 @@ func TestASecondRuntimeCannotRecoverALiveDatabase(t *testing.T) {
 	}
 
 	// Another runtime directory entirely, and the first daemon's database.
-	other := filepath.Join(t.TempDir(), "run")
+	other := filepath.Join(socketDir(t), "run")
 	check := exec.CommandContext(ctx, bin, "--check", "--db", db,
 		"--socket", filepath.Join(other, "umbral", "umbral.sock"))
 	check.Env = append(os.Environ(), "XDG_RUNTIME_DIR="+other)

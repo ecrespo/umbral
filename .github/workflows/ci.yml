@@ -135,6 +135,26 @@ jobs:
       - name: Install the shells the block tests need (T-F0-08)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zsh fish
+      # The runner image ships completion directories zsh's compinit calls insecure, so the
+      # global /etc/zsh/zshrc stops at "Ignore insecure directories and continue [y]?" and
+      # takes the first byte a test types as the answer: `printf` arrived as `rintf` (T-F0-26).
+      # A user's machine with the same permissions gets the same question in any terminal; the
+      # fix is the one compaudit prescribes, applied to the runner, not a test that hides it.
+      - name: Close zsh's insecure completion directories
+        if: runner.os == 'Linux'
+        # compaudit flags a directory that is group- or world-writable *or* not owned by root
+        # or the runner, so both are fixed, and the step checks its own work: a directory left
+        # insecure would otherwise surface again as a baffling `rintf`.
+        run: |
+          audit() { zsh -fc 'autoload -Uz compaudit; compaudit' 2>/dev/null || true; }
+          insecure=$(audit)
+          echo "insecure completion directories: ${insecure:-none}"
+          if [ -n "$insecure" ]; then
+            printf '%s\n' "$insecure" | xargs -d '\n' sudo chown root:root
+            printf '%s\n' "$insecure" | xargs -d '\n' sudo chmod g-w,o-w
+          fi
+          left=$(audit)
+          if [ -n "$left" ]; then echo "still insecure: $left" >&2; exit 1; fi
       - run: go test -race ./...
       - name: Build every binary
         run: go build ./...

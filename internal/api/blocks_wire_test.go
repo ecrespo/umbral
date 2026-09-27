@@ -83,7 +83,7 @@ var _ sessports.Blocks = (*fakeBlocks)(nil)
 func testServerWithBlocks(t *testing.T, blocks sessports.Blocks) *Server {
 	t.Helper()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	eventBus := bus.New()
 	t.Cleanup(eventBus.Close)
 

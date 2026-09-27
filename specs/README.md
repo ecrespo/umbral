@@ -2,7 +2,7 @@
 
 This folder holds all Spec-Driven Development artifacts that precede code.
 
-**Status:** PRD 1.12, API 1.13, Technical Design 1.13, Data Model 1.8, Plan 1.7, constitution 1.2.
+**Status:** PRD 1.12, API 1.13, Technical Design 1.13, Data Model 1.8, Plan 1.8, constitution 1.2.
 Every finding that blocked implementation is folded, twenty-four deltas are archived and the quality
 gate passes with no CRITICAL findings. **No delta is pending ratification.** What remains are
 MEDIUM and LOW items tracked as issues. The specs carry both lineages: the orchestration surface of

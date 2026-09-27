@@ -212,7 +212,7 @@ func TestPaneSplitAddressesByPublicId_REQ_CLI_005(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		code := run([]string{
 			"pane", "split", "w1:p1", "--direction", "right", "--json", "--no-autostart",
-			"--socket", filepath.Join(t.TempDir(), "umbral.sock"),
+			"--socket", filepath.Join(socketDir(t), "umbral.sock"),
 		}, &stdout, &stderr)
 		if code != exitUnavailable {
 			t.Errorf("exit = %d, want %d (EX_UNAVAILABLE); stderr: %s", code, exitUnavailable, stderr.String())
@@ -385,7 +385,7 @@ var domainErrors = map[string]int{
 func serveRecordingDaemon(t *testing.T, replies map[string]fakeReply) *recordingDaemon {
 	t.Helper()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	d := &recordingDaemon{socket: filepath.Join(dir, "umbral.sock")}
 	if err := os.WriteFile(filepath.Join(dir, "token"), []byte("deadbeef"), 0o600); err != nil {
 		t.Fatalf("write the token: %v", err)

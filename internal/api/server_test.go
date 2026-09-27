@@ -20,7 +20,7 @@ import (
 func testServer(t *testing.T, status StatusFunc) *Server {
 	t.Helper()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	s, err := Listen(t.Context(), Config{
 		SocketPath:    filepath.Join(dir, SocketFileName),
 		TokenPath:     filepath.Join(dir, TokenFileName),
@@ -377,7 +377,7 @@ func TestOversizedMessageIsRejected(t *testing.T) {
 func TestStaleSocketIsReplaced(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	socket := filepath.Join(dir, SocketFileName)
 
 	var lc net.ListenConfig
@@ -405,7 +405,7 @@ func TestStaleSocketIsReplaced(t *testing.T) {
 func TestListenRefusesToDeleteARegularFile(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	path := filepath.Join(dir, "important.txt")
 	if err := os.WriteFile(path, []byte("do not delete"), 0o600); err != nil {
 		t.Fatalf("write the decoy file: %v", err)
@@ -426,7 +426,7 @@ func TestListenRefusesToDeleteARegularFile(t *testing.T) {
 func TestTokenIsReusedAcrossRestarts(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := socketDir(t)
 	cfg := Config{
 		SocketPath:    filepath.Join(dir, SocketFileName),
 		TokenPath:     filepath.Join(dir, TokenFileName),
