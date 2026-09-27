@@ -351,11 +351,13 @@ default CI.
   - `rules.key.add|list|remove|rotate` with fingerprint confirmation and protection of the last key;
   - fail-closed after three failures or with no valid key;
   - `rules.rollback` and `rules.reset`, both offline and without needing a key;
-  - `rules.status` reporting the active bundle, the previous one, the keys and the last rejection.
+  - `rules.status` reporting the active bundle, the previous one, the keys and the last rejection;
+  - the bundle and signature formats, the trust seed built into the binary (matched by fingerprint, never reopening fail-closed), removal as revocation, and revocation discarding the bundles a key verified (delta `2026-09-rule-signing-custody`);
+  - `tools/rulesign` (`keygen`, `sign`, `verify`), reading the private key from stdin only, for the procedures of `docs/runbooks/rule-signing.md`.
 - **REQ:** REQ-SEC-011, REQ-SEC-013, REQ-SEC-014, REQ-SEC-015, REQ-SEC-016
-- **Files:** `internal/security/rules/bundle*.go`, `internal/security/rules/trust*.go`, `internal/api/rules.go`, `cmd/umb/rules.go`
+- **Files:** `internal/security/rules/bundle*.go`, `internal/security/rules/trust*.go`, `internal/security/rules/trustseed/`, `internal/api/rules.go`, `cmd/umb/rules.go`, `tools/rulesign/`
 - **Depends on:** T-F1-29
-- **Done:** tests `TestBundleRequiresValidSignature_REQ_SEC_011`, `TestRejectsUnknownKeyAndDowngrade_REQ_SEC_013`, `TestKeyLifecycleRequiresFingerprint_REQ_SEC_014`, `TestFailClosedAfterThreeFailures_REQ_SEC_015` and `TestRollbackAndResetWorkOffline_REQ_SEC_016` green; the recovery case (every key removed with `--force`, then `rules.reset`) is covered end to end.
+- **Done:** tests `TestBundleRequiresValidSignature_REQ_SEC_011`, `TestAnySignatureOfAValidKeyVerifies_REQ_SEC_011`, `TestRulesignVerifiesLikeTheDaemon_REQ_SEC_011`, `TestRejectsUnknownKeyAndDowngrade_REQ_SEC_013`, `TestAnUnchangedBundleIsUpToDate_REQ_SEC_013`, `TestKeyLifecycleRequiresFingerprint_REQ_SEC_014`, `TestTrustSeedMatchesByFingerprint_REQ_SEC_014`, `TestRemoveRevokesAndDiscardsBundles_REQ_SEC_014`, `TestFailClosedAfterThreeFailures_REQ_SEC_015`, `TestSeedDoesNotReopenFailClosed_REQ_SEC_015`, `TestAddOfSeededKeyReopensFailClosed_REQ_SEC_015` and `TestRollbackAndResetWorkOffline_REQ_SEC_016` green; the recovery case (every key removed with `--force`, then `rules.reset`) is covered end to end; `tools/rulesign` is mapped in `.go-arch-lint.yml` and covered by `task lint`.
 
 ### [ ] T-F1-31 · Wait monitoring and lifecycle
 - **What:**
@@ -494,11 +496,11 @@ default CI.
 | REQ-NTF-002 | T-F1-27 | TestNotificationRateLimited_REQ_NTF_002 |
 | REQ-SEC-009 | T-F1-28 | TestExplainNamesDecidingRule_REQ_SEC_009 |
 | REQ-SEC-010 | T-F1-29 | TestLocalRulesWin_REQ_SEC_010 |
-| REQ-SEC-011 | T-F1-29, T-F1-30 | TestBundleRequiresValidSignature_REQ_SEC_011 |
+| REQ-SEC-011 | T-F1-29, T-F1-30 | TestBundleRequiresValidSignature_REQ_SEC_011, TestAnySignatureOfAValidKeyVerifies_REQ_SEC_011, TestRulesignVerifiesLikeTheDaemon_REQ_SEC_011 |
 | REQ-SEC-012 | T-F1-02 | TestEnvFallbackOnlyWhenEnabled_REQ_SEC_012, TestAnEnvProviderAsksTheKeyringFirst_REQ_SEC_012 |
-| REQ-SEC-013 | T-F1-30 | TestRejectsUnknownKeyAndDowngrade_REQ_SEC_013 |
-| REQ-SEC-014 | T-F1-30 | TestKeyLifecycleRequiresFingerprint_REQ_SEC_014 |
-| REQ-SEC-015 | T-F1-30 | TestFailClosedAfterThreeFailures_REQ_SEC_015 |
+| REQ-SEC-013 | T-F1-30 | TestRejectsUnknownKeyAndDowngrade_REQ_SEC_013, TestAnUnchangedBundleIsUpToDate_REQ_SEC_013 |
+| REQ-SEC-014 | T-F1-30 | TestKeyLifecycleRequiresFingerprint_REQ_SEC_014, TestTrustSeedMatchesByFingerprint_REQ_SEC_014, TestRemoveRevokesAndDiscardsBundles_REQ_SEC_014 |
+| REQ-SEC-015 | T-F1-30 | TestFailClosedAfterThreeFailures_REQ_SEC_015, TestSeedDoesNotReopenFailClosed_REQ_SEC_015, TestAddOfSeededKeyReopensFailClosed_REQ_SEC_015 |
 | REQ-SEC-016 | T-F1-30 | TestRollbackAndResetWorkOffline_REQ_SEC_016 |
 | REQ-SEC-008 | T-F1-02 | TestKeyringUnavailableDisablesProviders_REQ_SEC_008, TestAnUnreachableKeyringIsUnavailable_REQ_SEC_008, TestStatusCarriesEachProvidersReason_REQ_SEC_008, TestStatusShowsWhyAProviderIsDown_REQ_SEC_008, TestADaemonWithoutAKeyringStartsDegraded_REQ_SEC_008; T-F1-05: TestModelsOfADownProviderAreDown_REQ_SEC_008 |
 | REQ-AGT-015 | T-F1-13 | TestSendIdempotentByClientMsgID_REQ_AGT_015 |

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.21 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.22 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -168,7 +168,7 @@ before the daemon starts.
 ## 3. General Conventions
 
 ### Identifiers
-- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`, and `trn_` for a turn (`turn_id`, T-F1-13)
+- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`, `trn_` for a turn (`turn_id`, T-F1-13), and `key_` for a trust key — fixed by the binary's trust seed for the project's keys, so every install shows the same id, and minted at `rules.key.add` otherwise
   (Constitution Art. 6). Example: `blk_01J9Z3K8T2QH6W4V5X7Y8Z9A0B`.
 - **Structural identifiers** are the documented exception to that rule (Art. 6, amendment of
   2026-09-20): a workspace is `w<n>`, a tab `w<n>:t<m>` and a pane `w<n>:p<m>`, with `n` and `m`
@@ -715,16 +715,25 @@ discarded. Neither closes the connection.
 ### 5.34 `rules.status` / `rules.key.add|list|remove|rotate` / `rules.rollback` / `rules.reset` — REQ-SEC-011, REQ-SEC-013, REQ-SEC-014, REQ-SEC-015, REQ-SEC-016
 `rules.status` result:
 ```json
-{"active_bundle":{"version":7,"sha256":"…","source":"remote","verified_with":"key_2026a"},
+{"active_bundle":{"version":7,"sha256":"…","source":"remote","verified_with":"key_01K5…"},
  "previous_bundle":{"version":6,"sha256":"…"},
  "local_override":true,
  "remote_updates":"enabled",
- "trust_keys":[{"id":"key_2026a","fingerprint":"SHA256:…","added_at":1758326400000}],
+ "trust_keys":[{"id":"key_01K5…","fingerprint":"SHA256:…","source":"builtin","added_at":1758326400000,"revoked_at":null}],
  "last_rejection":{"reason":"unknown_key","at":1758320000000}}
 ```
 - `remote_updates`: `enabled` | `disabled_by_config` | `disabled_fail_closed` (no valid key, or three consecutive failures — REQ-SEC-015).
 - `rules.key.add` and `rules.key.rotate` require `confirm_fingerprint` matching the key's SHA-256; otherwise `VALIDATION_ERROR`.
-- `rules.key.remove` on the last valid key requires `force: true`; otherwise `CONFLICT`.
+- A key with a `revoked_at` is not valid.
+- `rules.key.add` takes the public key as base64 of its 32 raw bytes.
+  - A fingerprint on the binary's seed `revoked` list is `CONFLICT`, whether or not the store holds it.
+  - Adding a fingerprint the store holds as revoked clears the revocation.
+  - Adding one it holds as valid, such as a key the seed inserted, changes no row but is still recorded.
+  - Any successful add leaves `disabled_fail_closed`, and it is the only thing that does: a newer binary's seed adds keys but does not reopen updates.
+- `trust_keys[].source` is `builtin` for any fingerprint the seed carries as current, retired or revoked, and `user` otherwise.
+- `rules.key.remove` revokes the key: it sets `revoked_at`, so a builtin key stays removed. It also discards the bundles the key verified and forgets downgrade rejections. The active bundle stays if it survives; otherwise the newest remaining `remote` bundle, or the built-in rules (version 0), becomes active. On the last valid key it requires `force: true`; otherwise `CONFLICT`.
+- `rules.key.rotate` adds the new key and revokes the old one, with `remove`'s consequences. It is for a user's own suspected compromise; the project's scheduled key rotation needs nothing from users.
+- `rules.rollback` with no `previous_bundle` answers `CONFLICT`.
 - `rules.rollback` reinstalls `previous_bundle` and `rules.reset` returns to the rules built into the binary. Both work offline, need no valid key, and never touch the local override directory (REQ-SEC-016).
 
 ### 5.35 `notification.show` — REQ-NTF-001, REQ-NTF-002
@@ -995,3 +1004,4 @@ printf '%s\n' \
 | 1.19 | 2026-09-27 | T-F1-13: `thread.create`/`send`/`get`/`list`/`update` served; §5.23 gives `thread.list` and `thread.get` their parameters and results; §5.20 says what `wait` and inline attachments answer until their tasks; §3 adds the `trn_` prefix; §6 adds `storage_error` and `context_overflow`; §4's Message gains `turn_id`; §5.20 says when `PROVIDER_UNAVAILABLE` is answered. Additive within `protocol_version = 1`. Delta `2026-09-agent-runtime` (proposed). |
 | 1.20 | 2026-09-27 | T-F1-14: `approval.list` (`{thread_id?, all?}`) and `approval.respond` served, with `approval.requested`; §5.25 says what a `thread` scope remembers, which decisions are kept `once`, and what a cancel does to a pending approval. Additive within `protocol_version = 1`. Delta `2026-09-approvals` (proposed). |
 | 1.21 | 2026-09-27 | Ratifies deltas `2026-09-agent-runtime` and `2026-09-approvals` as written; §2 says `approval.*` is advertised under `threads`. No wire change. |
+| 1.22 | 2026-09-27 | §3 adds `key_`; §5.34: `trust_keys` entries gain `source` (`builtin`/`user`) and `revoked_at`; `rules.key.add` takes base64 and is the only way out of fail-closed; `remove` revokes and discards the bundles the key verified; `rotate` is add plus revoke; `rollback` with nothing to return to is `CONFLICT`; `source` covers the seed's retired and revoked keys; adding a seed-revoked fingerprint is `CONFLICT` and re-adding a valid one is a recorded no-op; the active bundle survives a revocation that did not verify it. Delta `2026-09-rule-signing-custody`. Additive within `protocol_version = 1` |
