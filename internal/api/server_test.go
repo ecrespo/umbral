@@ -99,6 +99,22 @@ func (c *client) send(raw []byte) {
 	}
 }
 
+// sendPastTheLimit writes a line the daemon will refuse and hang up on. The hang-up can land
+// while the tail is still being written — on macOS's small socket buffers even one byte past
+// the limit is enough — so EPIPE and ECONNRESET on this write are the refusal arriving early,
+// not a failure: the answer is already on the socket for `read`.
+func (c *client) sendPastTheLimit(line []byte) {
+	c.t.Helper()
+
+	if err := c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		c.t.Fatalf("set write deadline: %v", err)
+	}
+	if _, err := c.conn.Write(line); err != nil &&
+		!errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET) {
+		c.t.Fatalf("write: %v", err)
+	}
+}
+
 func (c *client) read() response {
 	c.t.Helper()
 
@@ -386,14 +402,7 @@ func TestOversizedMessageIsRejected(t *testing.T) {
 	// is still writing — as it did on the macOS runner with only 1 KiB past it. That write
 	// then fails with EPIPE or ECONNRESET, which is the hang-up and not a defect: the
 	// answer is already on the socket.
-	huge := bytes.Repeat([]byte("a"), MaxMessageBytes+1<<20)
-	if err := c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		t.Fatalf("set write deadline: %v", err)
-	}
-	if _, err := c.conn.Write(append(huge, '\n')); err != nil &&
-		!errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET) {
-		t.Fatalf("write: %v", err)
-	}
+	c.sendPastTheLimit(append(bytes.Repeat([]byte("a"), MaxMessageBytes+1<<20), '\n'))
 
 	resp := c.read()
 	if resp.Error == nil || resp.Error.Code != codeValidationError {
@@ -437,7 +446,7 @@ func TestAMessageAtTheLimitIsAccepted(t *testing.T) {
 		t.Fatalf("the connection did not survive a message at the limit: %+v", resp.Error)
 	}
 
-	c.send(paddedCall(t, 4, "system.status", MaxMessageBytes+1))
+	c.sendPastTheLimit(paddedCall(t, 4, "system.status", MaxMessageBytes+1))
 	resp := c.read()
 	if resp.Error == nil || resp.Error.Code != codeValidationError || string(resp.ID) != "null" {
 		t.Fatalf("a message one byte past the limit = %+v, want VALIDATION_ERROR with a null id", resp)
@@ -468,15 +477,7 @@ func TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003(t *testing.T) {
 
 			s := testServer(t, nil)
 			c := dial(t, s)
-			// The oversized case is cut off mid-write, as TestOversizedMessageIsRejected
-			// explains; the answer is on the socket regardless.
-			if err := c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
-				t.Fatalf("set write deadline: %v", err)
-			}
-			if _, err := c.conn.Write(tc.line); err != nil &&
-				!errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET) {
-				t.Fatalf("write: %v", err)
-			}
+			c.sendPastTheLimit(tc.line)
 
 			resp := c.read()
 			if resp.Error == nil || resp.Error.Code != codeUnauthorized {
