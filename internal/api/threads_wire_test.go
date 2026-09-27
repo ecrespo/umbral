@@ -13,11 +13,34 @@ import (
 )
 
 type fakeThreads struct {
-	thread   agentsdomain.Thread
-	messages []agentsdomain.Message
-	sent     []agentsports.SendParams
-	sendErr  error
-	updated  agentsdomain.UpdateParams
+	thread     agentsdomain.Thread
+	messages   []agentsdomain.Message
+	sent       []agentsports.SendParams
+	sendErr    error
+	updated    agentsdomain.UpdateParams
+	approval   agentsdomain.Approval
+	answered   []agentsdomain.Response
+	respondErr error
+}
+
+func (f *fakeThreads) Approvals(context.Context, string, bool) ([]agentsdomain.Approval, error) {
+	return []agentsdomain.Approval{f.approval}, nil
+}
+
+func (f *fakeThreads) Respond(_ context.Context, r agentsdomain.Response) (agentsdomain.Approval, error) {
+	if err := r.Validate(); err != nil {
+		return agentsdomain.Approval{}, err
+	}
+	if r.ApprovalID != f.approval.ID {
+		return agentsdomain.Approval{}, agentsdomain.ErrNotFound
+	}
+	if f.respondErr != nil {
+		return agentsdomain.Approval{}, f.respondErr
+	}
+	f.answered = append(f.answered, r)
+	a := f.approval
+	a.State, a.Scope = agentsdomain.ApprovalApproved, r.Scope
+	return a, nil
 }
 
 func (f *fakeThreads) Create(_ context.Context, p agentsdomain.CreateParams) (agentsdomain.Thread, error) {
@@ -221,5 +244,73 @@ func TestThreadsWithoutARuntimeAreNotImplemented_REQ_API_003(t *testing.T) {
 	}
 	if resp := c.call(2, "thread.list", nil); resp.Error == nil || resp.Error.Code != codeNotImplemented {
 		t.Fatalf("thread.list = %+v", resp.Error)
+	}
+}
+
+// TestApprovalMethodsReachTheWire_REQ_AGT_004: approval.list and approval.respond answer §4's
+// Approval to an interactive client, `umb` reaches neither, and approval.requested carries
+// the approval with its diff (REQ-AGT-012).
+func TestApprovalMethodsReachTheWire_REQ_AGT_004(t *testing.T) {
+	t.Parallel()
+	svc, c, b := threadRig(t)
+	svc.approval = agentsdomain.Approval{
+		ID: "apr_1", ThreadID: "thr_1", ToolCallID: "tc_1", Tool: "write_file", Risk: "WriteFS",
+		Reason: "policy", Summary: "/w/a.go", Diff: "--- a\n+++ b", State: agentsdomain.ApprovalPending, CreatedAt: 9,
+	}
+
+	resp := c.call(2, "approval.list", nil)
+	raw, _ := json.Marshal(resp.Result)
+	if resp.Error != nil || !strings.Contains(string(raw), `"id":"apr_1"`) || !strings.Contains(string(raw), `"decision_scope":null`) {
+		t.Fatalf("approval.list = %s %+v", raw, resp.Error)
+	}
+	resp = c.call(3, "approval.respond", map[string]any{"approval_id": "apr_1", "decision": "approve", "scope": "thread"})
+	raw, _ = json.Marshal(resp.Result)
+	if resp.Error != nil || !strings.Contains(string(raw), `"state":"approved"`) || len(svc.answered) != 1 || !svc.answered[0].Approve {
+		t.Fatalf("approval.respond = %s %+v", raw, resp.Error)
+	}
+	for i, bad := range []map[string]any{
+		{"approval_id": "apr_1", "decision": "maybe", "scope": "once"},
+		{"approval_id": "apr_1", "decision": "deny", "scope": "forever"},
+		{"decision": "deny", "scope": "once"},
+	} {
+		if resp := c.call(4+i, "approval.respond", bad); resp.Error == nil || resp.Error.Code != codeValidationError {
+			t.Errorf("%v = %+v, want VALIDATION_ERROR", bad, resp.Error)
+		}
+	}
+	if resp := c.call(8, "approval.respond", map[string]any{"approval_id": "apr_x", "decision": "deny", "scope": "once"}); resp.Error == nil || resp.Error.Code != codeNotFound {
+		t.Errorf("unknown approval = %+v", resp.Error)
+	}
+	svc.respondErr = agentsdomain.ErrConflict
+	if resp := c.call(9, "approval.respond", map[string]any{"approval_id": "apr_1", "decision": "deny", "scope": "once"}); resp.Error == nil || resp.Error.Code != codeConflict {
+		t.Errorf("an approval already decided or expired = %+v, want CONFLICT", resp.Error)
+	}
+
+	b.Publish(agentsports.ApprovalRequested{Approval: svc.approval})
+	for {
+		method, _, params := c.readNotification(t)
+		if method != "approval.requested" {
+			continue
+		}
+		if !strings.Contains(string(params), `"diff":"--- a`) || !strings.Contains(string(params), `"tool_call_id":"tc_1"`) {
+			t.Fatalf("approval.requested %s", params)
+		}
+		break
+	}
+}
+
+// TestUmbCannotAnswerApprovals_REQ_API_001: §2's cli row names no approval.*.
+func TestUmbCannotAnswerApprovals_REQ_API_001(t *testing.T) {
+	t.Parallel()
+	svc := &fakeThreads{approval: agentsdomain.Approval{ID: "apr_1"}}
+	s := testServerWithConfig(t, Config{Threads: svc, Bus: bus.New()})
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientCLI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+	if resp := c.call(2, "approval.respond", map[string]any{"approval_id": "apr_1", "decision": "approve", "scope": "always"}); resp.Error == nil || resp.Error.Code != codeMethodNotFound {
+		t.Fatalf("approval.respond from umb = %+v", resp.Error)
+	}
+	if len(svc.answered) != 0 {
+		t.Fatal("umb answered an approval")
 	}
 }

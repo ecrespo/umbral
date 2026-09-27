@@ -61,9 +61,11 @@ func (k ClientKind) valid() bool {
 const capabilityWorkspaces = "workspaces"
 
 var capabilityOf = map[string]string{
-	"session":   "sessions",
-	"block":     "blocks",
-	"thread":    "threads",
+	"session": "sessions",
+	"block":   "blocks",
+	"thread":  "threads",
+	// §2 has no `approvals` namespace: answering an approval is part of running a thread.
+	"approval":  "threads",
 	"model":     "models",
 	"workspace": capabilityWorkspaces,
 	"tab":       capabilityWorkspaces,

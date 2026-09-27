@@ -364,17 +364,14 @@ func (t *turnRun) runTool(ctx context.Context, c domain.ToolCall) error {
 	case secdomain.VerdictDeny:
 		return t.finishTool(ctx, c, domain.ToolDeniedByPolicy, "denied by policy: "+decision.Reason, "", false)
 	case secdomain.VerdictAsk:
-		if cfg.Approver == nil {
-			return t.finishTool(ctx, c, domain.ToolDeniedByPolicy,
-				"denied by policy: this call needs approval ("+decision.Reason+") and no approval flow is available", "", false)
-		}
 		preview, _ := cfg.Tools.Preview(ctx, env, call)
-		approved, err := cfg.Approver.Approve(ctx, ports.ApprovalRequest{Call: c, Decision: decision, Diff: preview})
+		approved, err := t.awaitApproval(ctx, c, action, decision, preview)
 		if err != nil {
 			return err
 		}
 		if !approved {
-			return t.finishTool(ctx, c, domain.ToolDeniedByUser, "denied by the user", "", false)
+			// REQ-AGT-005: the model reads the refusal and the turn goes on.
+			return t.finishTool(ctx, c, domain.ToolDeniedByUser, "denied_by_user: the user did not allow this call", "", false)
 		}
 		grant.Approved = true
 	case secdomain.VerdictAllow:

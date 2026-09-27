@@ -31,9 +31,6 @@ type Config struct {
 	Bus    ports.Publisher
 	// Context reads rules files, git state and attachments; nil sends none of them.
 	Context ctxports.Gatherer
-	// Approver answers the policy's `ask` (T-F1-14). Without one an `ask` is refused as
-	// denied_by_policy: no tool runs outside a decision that allowed it.
-	Approver ports.Approver
 	// NewID makes a type-prefixed ULID (store.NewID).
 	NewID func(prefix string) string
 	// IsRepo says whether a directory is a repository root, for the write root; nil looks for
@@ -56,7 +53,9 @@ type Runtime struct {
 	mu     sync.Mutex
 	closed bool
 	turns  map[string]*turn // thread id → running turn
-	wg     sync.WaitGroup
+	// waiting are the turns paused on an approval, by approval id.
+	waiting map[string]chan domain.Approval
+	wg      sync.WaitGroup
 }
 
 var _ ports.Threads = (*Runtime)(nil)
@@ -103,7 +102,7 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
 	base, stop := context.WithCancel(context.WithoutCancel(ctx))
-	return &Runtime{cfg: cfg, base: base, stop: stop, turns: map[string]*turn{}}, nil
+	return &Runtime{cfg: cfg, base: base, stop: stop, turns: map[string]*turn{}, waiting: map[string]chan domain.Approval{}}, nil
 }
 
 // Close cancels every running turn and waits for them to record how they ended.

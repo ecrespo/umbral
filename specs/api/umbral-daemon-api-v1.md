@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.19 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.20 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -614,6 +614,8 @@ returns the next page. An unknown thread is `NOT_FOUND`; a `cursor` that names n
 thread is `VALIDATION_ERROR`.
 
 ### 5.24 `approval.list` → `{items: Approval[]}` (only `pending` by default)
+**Params:** `{thread_id?, all?}`. `all` includes decided and expired approvals; `thread_id`
+narrows to one thread. Oldest first. Interactive clients only (§2).
 
 ### 5.25 `approval.respond` — REQ-AGT-004, REQ-AGT-005
 **Params:** `{approval_id, decision:"approve"|"deny", scope:"once"|"thread"|"always"}`.
@@ -621,7 +623,16 @@ thread is `VALIDATION_ERROR`.
 Rules:
 - `scope = always` persists an `allow` or `deny` rule (table `policy_rules`).
 - Destructive patterns ignore `always` (REQ-SEC-005).
-- **Errors:** `NOT_FOUND`; `CONFLICT` if already decided.
+- `scope = thread` persists the rule for that thread only. The rule's pattern is the call's
+  target (`summary`: the command line, the path, the URL). A destructive command, and a target
+  holding `*` or `?` — which a rule's glob would read as a wider pattern — and a compound command
+  line — which the rules read one command at a time — are decided `once`
+  whatever the scope asked; the result's `decision_scope` says so.
+- The decision is persisted, then the paused turn resumes; a denial gives the model a
+  `denied_by_user` result and the turn goes on (REQ-AGT-005). A turn cancelled while it waits
+  leaves the approval `expired`.
+- **Errors:** `NOT_FOUND`; `CONFLICT` if already decided or expired; `VALIDATION_ERROR` for a
+  `decision` or `scope` outside the lists. Interactive clients only (§2).
 
 ### 5.26 `model.list` — REQ-LLM-002
 **Params:** `{refresh?: false}`. **Result:** `{items: Model[]}`.
@@ -982,3 +993,4 @@ printf '%s\n' \
 | 1.17 | 2026-09-27 | T-F1-02: §5.28 specifies `config.get` and `config.reload` — `{settings, providers, rejected}`, credentials as references only, the health reasons, and a reload that validates before applying and answers `CONFIG_INVALID` per entry; §5.2's providers gain `reason`; the capability lists of §2 and §9 gain `config`. Additive within `protocol_version = 1` Delta `2026-09-provider-config` (proposed). |
 | 1.18 | 2026-09-27 | T-F1-05: §4's Model gains `reason`, and says what 0 means for the context window and prices; §5.26 describes `model.list` — background discovery at start and on reload, `refresh`, a provider down for its credential or remote while offline never contacted, and discovery recorded in `egress_log`. Delta `2026-09-provider-config` (proposed). Additive within `protocol_version = 1` |
 | 1.19 | 2026-09-27 | T-F1-13: `thread.create`/`send`/`get`/`list`/`update` served; §5.23 gives `thread.list` and `thread.get` their parameters and results; §5.20 says what `wait` and inline attachments answer until their tasks; §3 adds the `trn_` prefix; §6 adds `storage_error` and `context_overflow`; §4's Message gains `turn_id`; §5.20 says when `PROVIDER_UNAVAILABLE` is answered. Additive within `protocol_version = 1`. Delta `2026-09-agent-runtime` (proposed). |
+| 1.20 | 2026-09-27 | T-F1-14: `approval.list` (`{thread_id?, all?}`) and `approval.respond` served, with `approval.requested`; §5.25 says what a `thread` scope remembers, which decisions are kept `once`, and what a cancel does to a pending approval. Additive within `protocol_version = 1`. Delta `2026-09-approvals` (proposed). |

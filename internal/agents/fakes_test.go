@@ -29,6 +29,7 @@ type memStore struct {
 	calls     map[string]domain.ToolCall
 	callOrder []string
 	rules     []secdomain.Rule
+	approvals []domain.Approval
 	writes    int
 	failAfter int
 	// beforeBegin runs between the send's read of the thread and BeginTurn's.
@@ -227,6 +228,70 @@ func (s *memStore) Rules(context.Context, string) ([]secdomain.Rule, error) {
 	return append([]secdomain.Rule(nil), s.rules...), nil
 }
 
+func (s *memStore) RequestApproval(_ context.Context, a domain.Approval) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.write(); err != nil {
+		return err
+	}
+	s.approvals = append(s.approvals, a)
+	t := s.threads[a.ThreadID]
+	t.State = domain.StateAwaitingApproval
+	s.threads[a.ThreadID] = t
+	return nil
+}
+
+func (s *memStore) Approval(_ context.Context, id string) (domain.Approval, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.approvals {
+		if a.ID == id {
+			return a, nil
+		}
+	}
+	return domain.Approval{}, domain.ErrNotFound
+}
+
+func (s *memStore) Approvals(_ context.Context, threadID string, all bool) ([]domain.Approval, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []domain.Approval
+	for _, a := range s.approvals {
+		if (all || a.State == domain.ApprovalPending) && (threadID == "" || a.ThreadID == threadID) {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
+func (s *memStore) DecideApproval(_ context.Context, id string, state domain.ApprovalState, scope domain.Scope, rule *secdomain.Rule, now int64) (domain.Approval, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, a := range s.approvals {
+		if a.ID != id {
+			continue
+		}
+		if a.State != domain.ApprovalPending {
+			return domain.Approval{}, domain.ErrConflict
+		}
+		if err := s.write(); err != nil {
+			return domain.Approval{}, err
+		}
+		a.State, a.Scope, a.DecidedAt = state, scope, &now
+		s.approvals[i] = a
+		if rule != nil {
+			s.rules = append(s.rules, *rule)
+		}
+		t := s.threads[a.ThreadID]
+		if t.State == domain.StateAwaitingApproval {
+			t.State = domain.StateRunning
+			s.threads[a.ThreadID] = t
+		}
+		return a, nil
+	}
+	return domain.Approval{}, domain.ErrNotFound
+}
+
 // scripted is the model gateway: each call takes the next script, and remembers its request.
 type scripted struct {
 	mu      sync.Mutex
@@ -342,12 +407,15 @@ func (f *fakeTools) Invoke(_ context.Context, _ toolsdomain.Env, call toolsdomai
 // checkingBus is the publisher: at the moment an event is published it checks that what the
 // event reports is already in the store (DD-007), then records it.
 type checkingBus struct {
-	t     *testing.T
-	store *memStore
-	mu    sync.Mutex
-	evs   []bus.Event
-	fail  []string
-	ended chan ports.TurnFinished
+	t         *testing.T
+	store     *memStore
+	mu        sync.Mutex
+	evs       []bus.Event
+	fail      []string
+	ended     chan ports.TurnFinished
+	approvals chan domain.Approval
+	// onApproval runs in the turn's goroutine as approval.requested is published.
+	onApproval func(domain.Approval)
 }
 
 func (b *checkingBus) Publish(ev bus.Event) {
@@ -375,6 +443,25 @@ func (b *checkingBus) Publish(ev bus.Event) {
 		if !found {
 			b.fail = append(b.fail, "context.compacted published before its summary was persisted")
 		}
+	case ports.ApprovalRequested:
+		b.store.mu.Lock()
+		found := false
+		for _, a := range b.store.approvals {
+			found = found || a.ID == e.Approval.ID
+		}
+		state := b.store.threads[e.Approval.ThreadID].State
+		b.store.mu.Unlock()
+		if !found || state != domain.StateAwaitingApproval {
+			b.fail = append(b.fail, "approval.requested published before the approval and the paused thread were persisted")
+		}
+		defer func() {
+			if b.onApproval != nil {
+				b.onApproval(e.Approval)
+			}
+			if b.approvals != nil {
+				b.approvals <- e.Approval
+			}
+		}()
 	case ports.TurnFinished:
 		b.store.mu.Lock()
 		state := b.store.threads[e.ThreadID].State
@@ -431,7 +518,7 @@ func newID(prefix string) string {
 func newRig(t *testing.T, scripts ...[]llm.Event) *rig {
 	t.Helper()
 	store := newMemStore()
-	b := &checkingBus{t: t, store: store, ended: make(chan ports.TurnFinished, 16)}
+	b := &checkingBus{t: t, store: store, ended: make(chan ports.TurnFinished, 16), approvals: make(chan domain.Approval, 16)}
 	models := &scripted{scripts: scripts}
 	tools := &fakeTools{tools: map[string]*fakeTool{
 		"read_file":  {risk: secdomain.RiskReadOnly, out: "file contents"},

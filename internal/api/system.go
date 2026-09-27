@@ -90,6 +90,10 @@ func (s *Server) registry() map[string]method {
 		m.available = hasWorkspaces
 		table[name] = m
 	}
+	for name, m := range approvalMethods() {
+		m.available = hasThreads
+		table[name] = m
+	}
 	for name, m := range threadMethods() {
 		m.available = hasThreads
 		table[name] = m

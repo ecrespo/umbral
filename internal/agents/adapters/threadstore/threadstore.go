@@ -371,3 +371,124 @@ func nullable(s string) any {
 	}
 	return s
 }
+
+const approvalColumns = `id, thread_id, tool_call_id, tool, risk, reason, summary, COALESCE(diff, ''), state,
+	COALESCE(decision_scope, ''), created_at, decided_at`
+
+func scanApproval(row scanner) (domain.Approval, error) {
+	var a domain.Approval
+	var state, scope string
+	var decided sql.NullInt64
+	if err := row.Scan(&a.ID, &a.ThreadID, &a.ToolCallID, &a.Tool, &a.Risk, &a.Reason, &a.Summary, &a.Diff, &state,
+		&scope, &a.CreatedAt, &decided); err != nil {
+		return domain.Approval{}, err
+	}
+	a.State, a.Scope = domain.ApprovalState(state), domain.Scope(scope)
+	if decided.Valid {
+		a.DecidedAt = &decided.Int64
+	}
+	return a, nil
+}
+
+// RequestApproval persists a pending approval and marks its thread awaiting_approval.
+func (s *Store) RequestApproval(ctx context.Context, a domain.Approval) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("threadstore: request approval: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO approvals(id, thread_id, tool_call_id, tool, risk, reason, summary, diff, state, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+		a.ID, a.ThreadID, a.ToolCallID, a.Tool, a.Risk, a.Reason, a.Summary, nullable(a.Diff), a.CreatedAt); err != nil {
+		return fmt.Errorf("threadstore: request approval: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE threads SET state = 'awaiting_approval', attention_state = 'blocked', updated_at = ?
+		WHERE id = ?`, a.CreatedAt, a.ThreadID); err != nil {
+		return fmt.Errorf("threadstore: request approval: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("threadstore: request approval: %w", err)
+	}
+	return nil
+}
+
+// Approval reads one approval.
+func (s *Store) Approval(ctx context.Context, id string) (domain.Approval, error) {
+	a, err := scanApproval(s.db.QueryRowContext(ctx, `SELECT `+approvalColumns+` FROM approvals WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Approval{}, fmt.Errorf("%w: approval %s", domain.ErrNotFound, id)
+	}
+	if err != nil {
+		return domain.Approval{}, fmt.Errorf("threadstore: read approval: %w", err)
+	}
+	return a, nil
+}
+
+// Approvals lists approvals oldest first.
+func (s *Store) Approvals(ctx context.Context, threadID string, all bool) ([]domain.Approval, error) {
+	query, args := `SELECT `+approvalColumns+` FROM approvals WHERE 1 = 1`, []any{}
+	if !all {
+		query += ` AND state = 'pending'`
+	}
+	if threadID != "" {
+		query, args = query+` AND thread_id = ?`, append(args, threadID)
+	}
+	rows, err := s.db.QueryContext(ctx, query+` ORDER BY created_at, rowid`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("threadstore: approvals: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []domain.Approval
+	for rows.Next() {
+		a, err := scanApproval(rows)
+		if err != nil {
+			return nil, fmt.Errorf("threadstore: approvals: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// DecideApproval records a decision on a pending approval (ports.Store).
+func (s *Store) DecideApproval(ctx context.Context, id string, state domain.ApprovalState, scope domain.Scope, rule *secdomain.Rule, now int64) (domain.Approval, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Approval{}, fmt.Errorf("threadstore: decide approval: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	a, err := scanApproval(tx.QueryRowContext(ctx, `SELECT `+approvalColumns+` FROM approvals WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Approval{}, fmt.Errorf("%w: approval %s", domain.ErrNotFound, id)
+	}
+	if err != nil {
+		return domain.Approval{}, fmt.Errorf("threadstore: decide approval: %w", err)
+	}
+	if a.State != domain.ApprovalPending {
+		return domain.Approval{}, fmt.Errorf("%w: approval %s is already %s", domain.ErrConflict, id, a.State)
+	}
+	var scopeValue any
+	if scope != "" {
+		scopeValue = string(scope)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE approvals SET state = ?, decision_scope = ?, decided_at = ? WHERE id = ?`,
+		string(state), scopeValue, now, id); err != nil {
+		return domain.Approval{}, fmt.Errorf("threadstore: decide approval: %w", err)
+	}
+	if rule != nil {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO policy_rules(thread_id, tool, pattern, decision, source, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			nullable(rule.ThreadID), rule.Tool, rule.Pattern, string(rule.Decision), rule.Source, now); err != nil {
+			return domain.Approval{}, fmt.Errorf("threadstore: remember the decision: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE threads SET state = 'running', attention_state = 'working', updated_at = ?
+		WHERE id = ? AND state = 'awaiting_approval'`, now, a.ThreadID); err != nil {
+		return domain.Approval{}, fmt.Errorf("threadstore: decide approval: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Approval{}, fmt.Errorf("threadstore: decide approval: %w", err)
+	}
+	a.State, a.Scope, a.DecidedAt = state, scope, &now
+	return a, nil
+}

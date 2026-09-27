@@ -141,21 +141,6 @@ func TestAskModeReadOnlyTools_REQ_AGT_009(t *testing.T) {
 	}
 }
 
-// TestAnAskWithoutAnApprovalFlowRunsNothing_REQ_AGT_004: until T-F1-14 wires approvals, a
-// call the policy asks about is refused, never run.
-func TestAnAskWithoutAnApprovalFlowRunsNothing_REQ_AGT_004(t *testing.T) {
-	r := newRig(t, callTool("run", `{"path":"make"}`), answer("ok"))
-	th := r.thread(t, domain.CreateParams{})
-	r.send(t, th.ID, "run make", "")
-	if r.tools.tools["run"].ran.Load() != 0 {
-		t.Fatal("an Exec call ran without approval in normal mode")
-	}
-	calls, _ := r.store.ToolCalls(t.Context(), th.ID)
-	if calls[0].Status != domain.ToolDeniedByPolicy || calls[0].Risk != "Exec" {
-		t.Fatalf("call %+v", calls[0])
-	}
-}
-
 // TestInvalidToolInputIsRecorded_REQ_AGT_002: input the tool refuses is invalid_args, and the
 // model reads why.
 func TestInvalidToolInputIsRecorded_REQ_AGT_002(t *testing.T) {
@@ -346,6 +331,8 @@ func TestEveryWriteThatFailsStopsTheTurn_REQ_AGT_011(t *testing.T) {
 		{"a pending tool call", callTool("read_file", `{"path":"a"}`), 2, false},
 		// ... and its outcome after it ran.
 		{"a tool call's outcome", callTool("read_file", `{"path":"a"}`), 3, true},
+		// user message, assistant message, pending call; the approval it asks for fails.
+		{"an approval", callTool("run", `{"path":"make"}`), 3, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r := newRig(t, c.script, answer("never"))
@@ -357,7 +344,8 @@ func TestEveryWriteThatFailsStopsTheTurn_REQ_AGT_011(t *testing.T) {
 			if end.StopReason != domain.StopStorageError {
 				t.Fatalf("stop %s, want storage_error", end.StopReason)
 			}
-			if ran := r.tools.tools["read_file"].ran.Load() == 1; ran != c.ran {
+			ran := r.tools.tools["read_file"].ran.Load()+r.tools.tools["run"].ran.Load() == 1
+			if ran != c.ran {
 				t.Fatalf("the tool ran: %v, want %v", ran, c.ran)
 			}
 		})
