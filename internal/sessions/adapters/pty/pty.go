@@ -7,18 +7,13 @@
 package pty
 
 import (
-	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 
 	creack "github.com/creack/pty"
 
@@ -194,49 +189,6 @@ func (s *session) signalForeground(signal syscall.Signal) error {
 		}
 	}
 	return nil
-}
-
-// childrenOf lists the processes whose parent is pid: from /proc where there is one, from
-// pgrep elsewhere (macOS).
-func childrenOf(pid int) []int {
-	if entries, err := os.ReadDir("/proc"); err == nil {
-		var out []int
-		for _, e := range entries {
-			child, err := strconv.Atoi(e.Name())
-			if err != nil {
-				continue
-			}
-			stat, err := os.ReadFile("/proc/" + e.Name() + "/stat")
-			if err != nil {
-				continue
-			}
-			// The command name is in parentheses and may hold spaces; the fields after the
-			// last ')' are state, then the parent's pid.
-			i := bytes.LastIndexByte(stat, ')')
-			if i < 0 {
-				continue
-			}
-			fields := strings.Fields(string(stat[i+1:]))
-			if len(fields) > 1 && fields[1] == strconv.Itoa(pid) {
-				out = append(out, child)
-			}
-		}
-		return out
-	}
-	// Bounded: the cancel it serves has 500 ms in all.
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	outb, err := exec.CommandContext(ctx, "pgrep", "-P", strconv.Itoa(pid)).Output() //nolint:gosec // a fixed program and a pid, nothing a caller can shape
-	if err != nil {
-		return nil
-	}
-	var out []int
-	for _, f := range strings.Fields(string(outb)) {
-		if child, err := strconv.Atoi(f); err == nil {
-			out = append(out, child)
-		}
-	}
-	return out
 }
 
 func winsize(size domain.Size) *creack.Winsize {
