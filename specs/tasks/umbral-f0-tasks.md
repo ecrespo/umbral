@@ -656,6 +656,17 @@
   should be. A subscription now starts held and is released once the reply is written
   (`conn.afterReply`). `TestSubscribeAnswersBeforeItStreams_REQ_TERM_004` pauses inside the
   snapshot to make the race certain: red 3/3 before the fix, green after.
+- **The second run** (36284097081) turned that round: Ubuntu green, macOS red in
+  `TestOversizedMessageIsRejected` with `write: broken pipe` — the first time that test had
+  run on macOS at all, since every socket test failed there before `socketDir`. The daemon
+  answers an oversized message with `VALIDATION_ERROR` and hangs up (`conn.serve`; API Spec
+  §1 sets only the 4 MiB limit, and neither the answer nor the hang-up is written there yet —
+  a gap for a later delta, not for this task); with macOS's small socket
+  buffers the client was still writing the tail and got EPIPE, which the test treated as
+  fatal before reading the answer. It now sends 1 MiB past the limit, so the hang-up comes
+  mid-write on every OS (red 20/20 on Linux with the old helper), accepts EPIPE/ECONNRESET on
+  that write, still reads `VALIDATION_ERROR` and then asserts the hang-up — and reddens if the
+  daemon stops sending the answer.
 
 ## Traceability matrix (F0)
 

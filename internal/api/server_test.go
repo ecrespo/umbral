@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -363,13 +364,25 @@ func TestOversizedMessageIsRejected(t *testing.T) {
 	s := testServer(t, nil)
 	c := dial(t, s)
 
-	huge := bytes.Repeat([]byte("a"), MaxMessageBytes+1024)
-	c.send(append(huge, '\n'))
+	// A whole mebibyte past the limit, more than default socket buffers hold, so the daemon
+	// answers and hangs up (`conn.serve`; API Spec §1 sets only the limit) while the client
+	// is still writing — as it did on the macOS runner with only 1 KiB past it. That write
+	// then fails with EPIPE or ECONNRESET, which is the hang-up and not a defect: the
+	// answer is already on the socket.
+	huge := bytes.Repeat([]byte("a"), MaxMessageBytes+1<<20)
+	if err := c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("set write deadline: %v", err)
+	}
+	if _, err := c.conn.Write(append(huge, '\n')); err != nil &&
+		!errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("write: %v", err)
+	}
 
 	resp := c.read()
 	if resp.Error == nil || resp.Error.Code != codeValidationError {
 		t.Fatalf("oversized message = %+v, want VALIDATION_ERROR", resp)
 	}
+	c.expectClosed()
 }
 
 // TestStaleSocketIsReplaced covers the crash-restart path: a leftover socket file must
