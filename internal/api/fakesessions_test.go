@@ -120,6 +120,16 @@ var _ sessports.Sessions = (*fakeSessions)(nil)
 func testServerWithSessions(t *testing.T, sessions sessports.Sessions) *Server {
 	t.Helper()
 
+	s, ctx := serveWithoutDispatch(t, sessions)
+	go s.Notify(ctx)
+	return s
+}
+
+// serveWithoutDispatch is testServerWithSessions without `Notify`, for a test that decides
+// when the dispatcher starts. It returns the context the dispatcher must run under.
+func serveWithoutDispatch(t *testing.T, sessions sessports.Sessions) (*Server, context.Context) {
+	t.Helper()
+
 	dir := socketDir(t)
 	eventBus := bus.New()
 	t.Cleanup(eventBus.Close)
@@ -138,7 +148,6 @@ func testServerWithSessions(t *testing.T, sessions sessports.Sessions) *Server {
 	ctx, cancel := context.WithCancel(t.Context())
 	served := make(chan error, 1)
 	go func() { served <- s.Serve(ctx) }()
-	go s.Notify(ctx)
 
 	t.Cleanup(func() {
 		cancel()
@@ -153,7 +162,7 @@ func testServerWithSessions(t *testing.T, sessions sessports.Sessions) *Server {
 		}
 	})
 	installResultObserver(t, s)
-	return s
+	return s, ctx
 }
 
 // dispatchTestOutput publishes one output chunk through the bus, the same path the sessions

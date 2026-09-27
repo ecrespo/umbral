@@ -632,7 +632,8 @@
   with `compaudit` before the tests.
 - **REQ:** Art. 1 — the CI gate (infrastructure).
 - **Files:** `{internal/api,internal/client,cmd/umb,cmd/umbrald}/sockdir_test.go` and the tests
-  that now use it, `Taskfile.yml`, `.github/workflows/ci.yml`
+  that now use it, `Taskfile.yml`, `.github/workflows/ci.yml`; and what the runners found:
+  `internal/api/{conn,fanout,sessions,server,notify}.go` and their tests
 - **Depends on:** T-F0-25
 - **Done:** `task test:portability` green, and the GitHub `CI` workflow green on
   `ubuntu-latest` and `macos-latest`.
@@ -667,6 +668,20 @@
   mid-write on every OS (red 20/20 on Linux with the old helper), accepts EPIPE/ECONNRESET on
   that write, still reads `VALIDATION_ERROR` and then asserts the hang-up — and reddens if the
   daemon stops sending the answer.
+- **The third run** (36284836147) swapped again: macOS green, Ubuntu red in two `internal/api`
+  tests. `TestSubscribeSnapshotBeforeLive_REQ_TERM_004` saw *no* output in fifteen seconds,
+  which is not the ordering bug fixed above: `Server.Notify` took its bus subscription inside
+  its own goroutine, so everything published before the scheduler ran it reached no one.
+  Delaying that goroutine by 500 ms reproduces the runner's failure to the line. `Listen`
+  now takes the subscription and `Notify` drains it;
+  `TestOutputPublishedBeforeTheDispatcherRunsIsDelivered_REQ_TERM_004` publishes before
+  starting `Notify` and was red before the move. In the daemon the same race existed between
+  `go server.Notify` and a client's first output, and was only less likely there; it is closed
+  for both.
+  `TestOutputLatencyUnder5ms_REQ_TERM_006` failed in the same run with p50 166 µs and p95
+  7.3 ms, as it had in run 35554547683 before any of this: a wall-clock percentile under `-race`
+  beside the rest of the package measures the scheduler. It is no longer parallel; the
+  benchmark in `task perf` remains REQ-TERM-006's gate of record and was green every run.
 
 ## Traceability matrix (F0)
 
@@ -675,7 +690,7 @@
 | REQ-TERM-001 | T-F0-05, T-F0-13 | TestCreateSession_REQ_TERM_001, BenchmarkSessionCreate_REQ_TERM_001 |
 | REQ-TERM-002 | T-F0-07 | Conformance_REQ_TERM_002 |
 | REQ-TERM-003 | T-F0-06 | TestSessionSurvivesNoClients_REQ_TERM_003 |
-| REQ-TERM-004 | T-F0-04, T-F0-06 | TestSubscribeSnapshotBeforeLive_REQ_TERM_004, TestSnapshotRoundTrip_REQ_TERM_004, TestRebaseKeepsWhatTheSnapshotDoesNotContain_REQ_TERM_004, TestSubscribeAnswersBeforeItStreams_REQ_TERM_004 |
+| REQ-TERM-004 | T-F0-04, T-F0-06 | TestSubscribeSnapshotBeforeLive_REQ_TERM_004, TestSnapshotRoundTrip_REQ_TERM_004, TestRebaseKeepsWhatTheSnapshotDoesNotContain_REQ_TERM_004, TestSubscribeAnswersBeforeItStreams_REQ_TERM_004, TestOutputPublishedBeforeTheDispatcherRunsIsDelivered_REQ_TERM_004 |
 | REQ-TERM-005 | T-F0-02, T-F0-05 | TestExitedEmitsCode_REQ_TERM_005, TestRecoveryMarksOpenBlocksAbandoned_REQ_TERM_005 |
 | REQ-TERM-006 | T-F0-06, T-F0-13 | BenchmarkOutputLatency_REQ_TERM_006 |
 | REQ-TERM-007 | T-F0-05 | TestResizeNotifies_REQ_TERM_007 |
@@ -718,6 +733,7 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | T-F0-26 | runners, second and third runs → fixed | Run 36284097081: macOS red in `TestOversizedMessageIsRejected`, the first run of that test on macOS — the client's write got EPIPE after the daemon's answer and hang-up; the test now reads the answer anyway. Run 36284836147: Ubuntu red because `Notify` subscribed to the bus inside its own goroutine and lost everything published before it was scheduled; `Listen` takes the subscription now, and a new test that publishes before starting `Notify` was red before the move. `TestOutputLatencyUnder5ms_REQ_TERM_006` is serial, since a wall-clock p95 beside its siblings measured the scheduler. |
 | 2026-09-26 | T-F0-26 | runner: macOS green, Ubuntu red → fixed | The first run on the runners after the merge found a real ordering bug in T-F0-06's fan-out, not a flake: a chunk queued while `session.subscribe` took its snapshot could be written before the reply, against API Spec §5.11. Subscriptions now start held and are released after the response is written; the new test was red 3/3 before the fix, and `spec-guardian` broke the hold and the release in turn to confirm both are guarded. |
 | 2026-09-26 | T-F0-26 | done locally; runner pending | "The gate is green" had meant the local gate for weeks. The remote one was red on both OSes, for reasons none of which a Linux laptop with a terminal could see: no `TERM`, a long `TMPDIR`, a runner's zsh asking a question. |
 | 2026-09-26 | T-F0-25 | done | The GitHub CI had been red on both OSes for eight runs while `task ci` was green locally. Four of the failures were one missing line: the daemon never told a pane what terminal it was, and a runner has no `TERM` to inherit. |

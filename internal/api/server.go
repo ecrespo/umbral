@@ -157,6 +157,12 @@ type Server struct {
 	mu    sync.Mutex
 	conns map[*conn]struct{}
 
+	// events is the dispatcher's bus subscription. `Listen` takes it and `Notify` drains
+	// it, because `Notify` runs on a goroutine of its own and nothing orders that goroutine
+	// against the first event a module publishes: subscribed from inside it, everything
+	// published before the scheduler got round to it reached no one.
+	events *bus.Subscription
+
 	// observeResult is nil except under test; see resultObserver.
 	observeResult resultObserver
 }
@@ -219,6 +225,7 @@ func Listen(ctx context.Context, cfg Config) (*Server, error) {
 		listener:  ln,
 		startedAt: time.Now(),
 		conns:     make(map[*conn]struct{}),
+		events:    cfg.Bus.SubscribeBuffered(dispatchBuffer, dispatchedKinds...),
 	}
 	s.methods = s.registry()
 	return s, nil
@@ -266,9 +273,12 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 }
 
-// Close stops accepting, closes every live connection and removes the socket file.
+// Close stops accepting, closes the dispatcher's bus subscription (which ends `Notify`),
+// closes every live connection and removes the socket file.
 func (s *Server) Close() error {
 	err := s.listener.Close()
+	// Also what frees the bus from a server whose `Notify` never ran.
+	s.events.Close()
 
 	s.closeConns()
 	s.wg.Wait()

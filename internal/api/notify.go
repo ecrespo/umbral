@@ -51,7 +51,9 @@ var dispatchedKinds = []bus.Kind{
 }
 
 // Notify forwards module events to connected clients as JSON-RPC notifications
-// (API Spec §6). It returns when ctx is cancelled.
+// (API Spec §6). Call it exactly once per server: it drains the one subscription `Listen`
+// took, and two callers would split the events between them. It returns when ctx is
+// cancelled or when `Close` closes that subscription.
 //
 // This is the simple form: every authenticated connection receives every event. The
 // per-session subscription that `session.subscribe` implies, the 4 ms / 32 KiB batching
@@ -59,11 +61,11 @@ var dispatchedKinds = []bus.Kind{
 // property that matters most: it never blocks the publisher, because the bus drops for a
 // subscriber that falls behind rather than waiting for it.
 func (s *Server) Notify(ctx context.Context) {
-	// A generous buffer: this is the daemon's single dispatch goroutine, and an event it
-	// drops here is output no client will ever see. The per-client budget that API Spec §8
-	// actually specifies lives in the subscription, where it can drop one slow client
-	// rather than everyone.
-	sub := s.cfg.Bus.SubscribeBuffered(dispatchBuffer, dispatchedKinds...)
+	// Taken by `Listen`, not here: see Server.events. Its buffer is generous because this
+	// is the daemon's single dispatch goroutine, and an event it drops is output no client
+	// will ever see. The per-client budget that API Spec §8 actually specifies lives in the
+	// subscription, where it can drop one slow client rather than everyone.
+	sub := s.events
 	defer sub.Close()
 
 	for {
@@ -73,6 +75,7 @@ func (s *Server) Notify(ctx context.Context) {
 			return
 		case event, open := <-sub.C():
 			if !open {
+				s.logDrops(sub)
 				return
 			}
 			if output, ok := event.(sessports.SessionOutput); ok {

@@ -101,9 +101,14 @@ func BenchmarkOutputLatency_REQ_TERM_006(b *testing.B) {
 
 // TestOutputLatencyUnder5ms_REQ_TERM_006 is the same measurement as a test, so a
 // regression fails `task test` rather than waiting for someone to run the benchmarks.
+//
+// It is deliberately **not** parallel. A wall-clock percentile measured while the rest of
+// the package runs beside it measures the scheduler: on the Ubuntu runner, under `-race`,
+// the median stayed at 166 µs while p95 reached 7-10 ms (CI runs 35554547683, 36284836147),
+// in the same run that starved a whole goroutine for longer than a handshake. Go runs a
+// package's serial tests before releasing its parallel ones, so this one measures alone.
+// The benchmark in `task perf` stays the gate of record.
 func TestOutputLatencyUnder5ms_REQ_TERM_006(t *testing.T) {
-	t.Parallel()
-
 	sessions := newFakeSessions()
 	s := testServerWithSessions(t, sessions)
 	c := dial(t, s)

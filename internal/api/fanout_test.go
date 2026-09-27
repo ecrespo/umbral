@@ -218,6 +218,39 @@ func TestSubscribeAnswersBeforeItStreams_REQ_TERM_004(t *testing.T) {
 	}
 }
 
+// TestOutputPublishedBeforeTheDispatcherRunsIsDelivered_REQ_TERM_004: the daemon starts
+// `Notify` on a goroutine of its own, and nothing orders that goroutine against the first
+// event a module publishes. If the dispatcher's bus subscription is taken inside it, every
+// event published before the goroutine is scheduled reaches no one — on a loaded Ubuntu
+// runner, the whole of TestSubscribeSnapshotBeforeLive_REQ_TERM_004's output (CI run
+// 36284836147). The subscription belongs to `Listen`, so that anything published once the
+// server exists waits for the dispatcher instead of vanishing.
+func TestOutputPublishedBeforeTheDispatcherRunsIsDelivered_REQ_TERM_004(t *testing.T) {
+	t.Parallel()
+
+	sessions := newFakeSessions()
+	s, ctx := serveWithoutDispatch(t, sessions)
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+	sessions.setSnapshot([]byte("screen"), 7, 0, 0)
+	if resp := c.call(2, "session.subscribe", map[string]any{"session_id": fakeSessionID}); resp.Error != nil {
+		t.Fatalf("session.subscribe: %+v", resp.Error)
+	}
+
+	s.dispatchTestOutput(fakeSessionID, 8, []byte("published before dispatch"))
+	go s.Notify(ctx)
+
+	got := c.collectNotificationsUntil("session.output", 15*time.Second,
+		func(got []map[string]any) bool {
+			return bytes.Contains(payload(got), []byte("published before dispatch"))
+		})
+	if !bytes.Contains(payload(got), []byte("published before dispatch")) {
+		t.Errorf("output published before the dispatcher ran was lost; got %q", payload(got))
+	}
+}
+
 // TestSessionSurvivesNoClients_REQ_TERM_003 checks the daemon's side of durability: output
 // published while nobody is subscribed is neither queued forever nor an error, and a client
 // that subscribes afterwards is served normally.
