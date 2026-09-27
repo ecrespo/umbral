@@ -29,6 +29,8 @@ type Message struct {
 	Text       string
 	ToolCalls  []ToolCall
 	ToolCallID string
+	// ToolName is the tool a tool message answers; Ollama matches results by name.
+	ToolName string
 	// ToolError marks a tool message whose Text is an error.
 	ToolError bool
 }
@@ -49,6 +51,11 @@ type Request struct {
 	Messages        []Message
 	Tools           []ToolSpec
 	MaxOutputTokens int64
+	// Reasoning asks a reasoning model to think: "" leaves the model's default, "on" and "off"
+	// switch it, "low", "medium" and "high" set its effort where the model takes one.
+	Reasoning string
+	// ResponseSchema, when set, is a JSON Schema the answer must follow (structured output).
+	ResponseSchema map[string]any
 }
 
 // EventKind is the type of a normalized stream event.

@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | `PROPOSED 2026-09-27 — pending the Tech Lead's ratification. T-F1-02 implements it and is merged with it open, at the user's instruction to carry on through T-F1-10; nothing downstream may treat it as ratified until it is.` |
 | **Date** | 2026-09-27 |
-| **Task** | T-F1-02 (implements 1–7, 9); T-F1-05 (implements 8, 8a–8c; touches API 1.18 §4 and §5.26, Tech 1.18 §5.1 and DD-008) |
+| **Task** | T-F1-02 (implements 1–7, 9); T-F1-05 (implements 8, 8a–8c; touches API 1.18 §4 and §5.26, Tech 1.18 §5.1 and DD-008); T-F1-06 (8d, Tech 1.19 DD-005) |
 | **Raised by** | The `spec-guardian` review of T-F1-02, 2026-09-27 (Art. 9: "NEEDS A DELTA") |
 
 ## Evidence
@@ -66,6 +66,10 @@ API 1.17 §5.28; this delta is what makes that text normative instead of silent.
    nothing to mark until it has been discovered once; `umb status` still shows the reason.
    OpenRouter's variable price (`-1`) is stored as 0; T-F1-07's `cost` policy must not read it
    as free.
+8d. **`num_ctx` when none is configured** (T-F1-06). REQ-LLM-006 sends "the model's configured
+   `num_ctx`"; `[providers.options]` configures it per provider. With none configured, Ollama
+   still gets one: 32768, capped at the model's own window from `/api/tags` — DD-005 exists to
+   avoid Ollama's short default, so sending nothing is not an option.
 9. **`config.get` result** is `{settings, providers, rejected}`; credentials appear only as
    their reference. `cli` is not given `config.*` (API §2 unchanged).
 

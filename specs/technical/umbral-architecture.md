@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.18 |
+| **Version** | 1.19 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -227,6 +227,12 @@ sequenceDiagram
 - **Decision:** Ollama uses the native `/api/chat` to send `num_ctx` (REQ-LLM-006), `keep_alive` and
   `format` with a JSON Schema. llama.cpp and LM Studio use openai-compat through Fantasy.
 - **Consequence:** one more adapter to maintain, but it avoids Ollama's short default `num_ctx`.
+- **`num_ctx` in every request** (T-F1-06, REQ-LLM-006): the provider's `[providers.options]
+  num_ctx` when models.toml sets it; otherwise 32768, capped at the model's own window once
+  discovery (`/api/tags`, `details.context_length`) knows it — never Ollama's default. `keep_alive`
+  goes at the request's top level and every other option in `options`; `think` is sent only when
+  the call asks (`true`/`false` or an effort level), `format` only with a schema. With tool calls,
+  Ollama's `done_reason: stop` is reported as `tool_calls`, as the openai-compat adapter reports it.
 
 ### DD-006: Policy engine as a pure function
 
@@ -485,9 +491,9 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 - **The catalog** (T-F1-05, `internal/llmgw`). Each provider becomes an adapter —
   `openai-compat`, `lmstudio` and `llamacpp` through Fantasy's openaicompat provider, `openrouter`
   through its OpenRouter provider (whose built-in URL the adapter's HTTP client rewrites to
-  `base_url`); `ollama` arrives with T-F1-06 and `yzma` later, and until then they are listed with
-  reason `no_adapter`. A provider down for its credential gets no adapter at all, so nothing can
-  call it. Discovery reads `<base_url>/models` at start and after every reload, in the background,
+  `base_url`), `ollama` through the native adapter of DD-005; `yzma` arrives later, and until then
+  it is listed with reason `no_adapter`. A provider down for its credential gets no adapter at all, so nothing can
+  call it. Discovery reads `<base_url>/models` (`/api/tags` for `ollama`) at start and after every reload, in the background,
   and stores the result in `models`; the models of a provider that does not answer stay, `down`
   with `discovery_failed`. A model's health and reason are its provider's — `ok` once it answered,
   `degraded` when its key came from the environment — with no column of their own. `local` is true
@@ -875,3 +881,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.16 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-03: §5.3 writes down how the table's "not exposed" cells and DD-006's precedence meet — in `ask` mode a tool that is not ReadOnly is denied as `not_exposed` before any step, destructive included — lists the built-in destructive patterns and how a command line is normalised, and states how rules read a compound line and what the trace holds. Delta `2026-09-policy-precedence` (proposed). |
 | 1.17 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-04: DD-008 lists the built-in redaction rules and how the generic detector reads REQ-SEC-001's thresholds — as necessary conditions, with Umbral ids and identifier-shaped tokens left alone — and records the recall the 4.5-bit floor allows at each length. Delta `2026-09-redaction-thresholds` (proposed). |
 | 1.18 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-05: §5.1 gains the `llamacpp` provider type (REQ-LLM-001 names it; the reference architecture's list did not) and describes the catalog: which adapter serves each type, background discovery, a down or offline-remote provider never contacted, and the reasons `discovery_failed`, `no_adapter`, `invalid_config` and `offline`; DD-008 says `egress_log` is written at the HTTP transport, discovery included, and fails closed. Delta `2026-09-provider-config` (proposed). |
+| 1.19 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-06: DD-005 says which `num_ctx` every Ollama request carries when models.toml sets none (32768 capped at the model's window), where `keep_alive`, `think` and `format` go, and how a tool call's finish reason is reported; §5.1's catalog serves `ollama`. Delta `2026-09-provider-config` (proposed). |
