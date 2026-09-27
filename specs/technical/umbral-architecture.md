@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.21 |
+| **Version** | 1.22 |
 | **Date** | 2026-09-27 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -636,6 +636,35 @@ B-09).
   cleaned, so `..` cannot escape, and a sibling sharing the root's prefix is outside. Resolving
   symlinks is the caller's (the tool, T-F1-09), which does I/O.
 
+### 5.3b Built-in tools (T-F1-09)
+
+The tools module's registry (`internal/tools/adapters/registry`) holds every tool with a JSON
+Schema and a risk (REQ-AGT-002); the built-ins are `internal/tools/adapters/builtin`
+(`run_command` joins them with T-F1-10). Delta `2026-09-builtin-tools` (proposed):
+
+- **Every call goes through the registry**, which validates the input against the schema
+  (`invalid_args` otherwise), refuses a cwd or write root that is not absolute, and runs the
+  call only under the grant decided on its own action — recomputed at invoke, so a target that
+  moved since is refused — when that grant is an `allow` or an approved `ask`. The risk decided
+  on is the one the tool registered with.
+- **Targets follow symlinks**: the path the policy sees, and the cwd and write root, are
+  resolved through the nearest existing ancestor, so a link out of the write root asks. A write
+  goes to the target the grant was checked against, resolving nothing again, inside an
+  `os.Root` opened on its nearest existing directory, and fails if a component or the target
+  became a link since the check.
+- **File tools read only regular files of at most 16 MiB**, opened without blocking.
+- **`write_file` and `edit_file` preview a unified diff** for `approval.requested`
+  (REQ-AGT-012); `edit_file` needs `old_string` to match exactly once unless `replace_all`;
+  a write goes through a temporary file and a rename, and keeps an existing file's mode.
+- **`fetch_url` is egress** (Art. 4): a URL the redaction rules would change is refused; every
+  request, each redirect hop, is recorded in `egress_log` (`provider = 'fetch_url'`, the URL as
+  payload) before it is sent, failing closed. It connects to no loopback, private, link-local,
+  shared or multicast address, checked at dial time after resolution, redirected or not, with
+  no proxy; `http`/`https` only, five redirects, 10 s, 2 MiB (REQ-AGT-018). Its result is
+  tainted (REQ-SEC-006).
+- **Output is bounded**: `read_file` 256 KiB, `grep` 500 matches of 300 characters, `glob` and
+  `list_dir` 1000 entries; searches skip `.git`, binary files and files over 4 MiB.
+
 ### 5.4 Error Handling
 
 ```go
@@ -921,3 +950,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.19 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-06: DD-005 says which `num_ctx` every Ollama request carries when models.toml sets none (32768 capped at the model's window), where `keep_alive`, `think` and `format` go, and how a tool call's finish reason is reported; §5.1's catalog serves `ollama`. Delta `2026-09-provider-config` (proposed). |
 | 1.20 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-07: DD-004 says how the router walks candidates — which filters drop one, when a failure falls back and when it ends the call, when the first-token clock starts, redaction of all content once before the first candidate, and what `usage` records for each call, failures included. Delta `2026-09-router-fallback` (proposed). |
 | 1.21 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-08: §5.1 lists the REQ-LLM-007 presets and says that a loopback gateway which forwards to the cloud counts as local. Delta `2026-09-provider-config` (8e, proposed). |
+| 1.22 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-09: §5.3b describes the tool registry and the built-ins — the grant every call needs, symlink resolution of targets, the diff preview, `fetch_url` as Art. 4 egress with its address checks, and output bounds. Delta `2026-09-builtin-tools` (proposed). |

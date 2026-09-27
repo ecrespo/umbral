@@ -231,6 +231,8 @@ deps:
   tools-adapters:
     anyVendorDeps: true
     mayDependOn:
+      # the registry's tests assemble the built-ins (T-F1-09).
+      - tools-adapters
       - tools-ports
       - sessions-ports
       - security-ports
