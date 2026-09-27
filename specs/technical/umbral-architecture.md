@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.26 |
+| **Version** | 1.27 |
 | **Date** | 2026-09-27 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -284,6 +284,8 @@ sequenceDiagram
 
 - **Decision:** the runtime writes the message, tool call or approval to SQLite in the turn's own
   goroutine, before publishing it on the bus (REQ-AGT-011). Accepted cost: ~0.2 ms per event with WAL.
+  Streamed text is persisted chunk by chunk, reasoning is published only, and a write that fails
+  stops the turn with `storage_error` (§5.3d; delta `2026-09-agent-runtime`, decisions 1 and 3).
 
 ### DD-008: Redaction at the egress edge
 
@@ -726,6 +728,36 @@ runtime (T-F1-13).
 - **Redaction** is not the context module's: the router redacts everything once before the first
   candidate (DD-004), attachments included.
 
+### 5.3d Agent runtime (T-F1-13)
+
+`internal/agents` runs threads (REQ-AGT-001…015). Its core (`agents-service`) reaches the other
+modules only through their ports — the thread store (`adapters/threadstore`), the model router
+(`Models`: `Stream` with a thread's model or class, and `Window`), the tool registry, the context
+gatherer — and publishes through a `Publisher`; `cmd/umbrald` wires them. Delta
+`2026-09-agent-runtime`:
+
+- **`thread.send`** validates, returns the original `{turn_id, message_id}` for a client id the
+  thread already has (checked first, under a per-thread lock, and again in the store's
+  transaction — REQ-AGT-015), reads the attachments, and persists the user message — its text with
+  the attachments rendered after it — while marking the thread `running`, in one transaction. A
+  turn already running is `CONFLICT`; a spent budget `BUDGET_EXCEEDED`. The turn then runs on the
+  runtime's context, not the request's.
+- **A turn** reads its thread once — so a model change applies from the next turn
+  (REQ-AGT-010) — along with its rules, the tools its mode exposes (`ask`: ReadOnly only,
+  REQ-AGT-009), the system prompt (§5.3c) and the history rebuilt from the stored messages and
+  tool calls. Each step compacts if it must (§5.3c), calls the model, and runs the tools asked
+  for through `security.Decide` and the registry: `deny` is `denied_by_policy`, `ask` goes to the
+  approval flow (T-F1-14; without one, `denied_by_policy`), `allow` runs. It ends at the model's
+  answer without tools, at `max_steps`, or when the thread's tokens reach its budget
+  (REQ-AGT-008).
+- **Persist before notify** (DD-007): the assistant message is inserted with its first text
+  delta and each later delta appended before it is published; every tool-call status is saved,
+  then published; a compaction's summary is a `system_note` before `context.compacted`; the
+  turn's usage and state are written before `thread.turn_finished`. Reasoning deltas are
+  published only. **A write that fails stops the turn** with `storage_error`, publishing and
+  running nothing it could not record (Analyze C-01); `ErrContextOverflow` is `context_overflow`;
+  a routing failure `provider_error`.
+
 ### 5.4 Error Handling
 
 ```go
@@ -1016,3 +1048,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.24 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies deltas `2026-09-provider-config`, `2026-09-policy-precedence`, `2026-09-redaction-thresholds`, `2026-09-router-fallback` and `2026-09-builtin-tools`: their sections lose "proposed", and DD-006 points at §5.3's reconciliation with the table. |
 | 1.25 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-11: §5.3c describes context assembly — rules files from the cwd up to the write root, highest precedence first, never followed out of it; `file`, `dir` and `block` attachments capped at 256 KiB with the omitted bytes stated, binary content left out; git context run without any command a repository's config can name (fsmonitor, filter drivers, diff drivers), bounded, and a failing git stated. Delta `2026-09-context-assembly` (proposed). |
 | 1.26 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-12: §5.3c adds the budget and compaction; Q-03 is answered — no tokenizer, a deliberately high byte estimate — and §3's module table says so. Delta `2026-09-context-budget` (proposed). |
+| 1.27 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-13: §5.3d describes the agent runtime — `thread.send`'s idempotency and transaction, a turn's loop and limits, persist-before-notify for streamed text and tool calls, and `storage_error` for a failed write (Analyze C-01). Delta `2026-09-agent-runtime` (proposed). |

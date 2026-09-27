@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
+
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/config"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
@@ -139,8 +141,11 @@ type Config struct {
 	Configuration ConfigService
 	// Models serves model.list. A nil value leaves it answering NOT_IMPLEMENTED.
 	Models ModelService
-	Bus    *bus.Bus
-	Logger *slog.Logger
+	// Threads is the agent runtime's inbound port, served as thread.*. A nil value leaves
+	// those methods answering NOT_IMPLEMENTED.
+	Threads agentsports.Threads
+	Bus     *bus.Bus
+	Logger  *slog.Logger
 
 	// MaxMessageBytes is the frame limit a connection gets once it completes the handshake
 	// (`[api] max_message_bytes`, API Spec §1). Zero means config.DefaultMaxMessageBytes.

@@ -76,6 +76,10 @@ type Usage struct {
 	OutputTokens    int64
 	ReasoningTokens int64
 	CacheReadTokens int64
+	// Model and CostMicroUSD are set by the router: the catalog id that served the call and
+	// what it cost, as `usage` records it.
+	Model        string
+	CostMicroUSD int64
 }
 
 // Event is one normalized stream event. Text is set for the two deltas, ToolCall for a

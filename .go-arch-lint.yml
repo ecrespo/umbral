@@ -39,6 +39,11 @@ components:
   # reason: it orchestrates llmgw's ports and belongs in neither domain nor adapters.
   llmgw-service: { in: internal/llmgw }
 
+  # The agent runtime (T-F1-13), for the same reason: it orchestrates the module's ports and
+  # the other modules' ports (Tech Design §5.2: agents -> ports of sessions, tools, context,
+  # llmgw, security, store), and belongs in neither domain nor adapters.
+  agents-service: { in: internal/agents }
+
   # The tree's integration tests wire the real store to the service, which is the job
   # Art. 3 reserves for a composition root — the same exception sessions-integration has.
   workspaces-integration: { in: internal/workspaces/integration }
@@ -151,6 +156,7 @@ deps:
   agents-ports:
     anyVendorDeps: false
     mayDependOn:
+      - bus
       - sessions-domain
       - agents-domain
       - tools-domain
@@ -329,6 +335,9 @@ deps:
       - config
       - sessions-ports
       - sessions-domain
+      - agents-ports
+      - agents-domain
+      - security-domain
       - workspaces-ports
       - workspaces-domain
   client:
@@ -363,6 +372,19 @@ deps:
       - llmgw-domain
       - security-domain
 
+  agents-service:
+    anyVendorDeps: true
+    mayDependOn:
+      - agents-ports
+      - agents-domain
+      - tools-ports
+      - tools-domain
+      - context-ports
+      - context-domain
+      - llmgw-domain
+      - security-domain
+      - bus
+
   sessions-service:
     anyVendorDeps: true
     mayDependOn:
@@ -396,6 +418,7 @@ deps:
       - sessions-service
       - workspaces-service
       - llmgw-service
+      - agents-service
       - shellscripts
       - sessions-ports
       - sessions-adapters

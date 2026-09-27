@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.11 |
+| **Version** | 1.12 |
 | **Date** | 2026-09-27 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -413,7 +413,7 @@ CREATE TABLE tool_calls (
   args_json      TEXT NOT NULL,
   status         TEXT NOT NULL CHECK (status IN ('pending','ok','error','denied_by_user','denied_by_policy','invalid_args')),
   result_summary TEXT,
-  result_json    TEXT,
+  result_json    TEXT,                        -- {"text", "tainted"}: what the model reads back (T-F1-13)
   block_id       TEXT REFERENCES blocks(id),
   started_at     INTEGER NOT NULL,
   ended_at       INTEGER
@@ -650,3 +650,4 @@ earlier drafts named.
 | 1.9 | 2026-09-26 | delta `2026-09-skills-cli`: §2.4f `skills` in migration 0005, keyed like `mcp_servers`; §5's 0005 row names it; §6 step 9 sweeps orphaned skill directories |
 | 1.10 | 2026-09-27 | T-F1-09: §2.12 says `egress_log.provider` may name the tool `fetch_url`, whose requests leave the machine too. No DDL change. Delta `2026-09-builtin-tools` (proposed). |
 | 1.11 | 2026-09-27 | Ratifies delta `2026-09-builtin-tools`; §2.12 no longer calls it proposed. |
+| 1.12 | 2026-09-27 | T-F1-13: `tool_calls.result_json` holds `{"text", "tainted"}`. No DDL change. Delta `2026-09-agent-runtime` (proposed). |

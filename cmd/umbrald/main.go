@@ -346,6 +346,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	providers.observe(models.configure)
 
+	// The agent runtime (T-F1-13). Its turns run on the daemon's context; closing it waits
+	// for each to record how it ended.
+	runtime, err := newRuntime(ctx, agentDeps{
+		logger: logger, db: db, bus: eventBus, gateway: models, egress: egress,
+		terminal: sessionService, blocks: blockReader,
+	})
+	if err != nil {
+		logger.Error("cannot build the agent runtime", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer runtime.Close()
+
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
 		TokenPath:     tokenPath,
@@ -353,6 +365,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Status:        withProviders(statusFromStore(db), providers),
 		Configuration: providers,
 		Models:        models,
+		Threads:       runtime,
 		Sessions:      sessionService,
 		Blocks:        blockReader,
 		Workspaces:    workspaceService,
