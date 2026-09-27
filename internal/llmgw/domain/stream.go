@@ -94,6 +94,9 @@ type ProviderError struct {
 	Provider string
 	Status   int
 	Err      error
+	// Permanent marks a failure no other candidate would avoid — a request that could not be
+	// built — although it has no status.
+	Permanent bool
 }
 
 func (e *ProviderError) Error() string {
@@ -106,8 +109,12 @@ func (e *ProviderError) Error() string {
 func (e *ProviderError) Unwrap() error { return e.Err }
 
 // Retryable reports whether the next candidate should be tried: a 429, a 5xx or a transport
-// failure (REQ-LLM-003). Anything else — a 400, a 401 — would fail the same way anywhere.
+// failure (REQ-LLM-003). Anything else — a 400, a 401, a request that could not be built, one
+// the adapter cannot carry — would fail the same way on another try.
 func (e *ProviderError) Retryable() bool {
+	if e.Permanent || errors.Is(e.Err, ErrUnsupported) {
+		return false
+	}
 	return e.Status == 0 || e.Status == 429 || e.Status >= 500
 }
 

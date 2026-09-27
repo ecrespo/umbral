@@ -68,7 +68,15 @@ func message(m domain.Message) fantasy.Message {
 // Stream opens the call on a Fantasy model and normalizes what it yields. Deltas pass through
 // one by one; a tool call is yielded once, complete; the finish part becomes a usage event and
 // a done event. A part of type error ends the stream with that error as a ProviderError.
+//
+// A request that sets Reasoning or ResponseSchema is refused with domain.ErrUnsupported
+// before anything is sent: these adapters do not carry either yet, and dropping them would
+// hand back free text where the caller asked for a schema. The router moves on to the next
+// candidate.
 func Stream(ctx context.Context, provider string, lm fantasy.LanguageModel, req domain.Request) (iter.Seq2[domain.Event, error], error) {
+	if req.Reasoning != "" || req.ResponseSchema != nil {
+		return nil, &domain.ProviderError{Provider: provider, Err: fmt.Errorf("reasoning and response schemas: %w", domain.ErrUnsupported)}
+	}
 	parts, err := lm.Stream(ctx, Call(req))
 	if err != nil {
 		return nil, Error(provider, err)

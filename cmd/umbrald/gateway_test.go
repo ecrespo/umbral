@@ -2,18 +2,24 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ecrespo/umbral/internal/client"
 	"github.com/ecrespo/umbral/internal/config"
+	"github.com/ecrespo/umbral/internal/llmgw"
+	"github.com/ecrespo/umbral/internal/llmgw/adapters/ollama"
 	llmdomain "github.com/ecrespo/umbral/internal/llmgw/domain"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 )
@@ -146,7 +152,10 @@ func TestOfflineReachesTheCatalog_REQ_LLM_004(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	g := newGateway(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), nopStore{}, nil)
+	g, err := newGateway(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), nopStore{}, nil, nopUsage{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	models := config.Models{Providers: []config.Provider{
 		{ID: "remote", Type: "openai-compat", BaseURL: "https://example.invalid/v1"},
 	}}
@@ -167,3 +176,240 @@ func (nopStore) Replace(context.Context, string, []llmdomain.Model) error  { ret
 func (nopStore) SetHealth(context.Context, string, llmdomain.Health) error { return nil }
 func (nopStore) List(context.Context) ([]llmdomain.Model, error)           { return nil, nil }
 func (nopStore) Retain(context.Context, []string) error                    { return nil }
+
+type nopUsage struct{}
+
+func (nopUsage) Record(context.Context, llmdomain.UsageRecord) error { return nil }
+
+func TestTheGatewayNeedsAUsageLog_REQ_LLM_005(t *testing.T) {
+	t.Parallel()
+
+	if _, err := newGateway(context.Background(), slog.New(slog.DiscardHandler), nopStore{}, nil, nil); err == nil {
+		t.Error("a gateway that records no model call was built")
+	}
+}
+
+// memModels is the model store in memory.
+type memModels struct {
+	mu   sync.Mutex
+	rows []llmdomain.Model
+}
+
+func (m *memModels) Replace(_ context.Context, _ string, models []llmdomain.Model) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rows = append([]llmdomain.Model(nil), models...)
+	return nil
+}
+func (*memModels) SetHealth(context.Context, string, llmdomain.Health) error { return nil }
+func (*memModels) Retain(context.Context, []string) error                    { return nil }
+func (m *memModels) List(context.Context) ([]llmdomain.Model, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]llmdomain.Model(nil), m.rows...), nil
+}
+
+type memEgress struct {
+	mu   sync.Mutex
+	recs []llmdomain.EgressRecord
+}
+
+func (e *memEgress) Record(_ context.Context, rec llmdomain.EgressRecord) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.recs = append(e.recs, rec)
+	return nil
+}
+
+// toServer sends every request to srv whatever host it names, so a remote provider can be
+// exercised without leaving the machine.
+type toServer struct{ srv *httptest.Server }
+
+func (t toServer) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.URL.Scheme, r.URL.Host = "http", strings.TrimPrefix(t.srv.URL, "http://")
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// TestEgressLoggedForRemote_REQ_SEC_002: a call the router sends to a remote provider leaves
+// one egress row with the host, the provider, the thread, the bytes and the SHA-256 of
+// exactly the payload that left — which is the redacted one (REQ-SEC-001).
+func TestEgressLoggedForRemote_REQ_SEC_002(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var chat []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/tags", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"models":[{"name":"gpt-oss:20b","details":{"context_length":131072},"capabilities":["completion","tools"]}]}`)
+	})
+	mux.HandleFunc("POST /api/chat", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		chat = body
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"message":{"role":"assistant","content":"ok"},"done":true,"done_reason":"stop","prompt_eval_count":3,"eval_count":1}`+"\n")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	egress := &memEgress{}
+	provider, err := ollama.New(ollama.Config{
+		ID: "gpu", BaseURL: "http://gpu-box.example:11434", Egress: egress,
+		HTTPClient: &http.Client{Transport: toServer{srv}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	g, err := newGateway(ctx, slog.New(slog.DiscardHandler), &memModels{}, egress, nopUsage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.catalog.Configure(false, []llmgw.Entry{{ID: "gpu", Provider: provider, Health: llmdomain.HealthOK}})
+	g.router.Configure(map[string][]string{"code": {"gpu/gpt-oss:20b"}})
+	if err := g.catalog.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	token := "ghp_" + strings.Repeat("x", 36)
+	stream, err := g.router.Stream(ctx, llmgw.Call{ThreadID: "thr_1", Class: "code", Request: llmdomain.Request{
+		Messages: []llmdomain.Message{{Role: llmdomain.RoleUser, Text: "push with " + token}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, err := range stream {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mu.Lock()
+	sent := chat
+	mu.Unlock()
+	if strings.Contains(string(sent), token) || !strings.Contains(string(sent), "[REDACTED:github_token]") {
+		t.Fatalf("the payload that left was not redacted: %s", sent)
+	}
+	if len(egress.recs) != 2 {
+		t.Fatalf("egress rows = %+v, want discovery and the call", egress.recs)
+	}
+	row := egress.recs[1]
+	sum := sha256.Sum256(sent)
+	if row.Host != "gpu-box.example" || row.Provider != "gpu" || row.ThreadID != "thr_1" ||
+		row.Bytes != int64(len(sent)) || row.PayloadSHA256 != hex.EncodeToString(sum[:]) {
+		t.Errorf("row = %+v, want host, provider, thread, %d bytes and the payload's hash", row, len(sent))
+	}
+}
+
+type memUsageLog struct {
+	mu   sync.Mutex
+	recs []llmdomain.UsageRecord
+}
+
+func (u *memUsageLog) Record(_ context.Context, rec llmdomain.UsageRecord) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.recs = append(u.recs, rec)
+	return nil
+}
+
+// TestAServerThatHoldsItsHeadersTimesOut_REQ_LLM_003: an Ollama loading a model sends no
+// response headers, so the real adapter is still inside Stream when the first-token timeout
+// fires. The call must move to the next candidate all the same, and record a timeout.
+func TestAServerThatHoldsItsHeadersTimesOut_REQ_LLM_003(t *testing.T) {
+	t.Parallel()
+
+	serve := func(hold bool) *httptest.Server {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /api/tags", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"models":[{"name":"m","details":{"context_length":8192},"capabilities":["completion"]}]}`)
+		})
+		mux.HandleFunc("POST /api/chat", func(w http.ResponseWriter, r *http.Request) {
+			if hold {
+				// The server notices the client leaving only once the body is read.
+				_, _ = io.Copy(io.Discard, r.Body)
+				<-r.Context().Done()
+				return
+			}
+			_, _ = io.WriteString(w, `{"message":{"role":"assistant","content":"ok"},"done":true,"done_reason":"stop"}`+"\n")
+		})
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	loading, err := ollama.New(ollama.Config{ID: "loading", BaseURL: serve(true).URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := ollama.New(ollama.Config{ID: "ready", BaseURL: serve(false).URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	catalog := llmgw.NewCatalog(&memModelsByProvider{rows: map[string][]llmdomain.Model{}}, slog.New(slog.DiscardHandler))
+	catalog.Configure(false, []llmgw.Entry{
+		{ID: "loading", Provider: loading, Health: llmdomain.HealthOK},
+		{ID: "ready", Provider: ready, Health: llmdomain.HealthOK},
+	})
+	if err := catalog.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	usage := &memUsageLog{}
+	router, err := llmgw.NewRouter(catalog, llmgw.RouterConfig{
+		Classes: map[string][]string{"code": {"loading/m", "ready/m"}},
+		Redact:  redact, Usage: usage, FirstTokenLocal: 200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := router.Stream(ctx, llmgw.Call{Class: "code", Request: llmdomain.Request{
+		Messages: []llmdomain.Message{{Role: llmdomain.RoleUser, Text: "hi"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text string
+	for ev, err := range stream {
+		if err != nil {
+			t.Fatalf("the call failed instead of falling back: %v", err)
+		}
+		text += ev.Text
+	}
+	if text != "ok" {
+		t.Errorf("text = %q, want the ready candidate's answer", text)
+	}
+	usage.mu.Lock()
+	defer usage.mu.Unlock()
+	if len(usage.recs) != 2 || usage.recs[0].Status != llmdomain.UsageTimeout || usage.recs[1].Status != llmdomain.UsageOK {
+		t.Errorf("usage = %+v, want a timeout then ok", usage.recs)
+	}
+}
+
+// memModelsByProvider is the model store in memory, per provider.
+type memModelsByProvider struct {
+	mu   sync.Mutex
+	rows map[string][]llmdomain.Model
+}
+
+func (m *memModelsByProvider) Replace(_ context.Context, provider string, models []llmdomain.Model) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rows[provider] = append([]llmdomain.Model(nil), models...)
+	return nil
+}
+
+func (*memModelsByProvider) SetHealth(context.Context, string, llmdomain.Health) error { return nil }
+
+func (*memModelsByProvider) Retain(context.Context, []string) error { return nil }
+
+func (m *memModelsByProvider) List(context.Context) ([]llmdomain.Model, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []llmdomain.Model
+	for _, ms := range m.rows {
+		out = append(out, ms...)
+	}
+	return out, nil
+}
