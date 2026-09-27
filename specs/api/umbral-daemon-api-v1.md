@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.13 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.14 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -23,7 +23,11 @@ The channel is bidirectional:
 - the client invokes **methods** (request/response);
 - the daemon emits **notifications** (no `id`) for output streams and events.
 
-Framing: JSON messages delimited by `\n` (NDJSON). Maximum message size: 4 MiB.
+Framing: JSON messages delimited by `\n` (NDJSON). A message is at most 4 MiB (4 194 304 bytes)
+including its delimiter. Past that limit the daemon replies `VALIDATION_ERROR` with `id: null` — it
+has not read the id — and closes the connection, because the framing cannot be recovered; before the
+handshake the reply is `UNAUTHORIZED` instead (§2). A client may see its own write fail with `EPIPE`
+or `ECONNRESET` and SHOULD read the reply first.
 
 A notification carries a sequence number in its envelope, beside `jsonrpc`, `method` and
 `params`:
@@ -41,7 +45,8 @@ before it existed, which is why adding it left `protocol_version` at 1 (§9).
    permissions `0600`).
 2. The first call on every connection MUST be `system.hello` with that token (REQ-SEC-003).
 3. Any earlier call, or a call with an invalid token, receives `UNAUTHORIZED` and the connection is
-   closed.
+   closed. A line that is not JSON, is not a JSON-RPC request, or is past the frame limit (§1)
+   counts as an earlier call: before the handshake it receives no protocol error in its place.
 4. The socket is created with permissions `0600` (REQ-SEC-007).
 5. THE SYSTEM SHALL compare the token before validating any other `system.hello` parameter.
    REQ-SEC-003 admits no exception, so no validation error may answer first and leave the
@@ -733,7 +738,7 @@ stateDiagram-v2
 
 | Limit | Value |
 |---|---|
-| JSON message | 4 MiB |
+| JSON message | 4 MiB including the `\n`; past it, `VALIDATION_ERROR` (before the handshake `UNAUTHORIZED`) and the connection is closed (§1) |
 | `session.input` | 64 KiB per message |
 | Concurrent connections | 32 |
 | `session.output` notifications | batched every 4 ms or 32 KiB, whichever comes first |
@@ -805,3 +810,4 @@ printf '%s\n' \
 | 1.11 | 2026-09-20 | delta `2026-09-schema-and-degradation-corrections`: §9 scopes the registration rule to what a build *implements* and says when `METHOD_NOT_FOUND` is the right answer; §9's capability bullet matches §2; §2's `cli` row grants `api.*`; `limit`, `cursor` and `include` become optional in §5.12, §5.13 and §5.18; §5.37 states the JSON Schema dialect, the nullability spelling and the full `client_kinds` list; seventeen methods gain the request shapes they never had |
 | 1.12 | 2026-09-20 | delta `2026-09-restore-semantics`: §4's `Pane` gains `command_pending` (omitted when false) and §5.8 states that `layout.apply` returns a tree's commands as pending, never as launched. Additive within `protocol_version = 1` |
 | 1.13 | 2026-09-26 | delta `2026-09-cli-allowlist`: §2's `cli` row gains `workspace.*`, `tab.*`, `pane.*` except `pane.move`, and `layout.*` — the surface REQ-CLI-005 and REQ-CLI-006 give `umb`, which the row refused. `session.*` stays interactive-only. Additive within `protocol_version = 1` |
+| 1.14 | 2026-09-26 | delta `2026-09-oversized-message`: §1 says the 4 MiB limit counts the `\n`, and that past it the daemon replies `VALIDATION_ERROR` with a null id and closes; §2 step 3 names unparseable, non-JSON-RPC and oversized lines as earlier calls, which get `UNAUTHORIZED`; §8's row says both |

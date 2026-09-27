@@ -229,7 +229,15 @@ func (c *conn) serve(ctx context.Context) {
 
 	if err := c.reader.Err(); err != nil && !errors.Is(err, net.ErrClosed) {
 		if errors.Is(err, bufio.ErrTooLong) {
-			// The peer is out of contract; tell it why before hanging up.
+			// The peer is out of contract; tell it why before hanging up, which the lost
+			// framing forces: the rest of the line is still arriving, and reading on would
+			// parse its tail as a message (API Spec §1). The id was never read, so it is
+			// null. Before the handshake the answer is UNAUTHORIZED, as for anything else
+			// that is not a valid system.hello (§2 step 3, REQ-SEC-003).
+			if !c.authenticated {
+				c.writeError(nil, fmt.Errorf("%w: the first call must be system.hello", ErrUnauthorized))
+				return
+			}
 			c.writeError(nil, ValidationError(
 				fmt.Sprintf("message exceeds the %d byte limit", MaxMessageBytes)))
 			return
@@ -242,6 +250,9 @@ func (c *conn) serve(ctx context.Context) {
 func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 	var req request
 	if err := json.Unmarshal(line, &req); err != nil {
+		if !c.authenticated {
+			return c.refuseBeforeHello(nullID)
+		}
 		c.writeRaw(response{
 			JSONRPC: jsonrpcVersion,
 			ID:      nullID,
@@ -255,6 +266,9 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 	}
 
 	if req.JSONRPC != jsonrpcVersion || req.Method == "" {
+		if !c.authenticated {
+			return c.refuseBeforeHello(invalidRequestID(req.ID))
+		}
 		c.writeRaw(response{
 			JSONRPC: jsonrpcVersion,
 			ID:      invalidRequestID(req.ID),
@@ -306,6 +320,16 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 		hook()
 	}
 	return false
+}
+
+// refuseBeforeHello answers a line that is not a valid request, on a connection that has
+// not completed the handshake. API Spec §2 step 3 makes anything but a valid system.hello
+// UNAUTHORIZED and closes the connection, and step 5 admits no protocol error in its place:
+// a parse error that left the connection open would let an unauthenticated peer keep trying
+// on the same connection (REQ-SEC-003).
+func (c *conn) refuseBeforeHello(id json.RawMessage) (closeConn bool) {
+	c.writeError(id, fmt.Errorf("%w: the first call must be system.hello", ErrUnauthorized))
+	return true
 }
 
 // reply writes a response unless the request was a notification.

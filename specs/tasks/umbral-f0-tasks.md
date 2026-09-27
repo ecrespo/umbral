@@ -683,6 +683,32 @@
   beside the rest of the package measures the scheduler. It is no longer parallel; the
   benchmark in `task perf` remains REQ-TERM-006's gate of record and was green every run.
 
+### [x] 2026-09-26 T-F0-27 · The frame limit says what happens past it
+- **What:** API Spec §1, §2 step 3 and §8 now say three things (1.14):
+  - the 4 MiB limit counts the `\n`;
+  - past the limit, the daemon replies `VALIDATION_ERROR` with `id: null` and closes;
+  - before the handshake, an oversized, unparseable or non-JSON-RPC line gets
+    `UNAUTHORIZED` and a close.
+
+  Delta `2026-09-oversized-message`.
+- **REQ:** REQ-SEC-003; API Spec §1 (the frame limit).
+- **Files:** `specs/api/umbral-daemon-api-v1.md`, `internal/api/conn.go`,
+  `internal/api/server_test.go`
+- **Depends on:** T-F0-26
+- **Done:** `TestAMessageAtTheLimitIsAccepted` and
+  `TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003` are green, and each was seen red,
+  against a one-byte shift of the limit and against the old code respectively. `task schema`
+  and `task ci` are green.
+- **Result.** The review of the draft delta found two things in the same corner:
+  - an oversized first message was to be `VALIDATION_ERROR`, which REQ-SEC-003 forbids;
+  - invalid JSON and non-JSON-RPC lines before `system.hello` answered with a protocol
+    error and **left the connection open**, so an unauthenticated peer could keep trying on
+    the same connection.
+
+  All three cases now get `UNAUTHORIZED` and a close; the new test was red in all three before
+  the change. The boundary test was checked by moving the limit one byte each way, and both
+  directions reddened it.
+
 ## Traceability matrix (F0)
 
 | REQ | Tasks | Tests citing it |
@@ -702,7 +728,7 @@
 | REQ-BLK-005 | T-F0-08 | TestBootstrapEmitsOSC133_REQ_BLK_005 |
 | REQ-BLK-006 | T-F0-10 | BenchmarkBlockSearch100k_REQ_BLK_006 |
 | REQ-BLK-007 | T-F0-02, T-F0-09 | TestPlainOutputHasNoEscapes_REQ_BLK_007 |
-| REQ-SEC-003 | T-F0-03 | TestHelloRejectsBadToken_REQ_SEC_003 |
+| REQ-SEC-003 | T-F0-03, T-F0-27 | TestHelloRejectsBadToken_REQ_SEC_003, TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003 |
 | REQ-SEC-007 | T-F0-03 | TestSocketPermissions0600_REQ_SEC_007 |
 | REQ-CLI-002 | T-F0-10, T-F0-11 | TestBlockGetLast_REQ_CLI_002 |
 | REQ-CLI-003 | T-F0-11 | TestUmbAutostartFailsWith69_REQ_CLI_003, TestAutostartFailureExits69_REQ_CLI_003 |
@@ -733,6 +759,7 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | T-F0-27 | done after a `spec-guardian` round | Written down what the daemon did past the 4 MiB frame limit, and on the way found it breaking REQ-SEC-003. Before the handshake, invalid JSON and non-JSON-RPC lines got a protocol error and an open connection; an oversized one was about to be specified as `VALIDATION_ERROR`. All three are `UNAUTHORIZED` and a close now. |
 | 2026-09-26 | T-F0-26 | runners, second and third runs → fixed | Run 36284097081: macOS red in `TestOversizedMessageIsRejected`, the first run of that test on macOS — the client's write got EPIPE after the daemon's answer and hang-up; the test now reads the answer anyway. Run 36284836147: Ubuntu red because `Notify` subscribed to the bus inside its own goroutine and lost everything published before it was scheduled; `Listen` takes the subscription now, and a new test that publishes before starting `Notify` was red before the move. `TestOutputLatencyUnder5ms_REQ_TERM_006` is serial, since a wall-clock p95 beside its siblings measured the scheduler. |
 | 2026-09-26 | T-F0-26 | runner: macOS green, Ubuntu red → fixed | The first run on the runners after the merge found a real ordering bug in T-F0-06's fan-out, not a flake: a chunk queued while `session.subscribe` took its snapshot could be written before the reply, against API Spec §5.11. Subscriptions now start held and are released after the response is written; the new test was red 3/3 before the fix, and `spec-guardian` broke the hold and the release in turn to confirm both are guarded. |
 | 2026-09-26 | T-F0-26 | done locally; runner pending | "The gate is green" had meant the local gate for weeks. The remote one was red on both OSes, for reasons none of which a Linux laptop with a terminal could see: no `TERM`, a long `TMPDIR`, a runner's zsh asking a question. |

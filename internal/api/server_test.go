@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -336,6 +337,11 @@ func TestInvalidJSONIsAParseError(t *testing.T) {
 
 	s := testServer(t, nil)
 	c := dial(t, s)
+	// Authenticated first: before the handshake every one of these is UNAUTHORIZED
+	// (TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003).
+	if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
 
 	c.send([]byte("{not json}\n"))
 	resp := c.read()
@@ -349,6 +355,11 @@ func TestNonJSONRPCMessageIsAnInvalidRequest(t *testing.T) {
 
 	s := testServer(t, nil)
 	c := dial(t, s)
+	// Authenticated first: before the handshake every one of these is UNAUTHORIZED
+	// (TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003).
+	if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
 
 	c.send([]byte(`{"id":1,"method":"system.hello"}` + "\n"))
 	resp := c.read()
@@ -357,12 +368,18 @@ func TestNonJSONRPCMessageIsAnInvalidRequest(t *testing.T) {
 	}
 }
 
-// TestOversizedMessageIsRejected covers the 4 MiB framing limit of API Spec §1.
+// TestOversizedMessageIsRejected covers the 4 MiB framing limit of API Spec §1 on an
+// authenticated connection: `VALIDATION_ERROR` with a null id, then the hang-up.
 func TestOversizedMessageIsRejected(t *testing.T) {
 	t.Parallel()
 
 	s := testServer(t, nil)
 	c := dial(t, s)
+	// Authenticated first: before the handshake every one of these is UNAUTHORIZED
+	// (TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003).
+	if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
 
 	// A whole mebibyte past the limit, more than default socket buffers hold, so the daemon
 	// answers and hangs up (`conn.serve`; API Spec §1 sets only the limit) while the client
@@ -382,7 +399,95 @@ func TestOversizedMessageIsRejected(t *testing.T) {
 	if resp.Error == nil || resp.Error.Code != codeValidationError {
 		t.Fatalf("oversized message = %+v, want VALIDATION_ERROR", resp)
 	}
+	if string(resp.ID) != "null" {
+		t.Errorf("id = %q, want null: the id of an unread message is undetermined", resp.ID)
+	}
 	c.expectClosed()
+}
+
+// paddedCall is a JSON-RPC request padded with spaces to exactly `size` bytes, its `\n`
+// included.
+func paddedCall(t *testing.T, id int, method string, size int) []byte {
+	t.Helper()
+	body := fmt.Appendf(nil, `{"jsonrpc":"2.0","id":%d,"method":%q}`, id, method)
+	if len(body)+1 > size {
+		t.Fatalf("a %d-byte message cannot hold %s", size, body)
+	}
+	return append(append(body, bytes.Repeat([]byte(" "), size-len(body)-1)...), '\n')
+}
+
+// TestAMessageAtTheLimitIsAccepted pins where API Spec §1's 4 MiB limit falls: it counts the
+// `\n`, so a message of exactly 4 194 304 bytes is an ordinary call and the connection
+// stays open, and one byte more is `VALIDATION_ERROR` and a hang-up (delta
+// `2026-09-oversized-message`).
+func TestAMessageAtTheLimitIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	s := testServer(t, nil)
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+
+	c.send(paddedCall(t, 2, "system.status", MaxMessageBytes))
+	if resp := c.read(); string(resp.ID) != "2" || resp.Error != nil {
+		t.Fatalf("a message of exactly %d bytes = %+v, want system.status's answer", MaxMessageBytes, resp)
+	}
+	if resp := c.call(3, "system.status", nil); resp.Error != nil {
+		t.Fatalf("the connection did not survive a message at the limit: %+v", resp.Error)
+	}
+
+	c.send(paddedCall(t, 4, "system.status", MaxMessageBytes+1))
+	resp := c.read()
+	if resp.Error == nil || resp.Error.Code != codeValidationError || string(resp.ID) != "null" {
+		t.Fatalf("a message one byte past the limit = %+v, want VALIDATION_ERROR with a null id", resp)
+	}
+	c.expectClosed()
+}
+
+// TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003: before the handshake, a line the
+// daemon cannot parse — not JSON, not JSON-RPC, or too long to frame — is no more a
+// `system.hello` than a call to another method is. REQ-SEC-003 and API Spec §2 steps 3 and
+// 5 give it `UNAUTHORIZED` and a closed connection; answering with a protocol error and
+// staying open would let an unauthenticated peer keep trying on the same connection. The id
+// is null where it was never read and echoed where it was.
+func TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		line   []byte
+		wantID string
+	}{
+		{"not JSON", []byte("{not json}\n"), "null"},
+		{"not JSON-RPC", []byte(`{"id":1,"method":"system.hello"}` + "\n"), "1"},
+		{"past the frame limit", append(bytes.Repeat([]byte("a"), MaxMessageBytes+1<<20), '\n'), "null"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := testServer(t, nil)
+			c := dial(t, s)
+			// The oversized case is cut off mid-write, as TestOversizedMessageIsRejected
+			// explains; the answer is on the socket regardless.
+			if err := c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				t.Fatalf("set write deadline: %v", err)
+			}
+			if _, err := c.conn.Write(tc.line); err != nil &&
+				!errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET) {
+				t.Fatalf("write: %v", err)
+			}
+
+			resp := c.read()
+			if resp.Error == nil || resp.Error.Code != codeUnauthorized {
+				t.Fatalf("first message = %+v, want UNAUTHORIZED", resp)
+			}
+			if string(resp.ID) != tc.wantID {
+				t.Errorf("id = %s, want %s", resp.ID, tc.wantID)
+			}
+			c.expectClosed()
+		})
+	}
 }
 
 // TestStaleSocketIsReplaced covers the crash-restart path: a leftover socket file must
@@ -615,6 +720,11 @@ func TestErrorsWithAnUndeterminedIDCarryNull(t *testing.T) {
 
 	s := testServer(t, nil)
 	c := dial(t, s)
+	// Authenticated first: before the handshake every one of these is UNAUTHORIZED
+	// (TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003).
+	if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
 
 	c.send([]byte("{not json}\n"))
 	resp := c.read()
