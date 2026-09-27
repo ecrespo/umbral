@@ -6,10 +6,10 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.11 |
+| **Version** | 1.12 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
-| **Last updated** | 2026-09-21 |
+| **Last updated** | 2026-09-26 |
 | **Source** | `docs/ARCHITECTURE.md` v0.1 |
 
 ---
@@ -149,6 +149,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-TERM-010** · MUST · optional — WHERE `[experimental] pane_history = true` in `$XDG_CONFIG_HOME/umbral/config.toml`, THE SYSTEM SHALL replay the stored recent screen of each restored pane before its new shell output; the setting SHALL be disabled by default because pane output can contain secrets. Capture happens every 10 s and on clean shutdown, so a crash loses at most the last window.
 - **REQ-TERM-011** · MUST · unwanted — IF a restored pane has a stored launch command, THEN THE SYSTEM SHALL leave it visible in the pane without running it, and SHALL run it only after the user confirms, so that a restart never re-executes commands on its own. `layout.apply` behaves the same way: it returns the commands as pending, never as launched.
 - **REQ-TERM-012** · MUST · event — WHEN the daemon starts, THE SYSTEM SHALL delete the shell bootstrap directories left in its runtime directory by previous runs, before it restores the workspace tree, so that a daemon killed without a chance to clean up does not leave files that nothing will ever remove. THE SYSTEM SHALL create those directories inside its own runtime directory rather than the shared temporary directory, and SHALL log and continue when one cannot be removed.
+- **REQ-TERM-013** · MUST · ubiquitous — THE SYSTEM SHALL set `TERM=xterm-256color` and `COLORTERM=truecolor` in the environment of every process it launches in a pane, replacing the values the daemon itself inherited, so that a program in a pane addresses the emulator that renders it rather than whatever terminal — or none — the daemon was started from; a value the pane's own `env` declares (REQ-WS-005) SHALL take precedence.
 
 ### 6.2 Blocks (BLK)
 
@@ -460,6 +461,7 @@ TUI as text:
 | 1.9 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-restore-semantics`: REQ-TERM-010 names `$XDG_CONFIG_HOME/umbral/config.toml` as the file the setting lives in, and REQ-TERM-011 states that a restored pane's command is left visible and never run, `layout.apply` included |
 | 1.10 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-bootstrap-sweeper`: REQ-TERM-012 — the daemon sweeps the shell bootstrap directories a killed run left in its runtime directory, and creates them there rather than in the shared temporary directory |
 | 1.11 | 2026-09-21 | E. Crespo (assisted draft) | delta `2026-09-cli-workspace-surface` (ratified 2026-09-26): REQ-CLI-005 and REQ-CLI-006 — `umb workspace`/`tab`/`pane`/`layout` over the methods of the same name, addressed by the `w<n>` identifiers, and a layout round trip through a pipe. Without them F0 exit criterion 4 cannot be performed and Art. 6's exception cites a command that does not exist |
+| 1.12 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-pane-term`: REQ-TERM-013 — every pane gets `TERM=xterm-256color` and `COLORTERM=truecolor` over the daemon's own, under the pane's declared `env`. Without it a daemon started with no terminal gave every shell a dumb one, and the first keystroke at a fresh prompt was lost |
 
 ## Approvals
 

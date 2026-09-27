@@ -608,6 +608,23 @@
   so a symlinked directory already shares it. The resolution was dropped as unneeded and the
   test kept as a pin.
 
+### [x] 2026-09-26 T-F0-25 · A pane says which terminal it is
+- **What:** every pane's environment gets `TERM=xterm-256color` and `COLORTERM=truecolor` after
+  the daemon's own and before the pane's declared `env`.
+- **REQ:** REQ-TERM-013
+- **Files:** `internal/sessions/lifecycle.go`, `internal/sessions/integration/term_test.go`
+- **Depends on:** T-F0-05
+- **Done:** `TestAPaneAdvertisesTheTerminalThatRendersIt_REQ_TERM_013` green, and
+  `internal/sessions/integration` green with `TERM` unset.
+- **Why it exists:** the GitHub CI of `develop` had been red on both OSes since `eeab3fb`, and
+  four of its failures were this: the runner has no `TERM`, the daemon passed that on, and bash
+  ran readline as a dumb terminal that lost the first byte typed at a fresh prompt. Delta
+  `2026-09-pane-term`, which also adds the requirement nobody had written.
+- **Result.** Reproduced locally with `env -u TERM go test`: the same four tests, the same
+  screens (`<cho umbral-once-2d54`). The new test sets the daemon's own `TERM=screen` and no
+  `COLORTERM`; it was red on both of its cases, then green once `environ` appended the pane's
+  terminal. The whole integration package passes with `TERM` unset.
+
 ## Traceability matrix (F0)
 
 | REQ | Tasks | Tests citing it |
@@ -650,6 +667,7 @@
 | REQ-TERM-010 | T-F0-18 | TestPaneHistoryDisabledByDefault_REQ_TERM_010 |
 | REQ-TERM-011 | T-F0-18 | TestRestoreNeverRunsStoredCommand_REQ_TERM_011 |
 | REQ-TERM-012 | T-F0-19 | TestStartSweepsOrphanedBootstrapDirectories_REQ_TERM_012, TestBootstrapDirectoriesLiveInTheRuntimeDirectory_REQ_TERM_012, TestSweepLeavesTheRunningSessionsAlone_REQ_TERM_012, TestSweepFailureDoesNotStopTheDaemon_REQ_TERM_012, TestBootstrapSurvivesASpaceInTheRuntimeDirectory_REQ_TERM_012 |
+| REQ-TERM-013 | T-F0-25 | TestAPaneAdvertisesTheTerminalThatRendersIt_REQ_TERM_013 |
 
 **Deferred:** REQ-BLK-008 (SHOULD, PowerShell) moves to F2 together with Windows.
 
@@ -657,6 +675,7 @@
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | T-F0-25 | done | The GitHub CI had been red on both OSes for eight runs while `task ci` was green locally. Four of the failures were one missing line: the daemon never told a pane what terminal it was, and a runner has no `TERM` to inherit. |
 | 2026-09-26 | — | F0 criterion 3 moved | The Tech Lead moved the TUI's week to the release 0.1 gate (delta `2026-09-defer-tui-week`, `T-REL-01`); F0 closes on the other five criteria and REQ-BLK-003. |
 | 2026-09-26 | T-F0-24 | done | The instance lock guarded the socket's directory; recovery's premise is about the database. A second daemon with another `--socket` and the same `--db` recovered over a live session — measured, `sessions_recovered: 1` — and now exits 75 instead. |
 | 2026-09-26 | T-F0-23 | done | A test that passed for a year's worth of reasons except the one that mattered: it handed `run` a writer that returned EPIPE, which the real binary never received — Go killed it with SIGPIPE first. One `signal.Notify`. |
