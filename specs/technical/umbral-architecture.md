@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.24 |
+| **Version** | 1.25 |
 | **Date** | 2026-09-27 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -679,6 +679,40 @@ with `run_command` from T-F1-10. Delta `2026-09-builtin-tools`:
 - **Output is bounded**: `read_file` 256 KiB, `grep` 500 matches of 300 characters, `glob` and
   `list_dir` 1000 entries; searches skip `.git`, binary files and files over 4 MiB.
 
+### 5.3c Context assembly (T-F1-11)
+
+The context module (`internal/context`) gathers what a turn's prompt carries besides the
+conversation. The domain renders it with `text/template` (`domain/templates`); the adapter
+`adapters/local` reads the machine behind the port `Gatherer`, and `@block` text comes through
+the port `Blocks`, which `cmd/umbrald` wires to the block history together with the agent
+runtime (T-F1-13).
+
+- **Rules files** (REQ-CTX-001) are searched from the cwd up to the repository root — the same
+  root §5.3 calls the write root: the nearest directory at or above the cwd holding `.git`, or the
+  cwd alone outside a repository. They are listed in the system prompt highest precedence first,
+  and the prompt says the earlier one wins. A candidate is read only if its resolved path stays
+  inside the resolved root — a clone can carry `AGENTS.md -> ~/.aws/credentials` — and is a
+  regular file with no NUL byte; each is capped like an attachment.
+- **Attachments** (REQ-CTX-002, REQ-CTX-005): a `file` is a regular file, opened without
+  blocking, relative to the thread's cwd; a `dir` is a one-level listing, sorted, directories
+  ending in `/`; a `block` is its command, its exit code (or that it did not report one) and its
+  plain text. Each keeps at most 256 KiB, cut on a UTF-8 boundary, and says how many bytes it
+  left out, counted against the file's size, not what was read. Content with a NUL byte is
+  binary: none of it is included, and the context says so. An attachment that names nothing of
+  its kind is `domain.ErrUnknownAttachment`, which `thread.send` answers with `VALIDATION_ERROR`;
+  `stdin` arrives with `umb ai` (T-F1-19).
+- **Git** (REQ-CTX-003): the repository root, the branch (or `(detached at <sha>)`),
+  `git status --short` and `git diff --stat`, run at the repository root, 5 s each, each section
+  capped at 32 KiB. **No command the repository's configuration names runs**: in `auto-edit` the
+  agent may write `.git/config`, and reading context is not a tool call the policy decides on. Git
+  runs with `core.fsmonitor=false`, every configured filter driver overridden empty and not
+  required, no external diff or textconv, `--ignore-submodules=dirty`, no optional locks and no
+  prompt; a filter name no `-c` override can carry stops git reading the worktree. "Not a
+  repository", or no git, means no section; any other failure — a timeout, a `safe.directory`
+  refusal — is a section saying the state could not be read, and why.
+- **Redaction** is not the context module's: the router redacts everything once before the first
+  candidate (DD-004), attachments included.
+
 ### 5.4 Error Handling
 
 ```go
@@ -967,3 +1001,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.22 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-09: §5.3b describes the tool registry and the built-ins — the grant every call needs, symlink resolution of targets, the diff preview, `fetch_url` as Art. 4 egress with its address checks, and output bounds. Delta `2026-09-builtin-tools` (proposed). |
 | 1.23 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-10: §5.3b adds `run_command` — the thread's PTY made on first use and reused, the command's block marked as the agent's and waited for, its time bound, a result that does not wait on its row, and a cancel that sends SIGTERM then SIGKILL to what the command launched and keeps the shell; §3 step 3 and §5.2 follow. Delta `2026-09-builtin-tools` (decisions 6–10, proposed). |
 | 1.24 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies deltas `2026-09-provider-config`, `2026-09-policy-precedence`, `2026-09-redaction-thresholds`, `2026-09-router-fallback` and `2026-09-builtin-tools`: their sections lose "proposed", and DD-006 points at §5.3's reconciliation with the table. |
+| 1.25 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-11: §5.3c describes context assembly — rules files from the cwd up to the write root, highest precedence first, never followed out of it; `file`, `dir` and `block` attachments capped at 256 KiB with the omitted bytes stated, binary content left out; git context run without any command a repository's config can name (fsmonitor, filter drivers, diff drivers), bounded, and a failing git stated. Delta `2026-09-context-assembly` (proposed). |

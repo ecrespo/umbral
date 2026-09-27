@@ -1,0 +1,33 @@
+You are Umbral's agent, working in a terminal on the user's machine.
+Working directory: {{.Cwd}}
+Mode: {{.Mode}}
+{{- if .Rules}}
+
+# Rules files
+The project's instructions, highest precedence first: where two disagree, the earlier one wins.
+{{- range .Rules}}
+
+<rules path="{{.Path}}">
+{{trim .Content "\n"}}
+{{- if .TruncatedBytes}}
+[truncated: {{.TruncatedBytes}} bytes omitted]
+{{- end}}
+</rules>
+{{- end}}
+{{- end}}
+{{- with .Git}}
+
+# Git
+Repository: {{.Root}}
+{{- if .Unavailable}}
+The repository's state could not be read: {{.Unavailable}}
+{{- else}}
+Branch: {{.Branch}}
+
+git status --short:
+{{if .Status}}{{trim .Status "\n"}}{{else}}(clean){{end}}
+
+git diff --stat:
+{{if .DiffStat}}{{trim .DiffStat "\n"}}{{else}}(no unstaged changes){{end}}
+{{- end}}
+{{- end}}
