@@ -23,6 +23,10 @@ const (
 	agentCancelBudget = 450 * time.Millisecond
 	// agentBusyWait is how long a run waits for a cancelled one to let go of the PTY.
 	agentBusyWait = 2 * time.Second
+	// agentInterruptEvery is how often a cancelled command's shell is interrupted again while
+	// the command holds the PTY, and agentStopWindow how long that goes on.
+	agentInterruptEvery = 100 * time.Millisecond
+	agentStopWindow     = 5 * time.Second
 )
 
 var (
@@ -140,18 +144,43 @@ func (s *Service) claimPTY(ctx context.Context, live *liveSession, run *agentRun
 	}
 }
 
-// stopAgent stops a cancelled run's command: SIGTERM to what the shell runs, and SIGKILL
-// agentTermGrace later if the run still holds the PTY.
+// stopAgent stops a cancelled run's command: SIGTERM to what the shell runs and SIGINT to the
+// shell, then SIGKILL agentTermGrace later. The interrupt is repeated every
+// agentInterruptEvery while the run holds the PTY, because a shell can lose one: bash runs
+// its DEBUG trap — the integration's preexec — before every command of a loop of builtins,
+// and an interrupt that lands inside the trap may end the trap and not the loop.
 func (s *Service) stopAgent(live *liveSession, run *agentRun) {
 	s.signalAgent(live, ports.SignalTermForeground)
-	time.AfterFunc(agentTermGrace, func() {
+	current := func() bool {
 		live.mu.RLock()
-		current := live.agent == run
-		live.mu.RUnlock()
-		if current {
-			s.signalAgent(live, ports.SignalKillForeground)
+		defer live.mu.RUnlock()
+		return live.agent == run
+	}
+	go func() {
+		kill := time.NewTimer(agentTermGrace)
+		defer kill.Stop()
+		again := time.NewTicker(agentInterruptEvery)
+		defer again.Stop()
+		give := time.NewTimer(agentStopWindow)
+		defer give.Stop()
+		for {
+			select {
+			case <-live.done:
+				return
+			case <-give.C:
+				return
+			case <-kill.C:
+				if current() {
+					s.signalAgent(live, ports.SignalKillForeground)
+				}
+			case <-again.C:
+				if !current() {
+					return
+				}
+				s.signalAgent(live, ports.SignalTermForeground)
+			}
 		}
-	})
+	}()
 }
 
 func (s *Service) signalAgent(live *liveSession, sig ports.SignalKind) {
