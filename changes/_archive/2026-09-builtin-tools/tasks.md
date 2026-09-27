@@ -9,6 +9,6 @@
   and `internal/tools/adapters/builtin/runcommand.go`.
 - **REQ:** REQ-AGT-003, REQ-AGT-007
 
-### [ ] Ratification
+### [x] 2026-09-27 Ratification
 - The Tech Lead ratifies or amends the delta, optionally sharpens REQ-AGT-018 and REQ-SEC-002,
   and moves the delta to `changes/_archive/`.

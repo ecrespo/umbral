@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.23 |
+| **Version** | 1.24 |
 | **Date** | 2026-09-27 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -170,7 +170,7 @@ sequenceDiagram
 2. Invalid arguments → one retry with a repair message; if it fails, `tool_error` (REQ-AGT-006).
 3. `thread.cancel` → the turn's `context.Context` is cancelled and the process groups the thread
    PTY's shell launched get `SIGTERM`; after 300 ms, `SIGKILL` (REQ-AGT-007). The shell itself is
-   kept (§5.3b; delta `2026-09-builtin-tools`, decision 9, proposed).
+   kept (§5.3b; delta `2026-09-builtin-tools`, decision 9).
 4. Daemon crash → messages and tool calls are already persisted (REQ-AGT-011). On restart, `running`
    turns become `stopped` and `pending` approvals become `expired`.
 
@@ -249,7 +249,7 @@ sequenceDiagram
     rounded to the nearest unit; a model whose price the provider does not publish costs 0.
     A row that cannot be written is logged and does not fail the call.
   - These choices go beyond REQ-LLM-003 and REQ-LLM-005's text and are delta
-    `2026-09-router-fallback` (proposed).
+    `2026-09-router-fallback`.
 - **Meta-providers** (OpenRouter, OmniRoute) are just another candidate; their internal fallback is
   not duplicated.
 
@@ -275,6 +275,10 @@ sequenceDiagram
   4. mode (`ask` exposes only ReadOnly; `auto-edit` allows WriteFS inside the workspace);
   5. `allow` rules;
   6. mode default.
+- **How it meets the §5.3 table:** an exposure step comes first, a destructive pattern is a floor a
+  `deny` rule still overrides, `auto-edit` asks outside the write root whatever the `allow` rules,
+  and rules read each command of a line — §5.3 "How the table and DD-006 meet" (delta
+  `2026-09-policy-precedence`).
 
 ### DD-007: Persist before notifying
 
@@ -313,7 +317,7 @@ sequenceDiagram
   40-character keys, ~70 % at 32 and ~5 % at 24 — entropy over a string's own characters cannot
   reach 4.5 bits below 23 characters (log2 22 ≈ 4.46). Short keys of unknown formats rely on
   the named rules. A key containing a `.` is split into candidates, and a lower-case
-  `password: …` is caught by no named rule. Delta `2026-09-redaction-thresholds` (proposed)
+  `password: …` is caught by no named rule. Delta `2026-09-redaction-thresholds`
   holds these decisions and the PRD amendment they need.
 
 ### DD-009: The daemon owns the workspace tree; the client only renders it
@@ -531,7 +535,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
   for a loopback `base_url` only. A gateway on loopback that forwards to the cloud — a self-hosted OmniRoute —
   is therefore local to Umbral: offline mode does not stop it and its onward requests are not in
   `egress_log`, which `examples/models.toml` says next to the preset (delta
-  `2026-09-provider-config`, 8e, proposed). With `router.offline = true` a remote provider is not contacted
+  `2026-09-provider-config`, 8e). With `router.offline = true` a remote provider is not contacted
   at all and its models are listed `down` with `offline`. The rows of a provider removed from
   `models.toml` are deleted on the next refresh. A provider's key stays in a type that prints as
   `[REDACTED]` up to the call that puts it in a header.
@@ -604,7 +608,7 @@ the agent's write boundary and has nothing to do with the structural workspace o
 B-09).
 
 **How the table and DD-006 meet** (T-F1-03, `internal/security/domain/policy*.go`; delta
-`2026-09-policy-precedence`, proposed):
+`2026-09-policy-precedence`):
 
 - **Step 0, exposure, comes first.** A tool the mode does not show the model is `deny` with
   reason `not_exposed`: `ask` shows ReadOnly only (REQ-AGT-009) — a destructive command
@@ -642,7 +646,7 @@ B-09).
 
 The tools module's registry (`internal/tools/adapters/registry`) holds every tool with a JSON
 Schema and a risk (REQ-AGT-002); the built-ins are `internal/tools/adapters/builtin`
-with `run_command` from T-F1-10. Delta `2026-09-builtin-tools` (proposed):
+with `run_command` from T-F1-10. Delta `2026-09-builtin-tools`:
 
 - **Every call goes through the registry**, which validates the input against the schema
   (`invalid_args` otherwise), refuses a cwd or write root that is not absolute, and runs the
@@ -955,10 +959,11 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.14 | 2026-09-27 | E. Crespo (assisted draft) | delta `2026-09-frame-limit-monitoring` (T-F1-33): §5.1 names live keys — today only `api.max_message_bytes`, changed by `limits.set` — adds the `[api]` table and says how a quoted value and its comment are read; §7.2 adds `umbral_frames_refused_total`; §9.4 adds `umb limits`, `umb limits set`, the `frames` line of `umb status` and the `RESULT_TOO_LARGE` hint |
 | 1.15 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-02: §5.1 specifies `[secrets] allow_env` and `models.toml` — the reference architecture's shape, real TOML validated by an embedded JSON Schema, credentials as references, a plaintext key refusing its entry, the keyring probed only when needed, the REQ-SEC-008/012 outcomes and what `config.reload` applies; §9.4's `umb status` shows each provider's reason. Delta `2026-09-provider-config` (proposed). |
 | 1.16 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-03: §5.3 writes down how the table's "not exposed" cells and DD-006's precedence meet — in `ask` mode a tool that is not ReadOnly is denied as `not_exposed` before any step, destructive included — lists the built-in destructive patterns and how a command line is normalised, and states how rules read a compound line and what the trace holds. Delta `2026-09-policy-precedence` (proposed). |
-| 1.17 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-04: DD-008 lists the built-in redaction rules and how the generic detector reads REQ-SEC-001's thresholds — as necessary conditions, with Umbral ids and identifier-shaped tokens left alone — and records the recall the 4.5-bit floor allows at each length. Delta `2026-09-redaction-thresholds` (proposed). |
+| 1.17 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-04: DD-008 lists the built-in redaction rules and how the generic detector reads REQ-SEC-001's thresholds — as necessary conditions, with Umbral ids and identifier-shaped tokens left alone — and records the recall the 4.5-bit floor allows at each length. Delta `2026-09-redaction-thresholds`. |
 | 1.18 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-05: §5.1 gains the `llamacpp` provider type (REQ-LLM-001 names it; the reference architecture's list did not) and describes the catalog: which adapter serves each type, background discovery, a down or offline-remote provider never contacted, and the reasons `discovery_failed`, `no_adapter`, `invalid_config` and `offline`; DD-008 says `egress_log` is written at the HTTP transport, discovery included, and fails closed. Delta `2026-09-provider-config` (proposed). |
 | 1.19 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-06: DD-005 says which `num_ctx` every Ollama request carries when models.toml sets none (32768 capped at the model's window), where `keep_alive`, `think` and `format` go, and how a tool call's finish reason is reported; §5.1's catalog serves `ollama`. Delta `2026-09-provider-config` (proposed). |
-| 1.20 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-07: DD-004 says how the router walks candidates — which filters drop one, when a failure falls back and when it ends the call, when the first-token clock starts, redaction of all content once before the first candidate, and what `usage` records for each call, failures included. Delta `2026-09-router-fallback` (proposed). |
+| 1.20 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-07: DD-004 says how the router walks candidates — which filters drop one, when a failure falls back and when it ends the call, when the first-token clock starts, redaction of all content once before the first candidate, and what `usage` records for each call, failures included. Delta `2026-09-router-fallback`. |
 | 1.21 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-08: §5.1 lists the REQ-LLM-007 presets and says that a loopback gateway which forwards to the cloud counts as local. Delta `2026-09-provider-config` (8e, proposed). |
 | 1.22 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-09: §5.3b describes the tool registry and the built-ins — the grant every call needs, symlink resolution of targets, the diff preview, `fetch_url` as Art. 4 egress with its address checks, and output bounds. Delta `2026-09-builtin-tools` (proposed). |
 | 1.23 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-10: §5.3b adds `run_command` — the thread's PTY made on first use and reused, the command's block marked as the agent's and waited for, its time bound, a result that does not wait on its row, and a cancel that sends SIGTERM then SIGKILL to what the command launched and keeps the shell; §3 step 3 and §5.2 follow. Delta `2026-09-builtin-tools` (decisions 6–10, proposed). |
+| 1.24 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies deltas `2026-09-provider-config`, `2026-09-policy-precedence`, `2026-09-redaction-thresholds`, `2026-09-router-fallback` and `2026-09-builtin-tools`: their sections lose "proposed", and DD-006 points at §5.3's reconciliation with the table. |

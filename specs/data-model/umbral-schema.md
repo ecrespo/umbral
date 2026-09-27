@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.10 |
+| **Version** | 1.11 |
 | **Date** | 2026-09-27 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -513,7 +513,7 @@ CREATE INDEX idx_egress_created ON egress_log(created_at DESC);
 
 Insert-only table: no `UPDATE` or `DELETE` except for retention. `provider` is the provider id
 of a model call, or the tool `fetch_url` for its requests (Art. 4; delta
-`2026-09-builtin-tools`, proposed), whose payload is the request URL.
+`2026-09-builtin-tools`), whose payload is the request URL.
 
 ### 2.13 `mcp_servers`
 
@@ -649,3 +649,4 @@ earlier drafts named.
 | 1.8 | 2026-09-26 | delta `2026-09-recovery-integration`: §6 step 1 settles every `pending` integration once no session is alive — `osc133` for a session with blocks, `none` otherwise — so a crash inside a session's five-second window — and any row an older daemon left `pending` — ends on the verdict REQ-BLK-003 requires |
 | 1.9 | 2026-09-26 | delta `2026-09-skills-cli`: §2.4f `skills` in migration 0005, keyed like `mcp_servers`; §5's 0005 row names it; §6 step 9 sweeps orphaned skill directories |
 | 1.10 | 2026-09-27 | T-F1-09: §2.12 says `egress_log.provider` may name the tool `fetch_url`, whose requests leave the machine too. No DDL change. Delta `2026-09-builtin-tools` (proposed). |
+| 1.11 | 2026-09-27 | Ratifies delta `2026-09-builtin-tools`; §2.12 no longer calls it proposed. |

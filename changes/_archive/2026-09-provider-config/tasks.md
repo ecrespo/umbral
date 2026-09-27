@@ -10,5 +10,5 @@
 - **REQ:** REQ-SEC-008
 - **Done:** `TestModelsOfADownProviderAreDown_REQ_SEC_008` green.
 
-### [ ] Ratification
+### [x] 2026-09-27 Ratification
 - The Tech Lead ratifies or amends the delta; on ratification it moves to `changes/_archive/`.
