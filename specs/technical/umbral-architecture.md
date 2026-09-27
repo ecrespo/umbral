@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.25 |
+| **Version** | 1.26 |
 | **Date** | 2026-09-27 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -113,7 +113,7 @@ flowchart LR
 | `tui` | Bubble Tea v2 (`charm.land/bubbletea/v2`), go-libghostty for the client's own renderer (DD-001) | tabs, panes, block list, keyboard | TUI-* |
 | `sessions` | `creack/pty`, go-libghostty, `shell/` bootstrap, `klauspost/compress/zstd` | PTY, VT, blocks, input lock, snapshots | TERM-*, BLK-* |
 | `agents` | own runtime over ports | per-turn loop, modes, limits, cancellation, persist-first | AGT-* |
-| `context` | `text/template`, tiktoken tokenizer in Go | rules, attachments, git, budget, compaction | CTX-* |
+| `context` | `text/template`, a byte estimate of tokens (Q-03) | rules, attachments, git, budget, compaction | CTX-* |
 | `tools` | microkernel registry | built-in tools and MCP adapter; JSON Schema validation | AGT-002/006, MCP-001 |
 | `llmgw` | `charm.land/fantasy` + native Ollama adapter | catalog, candidates per class, fallback, normalized streaming, usage | LLM-* |
 | `mcp` | `modelcontextprotocol/go-sdk` | connection, reconnection with backoff, prefixing | MCP-* |
@@ -710,6 +710,19 @@ runtime (T-F1-13).
   prompt; a filter name no `-c` override can carry stops git reading the worktree. "Not a
   repository", or no git, means no section; any other failure — a timeout, a `safe.directory`
   refusal — is a section saying the state could not be read, and why.
+- **Budget and compaction** (REQ-CTX-004, T-F1-12, `domain/budget.go`; delta
+  `2026-09-context-budget`): no model's tokenizer is loaded — a BPE table costs tens of MiB of the
+  daemon and covers one family — so everything sent is estimated at a token per three bytes of
+  UTF-8, rounded up, plus four a message. That over-counts English and code and matches CJK, so the
+  error compacts early rather than overflow; the router's looser four-characters filter (DD-004)
+  then passes whatever was compacted to fit. The reserve is the call's `max_output_tokens`, or a
+  quarter of the window up to 8192, never over half of it; the window is the smallest known among
+  the thread's candidates. Over the window minus the reserve, the oldest messages are summarized
+  by the `fast` class and the newest that fit are kept, starting with the user's latest request
+  (kept verbatim mid-turn) and never with a tool result apart from its call. The summary, at most
+  a fifth of the budget, rides in the system prompt under a header; it is persisted as a
+  `system_note`, and a later compaction replaces it by summarizing it again. What must stay not
+  fitting, or a summary that cannot be made, is `ErrContextOverflow`, with no request sent.
 - **Redaction** is not the context module's: the router redacts everything once before the first
   candidate (DD-004), attachments included.
 
@@ -962,7 +975,7 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 
 - [ ] **Q-01**: does libghostty's `Formatter` serialize the screen in a replayable VT format (with styles) for the snapshot? If not, fallback: replay the raw byte buffer, bounded to the last N lines. — Owner: Tech Lead, before T-F0-06.
 - [ ] **Q-02**: which local models meet the < 5 % invalid tool call threshold? Candidates: `gpt-oss:20b`, Qwen3-Coder. — Owner: Tech Lead, during F1.
-- [ ] **Q-03**: tokenizer per family (tiktoken for OpenAI/gpt-oss, ×1.1 approximation for the rest). Is it enough for REQ-CTX-004? — F1.
+- [x] **Q-03**: tokenizer per family (tiktoken for OpenAI/gpt-oss, ×1.1 approximation for the rest). Is it enough for REQ-CTX-004? — **Answered by T-F1-12:** no tokenizer is loaded; every family is estimated at a token per three bytes, deliberately high (§5.3c, delta `2026-09-context-budget`).
 
 ## Constitution check
 
@@ -1002,3 +1015,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.23 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-10: §5.3b adds `run_command` — the thread's PTY made on first use and reused, the command's block marked as the agent's and waited for, its time bound, a result that does not wait on its row, and a cancel that sends SIGTERM then SIGKILL to what the command launched and keeps the shell; §3 step 3 and §5.2 follow. Delta `2026-09-builtin-tools` (decisions 6–10, proposed). |
 | 1.24 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies deltas `2026-09-provider-config`, `2026-09-policy-precedence`, `2026-09-redaction-thresholds`, `2026-09-router-fallback` and `2026-09-builtin-tools`: their sections lose "proposed", and DD-006 points at §5.3's reconciliation with the table. |
 | 1.25 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-11: §5.3c describes context assembly — rules files from the cwd up to the write root, highest precedence first, never followed out of it; `file`, `dir` and `block` attachments capped at 256 KiB with the omitted bytes stated, binary content left out; git context run without any command a repository's config can name (fsmonitor, filter drivers, diff drivers), bounded, and a failing git stated. Delta `2026-09-context-assembly` (proposed). |
+| 1.26 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-12: §5.3c adds the budget and compaction; Q-03 is answered — no tokenizer, a deliberately high byte estimate — and §3's module table says so. Delta `2026-09-context-budget` (proposed). |
