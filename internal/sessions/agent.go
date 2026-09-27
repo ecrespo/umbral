@@ -150,12 +150,7 @@ func (s *Service) claimPTY(ctx context.Context, live *liveSession, run *agentRun
 // its DEBUG trap — the integration's preexec — before every command of a loop of builtins,
 // and an interrupt that lands inside the trap may end the trap and not the loop.
 func (s *Service) stopAgent(live *liveSession, run *agentRun) {
-	s.signalAgent(live, ports.SignalTermForeground)
-	current := func() bool {
-		live.mu.RLock()
-		defer live.mu.RUnlock()
-		return live.agent == run
-	}
+	s.signalRun(live, run, ports.SignalTermForeground)
 	go func() {
 		kill := time.NewTimer(agentTermGrace)
 		defer kill.Stop()
@@ -170,23 +165,32 @@ func (s *Service) stopAgent(live *liveSession, run *agentRun) {
 			case <-give.C:
 				return
 			case <-kill.C:
-				if current() {
-					s.signalAgent(live, ports.SignalKillForeground)
-				}
+				s.signalRun(live, run, ports.SignalKillForeground)
 			case <-again.C:
-				if !current() {
+				if !s.signalRun(live, run, ports.SignalTermForeground) {
 					return
 				}
-				s.signalAgent(live, ports.SignalTermForeground)
 			}
 		}
 	}()
 }
 
-func (s *Service) signalAgent(live *liveSession, sig ports.SignalKind) {
-	if err := live.pty.Signal(sig); err != nil {
-		s.cfg.Logger.Warn("could not stop the agent's command", "session_id", live.snapshotState().ID, "error", err)
+// signalRun signals the PTY only while run still holds it, and reports whether it did. The
+// read lock is held across the signal so the next run cannot claim the PTY, and start a
+// command the signal would reach, between the check and the kill.
+func (s *Service) signalRun(live *liveSession, run *agentRun, sig ports.SignalKind) bool {
+	live.mu.RLock()
+	if live.agent != run {
+		live.mu.RUnlock()
+		return false
 	}
+	sessionID := live.session.ID
+	err := live.pty.Signal(sig)
+	live.mu.RUnlock()
+	if err != nil {
+		s.cfg.Logger.Warn("could not stop the agent's command", "session_id", sessionID, "error", err)
+	}
+	return true
 }
 
 // threadSession returns the thread's live PTY, creating it if it has none.
