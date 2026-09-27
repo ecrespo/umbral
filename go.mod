@@ -5,6 +5,7 @@ go 1.27.1
 require (
 	charm.land/bubbletea/v2 v2.0.9
 	charm.land/fantasy v0.45.2
+	github.com/aymanbagabas/go-udiff v0.2.0
 	github.com/creack/pty v1.1.24
 	github.com/klauspost/compress v1.20.0
 	github.com/oklog/ulid/v2 v2.1.2
