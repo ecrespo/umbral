@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-09-26 — awaiting the Tech Lead's approval` |
+| **Status** | `RATIFIED 2026-09-26 — approved by E. Crespo together with the other three F1 deltas; the frame-limit reading "the CLI raises the limit" and the untainted catalog descriptions were chosen explicitly. Folded into PRD 1.13, Data Model 1.9, Plan 1.10 and the F1 tasks file; the API and Tech Design text is carried by each task's Spec edits and Files, and both documents say it is pending` |
 | **Date** | 2026-09-26 |
 | **Task** | T-F1-33, second of F1, before T-F1-01 |
 | **Raised by** | The Tech Lead, 2026-09-26: "lo del límite, implementa la posibilidad de monitoreo del límite y que levante un ajuste a nivel de cli". It follows `2026-09-oversized-message`, decision 5, which left the outgoing direction open. |

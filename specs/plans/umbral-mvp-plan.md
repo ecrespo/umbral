@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.9 |
+| **Version** | 1.10 |
 | **Date** | 2026-09-26 |
 | **PRD** | `specs/prd/umbral-mvp.md` |
 | **Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -25,7 +25,7 @@ There are two MVP phases in sequence (F0 Core → F1 Agentic) plus a hardening p
   - F1: the US-003 scenario works offline.
 - F2 and F3 are described at the end only as a horizon; they will get their own PRDs/deltas.
 
-**Total estimated duration:** 13-16 weeks for one person part-time, plus supervised coding agents.
+**Total estimated duration:** 15-18 weeks for one person part-time, plus supervised coding agents.
 **Team:** 1 Tech Lead/backend (Go), supported by coding agents using the tasks in `specs/tasks/`.
 **Release 0.1 target:** end of F1 + hardening.
 
@@ -144,12 +144,14 @@ The six exit criteria, and what closed each:
 
 ### Phase F1: Agent, models, MCP and security
 
-**Duration:** 7-8 weeks.
+**Duration:** 9-10 weeks (7-8 before the four deltas of 2026-09-26 added eleven days of work).
 **Goal:** US-003 scenario offline with approval; `umb ai` CLI; MCP; egress audit; a thread that another agent or a script can drive.
 
 | ID | Task | Estimate | Dependency | Status |
 |---|---|---|---|---|
-| T-F1-01 | Migration 0005 (agent, models, audit, MCP) | 1d | F0 | ☐ |
+| T-F1-32 | The handshake has a deadline and always answers (REQ-SEC-017/018) | 0.5d | F0 | ☐ |
+| T-F1-33 | The frame limit enforced outbound, watched, adjustable from the CLI | 3.5d | T-F1-32 | ☐ |
+| T-F1-01 | Migration 0005 (agent, models, audit, MCP, skills) | 1d | T-F1-32, T-F1-33 | ☐ |
 | T-F1-02 | Keyring and config loader that rejects plaintext secrets | 1d | T-F1-01 | ☐ |
 | T-F1-03 | Policy engine (pure function) | 2d | T-F1-01 | ☐ |
 | T-F1-04 | Secret redaction | 1.5d | T-F1-01 | ☐ |
@@ -179,6 +181,10 @@ The six exit criteria, and what closed each:
 | T-F1-29 | Rule overrides and optional updates | 1.5d | T-F1-04 | ☐ |
 | T-F1-30 | Signed rule bundles, trust store and offline recovery | 2.5d | T-F1-29 | ☐ |
 | T-F1-31 | Wait monitoring: inventory, cancellation and stall detection | 2d | T-F1-23 | ☐ |
+| T-F1-34 | Skill store and `skill.*` methods | 3d | T-F1-01 | ☐ |
+| T-F1-35 | `umb skill` | 1d | T-F1-34 | ☐ |
+| T-F1-36 | The agent sees skills, loads them on demand, as untrusted content | 1.5d | T-F1-09, T-F1-11, T-F1-12, T-F1-14, T-F1-34 | ☐ |
+| T-F1-37 | `umb mcp`, and the agent panel's extensions view | 1.5d | T-F1-17, T-F1-20, T-F1-35 | ☐ |
 | T-F1-22 | Hardening: retention job, recovery verification, user docs | 2d | T-F1-21 | ☐ |
 
 **F1 "Done" criteria:**
@@ -246,3 +252,4 @@ Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), 
 | 1.7 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-defer-tui-week`: F0's third exit criterion, the TUI's week as the main terminal, becomes a release 0.1 gate; F0 closes on the other five and REQ-BLK-003. `T-F0-23` and `T-F0-24` added and closed |
 | 1.8 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-25` (REQ-TERM-013, delta `2026-09-pane-term`) and `T-F0-26` added: the GitHub CI of `develop` had been red on both OSes for eight runs |
 | 1.9 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-26` closed on the runners and `T-F0-27` added (delta `2026-09-oversized-message`); **F0 closed**, with the checkpoint `docs/checkpoints/2026-09-26-f0-closed.md` |
+| 1.10 | 2026-09-26 | E. Crespo (assisted draft) | Four F1 deltas ratified: `T-F1-32` and `T-F1-33` go before `T-F1-01`; `T-F1-34` to `T-F1-37` add skills and `umb mcp`. F1 grows from 31 tasks and 57 days to 37 and 68 |

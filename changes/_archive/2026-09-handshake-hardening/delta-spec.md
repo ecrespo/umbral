@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-09-26 — awaiting the Tech Lead's approval` |
+| **Status** | `RATIFIED 2026-09-26 — approved by E. Crespo together with the other three F1 deltas; the frame-limit reading "the CLI raises the limit" and the untainted catalog descriptions were chosen explicitly. Folded into PRD 1.13, Data Model 1.9, Plan 1.10 and the F1 tasks file; the API and Tech Design text is carried by each task's Spec edits and Files, and both documents say it is pending` |
 | **Date** | 2026-09-26 |
 | **Task** | T-F1-32, the first task of F1 |
 | **Raised by** | The `spec-guardian` review of delta `2026-09-oversized-message` (findings 5 and 6), 2026-09-26; recorded as left open in `docs/checkpoints/2026-09-26-f0-closed.md` |

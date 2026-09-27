@@ -13,6 +13,13 @@
 
 ---
 
+
+> **Pending from F1 (ratified 2026-09-26, not yet written here).** PRD 1.13 adds REQ-SEC-017/018,
+> REQ-API-005, REQ-CLI-007/008 and REQ-SKL-001…007, which this document does not describe yet:
+> the handshake deadline, `RESULT_TOO_LARGE`, `limits.*`, `skill.*` and the `cli` rows for
+> `limits.*`, `skill.*` and `mcp.server.*`. Tasks T-F1-32, T-F1-33, T-F1-34 and T-F1-37 write
+> that text as they land. Until then, the design is in `changes/_archive/2026-09-{handshake-hardening,frame-limit-monitoring,skills-cli,cli-mcp}/`.
+
 ## 1. Overview
 
 This is the single contract between `umbrald` and its clients: `umbral-tui` (MVP), `umb` (CLI, MVP)

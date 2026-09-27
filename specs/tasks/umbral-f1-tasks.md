@@ -10,14 +10,59 @@ default CI.
 
 ## Tasks
 
-### [ ] T-F1-01 · Migration 0005 (agent, models, audit, MCP)
+### [ ] T-F1-32 · The handshake has a deadline and always answers
+- **What:**
+  - a 5 s deadline from accept to a completed `system.hello`, then `UNAUTHORIZED` with a null id
+    and a close;
+  - before the handshake, a JSON-RPC notification gets `UNAUTHORIZED` with a null id and a
+    close;
+  - a `system.hello` without an `id` or with a null `id` gets the same at any time, checked
+    before any token;
+  - API §1 (the JSON-RPC deviation), §2 and §8.
+- **REQ:** REQ-SEC-017, REQ-SEC-018
+- **Files:** `internal/api/conn.go`, `internal/api/server.go`, `internal/api/server_test.go`,
+  `specs/api/umbral-daemon-api-v1.md`
+- **Depends on:** F0 complete. **Goes before T-F1-01.**
+- **Delta:** `changes/_archive/2026-09-handshake-hardening/`
+- **Done:** `TestASilentConnectionIsClosedAfterTheDeadline_REQ_SEC_017` and
+  `TestANotificationBeforeHelloIsUnauthorized_REQ_SEC_018` green, each seen red against its own
+  deliberate break; `task ci` green.
+
+### [ ] T-F1-33 · The frame limit is enforced outbound, watched, and adjustable from the CLI
+- **What:**
+  - **Encoder:** every outbound frame is measured. A response over the limit becomes
+    `RESULT_TOO_LARGE` (`-32014`, with `size_bytes` and `limit_bytes`). A notification over it
+    becomes `limits.notification_dropped` under the same `seq`.
+  - **`block.get`:** shortens its output to fit, on a UTF-8 boundary or a base64 boundary, and
+    reports `output_response_truncated_bytes`.
+  - **Monitoring:** `frames` counters in `system.status` and `limits.get`; warn logs without
+    content.
+  - **The setting:** `[api] max_message_bytes` (1–64 MiB, default 4) is the first live key.
+    `limits.set` rewrites only that line, atomically, covering every case in the delta's
+    file-cases table. The 4 MiB limit before the handshake is
+    fixed. `max_message_bytes` is announced in `system.hello` and adopted by `internal/client`.
+  - **CLI:** `umb limits` and `umb limits set --max-message <size>`, the `frames` line in
+    `umb status`, and the hint on `RESULT_TOO_LARGE`.
+  - **Spec edits:** API §1–§9, Tech §5.1, §7.2 and §9.4.
+- **REQ:** REQ-API-005, REQ-OBS-005, REQ-CLI-007
+- **Files:** `internal/api/**`, `internal/client/**`, `internal/config/**`, `cmd/umb/**`,
+  `specs/api/umbral-daemon-api-v1.md`, `specs/technical/umbral-architecture.md`
+- **Depends on:** T-F1-32. **Goes before T-F1-01.**
+- **Delta:** `changes/_archive/2026-09-frame-limit-monitoring/` — its Verification and its
+  file-cases table are what this task's Done refers to.
+- **Done:** the four tests of the delta's Verification are green, and each was seen red against
+  its own break. `task schema` and `task ci` are green.
+
+### [ ] T-F1-01 · Migration 0005 (agent, models, audit, MCP, skills)
 - **What:** Data Model tables §2.4c to §2.13 with their indexes, plus recovery §6 steps 3-4.
   `threads` (§2.5) is **not** created here: migration 0001 already created it (§5, finding A-01).
   The structure tables (§2.4b) are **not** created here either: migration 0003 owns them (T-F0-14).
   `messages` includes `client_msg_id` and its partial unique index `idx_messages_client_msg`.
+  `skills` (§2.4f, delta `2026-09-skills-cli`) is created here too, so T-F1-34 never has to edit
+  a written migration.
 - **REQ:** REQ-AGT-011, REQ-LLM-005, REQ-SEC-002
 - **Files:** `internal/store/migrations/0005_agent.sql`, `internal/store/**`
-- **Depends on:** F0 complete
+- **Depends on:** F0 complete, T-F1-32, T-F1-33 — the two protocol tasks go first
 - **Done:** `TestMigration0005Constraints` and `TestRecoveryExpiresPendingApprovals_REQ_AGT_011` green.
 
 ### [ ] T-F1-02 · Keyring and configuration loader
@@ -309,6 +354,73 @@ default CI.
 - **Depends on:** T-F1-23
 - **Done:** tests `TestLimitsDegradeWithoutDisconnect_REQ_AUT_005`, `TestWaitListReportsAgeAndStalled_REQ_AUT_006`, `TestCancelLeavesTurnRunning_REQ_AUT_007` and `TestStalledTurnNotifiedNotKilled_REQ_AUT_008` green; a script that leaks 100 waits does not bring the connection down.
 
+### [ ] T-F1-34 · Skill store and `skill.*` methods
+- **What:**
+  - **Bundle checks:** front matter; entry kinds; paths; modes; size and entry limits enforced
+    while streaming; the canonical-manifest digest.
+  - **Store:** staging and rename into `$XDG_DATA_HOME/umbral/skills/<name>/`; the recovery
+    sweep of Data Model §6.
+  - **Methods:** `skill.inspect`, `install` (with `expected_sha256`), `list`, `get`,
+    `set_enabled` and `remove`, plus `skill.changed`.
+  - **Rules:** local sources only, classified before resolving; at most 64 enabled, and a 65th
+    install is stored disabled.
+  - **Arch:** the `api` rows. The `skills` table is created by T-F1-01 (Data Model §2.4f).
+  - **Spec edits:** API §2–§6 and §9; Tech §3.2 (`context` gains the skill store and catalog).
+- **REQ:** REQ-SKL-001, REQ-SKL-002, REQ-SKL-006
+- **Files:** `internal/context/**`, `internal/store/**`, `internal/api/**`, `.go-arch-lint.yml`,
+  `specs/api/umbral-daemon-api-v1.md`, `specs/technical/umbral-architecture.md`
+- **Depends on:** T-F1-01 (0005 includes `skills`)
+- **Delta:** `changes/_archive/2026-09-skills-cli/`
+- **Done:** these are green and `task schema` and `task arch` are green:
+  - `TestInstallCopiesRecordsAndRunsNothing_REQ_SKL_001`;
+  - `TestABadBundleIsRefusedWhole_REQ_SKL_002`;
+  - `TestACrashMidInstallLeavesNothingAfterRestart_REQ_SKL_002`;
+  - `TestARemoteSourceIsRefused_REQ_SKL_006`.
+
+### [ ] T-F1-35 · `umb skill`
+- **What:** `umb skill install|list|show|enable|disable|remove`; inspect, confirm, then install
+  with the shown digest; `--yes`, `--replace` and `--json`.
+- **REQ:** REQ-SKL-001, REQ-SKL-003
+- **Files:** `cmd/umb/**`, `specs/technical/umbral-architecture.md`
+- **Depends on:** T-F1-34
+- **Done:** `TestInstallAsksOrNeedsYes_REQ_SKL_001` and
+  `TestSkillCommandsMirrorTheMethods_REQ_SKL_003` green.
+
+### [ ] T-F1-36 · Umbral's agent sees skills, loads them on demand, and treats them as untrusted
+- **What:**
+  - **Catalog:** in every prompt, capped at 256 characters per description and 64 skills,
+    inside the budget; rebuilt per turn, so changes reach the next turn.
+  - **`skill_load`:** a `ReadOnly` tool behind a `tools/ports.SkillReader`; `file` confined to
+    the bundle; its output taints the turn (REQ-SEC-006).
+  - **Destructive patterns:** `umb skill install|enable|remove` and `umb mcp add` join the list.
+  - **Spec edits:** Tech §3.2 (`tools` gains `skill_load`) and §5.3 (the destructive patterns).
+- **REQ:** REQ-SKL-004, REQ-SKL-005, REQ-SKL-007
+- **Files:** `internal/context/**`, `internal/tools/**`, `internal/security/**`, `cmd/umbrald/**`,
+  `specs/technical/umbral-architecture.md`
+- **Depends on:** T-F1-09, T-F1-11, T-F1-12, T-F1-14, T-F1-34
+- **Done:** these are green:
+  - `TestPromptCarriesDescriptionsNotBodies_REQ_SKL_004`;
+  - `TestASkillCannotRunOrWidenAnything_REQ_SKL_005`;
+  - `TestASkillChangeReachesTheNextTurn_REQ_SKL_007`.
+
+### [ ] T-F1-37 · `umb mcp`, and the agent panel's extensions view
+- **What:**
+  - `umb mcp add|list|remove`, with `--stdio -- <command>`, `--http <url>`,
+    `--env NAME=keyring:<path>` and `--json`; always `untrusted`; plaintext `--env` refused in
+    the CLI;
+  - API §2's `cli` row gains the three `mcp.server.*` methods; §5.27 gains `remove`'s and
+    `list`'s params;
+  - `--env` accepts `keyring:` and `env:` references and refuses anything else;
+  - the agent panel lists MCP servers with their live state and skills with enabled or not, and
+    for each turn the MCP tools called and the skills loaded.
+- **REQ:** REQ-CLI-008, REQ-TUI-004
+- **Files:** `cmd/umb/**`, `internal/api/system.go`, `internal/tui/agent/**`,
+  `specs/api/umbral-daemon-api-v1.md`, `specs/technical/umbral-architecture.md`
+- **Depends on:** T-F1-17, T-F1-20, T-F1-35
+- **Delta:** `changes/_archive/2026-09-cli-mcp/`
+- **Done:** `TestMcpCommandsMirrorTheMethods_REQ_CLI_008`, `TestCliMayManageMcpServers_REQ_CLI_008`
+  and `TestAgentPanelShowsServersAndSkills_REQ_TUI_004` green.
+
 ## Traceability matrix (F1)
 
 | REQ | Tasks | Tests citing it |
@@ -382,6 +494,20 @@ default CI.
 | REQ-AUT-007 | T-F1-31 | TestCancelLeavesTurnRunning_REQ_AUT_007 |
 | REQ-AUT-008 | T-F1-31 | TestStalledTurnNotifiedNotKilled_REQ_AUT_008 |
 | REQ-OBS-004 | T-F1-18 | TestOrchestrationMetricsExposed_REQ_OBS_004 |
+| REQ-SEC-017 | T-F1-32 | TestASilentConnectionIsClosedAfterTheDeadline_REQ_SEC_017 |
+| REQ-SEC-018 | T-F1-32 | TestANotificationBeforeHelloIsUnauthorized_REQ_SEC_018 |
+| REQ-API-005 | T-F1-33 | TestAResponseOverTheLimitIsResultTooLarge_REQ_API_005 |
+| REQ-OBS-005 | T-F1-33 | TestFramesAreCounted_REQ_OBS_005 |
+| REQ-CLI-007 | T-F1-33 | TestLimitsSetRaisesTheLimitForNewConnections_REQ_CLI_007, TestAnOversizedAnswerTellsTheUserHowToRaiseTheLimit_REQ_CLI_007 |
+| REQ-SKL-001 | T-F1-34, T-F1-35 | TestInstallCopiesRecordsAndRunsNothing_REQ_SKL_001, TestInstallAsksOrNeedsYes_REQ_SKL_001 |
+| REQ-SKL-002 | T-F1-34 | TestABadBundleIsRefusedWhole_REQ_SKL_002, TestACrashMidInstallLeavesNothingAfterRestart_REQ_SKL_002 |
+| REQ-SKL-003 | T-F1-35 | TestSkillCommandsMirrorTheMethods_REQ_SKL_003 |
+| REQ-SKL-004 | T-F1-36 | TestPromptCarriesDescriptionsNotBodies_REQ_SKL_004 |
+| REQ-SKL-005 | T-F1-36 | TestASkillCannotRunOrWidenAnything_REQ_SKL_005 |
+| REQ-SKL-006 | T-F1-34 | TestARemoteSourceIsRefused_REQ_SKL_006 |
+| REQ-SKL-007 | T-F1-36 | TestASkillChangeReachesTheNextTurn_REQ_SKL_007 |
+| REQ-CLI-008 | T-F1-37 | TestMcpCommandsMirrorTheMethods_REQ_CLI_008, TestCliMayManageMcpServers_REQ_CLI_008 |
+| REQ-TUI-004 | T-F1-37 | TestAgentPanelShowsServersAndSkills_REQ_TUI_004 |
 
 **SHOULD/COULD covered or deferred:**
 
@@ -397,4 +523,5 @@ default CI.
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | T-F1-32 to T-F1-37 | added, not started | Four deltas ratified together and folded here. The fold drops the tasks' own "ratification bookkeeping" bullets and PRD entries, because ratification did that work: the REQs are in PRD 1.13, the `skills` table in Data Model 1.9, and the order in Plan 1.10. The API and Tech Design text stays with each task's Spec edits. API and Tech are bumped one step per task, in task order, and the versions each archived delta proposed are only a guide. |
 | — | — | — | — |

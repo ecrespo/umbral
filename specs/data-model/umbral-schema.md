@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.8 |
+| **Version** | 1.9 |
 | **Date** | 2026-09-11 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -320,6 +320,31 @@ Umbral keeps the active bundle and the previous one so `rules.rollback` works of
 are pruned. A `remote` bundle without `verified_with` cannot exist: the DDL allows it, and the
 `store` layer rejects it.
 
+### 2.4f `skills` (migration 0005)
+
+**Purpose:** the skills installed for Umbral's agent (REQ-SKL-001 to REQ-SKL-007, delta
+`2026-09-skills-cli`). The bundle itself lives in `$XDG_DATA_HOME/umbral/skills/<name>/`; this row
+is its record. The shape is `mcp_servers`': a prefixed ULID `id` and a unique `name` that the API
+and `umb` address it by, so Art. 6 holds without an amendment.
+
+```sql
+CREATE TABLE skills (
+  id           TEXT PRIMARY KEY CHECK (id LIKE 'skl\_%' ESCAPE '\'),
+  name         TEXT NOT NULL UNIQUE CHECK (length(name) BETWEEN 1 AND 64 AND name GLOB '[a-z0-9]*' AND name NOT GLOB '*[^a-z0-9-]*'),
+  description  TEXT NOT NULL CHECK (length(description) BETWEEN 1 AND 1024),
+  version      TEXT CHECK (version IS NULL OR length(version) <= 64),
+  source       TEXT NOT NULL,              -- the path it was installed from, display only
+  sha256       TEXT NOT NULL,
+  size_bytes   INTEGER NOT NULL CHECK (size_bytes BETWEEN 1 AND 8388608),
+  enabled      INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+  installed_at INTEGER NOT NULL
+);
+```
+
+At most 64 rows have `enabled = 1`; the `context` layer enforces it, since a count cannot be a
+`CHECK`. A row and its directory are written through a staging directory and a rename, and §6
+step 9 removes whatever a crash leaves between them.
+
 ### 2.5 `threads`
 
 ```sql
@@ -562,7 +587,7 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 | `0002_block_index.sql` | F0 | `idx_blocks_started` (§2.2) |
 | `0003_structure.sql` | F0 | `workspaces`, `tabs`, `panes`, `pane_aliases` and their indexes (§2.4b) |
 | `0004_restore.sql` | F0 | `pane_history` (§2.4d), `panes.command_pending` and `workspaces.focused_tab_id`/`focused_at` (§2.4b) — everything a restart needs and nothing else (T-F0-18) |
-| `0005_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers`, `pane_state_reports`, `pane_metadata`, `trust_keys`, `rule_bundles` and their indexes (§2.4c-2.4e, §2.6-2.13), plus the two `ALTER TABLE threads` statements of §2.5 |
+| `0005_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers`, `pane_state_reports`, `pane_metadata`, `trust_keys`, `rule_bundles`, `skills` and their indexes (§2.4c-2.4f, §2.6-2.13), plus the two `ALTER TABLE threads` statements of §2.5 |
 
 `threads` belongs to 0001 even though the agent arrives in F1: `sessions.owner_thread_id` and
 `blocks.thread_id` point at it, and with `foreign_keys=ON` SQLite rejects every insert into those
@@ -603,6 +628,9 @@ earlier drafts named.
    accept `thread.send` again without losing context (REQ-AGT-017).
 8. `pane_state_reports` and `pane_metadata` are cleared: external authority and display metadata do
    not survive a restart (REQ-INT-002, REQ-INT-004).
+9. Skills: every `skills/.staging-*` directory is removed, and every `skills/<name>/` directory
+   with no `skills` row. A crash between the copy and the row, in either direction, leaves
+   nothing behind (REQ-SKL-002, delta `2026-09-skills-cli`).
 
 ## Change History
 
@@ -617,3 +645,4 @@ earlier drafts named.
 | 1.6 | 2026-09-20 | delta `2026-09-art6-structural-ids`: `workspaces`, `tabs`, `panes` and `pane_aliases` enforce the structural identifier grammar with a `CHECK` (C-05) |
 | 1.7 | 2026-09-20 | delta `2026-09-restore-semantics`: §6 step 5 stops launching a restored pane's stored command; `panes.command_pending` and `workspaces.focused_tab_id`/`focused_at` in §2.4b; `pane_history` (§2.4d) moves to migration `0004_restore` and the agent subdomain to `0005_agent`, superseding the note in 1.4 |
 | 1.8 | 2026-09-26 | delta `2026-09-recovery-integration`: §6 step 1 settles every `pending` integration once no session is alive — `osc133` for a session with blocks, `none` otherwise — so a crash inside a session's five-second window — and any row an older daemon left `pending` — ends on the verdict REQ-BLK-003 requires |
+| 1.9 | 2026-09-26 | delta `2026-09-skills-cli`: §2.4f `skills` in migration 0005, keyed like `mcp_servers`; §5's 0005 row names it; §6 step 9 sweeps orphaned skill directories |

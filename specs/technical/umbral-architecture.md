@@ -14,6 +14,17 @@
 
 ---
 
+
+> **Pending from F1 (ratified 2026-09-26, not yet written here).** Several sections are still
+> to be updated:
+> - §5.1 gains "live keys" and the `[api]` table (T-F1-33);
+> - §3.2 gains the skill store, the catalog and `skill_load` (T-F1-34, T-F1-36);
+> - §5.3 gains the destructive patterns `umb skill …` and `umb mcp add` (T-F1-36);
+> - §7.2 gains `umbral_frames_refused_total` (T-F1-33);
+> - §9.4 gains `umb limits`, `umb skill` and `umb mcp` (T-F1-33, T-F1-35, T-F1-37).
+>
+> Each task writes its part. Until then, the design is in `changes/_archive/2026-09-*`.
+
 ## 1. Context
 
 Umbral is a local Go daemon (`umbrald`) that owns:
