@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-09-27 — pending the Tech Lead's ratification. T-F1-02 implements it and is merged with it open, at the user's instruction to carry on through T-F1-10; nothing downstream may treat it as ratified until it is.` |
+| **Status** | `RATIFIED 2026-09-27 — approved by E. Crespo together with the other four F1 deltas of T-F1-02…T-F1-10, as written. Folded into PRD 1.14, Tech Design 1.24 and Data Model 1.11` |
 | **Date** | 2026-09-27 |
 | **Task** | T-F1-02 (implements 1–7, 9); T-F1-05 (implements 8, 8a–8c; touches API 1.18 §4 and §5.26, Tech 1.18 §5.1 and DD-008); T-F1-06 (8d, Tech 1.19 DD-005); T-F1-08 (8e, Tech 1.21 §5.1) |
 | **Raised by** | The `spec-guardian` review of T-F1-02, 2026-09-27 (Art. 9: "NEEDS A DELTA") |

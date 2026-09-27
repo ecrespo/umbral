@@ -5,6 +5,6 @@
   `internal/llmgw/router_test.go` or `cmd/umbrald/gateway_test.go`.
 - **REQ:** REQ-LLM-003, REQ-LLM-005
 
-### [ ] Ratification
+### [x] 2026-09-27 Ratification
 - The Tech Lead ratifies or amends the delta — decision 6 above all — optionally sharpens
   REQ-LLM-003 and REQ-LLM-005, and moves the delta to `changes/_archive/`.

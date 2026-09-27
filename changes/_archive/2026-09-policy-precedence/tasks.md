@@ -8,5 +8,5 @@
 - **What:** decision 5 on the wire: API §5.36's example gains `exposure` and `decided`.
 - **REQ:** REQ-SEC-009
 
-### [ ] Ratification
+### [x] 2026-09-27 Ratification
 - The Tech Lead ratifies or amends the delta; on ratification it moves to `changes/_archive/`.

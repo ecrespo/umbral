@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.13 |
+| **Version** | 1.14 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-09-26 |
@@ -181,7 +181,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-AGT-015** · MUST · unwanted — IF `thread.send` arrives with a `client_msg_id` already processed in the same thread, THEN THE SYSTEM SHALL reply with the original `turn_id` and `message_id` without creating a new turn or running any tool again.
 - **REQ-AGT-016** · MUST · state — WHILE a thread has finished a turn that no client has viewed, THE SYSTEM SHALL expose its attention state as `done`, and SHALL change it to `idle` when a client focuses the thread.
 - **REQ-AGT-017** · MUST · event — WHEN the daemon starts after a shutdown, THE SYSTEM SHALL restore every thread with its full message history, mark interrupted turns `stopped`, and accept `thread.send` on them without losing previous context.
-- **REQ-AGT-018** · MUST · ubiquitous — THE SYSTEM SHALL restrict `fetch_url` to the `http` and `https` schemes, a 10 s timeout and 2 MiB of body, SHALL refuse redirects whose target resolves to loopback, link-local or private address ranges, and SHALL mark the result as untrusted content.
+- **REQ-AGT-018** · MUST · ubiquitous — THE SYSTEM SHALL restrict `fetch_url` to the `http` and `https` schemes, a 10 s timeout and 2 MiB of body, SHALL refuse to connect to loopback, link-local or private address ranges, directly or through a redirect, and SHALL mark the result as untrusted content.
 - **REQ-AGT-012** · SHOULD · event — WHEN `edit_file` or `write_file` requires approval, THE SYSTEM SHOULD include the unified diff of the proposed change in `approval.requested`.
 
 ### 6.4 Context (CTX)
@@ -196,17 +196,17 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 
 - **REQ-LLM-001** · MUST · ubiquitous — THE SYSTEM SHALL support the providers `ollama` (native API), `llamacpp`, `lmstudio`, `openrouter` and generic `openai-compat`.
 - **REQ-LLM-002** · MUST · event — WHEN the daemon starts, or a client invokes `model.list` with `refresh = true`, THE SYSTEM SHALL discover the models of every configured provider (`/v1/models`, `/api/tags`) and update the catalog.
-- **REQ-LLM-003** · MUST · unwanted — IF a provider replies 429 or 5xx, or does not deliver the first token within `first_token_timeout` (30 s remote, 120 s local), THEN THE SYSTEM SHALL try the next candidate of the task class and record the failure in `usage`.
+- **REQ-LLM-003** · MUST · unwanted — IF a provider replies 429 or 5xx, or does not deliver the first token within `first_token_timeout` (30 s remote, 120 s local), before the first token reaches the caller, THEN THE SYSTEM SHALL try the next candidate of the task class and record the failure in `usage`.
 - **REQ-LLM-004** · MUST · optional — WHERE `router.offline = true`, THE SYSTEM SHALL discard every remote candidate and, if no local one remains, reply `PROVIDER_UNAVAILABLE`.
-- **REQ-LLM-005** · MUST · ubiquitous — THE SYSTEM SHALL record, for every model call, the input tokens, output tokens, time to first token and cost in micro-USD.
+- **REQ-LLM-005** · MUST · ubiquitous — THE SYSTEM SHALL record, for every model call made to a provider, the input tokens, output tokens, time to first token and cost in micro-USD.
 - **REQ-LLM-006** · MUST · ubiquitous — THE SYSTEM SHALL send Ollama the model's configured `num_ctx` in every request.
 - **REQ-LLM-007** · SHOULD · ubiquitous — THE SYSTEM SHOULD include configuration presets for the Hugging Face router (`https://router.huggingface.co/v1`) and for a self-hosted OmniRoute instance.
 - **REQ-LLM-008** · COULD · ubiquitous — THE SYSTEM MAY run an embedded model through yzma for the `fast` class.
 
 ### 6.6 Security (SEC)
 
-- **REQ-SEC-001** · MUST · ubiquitous — THE SYSTEM SHALL apply the redaction rules to all content before sending it to a provider, replacing every match with `[REDACTED:<rule>]`. The rules are prefix patterns (`sk-`, `ghp_`, `AKIA`, PEM blocks, JWT) plus a generic detector that only fires on strings with entropy ≥ 4.5 bits per character and length ≥ 20.
-- **REQ-SEC-002** · MUST · event — WHEN a request is sent to a remote provider, THE SYSTEM SHALL record in `egress_log` the destination host, bytes sent, SHA-256 of the payload, provider and thread.
+- **REQ-SEC-001** · MUST · ubiquitous — THE SYSTEM SHALL apply the redaction rules to all content before sending it to a provider, replacing every match with `[REDACTED:<rule>]`. The rules are prefix patterns (`sk-`, `ghp_`, `AKIA`, PEM blocks, JWT) plus a generic detector that only fires on strings of at least 23 characters with entropy ≥ 4.5 bits per character (a string's own entropy cannot reach 4.5 bits below 23 characters). The thresholds are necessary, not sufficient: Umbral's type-prefixed ids and identifier-shaped tokens are left alone. The generic detector is a backstop whose recall depends on length — about 98 % of random 40-character keys, 70 % at 32 and 5 % at 24 — and known formats are the named rules' job (delta `2026-09-redaction-thresholds`).
+- **REQ-SEC-002** · MUST · event — WHEN a request is sent to a remote provider, or a tool sends one off the machine (`fetch_url`), THE SYSTEM SHALL record in `egress_log` the destination host, bytes sent, SHA-256 of the payload, provider and thread.
 - **REQ-SEC-003** · MUST · unwanted — IF a socket connection does not present the valid local token in `system.hello`, THEN THE SYSTEM SHALL reply `UNAUTHORIZED` and close the connection.
 - **REQ-SEC-004** · MUST · unwanted — IF the configuration contains a plaintext API key, THEN THE SYSTEM SHALL reject that provider entry and indicate that `keyring:<path>` must be used.
 - **REQ-SEC-005** · MUST · ubiquitous — THE SYSTEM SHALL require approval for commands matching the destructive-pattern list (`rm -rf`, `git push --force`, `mkfs`, `dd of=`, `kubectl delete`, …), regardless of `allow` rules and the thread mode.
@@ -483,6 +483,7 @@ TUI as text:
 | 1.11 | 2026-09-21 | E. Crespo (assisted draft) | delta `2026-09-cli-workspace-surface` (ratified 2026-09-26): REQ-CLI-005 and REQ-CLI-006 — `umb workspace`/`tab`/`pane`/`layout` over the methods of the same name, addressed by the `w<n>` identifiers, and a layout round trip through a pipe. Without them F0 exit criterion 4 cannot be performed and Art. 6's exception cites a command that does not exist |
 | 1.12 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-pane-term`: REQ-TERM-013 — every pane gets `TERM=xterm-256color` and `COLORTERM=truecolor` over the daemon's own, under the pane's declared `env`. Without it a daemon started with no terminal gave every shell a dumb one, and the first keystroke at a fresh prompt was lost |
 | 1.13 | 2026-09-26 | E. Crespo (assisted draft) | Four deltas ratified together for F1: `2026-09-handshake-hardening` (REQ-SEC-017, REQ-SEC-018), `2026-09-frame-limit-monitoring` (REQ-API-005, REQ-OBS-005, REQ-CLI-007), `2026-09-skills-cli` (§6.16, REQ-SKL-001 to 007; REQ-SEC-006 gains `skill_load` output) and `2026-09-cli-mcp` (REQ-CLI-008, REQ-TUI-004). §5.1's `umb` line also names the workspace tree, true since REQ-CLI-005 |
+| 1.14 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies the five deltas of T-F1-02…T-F1-10. `2026-09-redaction-thresholds`: REQ-SEC-001 states the 23-character floor, that the thresholds are necessary and not sufficient, and the generic detector's recall. `2026-09-router-fallback`: REQ-LLM-003 falls back only before the first token reaches the caller; REQ-LLM-005 counts calls made to a provider. `2026-09-builtin-tools`: REQ-SEC-002 covers `fetch_url`; REQ-AGT-018 refuses private ranges on every connection, not only redirects. `provider-config` and `policy-precedence` change no REQ text. |
 
 ## Approvals
 
