@@ -15,25 +15,41 @@ import (
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 )
 
-// gateway is the model catalog as the daemon runs it: rebuilt from models.toml and the
-// resolved credentials whenever they change, refreshed in the background, and served as
-// model.list (API Spec §5.26).
+// gateway is the model catalog and its router as the daemon runs them: rebuilt from
+// models.toml and the resolved credentials whenever they change, refreshed in the background,
+// and served as model.list (API Spec §5.26). The router is what the agent runtime calls models
+// through (T-F1-07): it redacts with the built-in rules (REQ-SEC-001) and records every call
+// in usage (REQ-LLM-005).
 type gateway struct {
 	ctx     context.Context
 	logger  *slog.Logger
 	catalog *llmgw.Catalog
+	router  *llmgw.Router
 	egress  llmports.EgressLog
 }
 
-func newGateway(ctx context.Context, logger *slog.Logger, store llmports.ModelStore, egress llmports.EgressLog) *gateway {
-	return &gateway{ctx: ctx, logger: logger, catalog: llmgw.NewCatalog(store, logger), egress: egress}
+func newGateway(ctx context.Context, logger *slog.Logger, store llmports.ModelStore, egress llmports.EgressLog, usage llmports.UsageLog) (*gateway, error) {
+	catalog := llmgw.NewCatalog(store, logger)
+	router, err := llmgw.NewRouter(catalog, llmgw.RouterConfig{Redact: redact, Usage: usage, Logger: logger})
+	if err != nil {
+		return nil, err
+	}
+	return &gateway{ctx: ctx, logger: logger, catalog: catalog, router: router, egress: egress}, nil
 }
+
+// redact applies the redaction rules built into the binary; the override directory of
+// REQ-SEC-010 replaces them when T-F1-30 lands.
+func redact(s string) string { return secdomain.Redact(s).Text }
 
 // configure rebuilds the providers and discovers their models in the background
 // (REQ-LLM-002: at start, and again after a reload changed them). The daemon never waits on
 // a provider to start or to answer config.reload. With `router.offline = true` no remote
 // provider is contacted (REQ-LLM-004).
 func (g *gateway) configure(models config.Models, resolved []secdomain.ResolvedCredential) {
+	// Classes first: a call between the two steps then finds new classes over the old
+	// providers, whose missing candidates it skips, rather than old classes naming providers
+	// a reload removed.
+	g.router.Configure(models.Classes)
 	g.catalog.Configure(models.Router.Offline, buildEntries(g.logger, g.egress, models, resolved))
 	go func() {
 		if err := g.catalog.Refresh(g.ctx); err != nil && g.ctx.Err() == nil {

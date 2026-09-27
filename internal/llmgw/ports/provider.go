@@ -18,7 +18,9 @@ type Provider interface {
 	// Models lists what the provider serves (REQ-LLM-002): `/v1/models`, `/api/tags`.
 	Models(ctx context.Context) ([]domain.Model, error)
 	// Stream starts one call. An error before the first event — a refused request — is
-	// returned here; one during the stream is yielded, and ends it.
+	// returned here; one during the stream is yielded, and ends it. Both Stream and the
+	// iterator must return once ctx is done: the router abandons a candidate by cancelling
+	// it and does not wait (REQ-LLM-003's first-token timeout).
 	Stream(ctx context.Context, req domain.Request) (iter.Seq2[domain.Event, error], error)
 }
 
@@ -37,4 +39,9 @@ type ModelStore interface {
 // EgressLog records every request that leaves the machine (Art. 4, REQ-SEC-002).
 type EgressLog interface {
 	Record(ctx context.Context, rec domain.EgressRecord) error
+}
+
+// UsageLog records every model call (REQ-LLM-005, Data Model §2.11).
+type UsageLog interface {
+	Record(ctx context.Context, rec domain.UsageRecord) error
 }

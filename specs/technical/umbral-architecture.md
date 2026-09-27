@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.19 |
-| **Date** | 2026-09-11 |
+| **Version** | 1.20 |
+| **Date** | 2026-09-27 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
 | **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
@@ -219,6 +219,36 @@ sequenceDiagram
   4. declared order.
 
   Cost and quality policies arrive in F2.
+- **How the router walks them** (T-F1-07, `internal/llmgw/router.go`):
+  - A candidate must be in the catalog: not yet discovered, or `down` for any reason — offline
+    included — it is skipped. The capability filter drops it when the request has tools and it
+    has none, asks for a response schema or for reasoning it does not advertise, or does not
+    fit its window, estimated at four characters a token plus `max_output_tokens`. A class
+    with nothing left is `PROVIDER_UNAVAILABLE` before anything is sent (REQ-LLM-004).
+  - The request is redacted once, before the first candidate (REQ-SEC-001, all content): the
+    system prompt, every message, every tool call's arguments and result, every tool's
+    description and every string in its input schema, and every string in the response
+    schema (values; a schema's property names are sent as written). The caller's request is
+    left as it was. The call's context
+    carries its thread, so the egress row of the payload that left — the redacted one — names
+    it (REQ-SEC-002).
+  - **Fallback is decided before the first event reaches the caller.** A 429, a 5xx, a
+    transport failure, a stream that ends empty, or no event within the first-token timeout
+    (30 s remote, 120 s local) moves to the next candidate (REQ-LLM-003). The clock starts
+    before the request is sent, so a server that holds its headers times out too. A 4xx or a request
+    that could not be built ends the call. Once an event is delivered the caller has it, so a
+    later failure ends the call rather than starting it again elsewhere. When the last
+    candidate fails the call is `PROVIDER_UNAVAILABLE`.
+  - An adapter that cannot carry what a request asks for — the Fantasy-based ones and
+    reasoning or a response schema, until they do — refuses it before sending, and the
+    router moves on without recording a call.
+  - **Every call that was made is one `usage` row** (REQ-LLM-005), failures included, with
+    status `rate_limited`, `timeout` or `error` and the error text. `first_token_ms` is NULL
+    when no event arrived. The cost is `(in × price_in + out × price_out) / 10^6` micro-USD,
+    rounded to the nearest unit; a model whose price the provider does not publish costs 0.
+    A row that cannot be written is logged and does not fail the call.
+  - These choices go beyond REQ-LLM-003 and REQ-LLM-005's text and are delta
+    `2026-09-router-fallback` (proposed).
 - **Meta-providers** (OpenRouter, OmniRoute) are just another candidate; their internal fallback is
   not duplicated.
 
@@ -882,3 +912,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.17 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-04: DD-008 lists the built-in redaction rules and how the generic detector reads REQ-SEC-001's thresholds — as necessary conditions, with Umbral ids and identifier-shaped tokens left alone — and records the recall the 4.5-bit floor allows at each length. Delta `2026-09-redaction-thresholds` (proposed). |
 | 1.18 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-05: §5.1 gains the `llamacpp` provider type (REQ-LLM-001 names it; the reference architecture's list did not) and describes the catalog: which adapter serves each type, background discovery, a down or offline-remote provider never contacted, and the reasons `discovery_failed`, `no_adapter`, `invalid_config` and `offline`; DD-008 says `egress_log` is written at the HTTP transport, discovery included, and fails closed. Delta `2026-09-provider-config` (proposed). |
 | 1.19 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-06: DD-005 says which `num_ctx` every Ollama request carries when models.toml sets none (32768 capped at the model's window), where `keep_alive`, `think` and `format` go, and how a tool call's finish reason is reported; §5.1's catalog serves `ollama`. Delta `2026-09-provider-config` (proposed). |
+| 1.20 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-07: DD-004 says how the router walks candidates — which filters drop one, when a failure falls back and when it ends the call, when the first-token clock starts, redaction of all content once before the first candidate, and what `usage` records for each call, failures included. Delta `2026-09-router-fallback` (proposed). |

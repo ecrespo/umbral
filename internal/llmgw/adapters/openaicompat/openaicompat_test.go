@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ecrespo/umbral/internal/llmgw/domain"
@@ -280,5 +281,34 @@ func TestConfigIsChecked(t *testing.T) {
 		if _, err := New(c); err == nil {
 			t.Errorf("New(%+v) accepted", c)
 		}
+	}
+}
+
+// TestWhatTheAdapterCannotCarryIsRefused_REQ_LLM_001: a request asking for reasoning or a
+// response schema is refused with ErrUnsupported before anything is sent, rather than sent
+// without them; the router then tries the next candidate.
+func TestWhatTheAdapterCannotCarryIsRefused_REQ_LLM_001(t *testing.T) {
+	t.Parallel()
+
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	p, _ := New(Config{ID: "lms", BaseURL: srv.URL + "/v1"})
+	for _, req := range []domain.Request{
+		{Model: "m", Reasoning: "high"},
+		{Model: "m", ResponseSchema: map[string]any{"type": "object"}},
+	} {
+		_, err := p.Stream(context.Background(), req)
+		var pe *domain.ProviderError
+		if !errors.Is(err, domain.ErrUnsupported) || !errors.As(err, &pe) || pe.Retryable() {
+			t.Errorf("%+v: err = %v, want a non-retryable ErrUnsupported", req, err)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Error("a request the adapter cannot carry reached the server")
 	}
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/ecrespo/umbral/internal/config"
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/egresslog"
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/modelstore"
+	"github.com/ecrespo/umbral/internal/llmgw/adapters/usagelog"
 	"github.com/ecrespo/umbral/internal/security/adapters/keyring"
 	"github.com/ecrespo/umbral/internal/sessions"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/blockstore"
@@ -333,7 +334,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		logger.Error("cannot build the egress log", slog.Any("error", err))
 		return exitCantCreate
 	}
-	models := newGateway(ctx, logger, modelStore, egress)
+	usage, err := usagelog.New(db)
+	if err != nil {
+		logger.Error("cannot build the usage log", slog.Any("error", err))
+		return exitCantCreate
+	}
+	models, err := newGateway(ctx, logger, modelStore, egress, usage)
+	if err != nil {
+		logger.Error("cannot build the model gateway", slog.Any("error", err))
+		return exitCantCreate
+	}
 	providers.observe(models.configure)
 
 	server, err := api.Listen(ctx, api.Config{

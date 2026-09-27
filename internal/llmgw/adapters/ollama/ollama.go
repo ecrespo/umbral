@@ -264,15 +264,15 @@ const maxLine = 16 << 20
 func (p *Provider) Stream(ctx context.Context, req domain.Request) (iter.Seq2[domain.Event, error], error) {
 	body, err := p.request(req)
 	if err != nil {
-		return nil, &domain.ProviderError{Provider: p.cfg.ID, Err: err}
+		return nil, &domain.ProviderError{Provider: p.cfg.ID, Err: err, Permanent: true}
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return nil, &domain.ProviderError{Provider: p.cfg.ID, Err: err}
+		return nil, &domain.ProviderError{Provider: p.cfg.ID, Err: err, Permanent: true}
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.base+"/api/chat", bytes.NewReader(raw))
 	if err != nil {
-		return nil, &domain.ProviderError{Provider: p.cfg.ID, Err: err}
+		return nil, &domain.ProviderError{Provider: p.cfg.ID, Err: err, Permanent: true}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if !p.cfg.APIKey.IsZero() {

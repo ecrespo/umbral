@@ -414,3 +414,21 @@ func TestOllamaRefusesABadNumCtx_REQ_LLM_006(t *testing.T) {
 		}
 	}
 }
+
+// TestARequestThatCannotBeBuiltIsNotRetried_REQ_LLM_003: tool-call arguments that are not JSON
+// would fail on every candidate, so the error is not retryable although it has no status.
+func TestARequestThatCannotBeBuiltIsNotRetried_REQ_LLM_003(t *testing.T) {
+	t.Parallel()
+
+	p, err := New(Config{ID: "o", BaseURL: "http://127.0.0.1:9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.Stream(context.Background(), domain.Request{Model: "m", Messages: []domain.Message{
+		{Role: domain.RoleAssistant, ToolCalls: []domain.ToolCall{{ID: "c", Name: "run", Input: "{not json"}}},
+	}})
+	var pe *domain.ProviderError
+	if !errors.As(err, &pe) || pe.Retryable() {
+		t.Errorf("err = %v, want a ProviderError that is not retryable", err)
+	}
+}
