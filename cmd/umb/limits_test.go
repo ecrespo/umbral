@@ -176,3 +176,27 @@ func TestFormatSize(t *testing.T) {
 		}
 	}
 }
+
+// TestStatusShowsWhyAProviderIsDown_REQ_SEC_008: the reason reaches the user, not only the
+// wire (REQ-SEC-008 "show that reason in umb status", REQ-SEC-012 for env_secret).
+func TestStatusShowsWhyAProviderIsDown_REQ_SEC_008(t *testing.T) {
+	t.Parallel()
+
+	socket := serveFakeDaemon(t, map[string]any{"system.status": map[string]any{
+		"daemon_version": "0.1.0", "uptime_ms": 1000, "sessions_alive": 0, "threads_running": 0,
+		"providers": []any{
+			map[string]any{"id": "hf", "health": "down", "reason": "keyring_unavailable"},
+			map[string]any{"id": "openrouter", "health": "degraded", "reason": "env_secret"},
+			map[string]any{"id": "ollama", "health": "unknown"},
+		},
+		"mcp": []any{},
+	}})
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"status", "--socket", socket, "--no-autostart"}, &stdout, &stderr); code != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", code, stderr.String())
+	}
+	want := "providers: hf (down: keyring_unavailable), openrouter (degraded: env_secret), ollama (unknown)\n"
+	if !strings.Contains(stdout.String(), want) {
+		t.Errorf("stdout =\n%s\nwant a line\n%s", stdout.String(), want)
+	}
+}

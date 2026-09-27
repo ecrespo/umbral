@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbral.local/schemas/models.json",
+  "title": "Umbral models.toml",
+  "description": "Providers, model classes and routing (Tech Design §5.1). Credentials are references, never values: keyring:<path>, or env:<VAR> where REQ-SEC-012 allows it.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "router": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "policy": { "enum": ["local-first", "cost", "quality"] },
+        "offline": { "type": "boolean" },
+        "max_cost_usd_per_thread": { "type": "number", "minimum": 0, "maximum": 1000000 }
+      }
+    },
+    "classes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fast": { "$ref": "#/$defs/chain" },
+        "code": { "$ref": "#/$defs/chain" },
+        "plan": { "$ref": "#/$defs/chain" },
+        "embed": { "$ref": "#/$defs/chain" }
+      }
+    },
+    "providers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/provider" }
+    }
+  },
+  "$defs": {
+    "chain": {
+      "description": "Candidates in order, each 'provider/model'.",
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9_-]+/.+$" }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_-]{1,64}$" },
+        "type": { "enum": ["ollama", "openai-compat", "lmstudio", "openrouter", "yzma"] },
+        "base_url": { "type": "string", "minLength": 1 },
+        "api_key": { "type": "string" },
+        "options": { "type": "object" },
+        "lib_path": { "type": "string" },
+        "models_dir": { "type": "string" }
+      },
+      "if": { "properties": { "type": { "const": "yzma" } } },
+      "then": { "required": ["lib_path", "models_dir"] },
+      "else": { "required": ["base_url"] }
+    }
+  }
+}

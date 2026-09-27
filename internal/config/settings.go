@@ -26,6 +26,10 @@ type Settings struct {
 	// unless the file says otherwise. It is the first live key: `limits.set` rewrites it and
 	// the daemon applies it to new connections without a restart.
 	MaxMessageBytes int
+	// AllowEnvSecrets is `[secrets] allow_env`: whether `env:<VAR>` may stand in for a
+	// keyring the machine does not have (REQ-SEC-012). Off by default, since the environment
+	// is the weaker store — every child process inherits it.
+	AllowEnvSecrets bool
 }
 
 // SettingsFileName is the file's name inside the configuration directory.
@@ -95,6 +99,13 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 					ErrSettingsInvalid, path, value)
 			}
 			settings.PaneHistory = on
+		case "secrets.allow_env":
+			on, err := strconv.ParseBool(value)
+			if err != nil {
+				return Settings{}, fmt.Errorf("%w: %s: secrets.allow_env is %q, want true or false",
+					ErrSettingsInvalid, path, value)
+			}
+			settings.AllowEnvSecrets = on
 		case apiSection + "." + maxMessageKey:
 			n, err := parseMaxMessageBytes(value)
 			if err != nil {

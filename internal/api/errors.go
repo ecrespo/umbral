@@ -111,6 +111,15 @@ type apiError struct {
 func (e *apiError) Error() string { return e.message }
 func (e *apiError) Unwrap() error { return e.err }
 
+// ErrorDetails returns the details an error built by this package carries, nil otherwise.
+func ErrorDetails(err error) []ErrorField {
+	var e *apiError
+	if errors.As(err, &e) {
+		return e.details
+	}
+	return nil
+}
+
 // ValidationError reports invalid parameters, naming the offending fields.
 func ValidationError(message string, details ...ErrorField) error {
 	return &apiError{err: errValidation, message: message, details: details}
