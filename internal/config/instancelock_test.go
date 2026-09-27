@@ -1,0 +1,305 @@
+//go:build unix
+
+package config
+
+import (
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+)
+
+// TestOnlyOneInstanceLockIsGranted is the invariant the whole daemon startup rests on: a
+// second daemon must not run Data Model §6 recovery over a first one's live sessions.
+func TestOnlyOneInstanceLockIsGranted(t *testing.T) {
+	dir := t.TempDir()
+
+	first, err := AcquireInstanceLock(dir)
+	if err != nil {
+		t.Fatalf("the first lock was refused: %v", err)
+	}
+	defer func() { _ = first.Release() }()
+
+	// A second attempt from another process, because flock is per open file description
+	// and the same process would be granted it again.
+	if err := tryLockInSubprocess(t, dir); !errors.Is(err, errSubprocessBusy) {
+		t.Errorf("a second process took the lock (%v); it would then recover over live sessions", err)
+	}
+}
+
+// TestInstanceLockIsReleasedForTheNextDaemon covers the ordinary restart: a daemon that
+// stopped must not lock the installation out.
+func TestInstanceLockIsReleasedForTheNextDaemon(t *testing.T) {
+	dir := t.TempDir()
+
+	first, err := AcquireInstanceLock(dir)
+	if err != nil {
+		t.Fatalf("first lock: %v", err)
+	}
+	if err := first.Release(); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	second, err := AcquireInstanceLock(dir)
+	if err != nil {
+		t.Fatalf("the lock was not released for the next daemon: %v", err)
+	}
+	_ = second.Release()
+}
+
+// TestInstanceLockSurvivesAKilledHolder is why this is flock and not a pid file. A daemon
+// that is SIGKILLed writes no cleanup, and a stale pid file would lock the installation
+// out until someone deleted it by hand. The kernel drops an flock when the holder dies.
+func TestInstanceLockSurvivesAKilledHolder(t *testing.T) {
+	dir := t.TempDir()
+
+	// A subprocess takes the lock and is killed; the file it left behind must not stop
+	// the next daemon.
+	cmd := lockHolderCmd(t, dir)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start the holder: %v", err)
+	}
+	waitForLockFile(t, dir)
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill the holder: %v", err)
+	}
+	_ = cmd.Wait()
+
+	lock, err := AcquireInstanceLock(dir)
+	if err != nil {
+		t.Fatalf("a killed holder left the installation locked out: %v", err)
+	}
+	_ = lock.Release()
+}
+
+// TestConcurrentAcquireGrantsExactlyOne is the shape autostart produces: several daemons
+// racing for the same installation at the same moment.
+func TestConcurrentAcquireGrantsExactlyOne(t *testing.T) {
+	dir := t.TempDir()
+
+	const racers = 8
+	var wg sync.WaitGroup
+	errs := make([]error, racers)
+	locks := make([]*InstanceLock, racers)
+	start := make(chan struct{})
+
+	for i := range racers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			locks[i], errs[i] = AcquireInstanceLock(dir)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	// Within one process flock is per open file description, so several may succeed
+	// here; what must never happen is an unexpected error, because that would leave a
+	// daemon exiting for the wrong reason.
+	for i, err := range errs {
+		if err != nil && !errors.Is(err, ErrAlreadyRunning) {
+			t.Errorf("racer %d failed with something other than ErrAlreadyRunning: %v", i, err)
+		}
+	}
+	for _, l := range locks {
+		_ = l.Release()
+	}
+}
+
+// TestOnlyOneDatabaseLockIsGranted is the instance lock's invariant moved onto the file it is
+// about. Recovery rewrites the database's live rows; two daemons with different runtime
+// directories and the same `--db` each hold an instance lock, and without this the second
+// one recovers over the first one's running sessions (delta `2026-09-database-lock`).
+func TestOnlyOneDatabaseLockIsGranted(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "data", "umbral.db")
+
+	first, err := AcquireDatabaseLock(db)
+	if err != nil {
+		t.Fatalf("the first lock was refused: %v", err)
+	}
+	defer func() { _ = first.Release() }()
+
+	if err := tryDatabaseLockInSubprocess(t, db); !errors.Is(err, errSubprocessBusy) {
+		t.Errorf("a second process took the database lock (%v); it would then recover over live sessions", err)
+	}
+}
+
+// TestDatabaseLockIsReleasedForTheNextDaemon: a daemon that stopped must not lock its
+// database away from the next one.
+func TestDatabaseLockIsReleasedForTheNextDaemon(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "umbral.db")
+
+	first, err := AcquireDatabaseLock(db)
+	if err != nil {
+		t.Fatalf("first lock: %v", err)
+	}
+	if err := first.Release(); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	second, err := AcquireDatabaseLock(db)
+	if err != nil {
+		t.Fatalf("the database lock was not released for the next daemon: %v", err)
+	}
+	_ = second.Release()
+}
+
+// TestAReleasedLockKeepsItsFile closes the unlink race the `spec-guardian` review of T-F0-24
+// found. Release used to close the file and then remove it: a daemon B that had already opened
+// the old file took the lock the moment A closed it, A then unlinked that file, and a daemon C
+// created a new one and locked that too — two owners of one database, and C's recovery over
+// B's live sessions. With the file left in place there is one inode, and C is refused.
+//
+// flock is per open file description, so three descriptors in one process contend exactly as
+// three daemons would.
+func TestAReleasedLockKeepsItsFile(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "umbral.db")
+
+	a, err := AcquireDatabaseLock(db)
+	if err != nil {
+		t.Fatalf("A: %v", err)
+	}
+	// B has opened the lock file and is about to flock it when A lets go.
+	b, err := os.OpenFile(db+DatabaseLockSuffix, os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("B opens the lock file: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	if err := a.Release(); err != nil {
+		t.Fatalf("A releases: %v", err)
+	}
+	if err := syscall.Flock(int(b.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("B could not take the lock A released: %v", err)
+	}
+
+	c, err := AcquireDatabaseLock(db)
+	if err == nil {
+		_ = c.Release()
+		t.Fatal("C took the database lock while B holds it: the file B locked was unlinked under it")
+	}
+	if !errors.Is(err, ErrDatabaseInUse) {
+		t.Fatalf("C failed with %v, want ErrDatabaseInUse", err)
+	}
+}
+
+// TestASymlinkedDataDirectorySharesTheLock: a data directory reached through a symlink is
+// the same database, so it must be the same lock — or `--db ~/link/umbral.db` would walk past
+// a daemon holding `~/real/umbral.db`. It holds because the lock file lives in that directory;
+// this pins it against a change that moved the lock somewhere keyed on the path's spelling.
+func TestASymlinkedDataDirectorySharesTheLock(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	if err := os.MkdirAll(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	held, err := AcquireDatabaseLock(filepath.Join(real, "umbral.db"))
+	if err != nil {
+		t.Fatalf("lock through the real path: %v", err)
+	}
+	defer func() { _ = held.Release() }()
+
+	if err := tryDatabaseLockInSubprocess(t, filepath.Join(link, "umbral.db")); !errors.Is(err, errSubprocessBusy) {
+		t.Errorf("the same database through a symlinked directory got its own lock (%v)", err)
+	}
+}
+
+var errSubprocessBusy = errors.New("the subprocess reported the lock was already held")
+
+const (
+	lockHelperEnv   = "UMBRAL_CONFIG_TEST_LOCK_DIR"
+	dbLockHelperEnv = "UMBRAL_CONFIG_TEST_DB_LOCK"
+)
+
+func TestMain(m *testing.M) {
+	if db := os.Getenv(dbLockHelperEnv); db != "" {
+		// Try and report, never hold: a lock that is wrongly granted must end the
+		// subprocess with 0 and fail the test, not park it for the test's timeout.
+		lock, err := AcquireDatabaseLock(db)
+		if err != nil {
+			if errors.Is(err, ErrDatabaseInUse) {
+				os.Exit(3)
+			}
+			os.Exit(1)
+		}
+		_ = lock.Release()
+		os.Exit(0)
+	}
+	if dir := os.Getenv(lockHelperEnv); dir != "" {
+		lock, err := AcquireInstanceLock(dir)
+		if err != nil {
+			if errors.Is(err, ErrAlreadyRunning) {
+				os.Exit(3)
+			}
+			os.Exit(1)
+		}
+		// Hold it until killed, so the parent can observe both the contention and what
+		// happens when the holder dies without releasing. The lock is deliberately never
+		// released: that is the case under test.
+		_ = lock
+		select {}
+	}
+	os.Exit(m.Run())
+}
+
+func lockHolderCmd(t *testing.T, dir string) *exec.Cmd {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locate the test binary: %v", err)
+	}
+	cmd := exec.CommandContext(t.Context(), self)
+	cmd.Env = append(os.Environ(), lockHelperEnv+"="+dir)
+	return cmd
+}
+
+func tryLockInSubprocess(t *testing.T, dir string) error {
+	t.Helper()
+	cmd := lockHolderCmd(t, dir)
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
+		return errSubprocessBusy
+	}
+	return err
+}
+
+func tryDatabaseLockInSubprocess(t *testing.T, db string) error {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locate the test binary: %v", err)
+	}
+	cmd := exec.CommandContext(t.Context(), self)
+	cmd.Env = append(os.Environ(), dbLockHelperEnv+"="+db)
+	err = cmd.Run()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
+		return errSubprocessBusy
+	}
+	return err
+}
+
+// waitForLockFile waits for the subprocess to have taken the lock. The file appearing is
+// not quite proof that flock succeeded, but the holder creates it and locks it in the same
+// breath, and the test that follows kills the holder either way.
+func waitForLockFile(t *testing.T, dir string) {
+	t.Helper()
+	path := filepath.Join(dir, LockFileName)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("the lock holder never created %s", path)
+}

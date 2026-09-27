@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+  <clipPath id="tile"><rect x="0" y="0" width="1024" height="1024" rx="230"/></clipPath>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+    <feGaussianBlur in="SourceAlpha" stdDeviation="14"/><feOffset dy="12"/>
+    <feComponentTransfer><feFuncA type="linear" slope="0.35"/></feComponentTransfer>
+    <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs>
+<g transform="translate(100 100) scale(0.8047)">
+  <rect width="1024" height="1024" rx="230" fill="#000" filter="url(#shadow)"/>
+  <g clip-path="url(#tile)">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#2A2575"/><stop offset="1" stop-color="#100D2E"/></linearGradient></defs>
+<rect width="1024" height="1024" fill="url(#bg)"/>
+
+<defs><linearGradient id="spill" x1="0" y1="820" x2="0" y2="1024" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#6A63D0" stop-opacity="0.95"/><stop offset="1" stop-color="#3A34A0" stop-opacity="0"/></linearGradient></defs>
+
+<path d="M312 820 H712 L840 1024 H184 Z" fill="url(#spill)"/>
+<rect x="250" y="800" width="524" height="40" rx="14" fill="#FFD27A"/>
+
+
+<defs><radialGradient id="light" gradientUnits="userSpaceOnUse" cx="512" cy="800" r="520"><stop offset="0" stop-color="#FFF6E0"/><stop offset="0.42" stop-color="#FFD27A"/><stop offset="0.75" stop-color="#FFB443"/><stop offset="1" stop-color="#EE861A"/></radialGradient></defs>
+<path d="M312 800 V440 A200 200 0 0 1 712 440 V800 Z" fill="url(#light)"/>
+
+<defs></defs>
+
+<path d="M398 520 L494 616 L398 712" fill="none" stroke="#1E1A52" stroke-width="60"
+      stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="530" y="668" width="140" height="52" rx="16" fill="#1E1A52"/>
+
+</g>
+</g>
+</svg>

@@ -1,0 +1,165 @@
+# CI gate for Umbral (Constitution Art. 1, Art. 2, Art. 3 and Art. 9).
+# A red job blocks the merge. Nothing here may be skipped with a flag.
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.27'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  specs:
+    name: Specs (Art. 9)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      # `umb` links no cgo, so the protocol schema can be generated here without building
+      # libghostty. The same comparison also runs inside `go test` as
+      # TestSchemaMatchesSpec_REQ_API_004; this job is where it fails with its own name.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: REQ coverage, matrices and DDL executability
+        run: python3 tools/sdd_check.py
+      - name: Protocol schema against the API Specification (REQ-API-004)
+        run: python3 tools/api_schema_check.py
+      - name: Mermaid diagrams
+        run: |
+          npm install --prefix tools
+          node tools/mermaid_check.mjs
+
+  icons:
+    name: Branding kit (REQ-PKG-001, 002, 003, 006)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install the kit's render dependencies and the .desktop validator
+        run: |
+          python3 -m pip install --quiet cairosvg Pillow
+          sudo apt-get update && sudo apt-get install -y desktop-file-utils
+      - name: Checksums, reproducible regeneration and .desktop validation
+        run: ./scripts/icons_check.sh
+
+  lint:
+    name: Lint (Art. 1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # gitleaks scans the history
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Zig, which builds libghostty-vt
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Build libghostty-vt (cgo dependency of the sessions emulator)
+        run: ./scripts/build_libghostty.sh
+      - run: echo "PKG_CONFIG_PATH=$HOME/.local/ghostty-vt/share/pkgconfig" >> "$GITHUB_ENV"
+      - name: gofumpt
+        run: |
+          go install mvdan.cc/gofumpt@latest
+          unformatted="$(gofumpt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofumpt-formatted:"; echo "$unformatted"; exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: golangci-lint (with gosec)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.2
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  arch:
+    name: Architecture boundaries (Art. 3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: go install github.com/fe3dback/go-arch-lint@latest
+      - name: Check the Tech Design §5.2 rules
+        run: go-arch-lint check
+      - name: Prove the rules actually reject a violation
+        run: ./scripts/arch_selftest.sh
+
+  test:
+    name: Tests with the race detector (Art. 2)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Zig, which builds libghostty-vt
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Build libghostty-vt (cgo dependency of the sessions emulator)
+        run: ./scripts/build_libghostty.sh
+      - run: echo "PKG_CONFIG_PATH=$HOME/.local/ghostty-vt/share/pkgconfig" >> "$GITHUB_ENV"
+      - name: Install the shells the block tests need (T-F0-08)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh fish
+      # The runner image ships completion directories zsh's compinit calls insecure, so the
+      # global /etc/zsh/zshrc stops at "Ignore insecure directories and continue [y]?" and
+      # takes the first byte a test types as the answer: `printf` arrived as `rintf` (T-F0-26).
+      # A user's machine with the same permissions gets the same question in any terminal; the
+      # fix is the one compaudit prescribes, applied to the runner, not a test that hides it.
+      - name: Close zsh's insecure completion directories
+        if: runner.os == 'Linux'
+        # compaudit flags a directory that is group- or world-writable *or* not owned by root
+        # or the runner, so both are fixed, and the step checks its own work: a directory left
+        # insecure would otherwise surface again as a baffling `rintf`.
+        run: |
+          audit() { zsh -fc 'autoload -Uz compaudit; compaudit' 2>/dev/null || true; }
+          insecure=$(audit)
+          echo "insecure completion directories: ${insecure:-none}"
+          if [ -n "$insecure" ]; then
+            printf '%s\n' "$insecure" | xargs -d '\n' sudo chown root:root
+            printf '%s\n' "$insecure" | xargs -d '\n' sudo chmod g-w,o-w
+          fi
+          left=$(audit)
+          if [ -n "$left" ]; then echo "still insecure: $left" >&2; exit 1; fi
+      - run: go test -race ./...
+      - name: Build every binary
+        run: go build ./...
+      - name: F0 exit criterion 4 — the CLI round trip against a real daemon (T-F0-20)
+        run: |
+          go build -o bin/umbrald ./cmd/umbrald
+          go build -o bin/umb ./cmd/umb
+          ./scripts/cli_roundtrip.sh

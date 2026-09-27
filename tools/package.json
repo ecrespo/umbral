@@ -1,0 +1,10 @@
+{
+  "name": "umbral-tools",
+  "private": true,
+  "description": "Validation tooling for Umbral specs (Mermaid).",
+  "type": "module",
+  "dependencies": {
+    "jsdom": "^24.1.0",
+    "mermaid": "^11.4.0"
+  }
+}

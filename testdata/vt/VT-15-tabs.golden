@@ -1,0 +1,13 @@
+# VT-15 tabs (MUST)
+# screen 40x6
+cursor: 39,2
+title: ""
+pwd: ""
+--- plain ---
+a       b       c       d
+x   y
+p                                      q
+--- vt ---
+\e[3g\e[Ha       b       c       d\x0d\n
+x   y\x0d\n
+p                                      q\e[3;40Hq\e[0m

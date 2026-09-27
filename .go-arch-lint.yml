@@ -1,0 +1,461 @@
+# Architecture boundaries for Umbral (Constitution Art. 3, Tech Design §5.2).
+# CI runs `task arch`; a new layer violation or import cycle breaks the build.
+#
+# The rules, restated from Tech Design §5.2:
+#   */domain        -> the standard library and other */domain
+#   */ports         -> its own domain and other */domain
+#   */adapters      -> its own ports, its own domain and external libraries
+#   agents          -> ports of sessions, tools, context, llmgw, security, store
+#   llmgw, sessions -> never agents
+#   cmd/*           -> everything
+#
+# Domain packages are listed explicitly instead of through commonComponents so that
+# this file reads as the whole rule, with no implicit permissions.
+version: 3
+workdir: .
+
+components:
+  # --- composition root -------------------------------------------------------
+  cmd: { in: cmd/** }
+
+  # --- embedded assets --------------------------------------------------------
+  # shell holds the integration bootstrap scripts and the embed directive that reaches
+  # them. It is a leaf: no package dependencies, so no module can hide logic in it.
+  shellscripts: { in: shell }
+
+  # --- module application cores ------------------------------------------------
+  # The service that orchestrates a module's own ports. Tech Design §5.1 lists domain,
+  # ports and adapters; the orchestrator that uses them has to live somewhere, and putting
+  # it in the module root keeps it out of both domain, which must stay pure, and adapters,
+  # which must stay replaceable.
+  sessions-service: { in: internal/sessions }
+
+  # The workspace tree's own core, the same shape and the same reason as
+  # sessions-service: the orchestrator has to live outside domain, which must stay pure,
+  # and outside adapters, which must stay replaceable.
+  workspaces-service: { in: internal/workspaces }
+
+  # The tree's integration tests wire the real store to the service, which is the job
+  # Art. 3 reserves for a composition root — the same exception sessions-integration has.
+  workspaces-integration: { in: internal/workspaces/integration }
+
+  # The module's integration tests wire the real adapters together, which is the job Art. 3
+  # reserves for a composition root. Naming it here keeps every file under the rules rather
+  # than excluding _test.go from them.
+  sessions-integration: { in: internal/sessions/integration }
+
+  # --- cross-cutting modules (no hexagonal split) -----------------------------
+  bus:    { in: internal/bus }
+  api:    { in: internal/api }
+  store:  { in: internal/store }
+  config: { in: internal/config }
+  client: { in: internal/client }
+  tui:          { in: internal/tui }
+  tui-ports:    { in: internal/tui/ports }
+  tui-adapters: { in: internal/tui/adapters/** }
+
+  # --- hexagonal modules ------------------------------------------------------
+  sessions-domain:   { in: internal/sessions/domain }
+  sessions-ports:    { in: internal/sessions/ports }
+  sessions-adapters: { in: internal/sessions/adapters/** }
+
+  workspaces-domain:   { in: internal/workspaces/domain }
+  workspaces-ports:    { in: internal/workspaces/ports }
+  workspaces-adapters: { in: internal/workspaces/adapters/** }
+
+  agents-domain:   { in: internal/agents/domain }
+  agents-ports:    { in: internal/agents/ports }
+  agents-adapters: { in: internal/agents/adapters/** }
+
+  tools-domain:   { in: internal/tools/domain }
+  tools-ports:    { in: internal/tools/ports }
+  tools-adapters: { in: internal/tools/adapters/** }
+
+  context-domain:   { in: internal/context/domain }
+  context-ports:    { in: internal/context/ports }
+  context-adapters: { in: internal/context/adapters/** }
+
+  llmgw-domain:   { in: internal/llmgw/domain }
+  llmgw-ports:    { in: internal/llmgw/ports }
+  llmgw-adapters: { in: internal/llmgw/adapters/** }
+
+  security-domain:   { in: internal/security/domain }
+  security-ports:    { in: internal/security/ports }
+  security-adapters: { in: internal/security/adapters/** }
+deps:
+  # --- domain: the standard library and other domains, nothing else -----------
+  sessions-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  agents-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  tools-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  context-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - llmgw-domain
+      - security-domain
+  llmgw-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - security-domain
+  security-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+
+  # --- ports: domain types only; no infrastructure, no external libraries -----
+  sessions-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  agents-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  tools-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  context-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  llmgw-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  security-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+
+  # --- adapters: its own ports, infrastructure and external libraries ---------
+  # sessions and llmgw never reach the agent runtime (Tech Design §5.2).
+  shellscripts:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+
+  sessions-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - sessions-ports
+      - store
+      - bus
+      - shellscripts
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  llmgw-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - llmgw-ports
+      - store
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  tools-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - tools-ports
+      - sessions-ports
+      - security-ports
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  context-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - context-ports
+      - store
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  security-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - security-ports
+      - store
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+
+  # agents is the only module allowed to reach the other modules' ports.
+  agents-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - agents-ports
+      - sessions-ports
+      - tools-ports
+      - context-ports
+      - llmgw-ports
+      - security-ports
+      - store
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+
+  # --- cross-cutting ----------------------------------------------------------
+  bus:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  config:
+    anyVendorDeps: true
+    mayDependOn:
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  store:
+    anyVendorDeps: true
+    mayDependOn:
+      - bus
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  # Tech Design §5.2: bus, store, config, and the ports AND domain of the modules it
+  # serves. The pair is not separable — a port's signatures are written in domain types —
+  # but the grant is per module: this list held every *-domain in the tree until 2026-09-20,
+  # which would have let api reach into a module it does not serve with nothing to notice.
+  # A task that wires a new module into api adds its two rows here, deliberately.
+  api:
+    anyVendorDeps: true
+    mayDependOn:
+      - bus
+      - store
+      - config
+      - sessions-ports
+      - sessions-domain
+      - workspaces-ports
+      - workspaces-domain
+  client:
+    anyVendorDeps: true
+    mayDependOn:
+      - config
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+  tui-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+  tui-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - tui-ports
+      - client
+      - sessions-domain
+  tui:
+    anyVendorDeps: true
+    mayDependOn:
+      - client
+      - tui-ports
+      - sessions-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+
+  sessions-service:
+    anyVendorDeps: true
+    mayDependOn:
+      - sessions-ports
+      - sessions-domain
+      - store
+      - bus
+
+  sessions-integration:
+    anyVendorDeps: true
+    mayDependOn:
+      - sessions-service
+      - sessions-ports
+      - sessions-domain
+      - sessions-adapters
+      - store
+      - bus
+
+  # --- composition root: the only place that wires modules together (Art. 3) ---
+  cmd:
+    anyVendorDeps: true
+    mayDependOn:
+      - api
+      - bus
+      - store
+      - config
+      - client
+      - tui
+      - tui-ports
+      - tui-adapters
+      - sessions-service
+      - workspaces-service
+      - shellscripts
+      - sessions-ports
+      - sessions-adapters
+      - workspaces-ports
+      - workspaces-adapters
+      - agents-ports
+      - agents-adapters
+      - tools-ports
+      - tools-adapters
+      - context-ports
+      - context-adapters
+      - llmgw-ports
+      - llmgw-adapters
+      - security-ports
+      - security-adapters
+      - sessions-domain
+      - workspaces-domain
+      - agents-domain
+      - tools-domain
+      - context-domain
+      - llmgw-domain
+      - security-domain
+
+
+  # --- the workspace tree (Tech Design §5.2) ----------------------------------
+  # `workspaces` -> ports of `sessions` and `store`; never `agents`, `api` or `waits`.
+  # The sessions-ports allowance is what lets a pane own a terminal without the tree
+  # knowing what a PTY is; the absence of sessions-adapters is what stops it reaching for
+  # one directly, and the absence of api is what keeps the wire format out of the model.
+  # The standard domain rule and nothing more. The allowance is unused today — identifiers,
+  # states and a rollup are arithmetic over strings — but go-arch-lint requires every
+  # component to name at least one permission, so it names the one the rule already grants
+  # rather than a wider one. `shellscripts` carries the same allowance for the same reason.
+  workspaces-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+
+  workspaces-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - workspaces-domain
+      - sessions-domain
+      # The published events carry a bus.Kind, the same reason sessions-ports depends on it.
+      - bus
+
+  workspaces-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - workspaces-ports
+      - workspaces-domain
+      - sessions-domain
+      - store
+
+  workspaces-service:
+    anyVendorDeps: true
+    mayDependOn:
+      - workspaces-ports
+      - workspaces-domain
+      - sessions-domain
+      - bus
+
+  workspaces-integration:
+    anyVendorDeps: true
+    mayDependOn:
+      - workspaces-service
+      - workspaces-ports
+      - workspaces-domain
+      - workspaces-adapters
+      - sessions-domain
+      - store
+      - bus

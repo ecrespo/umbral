@@ -1,0 +1,19 @@
+# VT-03 scroll-region (MUST)
+# screen 40x10
+cursor: 9,3
+title: ""
+pwd: ""
+--- plain ---
+L1
+L2
+
+after-nel
+L5
+bottom
+--- vt ---
+\e[3g\e[9G\eH\e[17G\eH\e[25G\eH\e[33G\eH\e[HL1\x0d\n
+L2\x0d\n
+\x0d\n
+after-nel\x0d\n
+L5\x0d\n
+bottom\e[3;6r\e[4;10H\e[0m

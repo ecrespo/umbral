@@ -1,0 +1,68 @@
+# Pre-commit hooks for Umbral (Constitution Art. 1).
+# Install once with: pre-commit install
+#
+# The Go hooks run the tools from $(go env GOPATH)/bin; install them with
+# `task tools:install`. They are `system` hooks on purpose: the versions must be the
+# same ones CI uses, not a copy pinned twice.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.(golden|svg|excalidraw)$
+      - id: end-of-file-fixer
+        exclude: \.(golden|svg|png|ico|icns|excalidraw)$
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: gofumpt
+        name: gofumpt
+        entry: gofumpt -l -w
+        language: system
+        types: [go]
+
+      - id: go-vet
+        name: go vet
+        entry: go vet ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: golangci-lint
+        name: golangci-lint (with gosec)
+        entry: golangci-lint run ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: govulncheck
+        name: govulncheck
+        entry: govulncheck ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-arch-lint
+        name: go-arch-lint (Art. 3 boundaries)
+        entry: go-arch-lint check
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: sdd-check
+        name: SDD coverage and DDL (Art. 9)
+        entry: python3 tools/sdd_check.py
+        language: system
+        files: ^(specs|changes)/.*\.md$
+        pass_filenames: false

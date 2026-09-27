@@ -1,0 +1,9 @@
+# VT-08 bracketed-paste (MUST)
+# screen 80x24
+cursor: 0,1
+title: ""
+pwd: ""
+--- plain ---
+prompt> pasted text
+--- vt ---
+\e[3g\e[9G\eH\e[17G\eH\e[25G\eH\e[33G\eH\e[41G\eH\e[49G\eH\e[57G\eH\e[65G\eH\e[73G\eH\e[Hprompt> pasted text\e[2;1H\e[0m

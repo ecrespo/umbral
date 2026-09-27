@@ -1,0 +1,295 @@
+package api
+
+import (
+	"encoding/base64"
+	"log/slog"
+	"sync"
+	"time"
+)
+
+// Fan-out limits from API Spec §8.
+const (
+	// BatchInterval caps how long a chunk waits to be coalesced with the next one.
+	// It is a ceiling, not a target: an idle subscription flushes immediately, because
+	// REQ-TERM-006 budgets 5 ms p95 for the whole daemon and spending 4 ms of it waiting
+	// for company that never arrives would leave almost nothing for the rest.
+	BatchInterval = 4 * time.Millisecond
+	// BatchBytes flushes early once this much output has accumulated.
+	BatchBytes = 32 << 10
+	// ClientQueueBytes is how much unsent output one subscription may hold. Beyond it the
+	// daemon drops the subscription rather than grow without bound; the client
+	// re-subscribes and gets a fresh snapshot.
+	ClientQueueBytes = 8 << 20
+)
+
+// DropReasonSlowClient is the reason reported when a subscription is dropped for
+// exceeding ClientQueueBytes.
+const DropReasonSlowClient = "slow_client"
+
+// subscription is one connection's stream of one session's output.
+//
+// Each has its own goroutine, so a client that stops reading its socket blocks only
+// itself: the writer that feeds it never waits, it accounts bytes and eventually gives up
+// on that subscription.
+type subscription struct {
+	sessionID string
+	conn      *conn
+	logger    *slog.Logger
+
+	mu      sync.Mutex
+	pending []queuedChunk
+	queued  int
+	// lastSeq is the floor for accepting chunks: the highest session seq ever queued.
+	// sentSeq is the highest one actually written to the socket. They differ whenever
+	// something is still waiting, and only the second one may be reported to the client.
+	lastSeq      uint64
+	sentSeq      uint64
+	sentEnvelope uint64
+	closed       bool
+	overflow     bool
+	// held keeps the writer silent until the `session.subscribe` response is on the wire.
+	// API Spec §5.11 puts every `session.output` after that response, and the subscription
+	// exists before the snapshot is taken, so without this a chunk queued in that window
+	// could be written first — and a client reading its reply would get a notification.
+	held bool
+
+	wake   chan struct{}
+	done   chan struct{}
+	closer sync.Once
+}
+
+// queuedChunk is one chunk waiting to be written, with the sequence number it arrived
+// under. The seq is kept per chunk rather than only as the subscription's high-water mark
+// because `rebase` has to discard exactly the chunks a later snapshot already contains.
+type queuedChunk struct {
+	seq uint64
+	// envelope is the daemon-run counter of API Spec §6, carried alongside the session's
+	// own seq because a batch reports the numbers of the last chunk it carries, and that
+	// chunk is not known until the batch is drained.
+	envelope uint64
+	data     []byte
+}
+
+func newSubscription(c *conn, sessionID string, startSeq uint64) *subscription {
+	s := &subscription{
+		sessionID: sessionID,
+		conn:      c,
+		logger:    c.logger,
+		lastSeq:   startSeq,
+		sentSeq:   startSeq,
+		held:      true,
+		wake:      make(chan struct{}, 1),
+		done:      make(chan struct{}),
+	}
+	go s.run()
+	return s
+}
+
+// enqueue accepts one output chunk. It never blocks: the caller is the daemon's single
+// dispatch goroutine, and one unresponsive client must not stall every other one.
+//
+// A chunk whose sequence number the subscription already has is dropped. That is what
+// makes `session.subscribe` gapless without being duplicative: the snapshot is current as
+// of some seq, and anything at or below it is already on the client's screen.
+func (s *subscription) enqueue(seq, envelope uint64, data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.overflow {
+		return
+	}
+	if seq <= s.lastSeq {
+		return
+	}
+	s.lastSeq = seq
+
+	if s.queued+len(data) > ClientQueueBytes {
+		// API Spec §8: past the queue limit the daemon drops the subscription. Keeping
+		// the bytes would trade a slow client for an out-of-memory daemon.
+		s.overflow = true
+		s.pending = nil
+		s.queued = 0
+		s.signal()
+		return
+	}
+
+	s.pending = append(s.pending, queuedChunk{seq: seq, envelope: envelope, data: data})
+	s.queued += len(data)
+	s.signal()
+}
+
+// rebase raises the subscription's floor to the sequence number a snapshot is current as
+// of, dropping whatever the client is about to see on that snapshot and keeping the rest.
+//
+// `session.subscribe` registers the subscription *before* asking for the snapshot, so that
+// output produced while the snapshot is being built is queued rather than lost (REQ-TERM-004).
+// Re-creating the subscription afterwards to apply the snapshot's seq would throw that queue
+// away again, which is the gap the early registration exists to close; the chunk would
+// survive only when the bus happened to deliver it late. Chunks arrive in ascending seq, so
+// the ones to drop are a prefix.
+func (s *subscription) rebase(startSeq uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.overflow {
+		return
+	}
+	drop := 0
+	for drop < len(s.pending) && s.pending[drop].seq <= startSeq {
+		s.queued -= len(s.pending[drop].data)
+		drop++
+	}
+	s.pending = s.pending[drop:]
+	if startSeq > s.lastSeq {
+		s.lastSeq = startSeq
+	}
+	if startSeq > s.sentSeq {
+		// What the snapshot contains counts as delivered: the client has those bytes
+		// on its screen and will reject anything at or below this number.
+		s.sentSeq = startSeq
+	}
+	if len(s.pending) > 0 {
+		s.signal()
+	}
+}
+
+// release lets the writer send what it has queued. The connection calls it once the
+// subscribe response has been written.
+func (s *subscription) release() {
+	s.mu.Lock()
+	s.held = false
+	s.mu.Unlock()
+	s.signal()
+}
+
+// signal wakes the writer without blocking if it is already awake.
+func (s *subscription) signal() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// run is the subscription's writer. It sends whatever is queued as soon as it can and
+// coalesces only what accumulates while the previous write is in flight.
+//
+// Waiting for a batch to fill would be the obvious reading of API Spec §8, and it is the
+// wrong one: 4 ms is a ceiling on how long a chunk may wait, not a target. Measured, a
+// fixed 4 ms wait puts the daemon's added latency at p95 4.2 ms against REQ-TERM-006's
+// 5 ms budget, leaving nothing for the rest of the path. Sending at once puts it at 60 µs,
+// and batching still happens exactly when it is needed: under load the writer is the slow
+// part, so the chunks that pile up behind it go out together.
+func (s *subscription) run() {
+	defer close(s.done)
+
+	for {
+		select {
+		case <-s.wake:
+		case <-s.conn.closedCh():
+			return
+		}
+
+		// Held, nothing may be written — not even an overflow notice. `release` wakes the
+		// writer again, so whatever piled up meanwhile is not forgotten.
+		if held, closed := s.state(); closed {
+			return
+		} else if held {
+			continue
+		}
+
+		if s.takeOverflow() {
+			s.conn.notify("session.unsubscribed", sessionUnsubscribedPayload{
+				SessionID: s.sessionID,
+				Reason:    DropReasonSlowClient,
+			}, s.conn.server.nextSeq())
+			s.logger.Warn("subscription dropped: the client fell more than the queue limit behind",
+				slog.String("session_id", s.sessionID), slog.Int("queue_bytes", ClientQueueBytes))
+			return
+		}
+
+		for {
+			batch, seq, envelope := s.take()
+			if len(batch) == 0 {
+				break
+			}
+			s.conn.notify("session.output", sessionOutputPayload{
+				SessionID: s.sessionID,
+				Seq:       seq,
+				DataB64:   base64.StdEncoding.EncodeToString(batch),
+			}, envelope)
+		}
+
+		if s.isClosed() {
+			return
+		}
+	}
+}
+
+// take removes up to BatchBytes of queued output. A longer queue is split across several
+// notifications rather than sent as one oversized message, which is the other half of
+// API Spec §8 and keeps each message well inside the 4 MiB framing limit.
+func (s *subscription) take() ([]byte, uint64, uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.pending) == 0 {
+		return nil, s.sentSeq, s.sentEnvelope
+	}
+
+	out := make([]byte, 0, min(s.queued, BatchBytes))
+	for len(s.pending) > 0 {
+		chunk := s.pending[0]
+		// Whole chunks only, and the boundary is the point. A notification reports the
+		// session seq of the last chunk it carries, and the client drops anything at or
+		// below the seq it last applied (§5.11) — so emitting half a chunk and then its
+		// other half, both under the same number, gets the remainder discarded as a
+		// duplicate and leaves a hole in the screen. Stopping on a chunk boundary is
+		// what keeps the reported seq strictly increasing.
+		//
+		// `len(out) > 0` guarantees progress: a chunk bigger than BatchBytes on its own
+		// still goes out, as one notification. The PTY reads 32 KiB at a time, the same
+		// as BatchBytes, so this is the ordinary case and not an edge.
+		if len(out) > 0 && len(out)+len(chunk.data) > BatchBytes {
+			break
+		}
+		out = append(out, chunk.data...)
+		s.sentSeq, s.sentEnvelope = chunk.seq, chunk.envelope
+		s.pending = s.pending[1:]
+		s.queued -= len(chunk.data)
+	}
+
+	// More is waiting, so wake ourselves rather than rely on the next enqueue.
+	if len(s.pending) > 0 {
+		s.signal()
+	}
+	return out, s.sentSeq, s.sentEnvelope
+}
+
+func (s *subscription) takeOverflow() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.overflow
+}
+
+func (s *subscription) state() (held, closed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.held, s.closed
+}
+
+func (s *subscription) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
+}
+
+// close stops the subscription. It is safe to call more than once.
+func (s *subscription) close() {
+	s.mu.Lock()
+	s.closed = true
+	s.pending = nil
+	s.queued = 0
+	s.mu.Unlock()
+
+	s.closer.Do(func() { s.signal() })
+}

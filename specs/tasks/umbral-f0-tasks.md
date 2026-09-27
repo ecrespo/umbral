@@ -1,0 +1,802 @@
+# Tasks — Umbral F0 (Terminal core and blocks)
+
+> **Source specs:** `specs/prd/umbral-mvp.md` · `specs/api/umbral-daemon-api-v1.md` · `specs/technical/umbral-architecture.md` · `specs/data-model/umbral-schema.md` · `specs/plans/umbral-mvp-plan.md`
+> **Plan phase covered:** F0 · **Generated:** 2026-09-11
+
+## Conventions for this file
+
+- Order is execution order, except for tasks marked [P].
+- States:
+  - `[ ]` pending
+  - `[~]` in progress
+  - `[x] {date}` done
+  - `[!]` blocked (with a note)
+- Infrastructure tasks without a functional REQ cite the constitution article they implement (`Art. N`). This is the only accepted exception to "task without a REQ".
+- Every test cites its REQ in its name: `Test…_REQ_XXX_NNN`.
+
+## Tasks
+
+### [x] 2026-09-11 T-F0-01 · Scaffolding and quality gate
+- **What:** set up the repository and its quality gate:
+  - `go mod init`, Tech Design §5.1 layout and a Taskfile (`task lint`, `task test`, `task arch`);
+  - pre-commit with gofumpt, go vet, golangci-lint (+gosec), govulncheck and gitleaks;
+  - `.go-arch-lint.yml` with the Tech Design §5.2 rules;
+  - CI pipeline.
+- **REQ:** Art. 1, Art. 3
+- **Files:** `go.mod`, `Taskfile.yml`, `.pre-commit-config.yaml`, `.golangci.yml`, `.go-arch-lint.yml`, `.github/workflows/ci.yml`, `scripts/arch_selftest.sh`, `cmd/**`, `internal/**/doc.go`, `AGENTS.md`
+- **Depends on:** —
+- **Done:** `task lint && task arch && task test` green in CI; a forbidden test import (e.g. `sessions` → `agents`) makes `task arch` fail.
+- **Result:** module `github.com/ecrespo/umbral` on Go 1.27.1. `task ci` runs specs, lint, arch, arch:selftest, test and build, all green locally. The forbidden-import criterion is automated in `scripts/arch_selftest.sh`, which injects `sessions` → `agents`, asserts that `go-arch-lint` rejects it and removes it again; CI runs it as its own step. `internal/` holds the §5.1 skeleton with one documented package per layer, and the three `cmd/` binaries build and run.
+
+### [x] 2026-09-11 T-F0-02 · Store and migration 0001 (terminal)
+- **What:**
+  - open SQLite with the Data Model §5 pragmas;
+  - migration 0001 exactly as Data Model §5 lists it: `schema_migrations`, **`threads`**, `sessions`,
+    `blocks`, `block_chunks`, `blocks_fts` and the three `blocks_fts_ai/ad/au` triggers (§2.4);
+  - restart recovery (Data Model §6, steps 1-2).
+- **REQ:** REQ-BLK-007, REQ-TERM-005, REQ-BLK-006
+- **Files:** `internal/store/**`, `internal/store/migrations/0001_terminal.sql`
+- **Depends on:** T-F0-01
+- **Done:** `go test ./internal/store/... -run 'Migrat|Recover'` green; `TestRecoveryMarksOpenBlocksAbandoned_REQ_TERM_005` passes; `TestMigration0001InsertsWithForeignKeysOn` inserts into `sessions` and `blocks` with `foreign_keys=ON` and an FTS `MATCH` returns the new block (A-01, A-07).
+- **Result:** `internal/store` opens the database with the §5 pragmas carried in the DSN, because `database/sql` pools connections and a pragma issued once would apply to one of them only. `Open` reads `foreign_keys` and `journal_mode` back instead of assuming the driver honoured them. Migrations are embedded, forward-only, one transaction each, contiguous from 0001, and a database from a newer daemon is refused with `ErrSchemaTooNew`. `Recover` applies §6 steps 1-2 in a single transaction and reports what it repaired. Ten tests green under `-race`, and removing `threads` from migration 0001 makes the A-01 regression test fail with the exact error the Analyze predicted. The daemon wires all of it at startup.
+
+### [x] 2026-09-11 T-F0-03 · JSON-RPC API, authentication and bus
+- **What:**
+  - Unix listener with 0600 permissions and token generation;
+  - NDJSON and method dispatch;
+  - `system.hello` and `system.status`, with `UNAUTHORIZED` and connection close;
+  - typed `internal/bus`;
+  - error translation (Tech Design §5.4).
+- **REQ:** REQ-SEC-003, REQ-SEC-007
+- **Files:** `internal/api/**`, `internal/bus/**`, `cmd/umbrald/main.go`
+- **Depends on:** T-F0-01
+- **Done:** `TestHelloRejectsBadToken_REQ_SEC_003` and `TestSocketPermissions0600_REQ_SEC_007` green.
+- **Result:** `internal/bus` is a typed pub/sub that drops the oldest event and counts the loss rather than blocking a publisher, so a stalled client cannot stall a PTY reader; the per-client 8 MiB queue of T-F0-06 sits above it. `internal/api` owns the wire format alone: modules return the §5.4 sentinels and `toWire` maps them, with `trace_id` and a scrubbed message only on `INTERNAL_ERROR`. `capabilities` is derived from the method table, so it cannot advertise a namespace that is not registered. Identifiers come from `store.NewID` using `github.com/oklog/ulid/v2`, placed in `store` because the `CHECK` constraints that enforce the prefixes are in the migrations next door. New unspecified surface, all recorded in `changes/_archive/2026-09-api-f0-decisions/`: the `$TMPDIR/umbral-<uid>` runtime-directory fallback with an ownership and mode check, the connection id standing in for `trace_id` until T-F1-18, a required `protocol_version`, and `UNAUTHORIZED` on a repeated handshake. `umbrald` also gained a `-check` flag that opens the database, recovers and exits without serving, and `exitUnavailable = 69` for a socket it cannot serve. The package `doc.go` files added by T-F0-01 for `api` and `bus` were folded into `jsonrpc.go` and `bus.go`, which is the idiomatic place for a package comment. `threads_running` in `system.status` is a real count, not a placeholder.
+
+### [x] 2026-09-11 T-F0-04 · [P] Spike Q-01: VT snapshot
+- **What:** check whether go-libghostty's `Formatter` produces replayable VT output (styles + cursor) for `session.subscribe`; if not, implement the bounded replay fallback. Record the decision in the Tech Design (DD-001) through a Delta if the contract changes.
+- **REQ:** REQ-TERM-004
+- **Files:** `internal/sessions/adapters/ghostty/snapshot*.go`, `docs/spikes/q01-snapshot.md`
+- **Depends on:** T-F0-01
+- **Done:** `docs/spikes/q01-snapshot.md` with the decision; golden round-trip test of the snapshot (applying it to an empty emulator produces the same screen in plain text) green.
+- **Result:** Q-01 answers **yes**: `FormatterFormatVT` plus the twelve `WithFormatterExtra*` options produces replayable VT, and the bounded-replay fallback is not needed. DD-001 stands; no Delta. Eight golden cases round-trip, the cursor survives, and the snapshot is a fixed point. The spike's real finding is a silent failure the spec would have walked into: `WithMaxScrollbackLines` alone is inert because libghostty's small default **byte** budget prunes first, so a terminal asked for 10,000 lines keeps 588. `NewTerminal` sets both budgets and the regression test calls that constructor, so removing either fails. Cost for T-F0-06: a full ~9,900-line snapshot is 704 KiB in 9.0 ms, comfortably inside the 8 MiB per-client queue but too slow to build on the goroutine draining the PTY. The palette is opt-in because it costs a flat 5.5 KiB, 98 % of a small screen. Risk recorded: the bindings have no tagged release and disclaim API stability; the `Emulator` port contains it and this adapter is the only file naming a libghostty symbol.
+
+### [x] 2026-09-11 T-F0-05 · PTY sessions and emulator
+- **What:**
+  - `Emulator` port and libghostty adapter;
+  - PTY adapter with `creack/pty`;
+  - `session.create`, `list`, `input`, `resize` and `close`;
+  - `input_owner` lock;
+  - notifications `session.exited`, `session.resized` and `session.input_owner`.
+- **REQ:** REQ-TERM-001, REQ-TERM-005, REQ-TERM-007, REQ-TERM-008
+- **Files:** `internal/sessions/{domain,ports,adapters/pty,adapters/ghostty}/**`
+- **Depends on:** T-F0-02, T-F0-03
+- **Done:** tests `TestCreateSession_REQ_TERM_001`, `TestExitedEmitsCode_REQ_TERM_005`, `TestResizeNotifies_REQ_TERM_007` and `TestInputLockedRejected_REQ_TERM_008` green.
+- **Result:** the module is domain, ports, two adapters and a service. `domain` holds the rules that need no PTY, including `CanAcceptInputFrom`, which is the whole of REQ-TERM-008 in one function. `ports` publishes `Sessions`, `PTY`, `Emulator` and `Bootstrapper`, all injected, so libghostty and `creack/pty` stay confined to one directory each. The service persists before notifying (DD-007) and drains each PTY on a background context, because REQ-TERM-003 promises the session outlives its clients. Measured `session.create` p95: 2.2 ms over 20 runs against the 300 ms NFR. Two linter exceptions carry written reasons rather than being silenced: `noctx` and `contextcheck` both want the shell bound to a request context, which would kill the session when the call that created it returns. The integration tests live in their own directory and their own arch-lint component, because wiring real adapters is a composition root's job; excluding `_test.go` from the boundary rules would have been the easy answer and would have stopped enforcing them in test code.
+
+### [x] 2026-09-11 T-F0-06 · Subscription, snapshot and fan-out
+- **What:**
+  - `session.subscribe` and `session.unsubscribe`;
+  - snapshot delivery with scrollback (≤ 10,000 lines);
+  - `session.output` with `seq`, batched every 4 ms or 32 KiB;
+  - 8 MiB queue per client, unsubscribing on overflow;
+  - live sessions without clients.
+- **REQ:** REQ-TERM-003, REQ-TERM-004, REQ-TERM-006
+- **Files:** `internal/sessions/**`, `internal/api/fanout*.go`
+- **Depends on:** T-F0-04, T-F0-05
+- **Done:** `TestSessionSurvivesNoClients_REQ_TERM_003`, `TestSubscribeSnapshotBeforeLive_REQ_TERM_004` and `BenchmarkOutputLatency_REQ_TERM_006` (p95 < 5 ms) green.
+- **Result:** `session.subscribe` registers the subscription **before** taking the snapshot, so a chunk arriving between the two is queued rather than lost; the snapshot's sequence number then discards whatever it already contains, which is what makes the stream gapless without being duplicative. The 4 ms figure in API Spec §8 is implemented as a ceiling rather than a target: a fixed 4 ms wait measured p95 4.24 ms against REQ-TERM-006's 5 ms budget, leaving nothing for the rest of the path, so the writer sends at once and coalesces only what piles up behind it. Measured after that change: **p95 12 µs**, 340 times better, with batching still working. Each subscription has its own writer goroutine and an 8 MiB budget; past it the subscription is dropped and the client is told with `session.unsubscribed`, which is new API surface and went into `changes/2026-09-slow-client-notification/`. Output goes only to subscribers, unlike the control notifications, which every authenticated connection receives.
+
+### [x] 2026-09-11 T-F0-07 · [P] VT conformance suite
+- **What:** the closed case list is Tech Design §8.1: implement **VT-01 … VT-20 (MUST)** and, if time allows, VT-21 and VT-22 (SHOULD). Each case is a `testdata/vt/VT-NN-<slug>.in` / `.golden` pair (plain text + attributes), plus a runner that feeds the bytes into the emulator and compares the result.
+- **REQ:** REQ-TERM-002
+- **Files:** `testdata/vt/**`, `internal/sessions/adapters/ghostty/conformance_test.go`
+- **Depends on:** T-F0-05
+- **Done:** `go test -run Conformance_REQ_TERM_002 ./...` green with the 20 MUST cases of §8.1 present; a missing `.golden` fails the run instead of skipping it.
+- **Result:** the closed list lives in Go and the fixtures on disk, both generated from the same table with `-update-vt`, so they cannot drift. Each case writes a `.in` with the exact byte stream, kept so a failure can be replayed outside Go, and a `.golden` with the screen as plain text, the cursor, the title, the working directory and the replayable VT with its escapes made visible. The VT section is what covers *and attributes*: plain text alone would pass an emulator that dropped every colour. Three checks were verified by breaking them: a missing `.golden` fails rather than skips, deleting a MUST case from the list fails with `the suite has 19 MUST cases`, and a `.in` that no longer matches its case is reported. VT-14 applies a resize after the input, which is the only case whose fixture is not a pure byte stream.
+
+### [x] 2026-09-11 T-F0-08 · [P] Shell-integration bootstrap
+- **What:** scripts for bash (`--init-file` that loads the user's rc), zsh (temporary `ZDOTDIR`) and fish (`--init-command`) that emit OSC 133 A/B/C/D, 633;E and 7 without breaking the user's prompt (Starship, p10k).
+- **REQ:** REQ-BLK-005
+- **Files:** `shell/bash/umbral.bash`, `shell/zsh/.zshrc`, `shell/fish/umbral.fish`, `internal/sessions/adapters/shellinteg/**`
+- **Depends on:** T-F0-01
+- **Done:** `TestBootstrapEmitsOSC133_REQ_BLK_005` in CI with real bash, zsh and fish.
+- **Result:** three scripts under `shell/`, embedded through `shell/shell.go` and materialised by `internal/sessions/adapters/shellinteg`. Each shell gets the only injection that both runs before the first prompt and keeps the user's own configuration: bash `--init-file` sourcing the rc back, zsh a temporary `ZDOTDIR` restoring the real one, fish `--init-command`, which runs after `config.fish` so nothing needs restoring. `Bootstrap.Argv` assembles the argument list because bash requires long options first: `bash -i --init-file F` exits 2. Tested under a real PTY, because every hook involved only runs in an interactive shell and a test on a pipe would pass against a bootstrap that emits nothing. Two real bugs were found this way and both now have a regression test: the bash DEBUG trap opened a phantom block for the prompt framework's own hook, recording `starship_precmd` as the first command of every session, and markers applied once are lost by any prompt that rewrites itself.
+
+### [x] 2026-09-11 T-F0-09 · Block lifecycle
+- **What:**
+  - OSC parser (emulator callbacks) that drives the state machine in API Spec §7;
+  - generation of `output_plain` (max 1 MiB) and zstd `block_chunks` (16 MiB cap);
+  - `block.*` notifications;
+  - alt-screen detection;
+  - `integration: none` after 5 s without OSC.
+- **REQ:** REQ-BLK-001, REQ-BLK-002, REQ-BLK-003, REQ-BLK-004, REQ-BLK-007
+- **Files:** `internal/sessions/domain/{block,marker,plaintext,recorder}.go`,
+  `internal/sessions/adapters/shellinteg/scanner.go`,
+  `internal/sessions/adapters/blockstore/**`, `internal/sessions/blocks.go`
+- **Depends on:** T-F0-05, T-F0-08
+- **Done:** tests `…_REQ_BLK_001` … `…_REQ_BLK_004` and `TestPlainOutputHasNoEscapes_REQ_BLK_007` green.
+- **Result:** the OSC scanner lives in `internal/sessions/adapters/shellinteg/scanner.go`, not in
+  emulator callbacks: libghostty's Go bindings expose neither the OSC 133 payload nor OSC 633,
+  so the daemon cannot get the command line or the exit code from the emulator. The block state
+  machine is a pure `domain.Recorder`; persistence is `internal/sessions/adapters/blockstore`
+  with zstd chunks (`klauspost/compress`, the first compression dependency). Also fixed here
+  because blocks in fish and zsh depended on them: the bash and zsh bootstraps reported exit
+  code 0 for every command whenever another `PROMPT_COMMAND`/`precmd` hook ran first, and the
+  daemon never answered terminal device queries, which made every fish session hang for two
+  seconds and permanently lose features. Extra tests beyond the matrix:
+  `TestBlocksInEveryShell_REQ_BLK_005` (bash, zsh and fish), the `TestScanner…` suite and
+  `TestBlockNotificationsMatchTheSchema_REQ_BLK_001_REQ_BLK_002`. Five decisions that narrow
+  approved spec text went to `changes/2026-09-block-lifecycle-decisions/` rather than staying
+  in comments: what `abandoned` means, which sequences `block_chunks` keeps, what
+  `output_truncated` covers, whether a late marker promotes a session, and the zstd
+  dependency.
+
+### [x] 2026-09-11 T-F0-10 · Block query and search
+- **What:** `block.list`, `block.get` (including `"last"`) and `block.search` over FTS5, with cursor pagination; benchmark with a 100,000-block fixture.
+- **REQ:** REQ-BLK-006, REQ-CLI-002
+- **Files:** `internal/sessions/domain/query.go`, `internal/sessions/query.go`,
+  `internal/sessions/adapters/blockstore/query.go`, `internal/api/blocks.go`
+- **Depends on:** T-F0-09
+- **Done:** `BenchmarkBlockSearch100k_REQ_BLK_006` with p95 < 200 ms; `TestBlockGetLast_REQ_CLI_002` green.
+- **Result:** measured p95 **0.93 ms** for search and **0.22 ms** for a list page over 100,000
+  blocks. Getting there needed two changes, folded into Data Model v1.3 and API Spec v1.4
+  (delta `2026-09-block-query-performance`, approved 2026-09-11): an index on `(started_at DESC, id DESC)`,
+  without which every unfiltered page was a full scan and a sort (141 ms), and ordering
+  `block.search` by insertion position rather than by start time, without which a common term
+  sorted its whole match set (139 ms, and no index helps). The 100,000-block corpus is
+  generated from a fixed seed in `bench_test.go` rather than committed as
+  `testdata/fixtures/blocks100k.sql.zst`: a binary of that size is unreviewable, and the
+  vocabulary that makes the queries match is readable in the file instead.
+  `TestBlockGetLast_REQ_CLI_002` exists twice on purpose, once in `internal/api` for the wire
+  shape the requirement names and once in `internal/sessions/integration` for the resolution,
+  because no package may see both.
+
+### [x] 2026-09-20 T-F0-11 · Base `umb` CLI
+- **What:** shared JSON-RPC client; `umbrald` autostart (3 s timeout → exit code 69); `umb status`; `umb block last --json`.
+- **REQ:** REQ-CLI-002, REQ-CLI-003, REQ-CLI-004
+- **Files:** `cmd/umb/**`, `internal/client/**`, `internal/config/{paths,instancelock}.go`, `internal/api/{paths,server}.go`, `cmd/umbrald/main.go`
+- **Depends on:** T-F0-10
+- **Done:** `TestUmbAutostartFailsWith69_REQ_CLI_003` and the JSON output test against the `Block` schema green.
+- **Result:** the client could not reach `api.DefaultSocketPath`, because the §5.2 row for `client` allows `config` and never `api`. Rather than copy the runtime-directory resolution — which carries `verifyPrivateDir`, a security check, and two copies of a security check are one too many — the location helpers moved to `internal/config`, which both sides already may import; `api` keeps the token writer, since only the daemon creates tokens. Those §5.2 rows did not actually exist, nor did §5.1 list `api`, `client`, `config`, `store` or `tui`: the rule lived only in `.go-arch-lint.yml`, so the citation was false until the delta wrote it down. The schema test compares the CLI's `Block` against `api.Block` by reflection, so the two sides of the socket check each other; that they both match API Spec §4 was confirmed by hand and is T-F0-17's job to automate. REQ-CLI-002's "current session" comes from `UMBRAL_SESSION_ID`; what happens outside a managed pane was a decision living only in a code comment, and is now in the PRD and in API Spec §5.17.
+- **Found by the `spec-guardian` review, not by the tests:** three real defects. **One,** two `umb` invocations at once each started a daemon: reproduced with five concurrent `umb status`, which left five daemons on one installation, the later ones unlinking the earlier one's socket and running Data Model §6 recovery over its live sessions — marking running sessions `exited` and open blocks `abandoned`. The comment that justified removing a stale socket cited a database lock that does not exist. `umbrald` now takes an exclusive `flock` on `umbrald.lock` before it opens the database, and a daemon that cannot take it exits 0 without serving; with it, the same five-way race leaves exactly one. **Two,** the handshake had no deadline and `Ctrl-C` could not interrupt it: `signal.NotifyContext` had disarmed the signal without anything acting on the cancellation, so `umb` against a daemon that accepts and never answers needed `SIGKILL`. The handshake now shares the dial budget and `call` expires the socket deadline on cancellation. **Three,** an autostarted daemon sent its log to `/dev/null`, so every daemon started the ordinary way discarded the structured log Art. 7 requires; it now appends to `umbrald.log` beside the socket, and the failure message points at it.
+- **Found while fixing those:** a data race of my own making — the cancellation callback read `c.conn` while `Close` wrote it, which `-race` caught on about half of the runs. The callback now closes over the connection. And the fake daemons in the tests looped on `Accept` forever, leaving an orphan process per run; sixty-eight had accumulated, and a stale one still holding a socket path is a flaky neighbour for the next run. Both fakes now expire.
+- **Sixteen tests, every one checked for teeth.** Two did not bite on the first attempt and were rewritten: the write-failure test passed for the wrong reason, because `printJSON` encoded straight into the stream so its error never reached the exit-code path; and the `--daemon-path` test passed with the flag removed, because `umbrald` is not on `PATH` under `go test` either, so it now asserts that the message names the path it was given.
+- **Verified against the real daemon, not only against fakes:** `umb status` autostarts `umbrald` on a clean `XDG_RUNTIME_DIR` and its log lands in `umbrald.log`; after running `false` in a live session, `umb block last --json` prints that block with `exit_code: 1`; and `umb status | head -1` exits 0.
+
+### [x] 2026-09-20 T-F0-12 · Base TUI
+- **What:**
+  - Bubble Tea v2 client with tabs and splits;
+  - session rendering from `session.output` (client-side emulator);
+  - block list with previous/next jump;
+  - reconnection with snapshot.
+- **REQ:** REQ-TUI-001
+- **Files:** `cmd/umbral-tui/**`, `internal/tui/**`, `internal/client/{client,autostart,stream}.go`, `.go-arch-lint.yml`
+- **Depends on:** T-F0-06, T-F0-09
+- **Done:** `TestTUIBlockNavigation_REQ_TUI_001` green; manual checklist in `docs/qa/f0-tui.md` completed.
+- **State:** `[x]` as of 2026-09-20. Both halves of the Done line are met. The second half was a person's job — raw mode, a real keyboard, a real font — and Ernesto Crespo walked all fourteen steps of `docs/qa/f0-tui.md` on Ubuntu 26.04.1 with none failing. That table is an attestation rather than a machine result, and it says so: the terminal emulator went unrecorded, so a second walk on a different one before release would still be worth doing.
+- **Result:** two things the task description did not name had to be decided first, and both needed a Delta (`2026-09-tui-renderer`). DD-001 already says the client parses for itself — "clients receive raw bytes and process them with their own renderer", with "double parsing" listed as the accepted cost — but no §5.2 row gave the TUI anywhere to put one, and splits make it unavoidable: bytes can go to the host terminal only while one session owns the whole window. The renderer is libghostty, the daemon's own, in `internal/tui/adapters/ghosttyvt`. A pure-Go VT from Bubble Tea's ecosystem would have kept `umbral-tui` free of cgo, and was rejected because the two sides parse the same stream: two emulators are two chances for the screen to drift from the block history, and T-F0-07's conformance suite covers only one of them. The second decision was Bubble Tea v2 itself, which the Tech Design §5.1 already named; its module path is now `charm.land/bubbletea/v2`.
+- **Result (client):** `internal/client` was request/response only, which a TUI cannot use — output arrives when nothing was asked for. `Stream` owns the reader instead and routes frames by whether they carry an id, so calls and notifications work at once; past a bounded buffer it stops and says so rather than growing, which is the client-side twin of the daemon's `session.unsubscribed`.
+- **Result (found by running it):** the handshake hardcoded `client_kind: "cli"`, and the daemon's §2 allowlist keeps `session.*` out of the `cli` set, so `session.create` came back `METHOD_NOT_FOUND` — a daemon that looked unimplemented rather than a client that had misidentified itself. No test with a fake could have caught it: every fake answered the handshake without reading it. The kind is now an option, `umbral-tui` sets `tui`, and this is the second time this review cycle that the handshake's own contents went unchecked (`spec-guardian` finding 5 on T-F0-11 said so).
+- **Result (found by re-reading it):** `session.unsubscribed` was mapped to "the daemon is gone", which is wrong twice over: the connection is still up, and API Spec §6 says exactly what to do instead — subscribe again and take the fresh snapshot. As written it would have stranded a working connection on a frozen screen, and stopped listening for everything else. It is now its own event kind, the pane's `seq` is reset before re-attaching, and a test pins the difference.
+- **Scope delivered, and what was left out on purpose.** Two panes per tab: the pane tree, portable layouts and the `w1:t1:p2` identifiers are T-F0-14 and T-F0-15, and half a tree would be work thrown away. A dropped *subscription* is re-attached automatically (API Spec §6); a lost *daemon connection* is reported and not retried, so "reconnection with snapshot" in the What line means the first and not the second. No mouse, no function keys, no Kitty keyboard protocol: `keyBytes` covers what a shell needs and the rest waits for something that tests it. No agent panel — REQ-TUI-001's other half is T-F1-20, which both matrices agree on. No scrollback view; the pane shows the screen and `umb block search` reaches the history. Lip Gloss, which the constitution's stack table names beside Bubble Tea, is not used: the delta records why and what it costs.
+- **Result (what the gates do not cover, on purpose).** Three scope decisions, recorded here because each was otherwise an argument living in a code comment. **One:** `BenchmarkSessionCreate_REQ_TERM_001` times `sessions.Service.Create`, not a client's round trip, so the handshake, the JSON-RPC decode, the reply marshal and the socket write are inside REQ-TERM-001's wording and outside the gate — and no other requirement bounds them either; REQ-TERM-006 covers the notification fan-out, a different path, and an earlier draft of the benchmark comment wrongly borrowed it as cover. The margin is 2.1 ms against 300 ms and the handler is an unmarshal and a marshal, so the risk is small, but it is unmeasured rather than bounded. **Two:** PRD §7's fourth bullet, idle daemon memory under 80 MiB with five sessions, is gated nowhere. It carries no REQ id and this task's What and REQ lines name only `session.create` and output latency, so Art. 2 does not bite; it also needs a running daemon and an RSS probe rather than a benchmark, which is a different kind of test than anything here. It stays ungated and now stays ungated in writing. **Three:** REQ-BLK-006 is gated but not self-tested — it has no injection point — which `scripts/perf_selftest.sh` states in its header.
+- **Result (a gate nobody required).** `perf_gates.sh` said "a miss blocks the merge", which was prose: the new job was in no required-checks list. Worse, the list in `scripts/github_bootstrap.py` had drifted so far that none of its four context names matched a job in `ci.yml` any more — a name that matches no job is not an error on GitHub's side, the check is simply never required and the protection weakens in silence. The list now carries the six real `ci.yml` contexts and the perf job, grouped under the workflow each comes from, and the script's message points at where the requirement is configured instead of asserting it.
+- **Result (a duplication with a threshold).** `perfProbeEnv`, `perfProbe` and `percentile` exist twice, in `internal/api` and `internal/sessions/integration`, because Go test helpers do not cross a package boundary. Two copies held honest by a selftest that would redden if either drifted is a fair trade; a third gate is not. At that point they belong in an `internal/perftest` package with its own `.go-arch-lint.yml` entry, since code the boundary rules do not map is code the boundary rules do not enforce.
+- **Result (what the review found in the wire layer).** The tree held up; the five hundred lines of translation above it did not, and the reason is that nothing tested them. Two were contradictions of the approved spec, both measured against a running daemon rather than argued: **one**, `toWire` consulted only the sessions module's sentinels, so every `ErrNotFound`, `ErrValidation` and `ErrConflict` the tree raised reached the client as `INTERNAL_ERROR` — the wrong code, and one that mints the `trace_id` §3 reserves for real faults, from an ordinary client typo. **Two**, the `workspace.*`, `tab.*` and `pane.*` notifications wrapped their object in an envelope, while §6 types those payloads as `Workspace`, `Tab` and `Pane` exactly as `block.started` carries a `Block`; a client written to §6 would have found no `id`. `internal/api/workspaces_wire_test.go` now covers the §5.4-§5.6 results field by field, the three `true` defaults, the §3 error table and the §6 payloads, and each of the two was confirmed to turn it red.
+- **Result (a capability nobody could find).** The handshake advertised `workspace`, `tab` and `pane`. API Spec §2 enumerates the legal entries and names the tree `workspaces` — one capability for three method prefixes — so a client branching on §2's vocabulary would have concluded the tree was absent while all seventeen methods answered. The derivation was honest about the method table and wrong about §2's words. `capabilityOf` maps prefixes to namespaces, which also fixed the same drift in `session` and `block`, pre-existing and enshrined by three tests.
+- **Result (things accepted and quietly ignored).** `pane.split` took §5.6's `command`, stored it and started a plain shell: a client would have watched its command not run, with no error to explain it. `sessdomain.CreateParams` carries no argv, and adding one is the launch path `layout.apply` needs, so the parameter is now refused with `VALIDATION_ERROR` naming T-F0-15 rather than silently dropped. `workspace.create` likewise accepted an absent `cwd`, which §5.4 requires, and started the root shell wherever the daemon happened to be; it is now a validation error, and a workspace created as a side effect of `pane.move` inherits the moved pane's directory, since there is no caller to ask.
+- **Result (notifications that were not sent).** Closing a workspace or a tab emitted nothing for the tabs and panes it took with it, so a client caching the tree kept ghosts; both now announce every object they closed, panes first. `workspace.closed` carried a record read before the close, which said the workspace was open. And a move that had to build its destination announced only `pane.moved`, leaving the new tab or workspace to be inferred from a reference inside it; `MovePane` now reports what it created and the service publishes those first.
+- **Result (identifiers at the edge).** A malformed identifier reached the store, found nothing, and came back as `NOT_FOUND` — telling a client its pane was gone when its request was malformed. `checkWorkspaceID`/`checkTabID`/`checkPaneID` run the REQ-WS-002 grammar at the service boundary, which is what `ErrValidation`'s own doc comment had been claiming all along.
+- **Result (a fourth undocumented decision).** A `ratio` outside §5.6's 0.1-0.9 is clamped, not refused, and the integration test enshrines it. Dragging a divider past the edge should give the edge; a client cannot meaningfully recover from an error there. It belongs in this list with the other three rather than only in a test.
+- **Result (what the review found, and one thing it was right about twice).** Three claims in the Result log outran the code, all of the same kind: `env` was reproduced and tested nowhere, the new launch path had no automated coverage at all, and `apply` promised atomicity it did not have. **The `env` gap took two attempts to close.** The first assertions compared the exported tree and the pane struct, both of which are built from the nodes that went in, so an apply that never wrote `env_json` satisfied every one of them — a deliberate break proved it. The assertion that bites reads the row back. **The launch path** is now covered end to end in `internal/sessions/integration`: a real PTY runs `sh -c printf`, its output is read off the emulator, a program that is nowhere is a `VALIDATION_ERROR`, and the session settles on `integration: none`. The unit tests beside it cover what that cannot see — that no bootstrap is prepared for a command session, which an integration test cannot distinguish because a bootstrap injected into `sh -c` would emit no OSC 133 either.
+- **Result (`apply` was not atomic where it mattered most).** `treestore.ApplyLayout` is one transaction, but the terminals are attached after it commits, and that is the step most likely to fail: a portable layout describes a machine that may not be this one, so its `cwd` may not exist and its `command[0]` may not be here. Returning bare left a committed tab holding some live panes and some empty ones — verbatim the "asked for four panes and got two" the method's own comment said could not happen. A failure now unwinds the tab and closes the terminals that did start, and `TestApplyUnwindsWhenATerminalWillNotStart` uses the harness's `failOn` hook, which existed and until now nothing used.
+- **Result (a portable layout declares its own PATH).** `exec.LookPath` reads the *daemon's* PATH, so a layout carrying `env: {"PATH": "/opt/toolchain/bin"}` beside `command: ["mytool"]` was refused although it had said exactly where to look. Resolution now runs against the environment the child will actually have. An empty PATH element is skipped rather than read as the working directory: POSIX says it means `.`, and honouring it would let a shared layout file execute whatever binary happens to sit in the checkout it opens in. That one has a test of its own, because it is a security property and not a formatting detail.
+- **Result (focus that pointed at something closed).** `layout.export` with no `tab_id` means "the tab I am looking at". After that tab or its workspace closed, the daemon still named it and the client got "tab w1:t1 does not exist" — a tab it never mentioned, reported missing, which reads like a different bug. Focus is now cleared on close, so the answer is "no tab is focused", which is the truth and is actionable. It is cleared rather than moved to a neighbour: choosing one would be the daemon guessing what the user is looking at.
+- **Result (`Session.shell` now carries something that is not a shell).** A pane launched with a command records that program, so `session.list` reports `"shell":"/usr/bin/sh"` for a `sh -c` pane rather than the shell nobody started. API Spec §4 types the field as a string and illustrates it with `/usr/bin/zsh`; the meaning is widened, not the type, and `protocol_version` stays at 1 (Art. 8). The alternative — leaving `shell` naming a shell the session never ran — would have made the field a lie in exactly the case a client most wants it. Recorded here rather than left for a reader to infer; a §4 note would be better and belongs with whatever next edits that section.
+- **Result (what trusting a layout means).** A layout file is executable input: `command` is run, with the daemon's environment plus the layout's overrides, as the user the daemon runs as. That is what REQ-WS-005 asks for and what Data Model §6.5 authorises, and `pane.split` already let a client pass an argv, so this adds no authority a client did not have. What it does is make that authority *portable* — a file that can be mailed, committed or shared now carries a program to run. The boundary is therefore the client, not the file: a layout is trusted exactly as much as whoever sent it, and nothing here treats a file as safer because it looks like data. `Node.Validate` bounds the shape, never the intent.
+- **Result (verification):** sixteen tests, all checked for teeth; three were broken deliberately to confirm it. Then the whole path was driven against a real `umbrald`: create a session, subscribe, replay the snapshot through the client's own libghostty, resize, send `echo`, receive `session.output` and `block.closed`, render the output, and read the block back from `block.list` with `exit=0`. That is what caught the `client_kind` bug.
+
+### [x] 2026-09-20 T-F0-13 · Performance gates in CI
+- **What:** CI job that runs the `session.create` and output-latency benchmarks and fails if they exceed the NFRs.
+- **REQ:** REQ-TERM-001, REQ-TERM-006
+- **Files:** `.github/workflows/perf.yml`, `internal/sessions/integration/bench_test.go`, `internal/api/latency_test.go`, `scripts/perf_gates.sh`, `scripts/perf_selftest.sh`
+- **Depends on:** T-F0-06
+- **Done:** the perf job is green; an artificial regression sized against each budget — 10 ms for REQ-TERM-006, 400 ms for REQ-TERM-001 — turns it red.
+- **Done line amended 2026-09-20.** It read "an artificial regression (10 ms sleep) turns it red". That is true of the 5 ms latency budget and false of the 300 ms `session.create` budget, where 10 ms is noise: measured, the benchmark stays green. One number could not serve both, and leaving the sentence standing would have meant closing the task against a criterion the repo knew it did not meet. No spec sentence moves — the PRD, API, Tech Design and data model are untouched — and the replacement is strictly stronger, so this is an amendment and not a Delta.
+- **State:** `[x]` as of 2026-09-20. The job ran for the first time on the push that closed T-F0-12 (`Performance`, run 35525499133) and both halves of the Done line held on the reference hardware PRD §7 names. No threshold needed the adjustment §7 provides for — the 4 vCPU runner is *faster* than the manual machine on two of the three gates, because the laptop figures were taken while a full `task ci` was competing for the same cores:
+
+  | Gate | Budget | CI runner p95 | ThinkPad p95 |
+  |---|---|---|---|
+  | `session.create` (REQ-TERM-001) | 300 ms | 1.14 ms | 2.1 ms |
+  | added output latency (REQ-TERM-006) | 5 ms | 26 µs | 26 µs |
+  | `block.search` over 100k (REQ-BLK-006) | 200 ms | 1.14 ms | 2.4 ms |
+
+  The selftest also fired on the runner: 10.26 ms caught against the 5 ms budget and 402 ms against the 300 ms one. That is the half that matters, because it is the half proving the green above is a measurement rather than a formality.
+- **Result:** three gates, not two. `BenchmarkSessionCreate_REQ_TERM_001` and `BenchmarkOutputLatency_REQ_TERM_006` are what the task names; `BenchmarkBlockSearch100k_REQ_BLK_006` already carried a budget from T-F0-10 and was the only NFR benchmark that checked itself, so it joins them rather than being the one gate nobody runs. `scripts/perf_gates.sh` picks which benchmarks are gates, how many samples each gets, and refuses a run in which a gate produced no result line; the budgets stay in the benchmarks, because a threshold written in two places is a threshold that will disagree with itself. `task perf` runs it, and `task ci` now runs `task perf`.
+- **Result (the done line is half right).** "An artificial regression (10 ms sleep) turns it red" holds for REQ-TERM-006, whose budget is 5 ms. It does not hold for REQ-TERM-001: 10 ms against a 300 ms budget is noise, and the benchmark stays green — measured, not assumed. `scripts/perf_selftest.sh` therefore sizes each injection against the budget it has to break: 10 ms for the latency gate, 400 ms for the create gate. One number could not have done both, and using one would have left the create gate looking self-tested while nothing tested it.
+- **Result (a real defect in the gate itself).** `BenchmarkOutputLatency_REQ_TERM_006` computed p95 as `latencies[int(float64(len(latencies))*0.95)]` and then, meaning to bound the index, compared the *duration* against the *sample count*: `if p95 >= time.Duration(len(latencies))`. At a full one-second run that condition is false and the p95 is right, which is why nobody saw it; at the small sample counts a CI job would use — 100 samples is 100 ns — it is true for any latency above a microsecond, and the benchmark silently gated on the maximum instead. A max-based gate on a shared runner is a flaky gate, and a flaky gate gets disabled. Both call sites now use one `percentile` helper, and the 5 ms budget is one named constant instead of three literals.
+- **Result (the selftest is the point).** `scripts/perf_gates.sh` proves the budgets are met; `scripts/perf_selftest.sh` proves they are still being checked. It is the sibling of `scripts/arch_selftest.sh` and exists for the same reason: a dropped `b.Errorf`, a threshold typed in seconds, or a `b.Skipf` on a runner without bash all leave a green job that measures nothing. It refuses to accept a bare non-zero exit — a package that stopped compiling also exits non-zero — and requires the failure to name the requirement whose budget was missed.
+- **Result (found by teeth-checking my own script).** The first version of `perf_gates.sh` treated a zero exit as a pass, and I added a `--- SKIP` guard on the assumption that a skipped benchmark says so. It does not: without `-v`, a benchmark that calls `b.Skipf` prints *nothing at all* — no skip line, no result line, just `ok`. `BenchmarkSessionCreate_REQ_TERM_001` skips when bash is missing, so on a runner without it the gate would have disappeared in silence under a green tick. The check is now that the benchmark's result line is present, which also catches the other way a gate quietly stops existing: a rename that leaves a stale name in the table, matching no benchmark and exiting zero. Both were verified by doing them.
+- **Result (verification):** both gates teeth-checked in both directions. Injecting the regression turns each red with the expected message; widening `outputLatencyBudget` from 5 ms to 5 s makes the selftest report `FAILED — accepted a 10ms regression`; breaking compilation in `internal/api` makes it report `failed for some other reason than the REQ-TERM-006 budget` rather than counting it as a catch. Current margins, all on the manual machine and none yet on the CI runner: `session.create` 2.1 ms p95 against 300 ms, added output latency 26 µs p95 against 5 ms, `block.search` over 100,000 blocks 2.4 ms p95 against 200 ms.
+
+### [x] 2026-09-20 T-F0-14 · Workspace, tab and pane model
+- **What:**
+  - `workspaces`, `tabs`, `panes` and `pane_aliases` tables in **migration 0003**, not 0001: 0001 is already applied and migrations are forward-only (Art. 6, Data Model §5);
+  - public identifiers `w<n>`, `w<n>:t<m>`, `w<n>:p<m>` with an allocator per session;
+  - methods `workspace.*`, `tab.*` and `pane.split|list|get|focus|rename|move|close`;
+  - binding of one live session per pane;
+  - rollup state per tab and workspace derived from panes.
+- **REQ:** REQ-WS-001, REQ-WS-002, REQ-WS-003, REQ-WS-006, REQ-WS-007
+- **Files:** `internal/workspaces/**`, `internal/store/migrations/0003_structure.sql`, `internal/api/workspaces.go`, `.go-arch-lint.yml` (new `workspaces` component, Tech Design §5.2)
+- **Depends on:** T-F0-03, T-F0-05
+- **Note:** this is the largest task in F0. If its first estimate slips, split it into "model and identifiers" and "methods and rollup" (finding B-08).
+- **Done:** tests `TestWorkspaceCreateReturnsTree_REQ_WS_001`, `TestPaneIdsStable_REQ_WS_002`, `TestSplitAttachesSession_REQ_WS_003`, `TestRollupPrefersBlocked_REQ_WS_006` and `TestMovedPaneKeepsAlias_REQ_WS_007` green.
+- **State:** `[x]` — all five named tests exist under those exact names, run and pass. The delta it rests on, `2026-09-pane-attention-state`, was ratified on 2026-09-20 and is archived; `rollup_state: "unknown"` on the wire is now a decision the specs carry.
+- **Result:** `internal/workspaces` in the shape §5.2 prescribes — `domain` with the identifiers, the five attention states, the rollup and the portable layout tree; `ports` with the inbound surface, the tree's persistence and a two-method view of the sessions module; `adapters/treestore` over migration 0003; a service that orders the writes and publishes the §6 notifications; and `internal/api/workspaces.go` with the seventeen methods of §5.4 to §5.6. Every forbidden import the new rules describe was injected and confirmed rejected — `workspaces` into `api`, into `sessions/adapters`, and its `domain` and `ports` into `store` — rather than taken on trust.
+- **Result (two spec gaps, raised as delta `2026-09-pane-attention-state`).** REQ-WS-006's last clause propagates `unknown`, and API §4's `rollup_state` listed four values without it. In F0 that is not a corner case but the only case: a pane's state comes from `pane_state_reports`, which is migration 0004, so every workspace holding a pane rolls up to a value the wire type forbade. And nothing in F0 gives a pane any state at all — §4 names `umbral:shell` as "derived from the block lifecycle", which is F0 code, but no requirement mandates the derivation and no artifact says which block state maps to which attention state. `unknown` joins the type; the derivation is recorded as deferred rather than invented.
+- **Result (the allocator has to look somewhere the schema does not).** `panes.id` and `pane_aliases.alias_id` are primary keys of different tables, so nothing in migration 0003 stops a new pane being called `w1:p2` while an alias of that name still points at the pane that moved away. `GetPane` would then answer with whichever table it read first, and REQ-WS-002's uniqueness would fail for the one identifier a user is most likely to have written down. `nextPaneOrdinal` therefore takes its maximum over both tables. Nothing else in the suite catches this: `TestANewPaneNeverTakesAnAliasedName_REQ_WS_002` was added after a teeth check showed the alias half of that query could be deleted with every other test still green.
+- **Result (where two artifacts had nothing to say).** Three decisions the specs leave open, written down rather than left in the code. **One:** `tabs` has no `focused_pane_id` column but API §4's `Tab` has the field, so it lives in `layout_json` — which Data Model §2.4b describes as holding the "portable tree (API Layout)", and the API `Layout` is the object that carries it. **Two:** §5.6 says where a moved pane goes but not where it lands inside the destination; it goes beside that tab's focused pane, split right at the default ratio, and an empty tab takes it as the root. **Three:** `pane.split` takes no size because the daemon cannot see the client's window, so a pane's terminal starts at 80x24 and the client's first `session.resize` corrects it.
+- **Result (a pane rename that the schema would have refused).** `pane_aliases.pane_id` is a foreign key on `panes(id)` with no `ON UPDATE`, so renaming a pane that any alias references fails outright with foreign keys on. The move clears the alias rows, renames the parent, then rewrites them against the new identifier — which also keeps the chain flat, so a pane moved three times answers to all four of its names directly instead of through three lookups.
+- **Result (capabilities stopped being true, and were made true).** Registering the seventeen methods unconditionally made the handshake advertise `workspace`, `tab` and `pane` on a daemon where the tree was not wired and every one of them answered METHOD_NOT_FOUND — exactly the drift `capabilities()` derives itself from the method table to avoid. The table is now built from the configuration, so a module that is not wired contributes no methods and advertises no capability.
+- **Result (a defect only concurrency showed).** Eight clients calling `workspace.create` at once: five of the eight failed. Allocating an identifier is a read — `max(...)` over the rows — and then the insert that uses it, and SQLite's default `BEGIN DEFERRED` starts such a transaction as a reader, taking the write lock only at the insert. Two of them cannot both finish; the loser gets `SQLITE_BUSY_SNAPSHOT`, which the `busy_timeout` already in the DSN does **not** wait out, because there is nothing to wait for — its snapshot is stale and the only cure is to roll back. Uniqueness was never in danger; the writes happening at all was. The DSN now sets `_txlock=immediate`, so a transaction takes the write lock up front and contenders queue on the timeout instead of failing, and `treestore.Layout` dropped its transaction so a single-statement read does not queue behind writers for nothing. It is a change to `internal/store`, shared by every module, because the flaw is in the shape — read then write — and not in this module. `TestConcurrentCreatesDoNotCollideOrFail_REQ_WS_002` is the regression test and was teeth-checked by putting the default back.
+- **Result (verification):** `task ci` green, including the boundary probes and 0 lint issues. Twelve tests over a real SQLite database plus the domain suite, and five deliberate mutations confirmed the named ones bite: restoring SQLite's default transaction mode, dropping the alias half of the allocator, dropping the alias record on a move, pinning the rollup to `idle`, and skipping the root pane's terminal each turn a criterion test red. Then the whole surface was driven against a real `umbrald`: `workspace.create` returned `w1`, `w1:t1`, `w1:p1` with a live session and `rollup_state: "unknown"`; `pane.split` returned the pane and a layout whose root is a `right` split at 0.6; `pane.move` carried `w1:p2` to `w2:p2` **keeping the same `session_id`**; `pane.get` on the retired `w1:p2` answered with `w2:p2` and `aliases: ["w1:p2","w2:p2"]`; and a `cli` client asking for `workspace.list` was refused with METHOD_NOT_FOUND, as API Spec §2 requires.
+- **Not in this task:** `layout.export` and `layout.apply` are T-F0-15, which is why the tree is built and stored but only `pane.split` and `pane.move` return it — and why §6's `layout.updated`, which §6 attributes to REQ-WS-004, is not emitted either. Restoring the structure after a restart is T-F0-18. Two clauses of §5.4/§5.6 wait on F1: `workspace.close` failing with `CONFLICT` while a thread of that workspace is `running` has nothing to check yet, since threads arrive with T-F1-01, and `pane.split`'s `command` waits on the launch path T-F0-15 builds.
+
+### [x] 2026-09-20 T-F0-15 · Portable layouts
+- **What:** `layout.export` producing the binary tree with labels, cwd and command; `layout.apply` recreating a tab from that tree and declaring in its response that processes and scrollback are not reproduced.
+- **REQ:** REQ-WS-004, REQ-WS-005
+- **Files:** `internal/workspaces/domain/layout.go`, `internal/workspaces/adapters/treestore/apply.go`, `internal/api/layout.go`, `internal/sessions/{domain/session.go,lifecycle.go,service.go}`
+- **Depends on:** T-F0-14
+- **Done:** round-trip test `TestLayoutExportApplyRoundTrip_REQ_WS_004` plus `TestApplyWarnsNoProcesses_REQ_WS_005` green.
+
+- **Result:** `layout.export` returns a tab's tree with each pane's label, cwd and launch command; `layout.apply` builds a tab from such a tree in one transaction and says in its response what it did not reproduce. The portable tree already existed — T-F0-14 stores it in `tabs.layout_json`, which Data Model §2.4b defines as exactly this shape — so this task is mostly the two ends of it plus the one thing the tree described and the daemon could not do.
+- **Result (the promise T-F0-14 left).** `pane.split` took §5.6's `command`, stored it and started a plain shell; I refused it there with a `VALIDATION_ERROR` naming this task, because a client watching its command not run with no error to explain it is the worst of the options. REQ-WS-005 requires apply to reproduce commands, so the launch path had to exist here anyway: `sessdomain.CreateParams` gains a `Command`, `Service.launch` resolves argv[0] through PATH and runs it instead of the shell, and `pane.split` passes it through again. A pane with a command gets **no** shell integration and therefore no blocks — the bootstrap works by sourcing a file into bash, zsh or fish, and `go test` has nowhere to source it. That is a property of what was asked for, not a failure, and REQ-BLK-003's `integration: none` already describes the result.
+- **Result (where "the focused tab" lives).** API Spec §5.7 defaults `layout.export` to the focused tab, and no artifact says where focus is kept: `workspaces` and `tabs` have no column for it, and `tabs.layout_json` holds only the pane focused *within* a tab. It is kept in the service, in memory, which means it is lost across a restart. The cost is a client opening on the first workspace instead of the last one used, and T-F0-18 — which restores the structure — is where persisting it would belong. §5.3's `session.snapshot` reports the same pair, so T-F0-16 consumes this rather than inventing its own.
+- **Result (the identifiers in an applied tree are ignored, deliberately).** A layout outlives the daemon that made it — that is the point of REQ-WS-004 — so the pane identifiers it carries belong to whatever workspace exported it, possibly on another machine. Reusing them would either collide with a live pane or resurrect a name an alias still answers to (REQ-WS-002). Everything else the node carries is reproduced: label, cwd, env and command, which is REQ-WS-005's own list. The round-trip test compares the two trees node by node on exactly those, and on nothing else — and separately reads each applied pane back from the database, because the tree it compares is rebuilt from the nodes that went in and would look right even if nothing had been stored.
+- **Result (a layout is the one input that cannot be trusted).** Every other tree in this module was built by it. A layout arrives from outside — exported months ago, hand-edited, written by another tool — so `Node.Validate` runs before anything is created: a split missing a child, a direction that is not `right` or `down`, a node type nothing recognises, a command naming no program, a nesting deeper than 32. It is refused whole, because a tab half-built from a bad tree is worse than a refusal: the client believes it has what it drew. `TestApplyRefusesAMalformedTree` checks the workspace has the same number of tabs afterwards as before.
+- **Result (`layout.updated`).** §6 defines it and T-F0-14 did not emit it, which the review noted. It now fires wherever a tab's tree changes shape — split, close, move, apply — and a move emits two, because the pane left one tree and joined another and `pane.moved` carries only the destination's.
+- **Result (a hole no test could see).** A bus event reaches a client only if `toNotification` knows its wire form **and** `dispatchedKinds` lists it. Forgetting the second is silent: the translation is there, the event never arrives, and the symptom is a client whose tree drifts out of step over minutes. The subscription list is now a named variable and `TestEveryWorkspaceEventIsDispatched` checks the two against each other; removing `layout.updated` from either one turns it red.
+- **Result (verification):** `task ci` green. Twenty-three new tests — six in `internal/api` against the §5.7/§5.8 wire and the §6 payload, eight in `internal/workspaces/integration` against real SQLite, four in `internal/sessions/integration` against a real PTY and five unit tests of the launch decision — and fifteen deliberate mutations to confirm they bite. One of those found a test passing for the wrong reason: the round trip compared the *exported tree*, which `materialise` rebuilds from the nodes that went in, so an apply that never stored or ran the command still looked right. It now asserts the pane row and the launch parameters as well, and all three of those mutations turn it red. Then the whole surface was driven against a real `umbrald`: a split with `["sh","-c","sleep 30"]`, an export with no `tab_id` that resolved to the focused tab, an apply into a second workspace producing two panes with their own terminals and the warning verbatim, and a malformed tree refused with `VALIDATION_ERROR`.
+- **Not in this task:** restoring the structure after a restart is T-F0-18, and persisting which tab is focused belongs with it. `toWirePane` emitted `command` and `env`, which API §4's `Pane` schema did not list, and `.go-arch-lint.yml` granted `api` every `domain` package in the tree while §5.2 granted it none — both closed by delta `2026-09-pane-fields-and-api-imports`, raised from this task's review. `layout.apply` reproduces `env` as the pane's environment overrides; it does not reproduce a pane's scrollback or its running process, which is what its own warning says.
+### [x] 2026-09-20 T-F0-16 · Snapshot and event sequencing
+- **What:**
+  - monotonic `seq` per session on every notification;
+  - `session.snapshot` with focused ids, records, layouts and the `seq` it contains;
+  - documented bootstrap protocol (subscribe → snapshot → apply the buffer).
+- **REQ:** REQ-API-001, REQ-API-002
+- **Files:** `internal/api/{snapshot,jsonrpc,notify,fanout,conn,server}.go`, `internal/workspaces/{service.go,ports,domain}`, `internal/client/stream.go`, `cmd/umbrald/bootstrap_test.go`
+- **Depends on:** T-F0-14
+- **Done:** `TestSnapshotCarriesSeq_REQ_API_001` and `TestNoGapBetweenSnapshotAndStream_REQ_API_002` (concurrent client under load) green.
+
+- **Result:** every notification now carries a `seq` in its envelope, and `session.snapshot` returns the tree with the number it contains. `internal/bus` was not touched: the counter belongs to the wire, not to the event system, and the bus has subscribers that are not clients.
+- **Result (§6's sentence admitted two readings, and clients cannot differ).** "Every notification carries `seq`, a monotonic counter per session shared by all subscribers" left three things open, each of which silently loses events if two clients answer differently. **Where:** `seq` already means something else on this wire — `session.output` carries one in its parameters, per PTY session (§5.11) — so putting the new one there would collide, and putting it in the other payloads would rewrite every shape §6 documents. It goes in the envelope. **What scope:** "per session" has no referent, because a `session` here is a PTY and most notifications have none; the only scope every subscriber shares is the daemon run. **And a fourth the others hid:** if the discard rule covered *every* notification, a client bootstrapping with `session.snapshot` would throw away terminal output — §5.3 carries no screen to have contained it. Delta `2026-09-notification-sequencing` settles all four.
+- **Result (the ordering is the whole correctness argument).** The counter is read **before** the tree. The daemon persists before it notifies (DD-007), so an event that has been given a number is already stored, and reading the counter first guarantees everything at or below the reported number is in the result. Reading it afterwards admits the opposite: an event landing during the read carries a number below the reported one, the client discards it as already contained, and it is in neither — a lost update with nothing to notice. The snapshot may reflect a few events *above* its number, which makes a client re-apply a record it already has; that direction is safe because tree notifications carry whole records rather than deltas.
+- **Result (one number per event, not per connection).** The envelope counter is assigned once per bus event, before the fan-out, so the same event reaches every client as the same number — which is the only thing "shared by all subscribers" can mean. Batched output was the awkward case: a subscription coalesces chunks on its own goroutine, so the notification it emits carries the highest envelope number in the batch, alongside the session's own `seq` for the bytes. Gaps are expected and documented as such: a client sees only what it is eligible for, so a missing number means "an event that was not yours", never loss. Loss keeps its own signal, `session.unsubscribed`.
+- **Result (verification):** `task ci` green. Six tests, five against the wire in `internal/api` and one end to end in `cmd/umbrald` — the only place Art. 3 allows the daemon to be wired. `TestNoGapBetweenSnapshotAndStream_REQ_API_002` runs a real daemon with two clients: one bootstraps while the other creates tabs continuously, and the tree it rebuilds from the snapshot plus the events above its `seq` is compared against the daemon's. Under load it is not a formality — the run logged 29 tabs created during the snapshot. Reversing the read order makes it fail exactly as the argument predicts: *"tab w8:t35 exists in the daemon and the client never learned of it"*. One of my own tests failed first for the wrong reason: it broadcast to the connection it then called on, and `call` reads the next *message* rather than the next reply, so it consumed a notification as the response.
+- **Not in this task:** `thread.*` records are F1, so `session.snapshot` returns `threads: []` — present and empty rather than absent, so a client does not have to branch on which build it is talking to. The focused thread is `null` for the same reason. Persisting which tab is focused across a restart is T-F0-18's, as T-F0-15 recorded.
+### [x] 2026-09-20 T-F0-17 · Protocol schema and capability degradation
+- **What:**
+  - capability list in `system.hello`;
+  - unknown method → `METHOD_NOT_FOUND` without closing the connection;
+  - `umb api schema --json` generated from the Go types;
+  - CI check that compares the schema with `specs/api/umbral-daemon-api-v1.md` (methods and error codes).
+- **REQ:** REQ-API-003, REQ-API-004
+- **Files:** `internal/api/schema.go`, `cmd/umb/api.go`, `tools/api_schema_check.py`
+- **Depends on:** T-F0-03
+- **Done:** `TestUnknownMethodKeepsConnection_REQ_API_003` and `TestSchemaMatchesSpec_REQ_API_004` green; a method added to the code without the spec turns CI red.
+- **Result:** the schema is generated from the Go types by reflection and compared with the specification by `tools/api_schema_check.py`, which `task schema` runs and `task ci` gates on. The Done line's own check was verified by doing it: registering `session.hibernate` turned the comparison red with *"method `session.hibernate` is served by the daemon and is in no §5 section of the specification"*.
+- **Result (the half the task did not name).** REQ-API-003's second sentence was unimplemented: a method whose module was absent answered `METHOD_NOT_FOUND`, which tells a client the daemon is too old when the truth is that this build lacks the module. The name now stays in the method table and the dispatcher answers `NOT_IMPLEMENTED`. That made §2's capability clause — "SHALL NOT advertise a namespace whose methods are not registered" — measure the wrong thing, since every method is now registered in every build; delta `2026-09-capability-degradation` moves the derivation onto what a build *serves*. The old behaviour was the drift it was written to prevent: a daemon with no sessions module advertised `sessions`, and two tests asserted that it should.
+- **Result (found by generating the schema).** Reflecting the wire types found three things no test had. **One:** seven methods shared a params struct with their namespace, so `workspace.close` accepted a `label` it ignored and `tab.create` a `tab_id` — decoding tolerated it, but a published schema would have told clients about members the method does not read. One struct per method now. **Two:** `blockPayload` and `toWireBlock` were two renderings of the same §4 object, agreeing only by inspection; the first is gone. **Three:** the daemon's own idea of which parameters are required disagreed with §5 in eighteen places, each now reconciled — that is the comparison doing exactly what REQ-API-004 asks of it.
+- **Result (results are now typed).** Every handler returned `map[string]any`, which marshals but cannot be read: reflection has nothing to ask it. They are named structs now, so the schema covers responses and not only requests, and the `keyWorkspace`-style constants that existed to make typos less likely are gone — a field name does that for free.
+- **Five teeth checks, all biting**, including the two that guard the generator itself: a method registered without its shapes, and a notification the daemon emits that the shape table omits. Both would otherwise publish a schema that is quietly wrong rather than failing the build.
+- **Result (a `spec-guardian` round, FIX FIRST).** It returned one CRITICAL and five HIGH, and four of them were real. **The sentence I had ratified that morning was not met by any build:** §9 said the daemon keeps "every method of the protocol" in its table, and the table holds 33 of §5's 52 — so `thread.send` answers `METHOD_NOT_FOUND`, the confusion the delta argues `NOT_IMPLEMENTED` exists to prevent. The rule was too wide rather than wrong: a daemon built before a phase landed genuinely does not know the name, which is REQ-API-003's first sentence, and claiming `NOT_IMPLEMENTED` would send a client looking for a differently-configured daemon of the same version that cannot exist. The codes divide by version and by build. **The published schema described a response the daemon never sends:** `block.search` declared `blockPage` and returns `searchPage`, and nothing bound a declared shape to the type its handler returns — the wire tests assert on JSON, the schema tests assert the declaration is not nil, and the comparison does not read results. **Three parameters were published required that the daemon defaults** — `limit`, `cursor`, `include` — and `umbral-tui` sends one of exactly those calls; the check passed because §5's shorthand omitted the `?` in the same three places, which is the one failure a two-sided comparison cannot find by itself. **And the document was not a JSON Schema:** no `$schema`, OpenAPI's `nullable` keyword, which a validator ignores, so `focused.workspace_id` would be rejected on every fresh daemon, and `{"type": ""}`, which no validator accepts. I had reworded §5.37 from "JSON Schema document" to "protocol document" instead of declaring the gap. Delta `2026-09-schema-and-degradation-corrections`.
+- **Result (my own worst defect was in a test helper).** `collectNotifications` treated a read timeout as "nothing yet, try again" — but a read deadline poisons a `json.Decoder` permanently, so every later `Decode` returns the same error in about a microsecond. The helper did not wait; it burned a core and reported an empty stream, which reads as "the daemon sent nothing". The shape was pre-existing and I had made it far worse by raising the budget from 2 s to 15 s. It now stops on a timeout, waits the whole budget for the *first* notification and a short gap after that, and takes a predicate so a test that sent a known quantity waits for all of it instead of for quiet. Proven by a standalone probe and by a teeth check: the old shape spins the full 10 s and collects nothing.
+- **Result (the gate compared half of what it claimed).** Seventeen of thirty-three methods reported "§5 documents no parameters; not compared", because §5.1, §5.2, §5.4-§5.6, §5.10, §5.12 and §5.15 never wrote their request shapes down, and my parser read only the first `params:` on a line. Both fixed: **33 of 33 are compared**, and an uncompared served method is now a blocking failure rather than an info line.
+- **Not done here:** `umb api schema --json` prints the compiled-in document and never opens the socket, because the schema describes the build; the daemon answers `api.schema` for the case where the question really is what *that* daemon speaks. Results are reflected structurally, without the value constraints §5 states in prose (`ratio?: 0.1-0.9`, `limit` 1-200): the comparison is on names and requiredness, which is what REQ-API-004 makes blocking.
+
+### [x] 2026-09-20 T-F0-18 · Structure restore after restart
+- **What:**
+  - persist the structure and give every restored pane a **fresh shell** on start; a stored
+    `command_json` comes back pending, typed at that shell's prompt and never run
+    (REQ-TERM-011, delta `2026-09-restore-semantics`);
+  - mark previous sessions `exited`;
+  - `pane_history` table and its opt-in replay, disabled by default.
+- **REQ:** REQ-TERM-009, REQ-TERM-010, REQ-TERM-011
+- **Files:** `internal/workspaces/restore*.go`, `internal/store/**`, `internal/config/**`
+- **Depends on:** T-F0-14
+- **Done:** `TestRestoreRebuildsStructure_REQ_TERM_009`, `TestPaneHistoryDisabledByDefault_REQ_TERM_010` and `TestRestoreNeverRunsStoredCommand_REQ_TERM_011` green.
+- **Result (two MUSTs said opposite things, and one was a safety rule).** Data Model §6 step 5 said a restored pane "launches a fresh shell, **or its `command_json` when it has one**"; REQ-TERM-011 says "leave it visible in the pane **without running it** … so that a restart never re-executes commands on its own". They cannot both hold, and the implementation followed §6 — `layout.apply` launched stored commands from T-F0-15. The danger is concrete: a pane whose command was `terraform apply` or `make deploy` re-runs unattended on every start, possibly after a crash that command caused. REQ-TERM-009 itself says "launch a fresh shell", so §6's clause was the outlier. Delta `2026-09-restore-semantics`.
+- **Result (what "visible in the pane" turned out to mean).** The command is typed at the new shell's prompt **without a newline**, so it sits on the command line as if the user had typed it; the confirmation REQ-TERM-011 asks for is pressing Enter. That needs no method, no dialog and no client change, and a user who does not want it presses Ctrl-C or edits it first — the gesture they already know. It lives in `sessions`, not `workspaces`, because writing before the prompt loses the bytes to the terminal discipline and only the module that owns the PTY sees the OSC 133 marker; `ports.Terminals` says in as many words that a pane never writes input. A shell with no integration never sends the marker, so the wait has a two-second end and the text goes in anyway: a command that appears early is a better failure than one that never appears.
+- **Result (`command_pending` is not cleared when the user runs it), deliberately.** The flag records that *Umbral* did not run the command. The daemon does not read the user's keystrokes to find out whether they did: a client showing "pending" after the fact is cosmetic staleness, a daemon watching input to guess is a surveillance feature nobody asked for.
+- **Result (focus finally has a column).** T-F0-15 and T-F0-16 both recorded that focus lived in memory and was lost on restart, with no column to put it in. `workspaces.focused_tab_id` and `focused_at`, in migration 0004: the focused workspace is the one focused most recently, so there is no singleton row and no second table.
+- **Result (the settings file was named in two requirements and specified nowhere).** `[experimental] pane_history = true` is TOML section notation and no artifact said where the file was, what happened when it was absent, or what happened when it was malformed. It is `$XDG_CONFIG_HOME/umbral/config.toml`; absent is the default configuration and not an error, an unknown key warns, and **malformed refuses to start** — falling back to defaults after a user has asked for something is how `pane_history = true` silently becomes false and someone believes their screens are being captured when they are not. A ~60-line strict reader rather than a dependency for one boolean, and it errors on anything outside its subset, because a parser that skips what it cannot read *is* the silent fallback.
+- **Result (migration renumbering).** `pane_history` sat in migration `0004`, the agent subdomain, which F1 writes — an F0 requirement cannot wait for it. It takes `0004_restore` and the agent subdomain becomes `0005`, the same move `2026-09-structure-migration` made for the structure tables, and free because neither file was written.
+- **Six teeth checks, five of which bit.** The sixth did not and said something: "replay respects the setting" cannot fail while capture already respects it, since there is nothing stored to replay. The real property is the privacy promise of §2.4d — turning the setting off deletes what was captured — and that one has a test of its own that bites.
+- **Found by a test, not by me:** the `PaneHistory` and `Screens` wiring never reached the constructor, because a formatter had rewritten the line my edit was matching on. Capture silently did nothing and the test caught it.
+- **Outside this task's scope, done anyway:** two test deadlines in `sessions` — a shell's exit budget and the block-lifecycle probe — fired under `go test -race ./...` on a loaded machine and turned the gate red three times with nothing wrong. Both are bounds against a wedged shell rather than measurements, and a timeout that fires on load is read as a finding.
+- **Result (a `spec-guardian` round after the commit, and what it cost).** Every gate was green and the requirement had no teeth. Two mutations survived the whole suite: appending `"\n"` in `shellLine`, which makes a restart and every `layout.apply` **run** the stored command, and an early `return` in `deliverPendingInput`, which means the command is never shown at all. The first passed because the test asserted `bytes.Contains(TypeAtPrompt, "echo it ran")`, which a trailing newline satisfies; the second because `internal/sessions/pending.go` had no test referencing it anywhere in the repo. Both now redden: the assertions compare the whole line, `TestShellLineNeverEndsALine_REQ_TERM_011` owns the one-character property against the function that decides it, and three tests in `internal/sessions/integration` drive a real PTY and a real shell — the command appears on screen, the sentinel file never does, pressing Enter creates it, the grace path delivers without shell integration, and neither route delivers twice.
+- **Result (a privacy promise nothing was keeping).** Data Model §4 retains `pane_history` "until the pane closes", and no code did: a pane is closed with `UPDATE panes SET closed_at = ?` and never deleted, so the table's `ON DELETE CASCADE` never fired and there was no sweeper. With the setting on, the captured screen of every pane the user had ever closed stayed in the database for the life of the installation — the data REQ-TERM-010 is disabled by default to be careful with. All three closing paths now delete in their own transaction, and `tools/sdd_check.py` asserts the cascade *cannot* be what enforces it, so the explicit delete cannot quietly become dead code.
+- **Result (the restore focus had two defects, one of them latent).** `focused_tab_id` is `ON DELETE SET NULL`, which reads like it covers a closed tab and does not, for the same reason as above — so a restart adopted focus on a tab that was gone and `layout.export` with no `tab_id` answered that it does not exist. Fixing it exposed the second: `focused_at` is epoch milliseconds (Art. 6), two workspaces focused inside the same millisecond tied, and SQLite returned whichever the plan preferred. `TestRestoreKeepsFocus_REQ_TERM_009` had been passing on that coin flip. The order is now fully determined and the closed tab falls back to the workspace's first open one.
+- **Also closed in the same round:** `TestApplyReturnsCommandsAsPending_REQ_TERM_011`, which the delta's Verification section names and which had never been written, so `-run REQ_TERM_011` never reached the `layout.apply` path at all; `command_pending`'s wire contract, present and omitted, which `task schema` cannot see because it compares §5's methods and not §4's members; the conditionality of `PendingCommandWarning`; the four specs that changed with no version bump or changelog row (PRD 1.9, API v1.12, Tech 1.9, Data Model 1.7); `ClearCommandPending`, declared on the port and called by nothing, now removed with the reason written down; and migration 0004, which no gate had been exercising.
+
+### [x] 2026-09-21 T-F0-19 · Bootstrap files in the runtime directory, and a sweep at start
+- **What:**
+  - `shellinteg.Prepare` creates its directory under the daemon's runtime directory instead
+    of `os.TempDir()`;
+  - `cmd/umbrald` deletes every `shellinteg-*` it finds there after `AcquireInstanceLock` and
+    before `Restore`;
+  - a removal that fails is logged and startup continues.
+- **REQ:** REQ-TERM-012
+- **Files:** `internal/sessions/adapters/shellinteg/bootstrap.go`,
+  `internal/sessions/adapters/shellinteg/sweep.go`,
+  `internal/sessions/adapters/shellinteg/{sweep,bootstrap}_test.go`, `cmd/umbrald/main.go`,
+  `cmd/umbrald/{sweep,bootstrap}_test.go`, `internal/sessions/integration/{service,bench}_test.go`,
+  `scripts/test_hygiene.sh`
+  > `internal/config/paths.go` was named here when the task was written and needed no change:
+  > `filepath.Dir(socket)` already resolves the directory `AcquireInstanceLock` is taken on, so
+  > the sweeper and the lock cannot point at different places without the socket moving too.
+- **Depends on:** T-F0-08, T-F0-18
+- **Done:** `TestBootstrapDirectoriesLiveInTheRuntimeDirectory_REQ_TERM_012`,
+  `TestStartSweepsOrphanedBootstrapDirectories_REQ_TERM_012`,
+  `TestSweepLeavesTheRunningSessionsAlone_REQ_TERM_012` and
+  `TestSweepFailureDoesNotStopTheDaemon_REQ_TERM_012` green (and, since the review,
+  `TestBootstrapSurvivesASpaceInTheRuntimeDirectory_REQ_TERM_012`), plus the measured teeth check:
+  `kill -9` a daemon with live sessions, confirm the directories are there, restart, confirm
+  they are gone.
+- **Why it exists:** the F0 verification of 2026-09-20 found 2515 orphaned bootstrap
+  directories, 168 MB, on one development machine. The normal path already cleans up — a clean
+  `SIGTERM` with two live sessions leaks nothing, measured — but `kill -9` leaks one per live
+  session and nothing recorded the name, so the residue was permanent. Delta
+  `2026-09-bootstrap-sweeper`.
+- **Result.** `shellinteg` no longer chooses where its files go: `Prepare` takes the parent
+  directory and **refuses an empty one** rather than letting `os.MkdirTemp("")` put them back
+  in `/tmp`, and `cmd/umbrald` — the only place allowed to resolve paths — passes
+  `filepath.Dir(socket)` through `shellinteg.Adapter{Dir: …}`. A mis-wired adapter now fails
+  at the first session instead of quietly littering the shared temporary directory again,
+  which matters because `Service.bootstrap` degrades a `Prepare` error into "start without
+  shell integration" (DD-002): without that refusal, the wiring mistake would have been
+  invisible except as blocks that stopped working.
+- **Result (one constant, two readers).** `dirPrefix = "shellinteg-"` is written by `Prepare`
+  and matched by `Sweep`. A sweeper that agrees with the writer only by inspection is a
+  sweeper that will one day delete nothing, or everything.
+- **Result (what the sweep must not take).** The socket, the token, `umbrald.lock` and
+  `umbrald.log` live in the same directory. `TestSweepRemovesOrphansAndNothingElse_REQ_TERM_012`
+  asserts they survive, because `os.RemoveAll(runtimeDir)` passes every test that only checks
+  the orphan is gone — and destroys the installation it was tidying. One failed removal does
+  not stop the others either: the errors are joined and returned, and the daemon logs them.
+- **Teeth, all four mutations measured rather than assumed.** Moving the `Sweep` call below
+  `workspaceService.Restore` → `TestSweepLeavesTheRunningSessionsAlone_REQ_TERM_012` fails
+  ("no bootstrap directory belongs to the restored pane"); sweeping the whole directory →
+  `TestSweepRemovesOrphansAndNothingElse_REQ_TERM_012` fails on the socket, the token and the
+  lock; turning the sweep's error into a `return exitCantCreate` →
+  `TestSweepFailureDoesNotStopTheDaemon_REQ_TERM_012` fails because the socket never appears;
+  restoring `os.MkdirTemp("")` →
+  `TestBootstrapDirectoriesLiveInTheRuntimeDirectory_REQ_TERM_012` fails with the `/tmp` path
+  it produced.
+- **Teeth, against a real daemon (the check the Done line asks for).** Isolated `XDG_*`, a
+  workspace created over the socket so a `bash` session is live: one `shellinteg-3064631233`
+  in the runtime directory. `kill -9` — it survives, which is the permanent residue. Restart:
+  the daemon logs `removed the bootstrap directories left by a previous run removed=1`, then
+  `structure restored panes=1`, and that directory is **gone** while the restored pane's fresh
+  shell has one of its own. A clean stop afterwards removes that one too, leaving only the
+  token behind. Before this task the same sequence left the directory forever.
+- **Result (review, 2026-09-26).** `spec-guardian` found the move had a cost the old
+  location hid: on macOS the runtime directory is `~/Library/Application Support/Umbral`, and
+  fish's `--init-command` is a line of fish, so the unquoted `source` split at the space and
+  every fish session there would have started without integration, silently. `Prepare` now
+  quotes the path for fish; `TestBootstrapSurvivesASpaceInTheRuntimeDirectory_REQ_TERM_012`
+  runs all three shells from a directory with a space and a quote, and failed on fish before
+  the fix. The same review showed `TestSweepLeavesTheRunningSessionsAlone_REQ_TERM_012` ended
+  its first run cleanly, which leaves no orphan to sweep: it now kills that daemon, asserts
+  the kill left a directory behind — reverting to a clean stop fails on exactly that — and its
+  panes get their own `HOME`. That exposed a race in the helper: a killed daemon's socket made
+  the next start look ready before it had swept, so `startStoppableDaemon` removes a stale
+  socket before it waits for one, and its stop is bounded instead of waiting forever.
+- **Not changed:** `Service.Shutdown` still does not run the bootstrap cleanup, and still does
+  not need to — the clean path already leaks nothing, measured on 2026-09-20. The reasoning is
+  in the delta under "Not modified"; it is repeated here because the code looks like it has a
+  bug and does not.
+
+### [x] 2026-09-26 T-F0-20 · `umb workspace`, `tab`, `pane` and `layout`
+- **What:**
+  - `umb workspace create|list|focus|rename|close`, `umb tab create|list|focus|rename|close`,
+    `umb pane split|list|get|focus|rename|close`, `umb layout export|apply`, each one call to
+    the JSON-RPC method of the same name and no client-side model (DD-001);
+  - objects addressed positionally by `w<n>`, `w<n>:t<m>` and `w<n>:p<m>`, which is the
+    grammar Art. 6's exception is written for;
+  - `--json` and the REQ-CLI-004 exit codes, as every other `umb` command;
+  - `umb layout apply --from <file|->`, so the round trip is a pipe.
+- **REQ:** REQ-CLI-005, REQ-CLI-006
+- **Files:** `cmd/umb/workspace.go`, `cmd/umb/layout.go`, `cmd/umb/main.go`,
+  `cmd/umb/*_test.go`, `scripts/cli_roundtrip.sh`, `internal/api/system.go`,
+  `internal/api/{workspaces,layout}_wire_test.go` (delta `2026-09-cli-allowlist`)
+- **Depends on:** T-F0-11, T-F0-14, T-F0-15
+- **Done:** `TestWorkspaceCreatePrintsTheTree_REQ_CLI_005`,
+  `TestPaneSplitAddressesByPublicId_REQ_CLI_005`, `TestUnknownSubcommandExitsOne_REQ_CLI_005`,
+  `TestLayoutExportApplyThroughAPipe_REQ_CLI_006` and
+  `TestLayoutApplyReportsWarnings_REQ_CLI_006` green, and `scripts/cli_roundtrip.sh` passing
+  against a real daemon — which *is* F0 exit criterion 4, performed rather than argued.
+- **Out of scope, deliberately:** `pane.move`, whose `destination` is a tagged union that has
+  more than one defensible flag syntax; it is not needed by the criterion and a CLI verb is
+  kept forever.
+- **Unblocked by delta `2026-09-cli-allowlist`** (2026-09-26). The CLI delta said the API
+  Specification was not touched, but API §2's allowlist did not let the `cli` client kind call
+  `workspace.*`, `tab.*`, `pane.*` or `layout.*` — `umb` got `METHOD_NOT_FOUND` for every one
+  of them, measured against a real daemon. That delta widens the row to exactly this surface
+  (bar `pane.move`), so this task also touches `internal/api/system.go` and its two tests.
+- **Result.** The five tests were written first, by the `test-author` agent against a fake
+  daemon, and red with `unknown command "workspace"`; the agent checked each against a
+  throwaway implementation broken six ways. The two allowlist tests replace the two that
+  pinned the refusal, and were red on all eighteen methods before `treeClients` existed.
+  `cmd/umb` holds one table of families and subcommands — method, positionals, flags,
+  parameters, human printer — from which dispatch and usage are both generated, so a command
+  cannot exist unlisted. `--json` prints the daemon's answer verbatim rather than through a
+  struct, because a CLI that re-encodes drops whatever field it does not know yet. Positionals
+  may sit before or after flags, which the standard parser does not allow, and a command for
+  `pane split` follows `--`. `layout apply` accepts what `layout export --json` writes — a
+  whole Layout, of which it sends only `root` — or a bare node. The warnings go to stderr, so
+  a human sees them and a pipe does not carry them.
+- **Result (the criterion, performed).** `scripts/cli_roundtrip.sh` against a real `umbrald`,
+  every `XDG_*` and `HOME` redirected: a workspace, a split at 0.6, a second split carrying
+  `sh -c 'sleep 600'`, two labels, `layout export` to a file, a second workspace, and
+  `layout export | layout apply --from -` into it. The applied tab's tree matches the exported
+  one in shape, direction, ratio, label, cwd and command; the command came back
+  `command_pending` and the warning said so (REQ-TERM-011). **Teeth:** putting
+  `workspace.create` back to interactive-only fails the script on its first command with
+  `METHOD_NOT_FOUND` — the exact gap every fake-daemon test passed through. It runs as
+  `task roundtrip`, last in `task ci`, and in the GitHub test job on Linux and macOS — the
+  macOS run has not been observed yet; the script sets `XDG_RUNTIME_DIR` and passes `--socket`
+  to both binaries so the socket is in the same place on either.
+- **Result (review).** `spec-guardian` returned FIX FIRST: the script waited for the macOS
+  default socket although `XDG_RUNTIME_DIR` wins on every OS; its `umb` wrapper appended
+  `--no-autostart` after a `--`, so one call stored it as part of the pane's command and was
+  free to autostart; and the CLI's grammar was written nowhere, so delta
+  `2026-09-cli-allowlist` now puts it in Tech §9.4 (1.11). All fixed. Three tests pin the
+  grammar — `TestTreeFlagsBecomeTheMethodsParameters_REQ_CLI_005`,
+  `TestTreeCommandsRejectWhatTheyCannotSend_REQ_CLI_005`,
+  `TestLayoutApplyReadsEitherFormOfTheTree_REQ_CLI_006` — and the first caught a real bug:
+  `--ratio 0` was swallowed instead of sent for the daemon to reject; a `--cwd` that cannot be
+  resolved is now an error rather than silently dropped. **Not changed:** a label beginning
+  with `-` cannot be given (it parses as a flag), and `umb` does not catch `SIGPIPE`, so Go ends
+  it with that signal on a closed stdout — which predates this task and makes Tech §9.4's
+  `EPIPE` rule reachable only through a writer, not a real pipe.
+
+### [x] 2026-09-26 T-F0-21 · A shell that exits inside the integration window still gets a verdict
+- **What:** `Service.finish` calls `live.integrationTimer.Stop()`, and the timer is the only
+  thing that ever writes `integration: none`. A session whose process exits before the five
+  second window closes therefore stays `pending` for the rest of the daemon's life, and the
+  session stays in the live map by design, so `session.list` and the `sessions` row both go on
+  saying `pending` about a process that is gone. REQ-BLK-003 says such a session SHALL be
+  marked `integration: none`. Settle the verdict at exit instead of cancelling it: `pending`
+  becomes `none`, and a session that already reached `osc133` is untouched, which
+  `setIntegration`'s existing transition rule already guarantees.
+- **REQ:** REQ-BLK-003
+- **Files:** `internal/sessions/lifecycle.go`, `internal/sessions/blocks.go`,
+  `internal/sessions/integration/command_test.go`
+- **Depends on:** T-F0-09
+- **Done:** `TestAnExitInsideTheWindowStillSettlesIntegration_REQ_BLK_003` green — a session
+  whose command exits in about a second reaches `integration: none` and never sits on
+  `pending` — and `TestACommandPaneGetsNoShellIntegration_REQ_BLK_003` passing without its
+  sixty-second wait, because once the verdict is settled at exit there is nothing left to wait
+  for. The teeth check is the deletion itself: put `integrationTimer.Stop()` back and the
+  first test reddens.
+- **Why it is a task and not a delta:** REQ-BLK-003 is in the PRD and says what should
+  happen; the code does not do it. Nothing about the requirement needs to change.
+- **Evidence (2026-09-21, against a real daemon, not a fake):** an isolated `umbrald` was
+  given two panes launched with `sh -c "sleep 1"`. Twenty-five seconds later, five times the
+  window, its own database answered:
+  ```
+  ses_01M33B3GKWBH5MFVDTWT6A0SEW|exited|pending|0
+  ses_01M33B1WQ29Q82PV3BP3XCEBNF|exited|pending|0
+  ```
+  The same defect was reproduced at `c7d7e18` in a detached worktree, so it predates
+  `T-F0-19` and no change on this branch caused it.
+- **It is also why the gate is unreliable.**
+  `TestACommandPaneGetsNoShellIntegration_REQ_BLK_003` launches `sh -c "sleep 5"` against a
+  five-second window, so whether the verdict lands before the process exits is a race that
+  machine load decides. It passes in isolation and under its own package, and it failed after
+  60.52 s inside a full `task ci` on 2026-09-21. The test is not flaky about nothing: it is a
+  coin flip over a real defect, and it can only be made deterministic by fixing the defect.
+- **Result.** `finish` stops the timer and then settles the verdict with
+  `setIntegration(live, none)`, before the session's state flips to `exited`, so a client that
+  sees a live session exit never sees it undecided. A session that already reached `osc133`
+  keeps it through `setIntegration`'s existing rule, and the one wrinkle — a session built
+  without a block recorder has no timer and so no verdict — is the same configuration in which
+  nothing judges integration at all; `umbrald` always wires the recorder. The test was written
+  first and failed on both of its assertions, the live session and the row (`"pending", want
+  "none"`); that failing state *is* the teeth check the Done line asks for, since it is the
+  code with `integrationTimer.Stop()` and nothing else.
+- **Measured against a real daemon (2026-09-26).** An isolated `umbrald`, two panes split
+  with `sh -c "sleep 1"`, the database read three seconds later — inside the five-second
+  window, so the timer cannot be what decided:
+  ```
+  ses_01M3FX2PAP6NK0HE7CYG7B95A3|alive|osc133|
+  ses_01M3FX2PAQ3Z89EEAHE51AZ8W8|exited|none|0
+  ses_01M3FX2PASAHB69P74YQE7FGQA|exited|none|0
+  ```
+  The same sequence left both on `exited|pending` twenty-five seconds later before the fix.
+  `TestACommandPaneGetsNoShellIntegration_REQ_BLK_003` now settles at the process's exit or
+  the window, whichever comes first, instead of racing them.
+- **Not covered, found by the review:** crash recovery. `store.Recover` turns `alive` into
+  `exited` and leaves `integration` alone, so a session still `pending` at a `kill -9` stays
+  `exited|pending` in its row, as do rows written before this fix. Data Model §6 step 1 does
+  not mention `integration`, so settling it there is a spec decision, not part of this task's
+  What; left for a delta. **Closed by `T-F0-22`** (delta `2026-09-recovery-integration`).
+
+### [x] 2026-09-26 T-F0-22 · A restart settles the integration verdict a crash interrupted
+- **What:** `store.Recover` settles every `pending` session row once step 1 has marked the
+  alive ones exited — `osc133` when the session has blocks, `none` otherwise — in the same
+  transaction, and `RecoveryReport` counts
+  them as `IntegrationSettled`; `umbrald` logs it beside the other recovery counts.
+- **REQ:** REQ-BLK-003
+- **Files:** `internal/store/recovery.go`, `internal/store/recovery_test.go`,
+  `cmd/umbrald/main.go`
+- **Depends on:** T-F0-02, T-F0-21
+- **Done:** `TestRecoverySettlesAPendingIntegration_REQ_BLK_003` green — an `alive|pending` and
+  an `exited|pending` row come back `none`, a `pending` row with a block comes back `osc133`,
+  `osc133` and `none` rows are untouched, the report counts three, and a second recovery
+  settles nothing — plus the measured check: a `kill -9`
+  inside a session's window, a restart, and the old row read back as `exited|none`.
+- **Why it exists:** T-F0-21 settles the verdict when a session exits; a daemon that dies runs
+  no `finish`, and Data Model §6 step 1 did not mention `integration`, so a crash inside the
+  window left the row `exited|pending` forever, as did every row an older daemon wrote. Delta
+  `2026-09-recovery-integration`, raised by the T-F0-21 review.
+- **Result.** Two updates inside the recovery transaction, after step 1: `pending` with blocks
+  → `osc133`, then the remaining `pending` → `none`. The first was added after the
+  `spec-guardian` review: a block row is written before the `osc133` verdict that follows it,
+  so a crash between the two, or a failed verdict write, leaves blocks under a `pending` row,
+  and settling that as `none` would write the very disagreement REQ-BLK-003 forbids. The new
+  test row was red (`"none", want "osc133"`) before the fix. The test was red on its assertions first
+  (`IntegrationSettled = 0, want 2`, both rows still `pending`) once the report field existed
+  to compile against, then green; an `osc133` row is untouched and a second recovery settles
+  nothing. **Measured against a real daemon:** a workspace and a pane running
+  `sh -c 'sleep 600'`, `kill -9` before either left its window — both rows `alive|pending` —
+  then a restart, which logged `sessions_recovered=2 integration_settled=2` and left both
+  `exited|none`. The two sessions the restore then opened start `alive|pending` in their own
+  window, as they should. **No data migration:** the rule runs on every start, so the first
+  start of a daemon carrying it repairs the rows older daemons left behind.
+
+### [x] 2026-09-26 T-F0-23 · A closed pipe ends `umb` with 0, not with SIGPIPE
+- **What:** `umb` asks for `SIGPIPE`, so Go's runtime returns `EPIPE` to the write instead of
+  killing the process, and the printer's existing rule — a closed pipe is not a failure —
+  finally runs in the binary and not only in the test.
+- **REQ:** REQ-CLI-004
+- **Files:** `cmd/umb/main.go`, `cmd/umb/main_test.go`
+- **Depends on:** T-F0-11
+- **Done:** `TestAClosedPipeEndsTheRealBinaryWithZero_REQ_CLI_004` green, and
+  `umb api schema --json | head -c1` exits 0 from a real shell.
+- **Why it exists:** found by the `spec-guardian` review of T-F0-20. REQ-CLI-004 says a closed
+  pipe is "what `| head` does deliberately" and must not fail the command, and Tech §9.4
+  repeats it; `TestBrokenPipeIsNotAFailure_REQ_CLI_004` passed because it hands `run` a writer
+  that returns `EPIPE`. A real stdout never did: Go ends a program that writes to a closed
+  pipe on fd 1 with `SIGPIPE` unless it has asked for that signal, so the shell saw 141.
+  No delta: the requirement was right, the binary did not keep it.
+- **Result.** The test builds the binary, closes the pipe's reader before the first byte and
+  runs `umb api schema --json` into it; it was red with `signal: broken pipe`, then green once
+  `main` called `signal.Notify` for `SIGPIPE`. Checked from a real shell as well:
+  `bin/umb api schema --json | head -c1` → `pipestatus` 0.
+
+### [x] 2026-09-26 T-F0-24 · A daemon locks the database it recovers
+- **What:** `config.AcquireDatabaseLock` takes `<database>.lock` beside the database after the
+  instance lock and before `store.Open`; held elsewhere, `umbrald` logs it and exits 75
+  (`EX_TEMPFAIL`) without opening the database. The two locks share one implementation.
+- **REQ:** Art. 6 — Data Model §6's recovery premise, which the instance lock already
+  protected (infrastructure, like the instance lock's own tests).
+- **Files:** `internal/config/instancelock.go`, `internal/config/instancelock_test.go`,
+  `cmd/umbrald/main.go`, `cmd/umbrald/dblock_test.go`,
+  `specs/technical/umbral-architecture.md`
+- **Depends on:** T-F0-02, T-F0-22
+- **Done:** `TestOnlyOneDatabaseLockIsGranted`, `TestDatabaseLockIsReleasedForTheNextDaemon`
+  and `TestASecondRuntimeCannotRecoverALiveDatabase` green, plus `TestAReleasedLockKeepsItsFile` and `TestASymlinkedDataDirectorySharesTheLock` from the review.
+- **Why it exists:** the `spec-guardian` review of T-F0-22 found the instance lock guards the
+  runtime directory while recovery's premise is about the database. Delta
+  `2026-09-database-lock`.
+- **Result.** The daemon-level test reproduced the hazard before the fix, against real
+  daemons: a first daemon serving a live bash session, a second with another `--socket`, the
+  same `--db` and `--check`, which exited 0 after logging `sessions_recovered: 1` — the first
+  daemon's live session marked exited under it. After: exit 75 and the session still `alive`.
+  The config tests were red on a stub that granted every lock. Writing them caught a defect in
+  the test itself first: a probe that *held* a wrongly granted lock parked the subprocess until
+  the test timed out, instead of failing it; the database probe now tries, reports and exits.
+- **Result (review).** `spec-guardian` found `Release` closed the lock and then unlinked it,
+  which lets two daemons each hold "the" lock (see the delta's decision 4); the refactor had
+  carried that race from the instance lock onto the database's. Neither lock file is removed
+  any more. `TestAReleasedLockKeepsItsFile` reproduces the three-daemon sequence in one process
+  and was red on the old `Release`. `TestASymlinkedDataDirectorySharesTheLock` was written to
+  add path resolution, and passed on the old code: the lock lives in the database's directory,
+  so a symlinked directory already shares it. The resolution was dropped as unneeded and the
+  test kept as a pin.
+
+### [x] 2026-09-26 T-F0-25 · A pane says which terminal it is
+- **What:** every pane's environment gets `TERM=xterm-256color` and `COLORTERM=truecolor` after
+  the daemon's own and before the pane's declared `env`.
+- **REQ:** REQ-TERM-013
+- **Files:** `internal/sessions/lifecycle.go`, `internal/sessions/integration/term_test.go`
+- **Depends on:** T-F0-05
+- **Done:** `TestAPaneAdvertisesTheTerminalThatRendersIt_REQ_TERM_013` green, and
+  `internal/sessions/integration` green with `TERM` unset.
+- **Why it exists:** the GitHub CI of `develop` had been red on both OSes since `eeab3fb`, and
+  four of its failures were this: the runner has no `TERM`, the daemon passed that on, and bash
+  ran readline as a dumb terminal that lost the first byte typed at a fresh prompt. Delta
+  `2026-09-pane-term`, which also adds the requirement nobody had written.
+- **Result.** Reproduced locally with `env -u TERM go test`: the same four tests, the same
+  screens (`<cho umbral-once-2d54`). The new test sets the daemon's own `TERM=screen` and no
+  `COLORTERM`; it was red on both of its cases, then green once `environ` appended the pane's
+  terminal. The whole integration package passes with `TERM` unset.
+
+### [x] 2026-09-26 T-F0-26 · The CI gate runs green on the runners, not only on this machine
+- **What:** tests put their sockets in short directories (`socketDir`, under `/tmp`) instead of
+  `t.TempDir()`; `task test:portability` runs the four socket packages under a macOS-length
+  `TMPDIR` inside `task ci`; the GitHub Linux job closes zsh's insecure completion directories
+  with `compaudit` before the tests.
+- **REQ:** Art. 1 — the CI gate (infrastructure).
+- **Files:** `{internal/api,internal/client,cmd/umb,cmd/umbrald}/sockdir_test.go` and the tests
+  that now use it, `Taskfile.yml`, `.github/workflows/ci.yml`; and what the runners found:
+  `internal/api/{conn,fanout,sessions,server,notify}.go` and their tests
+- **Depends on:** T-F0-25
+- **Done:** `task test:portability` green, and the GitHub `CI` workflow green on
+  `ubuntu-latest` and `macos-latest`.
+- **Why it exists:** the GitHub CI of `develop` had been red on both OSes for at least eight
+  runs (since `eeab3fb`) while `task ci` was green locally, and nothing recorded it; the
+  T-F0-20 round trip had never run there, because `go test` failed first. Three causes. Four
+  failures were `TERM` (T-F0-25). On macOS every listener failed with `bind: invalid argument`:
+  `t.TempDir()` under `/var/folders/…/T/` plus a test's name passes the 104-byte socket cap.
+  On Linux the runner's zsh stopped at compinit's "insecure directories" question and took the
+  first byte a test typed as its answer — `printf` arrived as `rintf`.
+- **Result.** The macOS failure reproduces on any machine with a 100-byte `TMPDIR`, which is
+  what `test:portability` uses; it was red on `internal/client`, `internal/api` and `cmd/umb`
+  before `socketDir` and green after, with `cmd/umbrald` too and nothing left in `/tmp`. The
+  zsh cause cannot be reproduced here — this machine has no insecure completion directory —
+  so its fix is confirmed only by the runner.
+- **The first runner run after the merge** (run 36283140086) was green on macOS and red on
+  Ubuntu in `TestSubscribeSnapshotBeforeLive_REQ_TERM_004`, and not as a flake: the daemon
+  broke API Spec §5.11. The subscription exists before the snapshot so that output in that
+  window is queued, and its writer then sent that output at once — racing the
+  `session.subscribe` reply, so a client could read a `session.output` where its response
+  should be. A subscription now starts held and is released once the reply is written
+  (`conn.afterReply`). `TestSubscribeAnswersBeforeItStreams_REQ_TERM_004` pauses inside the
+  snapshot to make the race certain: red 3/3 before the fix, green after.
+- **The second run** (36284097081) turned that round: Ubuntu green, macOS red in
+  `TestOversizedMessageIsRejected` with `write: broken pipe` — the first time that test had
+  run on macOS at all, since every socket test failed there before `socketDir`. The daemon
+  answers an oversized message with `VALIDATION_ERROR` and hangs up (`conn.serve`; API Spec
+  §1 sets only the 4 MiB limit, and neither the answer nor the hang-up is written there yet —
+  a gap for a later delta, not for this task); with macOS's small socket
+  buffers the client was still writing the tail and got EPIPE, which the test treated as
+  fatal before reading the answer. It now sends 1 MiB past the limit, so the hang-up comes
+  mid-write on every OS (red 20/20 on Linux with the old helper), accepts EPIPE/ECONNRESET on
+  that write, still reads `VALIDATION_ERROR` and then asserts the hang-up — and reddens if the
+  daemon stops sending the answer.
+- **The third run** (36284836147) swapped again: macOS green, Ubuntu red in two `internal/api`
+  tests. `TestSubscribeSnapshotBeforeLive_REQ_TERM_004` saw *no* output in fifteen seconds,
+  which is not the ordering bug fixed above: `Server.Notify` took its bus subscription inside
+  its own goroutine, so everything published before the scheduler ran it reached no one.
+  Delaying that goroutine by 500 ms reproduces the runner's failure to the line. `Listen`
+  now takes the subscription and `Notify` drains it;
+  `TestOutputPublishedBeforeTheDispatcherRunsIsDelivered_REQ_TERM_004` publishes before
+  starting `Notify` and was red before the move. In the daemon the same race existed between
+  `go server.Notify` and a client's first output, and was only less likely there; it is closed
+  for both.
+  `TestOutputLatencyUnder5ms_REQ_TERM_006` failed in the same run with p50 166 µs and p95
+  7.3 ms, as it had in run 35554547683 before any of this: a wall-clock percentile under `-race`
+  beside the rest of the package measures the scheduler. It is no longer parallel; the
+  benchmark in `task perf` remains REQ-TERM-006's gate of record and was green every run.
+- **The fourth run** (36286671540, `ea130d6`) was the first green on both OSes. The fifth
+  (36287309770, `a541ca3`, T-F0-27's commit) was red on macOS, and the cause was a test T-F0-27
+  had just added: it sent a message one byte past the limit through the plain helper, and got
+  EPIPE when the daemon hung up. Every refused write now goes through `sendPastTheLimit`. Run
+  36287708369 on `4d77c19` is green on both OSes, and that run meets **Done**.
+
+### [x] 2026-09-26 T-F0-27 · The frame limit says what happens past it
+- **What:** API Spec §1, §2 step 3 and §8 now say three things (1.14):
+  - the 4 MiB limit counts the `\n`;
+  - past the limit, the daemon replies `VALIDATION_ERROR` with `id: null` and closes;
+  - before the handshake, an oversized, unparseable or non-JSON-RPC line gets
+    `UNAUTHORIZED` and a close.
+
+  Delta `2026-09-oversized-message`.
+- **REQ:** REQ-SEC-003; API Spec §1 (the frame limit).
+- **Files:** `specs/api/umbral-daemon-api-v1.md`, `internal/api/conn.go`,
+  `internal/api/server_test.go`
+- **Depends on:** T-F0-26
+- **Done:** `TestAMessageAtTheLimitIsAccepted` and
+  `TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003` are green, and each was seen red,
+  against a one-byte shift of the limit and against the old code respectively. `task schema`
+  and `task ci` are green.
+- **Result.** The review of the draft delta found two things in the same corner:
+  - an oversized first message was to be `VALIDATION_ERROR`, which REQ-SEC-003 forbids;
+  - invalid JSON and non-JSON-RPC lines before `system.hello` answered with a protocol
+    error and **left the connection open**, so an unauthenticated peer could keep trying on
+    the same connection.
+
+  All three cases now get `UNAUTHORIZED` and a close; the new test was red in all three before
+  the change. The boundary test was checked by moving the limit one byte each way, and both
+  directions reddened it.
+
+## Traceability matrix (F0)
+
+| REQ | Tasks | Tests citing it |
+|---|---|---|
+| REQ-TERM-001 | T-F0-05, T-F0-13 | TestCreateSession_REQ_TERM_001, BenchmarkSessionCreate_REQ_TERM_001 |
+| REQ-TERM-002 | T-F0-07 | Conformance_REQ_TERM_002 |
+| REQ-TERM-003 | T-F0-06 | TestSessionSurvivesNoClients_REQ_TERM_003 |
+| REQ-TERM-004 | T-F0-04, T-F0-06 | TestSubscribeSnapshotBeforeLive_REQ_TERM_004, TestSnapshotRoundTrip_REQ_TERM_004, TestRebaseKeepsWhatTheSnapshotDoesNotContain_REQ_TERM_004, TestSubscribeAnswersBeforeItStreams_REQ_TERM_004, TestOutputPublishedBeforeTheDispatcherRunsIsDelivered_REQ_TERM_004 |
+| REQ-TERM-005 | T-F0-02, T-F0-05 | TestExitedEmitsCode_REQ_TERM_005, TestRecoveryMarksOpenBlocksAbandoned_REQ_TERM_005 |
+| REQ-TERM-006 | T-F0-06, T-F0-13 | BenchmarkOutputLatency_REQ_TERM_006 |
+| REQ-TERM-007 | T-F0-05 | TestResizeNotifies_REQ_TERM_007 |
+| REQ-TERM-008 | T-F0-05 | TestInputLockedRejected_REQ_TERM_008 |
+| REQ-BLK-001 | T-F0-09 | TestBlockStartsOnOSC133C_REQ_BLK_001 |
+| REQ-BLK-002 | T-F0-09 | TestBlockClosedOnOSC133D_REQ_BLK_002 |
+| REQ-BLK-003 | T-F0-09, T-F0-21, T-F0-22 | TestIntegrationNoneAfter5s_REQ_BLK_003, TestACommandPaneGetsNoShellIntegration_REQ_BLK_003, TestAnExitInsideTheWindowStillSettlesIntegration_REQ_BLK_003, TestRecoverySettlesAPendingIntegration_REQ_BLK_003 |
+| REQ-BLK-004 | T-F0-09 | TestAltScreenMarksInteractive_REQ_BLK_004 |
+| REQ-BLK-005 | T-F0-08 | TestBootstrapEmitsOSC133_REQ_BLK_005 |
+| REQ-BLK-006 | T-F0-10 | BenchmarkBlockSearch100k_REQ_BLK_006 |
+| REQ-BLK-007 | T-F0-02, T-F0-09 | TestPlainOutputHasNoEscapes_REQ_BLK_007 |
+| REQ-SEC-003 | T-F0-03, T-F0-27 | TestHelloRejectsBadToken_REQ_SEC_003, TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003 |
+| REQ-SEC-007 | T-F0-03 | TestSocketPermissions0600_REQ_SEC_007 |
+| REQ-CLI-002 | T-F0-10, T-F0-11 | TestBlockGetLast_REQ_CLI_002 |
+| REQ-CLI-003 | T-F0-11 | TestUmbAutostartFailsWith69_REQ_CLI_003, TestAutostartFailureExits69_REQ_CLI_003 |
+| REQ-CLI-004 | T-F0-11, T-F0-23 | TestBlockLastExits69WhenTheDaemonIsUnavailable_REQ_CLI_003, TestWriteFailureIsNotReportedAsSuccess_REQ_CLI_004, TestBrokenPipeIsNotAFailure_REQ_CLI_004, TestAClosedPipeEndsTheRealBinaryWithZero_REQ_CLI_004 |
+| REQ-CLI-005 | T-F0-20 | TestWorkspaceCreatePrintsTheTree_REQ_CLI_005, TestPaneSplitAddressesByPublicId_REQ_CLI_005, TestUnknownSubcommandExitsOne_REQ_CLI_005, TestCliClientMayDriveTheWorkspaceTree_REQ_CLI_005, TestCliClientStillMayNotMovePanesOrDriveSessions_REQ_CLI_005, TestTreeFlagsBecomeTheMethodsParameters_REQ_CLI_005, TestTreeCommandsRejectWhatTheyCannotSend_REQ_CLI_005 |
+| REQ-CLI-006 | T-F0-20 | TestLayoutExportApplyThroughAPipe_REQ_CLI_006, TestLayoutApplyReportsWarnings_REQ_CLI_006, TestLayoutApplyReadsEitherFormOfTheTree_REQ_CLI_006 |
+| REQ-TUI-001 | T-F0-12 (+ T-F1-20) | TestTUIBlockNavigation_REQ_TUI_001, TestTabsAndSwitching_REQ_TUI_001, TestSplitResizesBothPanes_REQ_TUI_001 |
+| REQ-WS-001 | T-F0-14 | TestWorkspaceCreateReturnsTree_REQ_WS_001 |
+| REQ-WS-002 | T-F0-14 | TestPaneIdsStable_REQ_WS_002 |
+| REQ-WS-003 | T-F0-14 | TestSplitAttachesSession_REQ_WS_003 |
+| REQ-WS-004 | T-F0-15 | TestLayoutExportApplyRoundTrip_REQ_WS_004 |
+| REQ-WS-005 | T-F0-15 | TestApplyWarnsNoProcesses_REQ_WS_005 |
+| REQ-WS-006 | T-F0-14 | TestRollupPrefersBlocked_REQ_WS_006 |
+| REQ-WS-007 | T-F0-14 | TestMovedPaneKeepsAlias_REQ_WS_007 |
+| REQ-API-001 | T-F0-16 | TestSnapshotCarriesSeq_REQ_API_001 |
+| REQ-API-002 | T-F0-16 | TestNoGapBetweenSnapshotAndStream_REQ_API_002 |
+| REQ-API-003 | T-F0-17 | TestUnknownMethodKeepsConnection_REQ_API_003 |
+| REQ-API-004 | T-F0-17 | TestSchemaMatchesSpec_REQ_API_004 |
+| REQ-TERM-009 | T-F0-18 | TestRestoreRebuildsStructure_REQ_TERM_009 |
+| REQ-TERM-010 | T-F0-18 | TestPaneHistoryDisabledByDefault_REQ_TERM_010 |
+| REQ-TERM-011 | T-F0-18 | TestRestoreNeverRunsStoredCommand_REQ_TERM_011 |
+| REQ-TERM-012 | T-F0-19 | TestStartSweepsOrphanedBootstrapDirectories_REQ_TERM_012, TestBootstrapDirectoriesLiveInTheRuntimeDirectory_REQ_TERM_012, TestSweepLeavesTheRunningSessionsAlone_REQ_TERM_012, TestSweepFailureDoesNotStopTheDaemon_REQ_TERM_012, TestBootstrapSurvivesASpaceInTheRuntimeDirectory_REQ_TERM_012 |
+| REQ-TERM-013 | T-F0-25 | TestAPaneAdvertisesTheTerminalThatRendersIt_REQ_TERM_013 |
+
+**Deferred:** REQ-BLK-008 (SHOULD, PowerShell) moves to F2 together with Windows.
+
+## Execution log
+
+| Date | Tasks | Result | Notes |
+|---|---|---|---|
+| 2026-09-26 | F0 | **closed** | Closing checkpoint `docs/checkpoints/2026-09-26-f0-closed.md`. The GitHub gate was green on both OSes on the closing tree (run 36287708369, `4d77c19`). `sdd_check` reported no CRITICAL and no HIGH. An isolated daemon was taken through `kill -9` and a restart and brought its structure back. `docs/f0-closure-plan.md` is deleted, as its own checklist asked. |
+| 2026-09-26 | T-F0-26 | done | Run 36286671540 (`ea130d6`) was the first green on both OSes. A test that T-F0-27 added then broke macOS once more with the same EPIPE pattern; `sendPastTheLimit` now carries every refused write, and run 36287708369 (`4d77c19`) is green on both. |
+| 2026-09-26 | T-F0-27 | done after a `spec-guardian` round | Written down what the daemon did past the 4 MiB frame limit, and on the way found it breaking REQ-SEC-003. Before the handshake, invalid JSON and non-JSON-RPC lines got a protocol error and an open connection; an oversized one was about to be specified as `VALIDATION_ERROR`. All three are `UNAUTHORIZED` and a close now. |
+| 2026-09-26 | T-F0-26 | runners, second and third runs → fixed | Run 36284097081: macOS red in `TestOversizedMessageIsRejected`, the first run of that test on macOS — the client's write got EPIPE after the daemon's answer and hang-up; the test now reads the answer anyway. Run 36284836147: Ubuntu red because `Notify` subscribed to the bus inside its own goroutine and lost everything published before it was scheduled; `Listen` takes the subscription now, and a new test that publishes before starting `Notify` was red before the move. `TestOutputLatencyUnder5ms_REQ_TERM_006` is serial, since a wall-clock p95 beside its siblings measured the scheduler. |
+| 2026-09-26 | T-F0-26 | runner: macOS green, Ubuntu red → fixed | The first run on the runners after the merge found a real ordering bug in T-F0-06's fan-out, not a flake: a chunk queued while `session.subscribe` took its snapshot could be written before the reply, against API Spec §5.11. Subscriptions now start held and are released after the response is written; the new test was red 3/3 before the fix, and `spec-guardian` broke the hold and the release in turn to confirm both are guarded. |
+| 2026-09-26 | T-F0-26 | done locally; runner pending | "The gate is green" had meant the local gate for weeks. The remote one was red on both OSes, for reasons none of which a Linux laptop with a terminal could see: no `TERM`, a long `TMPDIR`, a runner's zsh asking a question. |
+| 2026-09-26 | T-F0-25 | done | The GitHub CI had been red on both OSes for eight runs while `task ci` was green locally. Four of the failures were one missing line: the daemon never told a pane what terminal it was, and a runner has no `TERM` to inherit. |
+| 2026-09-26 | — | F0 criterion 3 moved | The Tech Lead moved the TUI's week to the release 0.1 gate (delta `2026-09-defer-tui-week`, `T-REL-01`); F0 closes on the other five criteria and REQ-BLK-003. |
+| 2026-09-26 | T-F0-24 | done | The instance lock guarded the socket's directory; recovery's premise is about the database. A second daemon with another `--socket` and the same `--db` recovered over a live session — measured, `sessions_recovered: 1` — and now exits 75 instead. |
+| 2026-09-26 | T-F0-23 | done | A test that passed for a year's worth of reasons except the one that mattered: it handed `run` a writer that returned EPIPE, which the real binary never received — Go killed it with SIGPIPE first. One `signal.Notify`. |
+| 2026-09-26 | T-F0-22 | done | The last path to a `pending` verdict on a gone process was a crash: T-F0-21 fixed the exit, and a daemon that dies has none. Data Model §6 said nothing about integration, so it took a delta before one line of SQL. |
+| 2026-09-26 | T-F0-20 | done after a `spec-guardian` round | F0 exit criterion 4, performed: `scripts/cli_roundtrip.sh` creates, splits, exports and reapplies a layout against a real daemon using only `umb`. The CLI was the easy half. The other half was a protocol gap the ratified CLI delta had declared absent — API §2 refused the whole tree to `cli` — and five tests on a fake daemon could not see it; delta `2026-09-cli-allowlist` closed it by exactly the surface the CLI uses. The review then found the script's own wrapper leaking a flag into a pane's command, and a grammar nobody had specified. |
+| 2026-09-26 | T-F0-21 | done | A one-line fix to a defect that made the gate a coin flip: the exit now settles REQ-BLK-003's verdict instead of cancelling the only thing that ever wrote it. Test first, red on both the live session and its row, then green; measured on a real daemon inside the window. The same session ratified delta `2026-09-cli-workspace-surface` and fixed a hygiene-gate false positive, and found that API §2 does not let the `cli` client kind call `workspace.*`/`tab.*`/`pane.*`/`layout.*` at all — a gap the delta missed, which blocks `T-F0-20` until a delta of its own. |
+| 2026-09-21 | F0 validation | phase **not** closed | Asked whether F0 could be closed now that `T-F0-19` had shipped; measured rather than argued, and the answer is still no. Exit criterion 6 was the one item nobody had ever put a number to, so it was measured: an isolated `umbrald` with five live panes (five `zsh` children, all `osc133`) held a steady **VmRSS of 37.6 MiB / PSS 36.0 MiB across 90 s**, against the 80 MiB of PRD §7 — met, with more than half the budget unused, though still ungated, which is what T-F0-13 already records. Criterion 3 needs a week of a human using the TUI and has had one walkthrough. Criterion 4 needs `T-F0-20`, which is blocked on the ratification of `2026-09-cli-workspace-surface`. The run also turned up a MUST defect nobody had looked for: a session whose process exits inside the five-second integration window never reaches `integration: none`, because `finish` stops the only timer that would have said so. It is `T-F0-21`, it is pre-existing at `c7d7e18`, and it is the reason `TestACommandPaneGetsNoShellIntegration_REQ_BLK_003` is a coin flip under load. |
+| 2026-09-21 | T-F0-19 | done | The sweep is safe because of *where* it is called, not because of anything it decides: under the instance lock this daemon is the only one of its installation, so every `shellinteg-*` beside the socket belongs to a process that is gone — no age heuristic, no ownership check. The ordering carries the other half: it runs before `Restore`, because the shells the restore launches write their own directories there and a sweep afterwards would delete the files they were started with. That is the mutation worth remembering — moved below `Restore` every other test stays green, and every restored pane comes back without shell integration, silently. `Prepare` refusing an empty parent is the second load-bearing detail: `bootstrap` degrades a `Prepare` error into a session without integration, so a mis-wired adapter would otherwise show up only as blocks that stopped working. |
+| 2026-09-20 | F0 verification | phase **not** closed | The task list is complete and `task ci` is green; two of the plan's six F0 exit criteria are not met. The TUI has not been used for a week, and **no CLI for the workspace tree exists** — `umb` serves `status`, `block last`, `api schema`, `version`, `help` and nothing else — so "a script creates a workspace, splits, exports and reapplies a layout using only the CLI" cannot be performed. No task builds it and no REQ requires it, while Art. 6's amendment justifies the `w<n>` identifiers on `umb pane split w1:t1` being "the feature": a Delta, not a quiet task. Verified by running rather than reading: 43/43 matrix tests exist, and a real daemon was driven through create, split, rename, export, apply, `kill -9` and restart — five panes back with labels, cwds, fresh sessions and focus, the sentinel absent and the stored command sitting typed at a real shell's prompt. That run also found two defects in the suite itself: `cmd/umbrald/bootstrap_test.go` overrode only `XDG_RUNTIME_DIR`, so its daemon wrote to the developer's real database (2484 tabs, 2490 sessions accumulated there), and it leaked one `umbrald` per run, four found alive holding that database open. Both fixed and verified; the rows already written are not cleaned. `docs/checkpoints/2026-09-20-f0-closure.md`. |
+| 2026-09-20 | T-F0-18 | done, then reworked after a `spec-guardian` round | Two MUSTs contradicted each other and one was a safety rule. Data Model §6 step 5 said a restored pane launches "a fresh shell, **or its `command_json` when it has one**"; REQ-TERM-011 says "leave it visible in the pane **without running it** … so that a restart never re-executes commands on its own". The code followed §6 — `layout.apply` had been launching stored commands since T-F0-15 — and the danger is concrete: a pane whose command was `terraform apply` re-runs unattended on every start, possibly after a crash that command caused. Delta `2026-09-restore-semantics`. "Visible in the pane" turned out to mean literally that: the command is typed at the new shell's prompt without a newline, and pressing Enter is the confirmation the requirement asks for — no method, no dialog, no client change. It lives in `sessions` because writing before the prompt loses the bytes and only the module owning the PTY sees the OSC 133 marker. Three more things were specified nowhere and are now: where the settings file is and what a malformed one does (it refuses to start, because falling back to defaults is how `pane_history = true` silently becomes false), which column focus lives in, and which migration `pane_history` belongs to — it was in F1's, which an F0 requirement cannot wait for. Six teeth checks, five of which bit; the sixth could not, and saying why led to the test that matters: turning pane history off deletes what was captured, which is a privacy promise rather than housekeeping. One defect found by a test rather than by me — the pane-history wiring never reached the constructor because a formatter had rewritten the line my edit matched on, so capture silently did nothing. The review afterwards returned FIX FIRST and was right: every gate was green while the requirement had no teeth, and it proved it by mutation — appending `\n` in `shellLine` makes every restart run the stored command, and the whole suite stayed green. `internal/sessions/pending.go`, which is the delivery mechanism, had no test at all. Both now redden, the second against a real PTY. It also found that `pane_history` was kept forever because closing a pane is an UPDATE and the cascade never fires, that restored focus could name a closed tab, and that the four specs had changed without a version bump. Fixing the focus exposed a latent coin flip: two workspaces focused in the same millisecond tied on `focused_at` and the test had been passing on the query plan. |
+| 2026-09-20 | T-F0-17 | done | The task read as plumbing and was not. Generating the schema from the Go types is what made the daemon's actual contract legible, and three things did not survive the reading: seven methods shared a params struct with their namespace, so `workspace.close` published a `label` it ignores; `blockPayload` and `toWireBlock` were two renderings of one §4 object that agreed only by inspection; and every handler returned `map[string]any`, which marshals but cannot be reflected, so the response half of REQ-API-004 was unreachable without typing them. Separately, REQ-API-003's second sentence had never been implemented — an unserved method answered `METHOD_NOT_FOUND`, which says "this daemon is too old" when the truth is "this build lacks the module" — and fixing it made §2's capability clause measure the wrong thing, since it counts registered methods and now every method is registered in every build. Delta `2026-09-capability-degradation`. The comparison found eighteen places where the daemon's idea of a required parameter disagreed with §5; each one is now reconciled, which is the whole value of having two independent derivations of one contract. The Done line's own requirement was verified by doing it: a `session.hibernate` registered in the code turned CI red. Five teeth checks, including the two that guard the generator — a method registered with no shapes, and an emitted notification the shape table omits — because a schema that is quietly wrong is worse than none. |
+| 2026-09-20 | T-F0-16 | done after a `spec-guardian` round | The task was one sentence of §6 — "a monotonic counter per session shared by all subscribers" — and the sentence could not be implemented as written: `seq` already named a per-PTY counter in `session.output`'s params, and "per session" has no referent when most notifications have no PTY. Delta `2026-09-notification-sequencing` settles six points; the load-bearing one is that the snapshot reads the counter **before** the tree, which DD-007's persist-before-notify makes sound and which `TestTheSnapshotSeqIsReadBeforeTheTree` pins by bumping the counter inside the tree read, so reversing two lines fails deterministically rather than by scheduler luck. `TestNoGapBetweenSnapshotAndStream_REQ_API_002` runs two real clients against a real daemon and reconstructs the tree while a writer churns it — 47 tabs created during one snapshot. The review then found more than I had. Two of my own tests asserted "strictly increasing on one connection" and passed only because they were built so no `session.output` ever arrived: output waits in the §8 queue while control notifications are written directly, so a connection with a subscription sees the numbers out of order, and a client taking the obvious reading of "monotonic" would discard live events. That became decision 5 rather than a code change, because the ordering is inherent. Chasing it found a real bug the review had only flagged as a stale comment: `take` split a chunk at the batch boundary and reported the subscription's high-water `seq` for both halves, and `internal/tui` drops anything not greater than the last seq it applied — so any burst over 32 KiB lost everything after the first batch. `take` now stops on chunk boundaries. Also found: `Service.Snapshot` was asserted only against a fake that returned canned slices, so a snapshot omitting non-focused tabs' panes passed every gate; §5.3 told clients to open `events.subscribe`, a method that appeared in that one line and nowhere else in the specs or the code; and `focused` came back with nulls §5.3 did not type. |
+| 2026-09-20 | T-F0-15 | done after a `spec-guardian` round | A tab's layout exports and applies as a portable tree, and a pane can be launched with a command instead of a shell. Two things the task did not predict. `exec.LookPath` resolves against the *daemon's* `PATH`, so a layout declaring its own environment was refused for a binary that would have been found once the child started; resolution now runs against the child's `PATH` and skips empty elements, which is a security property rather than a tidiness one. And `ApplyLayout` was not atomic: a terminal that failed to attach left half a tab behind, so the transaction now has an `unapply()` counterpart. `ApplyWarning` states in the spec what apply cannot reproduce — live processes and scrollback — because a client that promised otherwise would be lying for us. The `env` round-trip was tested twice before it bit: the first assertions compared structures rebuilt from the input nodes, which is true whatever the database did. |
+| 2026-09-20 | T-F0-14 | done after a `spec-guardian` round | `umbrald` owns the workspace tree: migration 0003, `workspace.*`/`tab.*`/`pane.*`, and REQ-WS-007's aliases. Five of eight concurrent `workspace.create` calls failed with `SQLITE_BUSY_SNAPSHOT`, which `busy_timeout` does not wait out — a read-then-write transaction has already taken its snapshot by the time it tries to upgrade. `_txlock=immediate` in the DSN fixes it. `nextPaneOrdinal` takes its maximum over the union of `panes.id` and `pane_aliases.alias_id`, because nothing in the schema stops a new pane taking a name an alias still answers to. The review found two criticals of its own: every workspaces sentinel reached clients as `INTERNAL_ERROR` with a trace id, since `toWire` consulted only the sessions error list; and the §6 notifications wrapped their object in an envelope the spec does not have. The migration test was rebuilt after it turned out to rewind only 0002's index, so 0003 replayed onto tables that already existed. |
+| 2026-09-20 | T-F0-13 | done, `[~]` until the job ran on a real runner | Three of the four NFR budgets became gates. The first version of the p95 compared a `time.Duration` against a sample *count*, so at CI sample sizes the gate measured the maximum and would have accepted almost any regression. The selftest exists because of what the teeth check found next: a benchmark that skips prints nothing at all without `-v` — no SKIP line, no result line, just `ok` — so the first guard was useless and a renamed benchmark would have passed silently forever. `scripts/perf_gates.sh` now requires the result line, and `scripts/perf_selftest.sh` injects a per-budget regression and asserts each gate reddens, which distinguishes "accepted a regression" from "never ran". The task's own Done line was half wrong: 10 ms does not redden a 300 ms budget, measured and amended in place. Marked `[x]` before the CI job had run, which the review caught and which is why the row says `[~]`. |
+| 2026-09-20 | T-F0-12 | code done, `[~]` pending the manual checklist, after a `spec-guardian` round | The interesting part was not the Bubble Tea model. It was that the task's one line — "session rendering from `session.output` (client-side emulator)" — had no home in the boundary rules, and that choosing a renderer is a decision with a long tail: sharing the daemon's libghostty costs `umbral-tui` its pure-Go build and buys the guarantee that the screen and the block history cannot disagree about the same byte stream. Delta `2026-09-tui-renderer` records it. Driving the finished path against a real daemon found a bug no fake could: the client announced `client_kind: "cli"` for every connection, and `session.*` is outside the `cli` allowlist of API Spec §2, so the TUI's first call failed as `METHOD_NOT_FOUND`. Eleven tests, all checked for teeth. The manual checklist is `docs/qa/f0-tui.md` and is a human's job: raw mode, a real keyboard and a real font are what it covers — which is why the task is `[~]` and not `[x]`, a distinction I had got wrong before the review caught it. The review found four more things worth having. Re-attaching after a dropped subscription replayed the fresh snapshot into a screen that still held the old one, which violates the snapshot's own precondition — it reproduces the daemon's screen only when replayed into an *empty* emulator — so `ports.Screen` gained `Reset`. The test I had written for that path could not have caught it: it asserted that bytes had been appended, which is true either way. The snapshot and the first live chunk race each other into the model as independent messages, so output is now held until the snapshot lands and `lastSeq` never goes backwards. And the overflow path reported "you fell behind" with a blocking send on the channel that was full because the reader had fallen behind, which would have parked the goroutine forever and never delivered the message. `internal/tui/adapters/daemon` also had no tests at all, which is precisely where the `client_kind` bug had lived; it now has table tests against literal API Spec §6 frames. |
+| 2026-09-20 | T-F0-11 | done after a `spec-guardian` round | The task's own design question was where the socket path lives: `internal/client` may not import `internal/api`, so the runtime-directory resolution moved to `internal/config` rather than being copied, because copying it would have copied `verifyPrivateDir` with it. Two things turned up that the task description did not predict. `errcheck`, firing on the `io.Writer` refactor, was pointing at a real defect: `umb block last --json > /full/disk` exited 0 with nothing written, so every write now goes through one printer whose first failure becomes exit 1, with `EPIPE` excluded because `umb status | head -1` closes the pipe deliberately. And the teeth check on that very test failed: it passed for the wrong reason, because `printJSON` encoded straight into the stream and its write error never reached the exit-code path. Encoding into a buffer first put both paths back together, and the test then bit. Sixteen tests, all checked for teeth. The review then found three defects the tests had not: concurrent `umb` invocations each starting a daemon that recovered over the previous one's live sessions (reproduced: five daemons on one installation, now exactly one, behind an `flock` taken before the database is opened); a handshake with no deadline that `Ctrl-C` could not interrupt; and an autostarted daemon logging to `/dev/null`, against Art. 7. Fixing the second introduced a data race of my own, caught by `-race` on half the runs. Two deltas came out of the review and are pending ratification: `2026-09-cli-surface` and, from the reconciliation, `2026-09-structure-migration`. Verified against the real daemon rather than only against fakes: `umb status` autostarts `umbrald` on a clean `XDG_RUNTIME_DIR`, and `umb block last --json` prints the block for a `false` that really ran, with `exit_code: 1`. |
+| 2026-09-20 | reconciliation | done | Merging the two spec lineages surfaced a real defect in T-F0-06, not just the flaky test that exposed it. `session.subscribe` registered the subscription, took the snapshot, and then called `subscribe` again with the snapshot's seq — which closes the subscription and creates a new one, throwing away everything queued in between. The early registration exists precisely to keep that window; output produced during the snapshot survived only when the bus happened to deliver it after the replacement, which is why `TestSubscribeSnapshotBeforeLive_REQ_TERM_004` failed about one run in three under `-race` rather than always. The handler now rebases the existing subscription, dropping the prefix the snapshot already shows. `TestRebaseKeepsWhatTheSnapshotDoesNotContain_REQ_TERM_004` pins it deterministically and was checked for teeth. Separately, `TestNoChunkWaitsLongerThanTheBatchInterval` timed a single socket round-trip against the 4 ms batch ceiling, which the race detector's own overhead exceeds; it now takes the median of 25 lone chunks and still fails at a 4.48 ms median when a fixed timer is injected. |
+| 2026-09-11 | T-F0-10 | done | The first task whose requirement was missed on the first measurement, by six times: `block.search` p95 was 1.23 s against a 200 ms budget, and a `LIMIT 50` list page took 129 ms. `EXPLAIN QUERY PLAN` named both causes. `blocks` had no index on its default ordering, only on `(session_id, started_at)`, so an unfiltered page scanned and sorted 100,000 rows. And ordering a full-text search by `started_at` puts a temporary B-tree over the whole match set, so a term matching half the history sorted fifty thousand rows to return fifty; no index helps, because the rows arrive from the full-text index in rowid order. Ordering by that rowid instead is 300 times faster and returns the same list, since a block's row is written when its command starts. Both changes needed spec text and were folded on approval into Data Model v1.3 and API Spec v1.4. Six properties were checked for teeth. Two things found while writing it: FTS5 rejects a bare path as a syntax error, so a client typing one has to quote it; and `blocks_fts` is keyed on implicit rowids, which `VACUUM` may renumber, silently desynchronising the index, which the delta records. |
+| 2026-09-11 | T-F0-09 | done | Two defects in already-"done" work surfaced only when a real shell was asked for a real exit code. First: the bash and zsh bootstraps read `$?` in a hook registered last, and every element of `PROMPT_COMMAND`/`precmd_functions` leaves `$?` set to its own result, so with Starship installed every command was recorded as exit 0. The work is now split in two, a capture hook first and the marker hook last, because the two halves want opposite positions. Second: the daemon never wired libghostty's write-pty effect, so no program's query to the terminal was ever answered; fish waits two seconds for a Primary Device Attributes reply and then permanently disables features, and under a retrying test it never timed out at all. Both were found by `TestBlocksInEveryShell_REQ_BLK_005`, which exists because REQ-BLK-005 covers three shells and only running all three proves they agree. A third, smaller one was found by the plain-text test: carriage return was treated as "erase the line", which is right for a progress bar and wrong for the CRLF a PTY ends every line with, so the decision is now deferred one byte. The scanner and the recorder were each checked for teeth by breaking three and four properties respectively. Deliberately not done: `block.list`/`get`/`search` are T-F0-10, and chunk writes sit on the drain goroutine, after the chunk has been published, so they delay the history and never the screen. |
+| 2026-09-11 | T-F0-07 | done | 22 cases: VT-01…VT-20 MUST plus VT-21 and VT-22 SHOULD. Everything passes against libghostty on the first run, which is expected rather than suspicious: the emulator is Ghostty's own and these are the sequences it exists to implement. The value is the regression net, not the discovery. Worth noting from the fixtures: VT-20 confirms the shell-integration OSC sequences leave no visible mark, which is what lets T-F0-09 read them without corrupting the screen. |
+| 2026-09-11 | T-F0-06 | done | All three tests were checked for teeth. Two bit immediately; the ordering test did **not**, because the fake published output after subscribe returned and the race window was never exercised. Making the fake publish *inside* the snapshot call still did not bite reliably, since whether the dispatch goroutine ran in the window was up to the scheduler. It now asserts the ordering where it happens, that a subscription exists at the moment the snapshot is taken, which fails deterministically when the order is reversed. Verified end to end against a real bash session: the snapshot carries the pre-subscribe output, the live stream carries only what came after, and the sequence numbers are strictly increasing and all above the snapshot's. |
+| 2026-09-11 | T-F0-05 | done | Both security-relevant tests were checked for teeth by breaking what they guard: writing the input before checking the lock fails REQ-TERM-008's canary check, and resizing only the bookkeeping fails REQ-TERM-007's `tput cols`. Verified end to end over the real socket: create, input, resize with its notification, list, close and the exited notification. One observation worth keeping: input written to a PTY before the shell's line editor is ready can be lost, so an end-to-end script that types immediately after `session.create` sees a wrong exit code. With the shell settled, bash, zsh and fish all report the real code. `session.*` is restricted to the `tui` and `desktop` client kinds, since API Spec §2 does not grant it to `cli`. |
+| 2026-09-11 | T-F0-08 | done | bash 5.3.9, zsh 5.9 and fish 4.2.1, each driven through a PTY with `creack/pty`. The prompt-framework clause is covered by a fake rc that reassigns the prompt on every prompt, so it holds on a CI runner with neither Starship nor powerlevel10k installed; the machine that found the bug had Starship in its own rc. Both new tests were checked for teeth by breaking the thing they guard. fish skips the configuration-preservation case by design: `--init-command` runs after `config.fish`, so there is nothing to restore. |
+| 2026-09-11 | T-F0-04 | done | First cgo in the repository. `libghostty-vt` is built from ghostty's source with Zig 0.16.0 by `scripts/build_libghostty.sh` (`task deps:ghostty`); the Taskfile points `PKG_CONFIG_PATH` at the default prefix so no Go target needs the caller to export anything, and CI builds it in the lint and test jobs. Measured numbers and the scrollback finding are in `docs/spikes/q01-snapshot.md`. Not covered here and deliberately left to their own tasks: reflow on resize (T-F0-07), real PTY output (T-F0-05), macOS. |
+| 2026-09-11 | T-PKG-01, T-PKG-02 | done | Recorded here because the hardening tasks file did not exist yet; both tasks now live in `umbral-hardening-tasks.md`. Closes Phase 0. The kit reproduces byte for byte from `tools/build.py`, verified by regenerating it: 55 of 56 artifacts identical, the `.desktop` file the only intended change. Finding A-12 honoured: REQ-PKG-004, 005, 007 and 008 went to `specs/prd/umbral-f2-desktop.md` instead of becoming MVP MUSTs nothing could close. Finding A-15 closed: the checksums were regenerated after the `.desktop` change. Finding A-16 closed: the superseded Spanish copy of the delta was deleted. |
+| 2026-09-11 | T-F0-03 | done after a `spec-guardian` round | The review returned FIX FIRST with 1 CRITICAL and 5 HIGH. The critical was real and reproduced with a probe: a token file that existed but was empty kept its old mode, because `os.WriteFile` does not apply its mode argument to an existing file, so the token landed at 0664. It is now written through `OpenFile` with an explicit `Chmod` and the mode is read back. Also fixed: the handshake validated `client_kind` before the token, so a bad token plus a bad kind answered `VALIDATION_ERROR` and left the connection open, against REQ-SEC-003; the runtime-directory fallback trusted a world-writable parent; `trace_id` carried a freshly minted id that correlated to nothing; `capabilities` advertised `sessions` and `blocks` with no such method registered; `go.mod` recorded a direct dependency as indirect. Five decisions the spec does not cover went into `changes/_archive/2026-09-api-f0-decisions/` instead of staying in comments. |
+| 2026-09-11 | T-F0-02 | done | `internal/store` with migration 0001, pragma verification, forward-only migrations and restart recovery. Driver: `modernc.org/sqlite` (pure Go, no cgo). `threads` is created in 0001 per the folded delta, and the regression test for A-01 was checked by reverting the fix: it fails with `no such table: main.threads`, exactly as the Analyze described. Steps 3-4 of Data Model §6 wait for T-F1-01, which creates the tables they touch. |
+| 2026-09-11 | T-F0-01 | done | Go 1.27.1 installed under `~/.local/go` without root, since the machine had no Go at all. `task lint` (gofumpt, go vet, golangci-lint with gosec, govulncheck, gitleaks), `task arch`, `task arch:selftest` and `task test -race` all green. `gosec` G115 is excluded for now with a written reason: it fires on every epoch-ms and micro-USD conversion Art. 6 mandates, and it is re-enabled once the store layer exists. **Zig is still missing**, so T-F0-04 and T-F0-05 cannot build libghostty yet. |

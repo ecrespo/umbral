@@ -1,0 +1,9 @@
+# VT-06 sgr-truecolor (MUST)
+# screen 80x24
+cursor: 23,0
+title: ""
+pwd: ""
+--- plain ---
+orange blue-bg inverted
+--- vt ---
+\e[3g\e[9G\eH\e[17G\eH\e[25G\eH\e[33G\eH\e[41G\eH\e[49G\eH\e[57G\eH\e[65G\eH\e[73G\eH\e[H\e[0m\e[38;2;255;128;0morange\e[0m \e[0m\e[48;2;0;64;128mblue-bg\e[0m \e[0m\e[38;2;0;0;0m\e[48;2;255;255;255minverted\e[0m\e[1;24H\e[0m

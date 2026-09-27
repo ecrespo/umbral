@@ -1,0 +1,217 @@
+# Task runner for Umbral. See https://taskfile.dev
+#
+# The three gates named in AGENTS.md and in the constitution:
+#   task lint  -> Art. 1, code quality
+#   task arch  -> Art. 3, architecture boundaries
+#   task test  -> Art. 2, tests with the race detector
+#
+# `task ci` runs all of them plus the spec checkers, which is what the pipeline does.
+version: '3'
+
+# libghostty-vt is linked through cgo and found with pkg-config. The default prefix that
+# scripts/build_libghostty.sh writes to is added here so every Go target works without the
+# caller exporting anything; an existing PKG_CONFIG_PATH still wins.
+env:
+  PKG_CONFIG_PATH: '{{.PKG_CONFIG_PATH | default (printf "%s/.local/ghostty-vt/share/pkgconfig" .HOME)}}'
+
+vars:
+  BIN: '{{.ROOT_DIR}}/bin'
+  # Every binary is stamped with the git description so `umbrald -version` is traceable.
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev"
+  LDFLAGS: -s -w -X main.version={{.VERSION}}
+
+tasks:
+  default:
+    desc: List the available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  # --- Art. 1: code quality ---------------------------------------------------
+  fmt:
+    desc: Format the code with gofumpt
+    cmds:
+      - gofumpt -l -w .
+
+  fmt:check:
+    desc: Fail if any file is not gofumpt-formatted
+    cmds:
+      - |
+        unformatted="$(gofumpt -l .)"
+        if [ -n "$unformatted" ]; then
+          echo "not gofumpt-formatted:"; echo "$unformatted"; exit 1
+        fi
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: 'Art. 1 gate: gofumpt, go vet, golangci-lint (+gosec), govulncheck and gitleaks'
+    cmds:
+      - task: fmt:check
+      - task: vet
+      - golangci-lint run ./...
+      - govulncheck ./...
+      - gitleaks detect --no-banner --redact --source .
+
+  # --- Art. 3: architecture boundaries ----------------------------------------
+  arch:
+    desc: 'Art. 3 gate: verify the Tech Design §5.2 dependency rules'
+    cmds:
+      - go-arch-lint check
+
+  arch:selftest:
+    desc: Prove that a forbidden import actually breaks `task arch` (T-F0-01 done criterion)
+    cmds:
+      - ./scripts/arch_selftest.sh
+
+  # --- Art. 2: tests ----------------------------------------------------------
+  test:
+    desc: 'Art. 2 gate: go test with the race detector'
+    cmds:
+      - go test -race ./...
+
+  test:hygiene:
+    desc: 'Run the suite and fail if it leaked a daemon, a temp directory or a write to the real database'
+    cmds:
+      # The suite must be hermetic. On 2026-09-20 it was not: one test wrote 2490 sessions
+      # into the developer's own ~/.local/share/umbral/umbral.db and leaked an umbrald per
+      # run, and neither showed in CI because a runner's home is thrown away.
+      - ./scripts/test_hygiene.sh go test -race ./...
+
+  test:portability:
+    desc: The socket-using packages under a macOS-length TMPDIR, so a long socket path fails here
+    cmds:
+      # macOS caps a socket path at 104 bytes and its $TMPDIR is /var/folders/…/T/; every
+      # listener built on t.TempDir failed there for weeks while Linux, with /tmp, passed.
+      # A 100-byte TMPDIR reproduces it on any machine (T-F0-26). A new package that binds a
+      # socket in its tests belongs in this list, with its own socketDir.
+      - |
+        base="$(mktemp -d)"
+        trap 'rm -rf "$base"' EXIT
+        long="$base/a-temporary-directory-as-long-as-the-one-macos-hands-every-process"
+        mkdir -p "$long"
+        TMPDIR="$long" go test -race -count=1 ./internal/client/ ./internal/api/ ./cmd/umb/ ./cmd/umbrald/
+
+  test:hygiene:selftest:
+    desc: Prove the hygiene gate rejects a leak
+    cmds:
+      # The sibling of arch:selftest and bench:selftest. This one needs it most: its subject
+      # is absence, and a gate that never fires looks exactly like a suite that never leaks.
+      - ./scripts/test_hygiene_selftest.sh
+
+  test:cover:
+    desc: Tests with a coverage profile (target ≥ 75 % in domain, policy and router)
+    cmds:
+      - go test -race -coverprofile=coverage.out -covermode=atomic ./...
+      - go tool cover -func=coverage.out | tail -1
+
+  bench:
+    desc: Run the benchmarks that back the NFRs (REQ-TERM-001, TERM-006, BLK-006)
+    cmds:
+      # Everything on the default one second per benchmark, which gives the latency
+      # budgets as many samples as they can get.
+      - go test -run '^$' -bench . -benchmem $(go list ./... | grep -v blockstore)
+      # The block benchmarks are the exception: each builds a 100,000-row database first,
+      # so a duration-based run would spend its time in setup. 300 iterations is enough to
+      # compute the p95 REQ-BLK-006 is written in.
+      - go test -run '^$' -bench . -benchtime 300x -benchmem ./internal/sessions/adapters/blockstore/
+
+  perf:
+    desc: Run the NFR budget gates and prove they reject a regression (T-F0-13)
+    cmds:
+      - task: bench:gates
+      - task: bench:selftest
+
+  bench:gates:
+    desc: Fail if any benchmark with an NFR budget misses it (REQ-TERM-001, TERM-006, BLK-006)
+    cmds:
+      # The budgets live in the benchmarks, which report p95 and fail themselves. The
+      # script only picks which benchmarks are gates and how many samples each gets.
+      - ./scripts/perf_gates.sh
+
+  bench:selftest:
+    desc: Prove the NFR gates reject an injected regression
+    cmds:
+      # The sibling of arch:selftest, and there for the same reason: a budget check that
+      # stopped checking passes silently forever.
+      - ./scripts/perf_selftest.sh
+
+  # --- specifications ---------------------------------------------------------
+  specs:
+    desc: 'Art. 9 gate: REQ coverage, DDL executability and Mermaid diagrams'
+    cmds:
+      - python3 tools/sdd_check.py
+      - test -d tools/node_modules || npm install --prefix tools
+      - node tools/mermaid_check.mjs
+
+  schema:
+    desc: 'REQ-API-004: the protocol in the binary against the API Specification'
+    cmds:
+      - python3 tools/api_schema_check.py
+
+  # --- branding -----------------------------------------------------------------
+  icons:
+    desc: 'REQ-PKG-001/002/003/006: checksums, reproducible kit and a valid .desktop file'
+    cmds:
+      - ./scripts/icons_check.sh
+
+  icons:update:
+    desc: Rewrite CHECKSUMS.sha256 after a deliberate change to the branding kit
+    cmds:
+      - ./scripts/icons_check.sh --update
+
+  # --- build ------------------------------------------------------------------
+  build:
+    desc: Build umbrald, umb and umbral-tui into ./bin
+    cmds:
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BIN}}/umbrald ./cmd/umbrald
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BIN}}/umb ./cmd/umb
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BIN}}/umbral-tui ./cmd/umbral-tui
+
+  roundtrip:
+    desc: F0 exit criterion 4 against a real daemon, using only the CLI (T-F0-20)
+    deps: [build]
+    cmds:
+      # A fake daemon cannot see what the real one refuses: the `cli` allowlist gap that
+      # blocked T-F0-20 passed every cmd/umb test and fails here on the first command.
+      - UMBRALD={{.BIN}}/umbrald UMB={{.BIN}}/umb ./scripts/cli_roundtrip.sh
+
+  clean:
+    desc: Remove build and coverage artifacts
+    cmds:
+      - rm -rf {{.BIN}} coverage.out
+
+  # --- everything -------------------------------------------------------------
+  ci:
+    desc: Everything the pipeline runs
+    cmds:
+      - task: specs
+      - task: schema
+      - task: icons
+      - task: lint
+      - task: arch
+      - task: arch:selftest
+      - task: test:hygiene
+      - task: test:hygiene:selftest
+      - task: test:portability
+      - task: perf
+      - task: build
+      - task: roundtrip
+
+  deps:ghostty:
+    desc: Build libghostty-vt, which the sessions emulator links through cgo (needs Zig)
+    cmds:
+      - ./scripts/build_libghostty.sh
+
+  tools:install:
+    desc: Install the Go tools the gate needs into $(go env GOPATH)/bin
+    cmds:
+      - go install mvdan.cc/gofumpt@latest
+      - go install golang.org/x/vuln/cmd/govulncheck@latest
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+      - go install github.com/fe3dback/go-arch-lint@latest
+      - echo "gitleaks is not go-installable under that path; see https://github.com/gitleaks/gitleaks"

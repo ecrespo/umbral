@@ -1,0 +1,62 @@
+# Performance gates for Umbral (T-F0-13).
+#
+# The NFRs in specs/prd/umbral-mvp.md are numbers, so they are checked the way numbers are
+# checked. Each budgeted benchmark reports p95 and fails itself when it misses; this job
+# runs them and then proves, on the same runner, that the check still rejects a regression.
+# Without that second half a dropped assertion would leave a green job that measures
+# nothing — the same failure mode scripts/arch_selftest.sh exists to prevent.
+#
+# PRD §7 names this job's runner as the reference hardware for the automated gate
+# (GitHub `ubuntu-latest`, 4 vCPU; the ThinkPad P14s is the manual one), and says what to
+# do if the runner cannot reach a number: adjust the gate and keep the laptop figure as
+# the product target, with both written down. Whether an adjustment is needed is not known
+# yet — the figures below are the manual machine's, and this job has produced none.
+#
+# Budgets, against what they measure on the manual machine:
+#   REQ-TERM-001  session.create                 300 ms p95   ~2.1 ms
+#   REQ-TERM-006  added output latency              5 ms p95   ~26 µs
+#   REQ-BLK-006   block.search over 100k blocks   200 ms p95   ~2.4 ms
+# Two orders of magnitude of margin, on percentiles rather than means, is what makes a red
+# job here a regression instead of weather.
+name: Performance
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.27'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  perf:
+    name: NFR budgets (REQ-TERM-001, REQ-TERM-006, REQ-BLK-006)
+    # Linux only. The budgets are properties of the daemon, not of a runner image, and
+    # forking a shell on the macOS runners is slow enough to measure the runner instead.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Zig, which builds libghostty-vt
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Build libghostty-vt (cgo dependency of the sessions emulator)
+        run: ./scripts/build_libghostty.sh
+      - run: echo "PKG_CONFIG_PATH=$HOME/.local/ghostty-vt/share/pkgconfig" >> "$GITHUB_ENV"
+
+      - name: Every NFR budget is met
+        run: ./scripts/perf_gates.sh
+
+      - name: The budgets reject an injected regression
+        run: ./scripts/perf_selftest.sh

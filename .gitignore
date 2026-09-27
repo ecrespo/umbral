@@ -30,3 +30,19 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Mermaid checker dependencies (tools/package.json)
+tools/node_modules/
+.idea/
+
+# Build output (task build)
+/bin/
+
+# Python bytecode from the branding kit's build scripts
+__pycache__/
+*.py[cod]
+
+# The English-translation snapshot that was unpacked over the working copy on 2026-09-20.
+# Keeping it out of history: it is a full binary archive of the repository and nothing
+# references it. See docs/checkpoints/2026-09-20-reconciliation.md.
+umbral-repo-en.zip

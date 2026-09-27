@@ -1,0 +1,11 @@
+# VT-05 sgr-256 (MUST)
+# screen 80x24
+cursor: 9,1
+title: ""
+pwd: ""
+--- plain ---
+fg196 bg27 fg15bg0
+darklight
+--- vt ---
+\e[3g\e[9G\eH\e[17G\eH\e[25G\eH\e[33G\eH\e[41G\eH\e[49G\eH\e[57G\eH\e[65G\eH\e[73G\eH\e[H\e[0m\e[38;5;196mfg196\e[0m \e[0m\e[48;5;27mbg27\e[0m \e[0m\e[38;5;15m\e[48;5;0mfg15bg0\e[0m\x0d\n
+\e[0m\e[38;5;232mdark\e[0m\e[38;5;255mlight\e[0m\e[2;10H\e[0m

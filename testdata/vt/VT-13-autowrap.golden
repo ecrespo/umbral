@@ -1,0 +1,13 @@
+# VT-13 autowrap (MUST)
+# screen 10x6
+cursor: 0,3
+title: ""
+pwd: ""
+--- plain ---
+0123456789
+WRAPPED
+012345678P
+--- vt ---
+\e[3g\e[9G\eH\e[H0123456789\x0d\n
+WRAPPED\x0d\n
+012345678P\e[4;1H\e[0m

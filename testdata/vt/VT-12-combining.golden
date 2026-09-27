@@ -1,0 +1,13 @@
+# VT-12 combining (MUST)
+# screen 20x4
+cursor: 9,2
+title: ""
+pwd: ""
+--- plain ---
+é à ö
+ñ ç
+á̂̃ stacked
+--- vt ---
+\e[3g\e[9G\eH\e[17G\eH\e[Hé à ö\x0d\n
+ñ ç\x0d\n
+á̂̃ stacked\e[3;10H\e[0m

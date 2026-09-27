@@ -1,0 +1,408 @@
+// Command umbrald is the Umbral daemon: it owns the PTYs, their VT emulation, the
+// blocks derived from shell integration, the agent runtime and the model gateway.
+//
+// This file is the composition root. Per Art. 3 it is the only place allowed to wire
+// modules together; every other package talks through ports or bus events.
+//
+// What works today: the daemon opens its database, applies migrations, runs the restart
+// recovery of Data Model §6, owns PTY sessions with their emulators, and serves system.*
+// and session.* over the 0600 Unix socket. Output streaming to clients arrives in T-F0-06
+// and blocks in T-F0-09.
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"runtime/debug"
+	"syscall"
+	"time"
+
+	"github.com/ecrespo/umbral/internal/api"
+	"github.com/ecrespo/umbral/internal/bus"
+	"github.com/ecrespo/umbral/internal/config"
+	"github.com/ecrespo/umbral/internal/sessions"
+	"github.com/ecrespo/umbral/internal/sessions/adapters/blockstore"
+	"github.com/ecrespo/umbral/internal/sessions/adapters/ghostty"
+	"github.com/ecrespo/umbral/internal/sessions/adapters/pty"
+	"github.com/ecrespo/umbral/internal/sessions/adapters/shellinteg"
+	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
+	"github.com/ecrespo/umbral/internal/store"
+	"github.com/ecrespo/umbral/internal/workspaces"
+	"github.com/ecrespo/umbral/internal/workspaces/adapters/treestore"
+	wsports "github.com/ecrespo/umbral/internal/workspaces/ports"
+)
+
+// version is overridden at build time with -ldflags "-X main.version=…".
+var version = "0.0.0-dev"
+
+// Exit codes from sysexits.h, so shell callers can tell the failures apart.
+const (
+	exitOK          = 0  // served, or another daemon already owns this installation
+	exitUsage       = 64 // EX_USAGE: a bad command line
+	exitDataErr     = 65 // EX_DATAERR: the database is unusable, for example a newer schema
+	exitUnavailable = 69 // EX_UNAVAILABLE: the socket could not be served
+	exitCantCreate  = 73 // EX_CANTCREAT: a required file or directory could not be created
+	exitTempFail    = 75 // EX_TEMPFAIL: the database is held by a daemon of another runtime directory
+	exitConfig      = 78 // EX_CONFIG: the settings file is there and cannot be read
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("umbrald", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	showVersion := fs.Bool("version", false, "print the daemon version and exit")
+	dbPath := fs.String("db", "", "database file (default $XDG_DATA_HOME/umbral/umbral.db)")
+	socketPath := fs.String("socket", "", "JSON-RPC socket (default $XDG_RUNTIME_DIR/umbral/umbral.sock)")
+	oneShot := fs.Bool("check", false, "open the database, recover and exit without serving")
+	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+
+	if *showVersion {
+		if _, err := fmt.Fprintln(stdout, buildVersion()); err != nil {
+			return 1
+		}
+		return 0
+	}
+
+	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+
+	socket, err := resolveSocketPath(*socketPath)
+	if err != nil {
+		logger.Error("cannot locate the socket", slog.Any("error", err))
+		return exitCantCreate
+	}
+
+	// Settings before anything they configure, and a malformed file stops the daemon here
+	// rather than after it has taken the lock and opened the database. A user who wrote
+	// `pane_history = true` and got a daemon running with it off would believe their
+	// screens were being captured when they were not; refusing is the honest answer.
+	settingsPath, err := config.SettingsPath()
+	if err != nil {
+		logger.Error("cannot locate the settings file", slog.Any("error", err))
+		return exitCantCreate
+	}
+	settings, err := config.LoadSettings(logger, settingsPath)
+	if err != nil {
+		logger.Error("the settings file cannot be read; refusing to start with defaults "+
+			"the user did not ask for", slog.Any("error", err))
+		return exitConfig
+	}
+
+	// Before the database, and before recovery above all. Recovery rewrites live rows on
+	// the premise that the previous process is gone (Data Model §6); a second daemon
+	// running it over a first one's sessions destroys state that is not stale. `umb`
+	// autostarts, so two daemons starting at once is ordinary rather than exotic.
+	lock, err := config.AcquireInstanceLock(filepath.Dir(socket))
+	if err != nil {
+		if errors.Is(err, config.ErrAlreadyRunning) {
+			// Not a failure: whoever holds the lock is serving this installation, which
+			// is what the caller wanted. An autostarting `umb` retries and finds them.
+			logger.Info("another umbrald already owns this installation; exiting",
+				slog.String("socket", socket))
+			return exitOK
+		}
+		logger.Error("cannot take the instance lock", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer func() {
+		if err := lock.Release(); err != nil {
+			logger.Error("cannot release the instance lock", slog.Any("error", err))
+		}
+	}()
+
+	// Under the lock, so this daemon is the only one of its installation and every
+	// bootstrap directory beside the socket belongs to a process that is gone — no age
+	// heuristic, no ownership check, no race to lose (REQ-TERM-012). Before the restore
+	// below, because the shells that restore launches write their own directories here and
+	// sweeping afterwards would delete the files they were started with.
+	if removed, err := shellinteg.Sweep(filepath.Dir(socket)); err != nil {
+		// Litter, not an outage: the user is waiting for a terminal, not for tidiness.
+		logger.Warn("could not remove every bootstrap directory left by a previous run",
+			slog.Int("removed", removed), slog.Any("error", err))
+	} else if removed > 0 {
+		logger.Info("removed the bootstrap directories left by a previous run",
+			slog.Int("removed", removed))
+	}
+
+	// The database has an owner too (delta `2026-09-database-lock`). The instance lock above
+	// serialises daemons of one runtime directory; recovery's premise is about this file, and
+	// a daemon of another runtime directory pointed at it with -db would otherwise recover
+	// over live sessions. Held elsewhere, nothing is serving the caller's socket and nothing
+	// failed to be created, so this is EX_TEMPFAIL rather than 0 or 73.
+	if *dbPath == "" {
+		if *dbPath, err = store.DefaultPath(); err != nil {
+			logger.Error("cannot locate the database", slog.Any("error", err))
+			return exitCantCreate
+		}
+	}
+	dbLock, err := config.AcquireDatabaseLock(*dbPath)
+	if err != nil {
+		if errors.Is(err, config.ErrDatabaseInUse) {
+			logger.Error("another umbrald, of a different runtime directory, is using this "+
+				"database; refusing to recover over its live sessions",
+				slog.String("database", *dbPath), slog.String("socket", socket))
+			return exitTempFail
+		}
+		logger.Error("cannot take the database lock", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer func() {
+		if err := dbLock.Release(); err != nil {
+			logger.Error("cannot release the database lock", slog.Any("error", err))
+		}
+	}()
+
+	db, err := store.Open(ctx, store.Options{Path: *dbPath})
+	if err != nil {
+		logger.Error("cannot open the database", slog.Any("error", err))
+		if errors.Is(err, store.ErrSchemaTooNew) {
+			return exitDataErr
+		}
+		return exitCantCreate
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			logger.Error("cannot close the database", slog.Any("error", err))
+		}
+	}()
+
+	// Data Model §6: every PTY died with the previous process, so any session still
+	// marked alive is stale. Blocks that were open become abandoned, never deleted.
+	report, err := db.Recover(ctx, time.Now())
+	if err != nil {
+		logger.Error("recovery after restart failed", slog.Any("error", err))
+		return exitDataErr
+	}
+
+	schemaVersion, err := db.SchemaVersion(ctx)
+	if err != nil {
+		logger.Error("cannot read the schema version", slog.Any("error", err))
+		return exitDataErr
+	}
+
+	logger.Info("database ready",
+		slog.String("version", buildVersion()),
+		slog.String("database", db.Path()),
+		slog.Int("schema_version", schemaVersion),
+		slog.Int64("sessions_recovered", report.SessionsExited),
+		slog.Int64("blocks_abandoned", report.BlocksAbandoned),
+		slog.Int64("integration_settled", report.IntegrationSettled))
+
+	if *oneShot {
+		return 0
+	}
+
+	tokenPath := filepath.Join(filepath.Dir(socket), config.TokenFileName)
+
+	// The bus is created here, in the composition root, and handed to whoever needs it.
+	// Art. 3 allows no other package to wire modules together.
+	eventBus := bus.New()
+	defer eventBus.Close()
+
+	// The sessions module gets its adapters here and nowhere else: the PTY, the emulator
+	// and the shell bootstrap are all injected, which is what keeps libghostty and
+	// creack/pty confined to one directory each (Art. 3).
+	blocks, err := blockstore.New(db)
+	if err != nil {
+		logger.Error("cannot build the block store", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer func() { _ = blocks.Close() }()
+
+	sessionService, err := sessions.New(sessions.Config{
+		Store:     db,
+		Bus:       eventBus,
+		NewPTY:    pty.Open,
+		NewEmu:    ghostty.NewEmulator,
+		Bootstrap: shellinteg.Adapter{Dir: filepath.Dir(socket)},
+		Blocks:    blocks,
+		// A scanner per session: it carries the state of a sequence split across two
+		// PTY reads, so one shared between sessions would mix their streams.
+		NewScanner: func() sessports.Scanner { return shellinteg.NewScanner() },
+		Logger:     logger,
+	})
+	if err != nil {
+		logger.Error("cannot build the sessions module", slog.Any("error", err))
+		return exitCantCreate
+	}
+	// Every PTY is closed on the way out so no shell is orphaned. The rows are repaired on
+	// the next start by store.Recover.
+	defer sessionService.Shutdown()
+
+	blockReader, err := sessions.NewReader(sessions.ReaderConfig{Blocks: blocks})
+	if err != nil {
+		logger.Error("cannot build the block reader", slog.Any("error", err))
+		return exitCantCreate
+	}
+
+	tree, err := treestore.New(db)
+	if err != nil {
+		logger.Error("cannot build the workspace store", slog.Any("error", err))
+		return exitCantCreate
+	}
+	// The tree takes the sessions module through ports.Terminals, a two-method view of it:
+	// a pane needs a terminal and needs to give it back, and nothing else. The assignment
+	// is written through the port rather than the concrete service so go-arch-lint's deep
+	// scan sees the dependency the boundary rules describe.
+	var terminals wsports.Terminals = sessionService
+	// REQ-TERM-010's capture reads a session's screen through a port declared in the
+	// workspaces module's own terms, so neither module has to know the other's shapes.
+	// Adapting them is a composition-root job, which is what this file is for.
+	screens := wsports.Screens(screenReader{sessions: sessionService})
+	workspaceService, err := workspaces.New(workspaces.Config{
+		Tree:        tree,
+		Terminals:   terminals,
+		Bus:         eventBus,
+		Logger:      logger,
+		PaneHistory: settings.PaneHistory,
+		Screens:     screens,
+	})
+	if err != nil {
+		logger.Error("cannot build the workspace tree", slog.Any("error", err))
+		return exitCantCreate
+	}
+
+	// The tree comes back before the socket opens (REQ-TERM-009).
+	//
+	// Order matters twice over. After `db.Recover` above, because that is what marks the
+	// previous run's sessions `exited` — restoring first would attach fresh terminals to
+	// panes whose old rows still claimed to be alive. And before `api.Listen`, because a
+	// client that connected midway would watch panes appear one at a time with no
+	// notification explaining them, and `session.snapshot` would report a tree that was
+	// true for a moment.
+	//
+	// A restore that fails does not stop the daemon. The structure is a convenience; the
+	// sessions a user starts next are not, and refusing to serve them because an old
+	// workspace could not be rebuilt would turn a lost layout into a lost terminal.
+	// Screens the setting no longer wants are deleted before anything can read them
+	// (Data Model §2.4d, a privacy promise rather than housekeeping).
+	if err := workspaceService.PrepareHistory(ctx); err != nil {
+		logger.Error("could not reconcile the stored pane screens with the setting",
+			slog.Any("error", err))
+	}
+
+	if err := workspaceService.Restore(ctx); err != nil {
+		logger.Error("could not restore the saved structure; starting with an empty tree",
+			slog.Any("error", err))
+	}
+
+	server, err := api.Listen(ctx, api.Config{
+		SocketPath:    socket,
+		TokenPath:     tokenPath,
+		DaemonVersion: buildVersion(),
+		Status:        statusFromStore(db),
+		Sessions:      sessionService,
+		Blocks:        blockReader,
+		Workspaces:    workspaceService,
+		Bus:           eventBus,
+		Logger:        logger,
+	})
+	if err != nil {
+		logger.Error("cannot open the socket", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer func() {
+		if err := server.Close(); err != nil {
+			logger.Error("cannot close the socket", slog.Any("error", err))
+		}
+	}()
+
+	// Forward module events to connected clients (API Spec §6).
+	go server.Notify(ctx)
+
+	// REQ-TERM-010's capture: every 10 s while the setting is on, and once more when the
+	// context ends, which is the "on clean shutdown" half. A no-op when it is off.
+	captureDone := make(chan struct{})
+	go func() {
+		defer close(captureDone)
+		workspaceService.RunCapture(ctx)
+	}()
+	defer func() { <-captureDone }()
+
+	logger.Info("umbrald listening",
+		slog.String("socket", server.SocketPath()),
+		slog.String("token_file", tokenPath))
+
+	if err := server.Serve(ctx); err != nil {
+		logger.Error("the socket stopped serving", slog.Any("error", err))
+		return exitUnavailable
+	}
+
+	logger.Info("umbrald stopped")
+	return 0
+}
+
+// resolveSocketPath honours an explicit -socket flag and otherwise asks config for the
+// platform default, which is the same answer `umb` gets.
+func resolveSocketPath(flagValue string) (string, error) {
+	if flagValue != "" {
+		return flagValue, nil
+	}
+	return config.DefaultSocketPath()
+}
+
+// statusFromStore answers system.status from the database. It is a closure rather than a
+// method so that api keeps knowing nothing about store, and so that T-F0-05 can replace
+// the counts with live ones without touching the api package.
+func statusFromStore(db *store.Store) api.StatusFunc {
+	return func(ctx context.Context) (api.StatusResult, error) {
+		var alive, running int
+		// threads exists from migration 0001, so the count is real rather than a
+		// placeholder, even though nothing writes to that table before T-F1-01.
+		err := db.DB().QueryRowContext(ctx, `
+			SELECT (SELECT count(*) FROM sessions WHERE state = 'alive'),
+			       (SELECT count(*) FROM threads  WHERE state = 'running')`).
+			Scan(&alive, &running)
+		if err != nil {
+			return api.StatusResult{}, fmt.Errorf("count sessions and threads: %w", err)
+		}
+		return api.StatusResult{SessionsAlive: alive, ThreadsRunning: running}, nil
+	}
+}
+
+// buildVersion reports the linker-provided version, falling back to the VCS revision
+// that the Go toolchain stamps into the binary.
+func buildVersion() string {
+	if version != "0.0.0-dev" {
+		return version
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return version
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" && s.Value != "" {
+			return version + "+" + s.Value[:min(len(s.Value), 12)]
+		}
+	}
+	return version
+}
+
+// screenReader adapts the sessions module to the narrow view REQ-TERM-010's capture needs.
+type screenReader struct {
+	sessions sessports.Sessions
+}
+
+func (r screenReader) Screen(ctx context.Context, sessionID string) (wsports.Screen, error) {
+	snapshot, err := r.sessions.Snapshot(ctx, sessionID)
+	if err != nil {
+		return wsports.Screen{}, err
+	}
+	// The cursor's row is the closest thing the snapshot has to "how many lines this is",
+	// and Data Model §2.4d stores `rows` beside the screen so a reader knows what it got.
+	return wsports.Screen{Data: snapshot.Data, Rows: int(snapshot.CursorY) + 1}, nil
+}
