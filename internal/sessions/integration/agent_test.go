@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -177,6 +178,40 @@ func TestKillForegroundUnder500ms_REQ_AGT_007(t *testing.T) {
 	after2, err := h.RunForThread(ctx, threadID, cwd, "echo still-here")
 	if err != nil || !strings.Contains(after2.Output, "still-here") {
 		t.Errorf("the PTY after cancelling a builtin loop: %q, %v", after2.Output, err)
+		dumpThreadPTY(t, h, threadID)
+	}
+}
+
+// TestACancelBeforeTheCommandStartsStillStopsIt_REQ_AGT_007: a run cancelled before the shell
+// has started its command — no OSC 133;C yet — is stopped once it does. Signalled at once,
+// the interrupt reached a shell that had not begun the loop and was lost, so the loop ran for
+// good and held the PTY: the macOS runner's slowness made that window wide enough to hit.
+func TestACancelBeforeTheCommandStartsStillStopsIt_REQ_AGT_007(t *testing.T) {
+	h := newHarness(t)
+	cwd := t.TempDir()
+	threadID := thread(t, h, cwd)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+	if _, err := h.RunForThread(ctx, threadID, cwd, "true"); err != nil {
+		t.Fatal(err)
+	}
+	// Several rounds, because what decides the outcome is where the shell is when the signal
+	// lands.
+	for round := range 5 {
+		for _, command := range []string{"while :; do :; done", "sleep 3174"} {
+			early, stop := context.WithCancel(ctx)
+			stop()
+			if _, err := h.RunForThread(early, threadID, cwd, command); !errors.Is(err, context.Canceled) {
+				t.Errorf("%s: err %v", command, err)
+			}
+			next, done := context.WithTimeout(ctx, 10*time.Second)
+			after, err := h.RunForThread(next, threadID, cwd, "echo still-here")
+			done()
+			if err != nil || !strings.Contains(after.Output, "still-here") {
+				dumpThreadPTY(t, h, threadID)
+				t.Fatalf("after cancelling %q before it started (round %d): %q, %v", command, round, after.Output, err)
+			}
+		}
 	}
 }
 
@@ -217,5 +252,35 @@ func TestParallelFirstUsesShareOnePTY_REQ_AGT_003(t *testing.T) {
 	}
 	if !a.run.Persisted || !b.run.Persisted {
 		t.Error("a stored block was reported as not persisted")
+	}
+}
+
+// dumpThreadPTY logs the thread's screen and its shell's version, for a cancel that left the
+// PTY in a state the assertion cannot describe — the failures it exists for were seen only on
+// the macOS runner.
+func dumpThreadPTY(t *testing.T, h *harness, threadID string) {
+	t.Helper()
+	if out, err := exec.CommandContext(t.Context(), h.shell, "--version").Output(); err == nil {
+		t.Logf("shell %s: %s", h.shell, strings.SplitN(string(out), "\n", 2)[0])
+	}
+	sessions, err := h.List(t.Context())
+	if err != nil {
+		t.Logf("list: %v", err)
+		return
+	}
+	for _, s := range sessions {
+		if s.OwnerThreadID != threadID {
+			continue
+		}
+		snap, err := h.Snapshot(t.Context(), s.ID)
+		if err != nil {
+			t.Logf("snapshot: %v", err)
+			continue
+		}
+		data := snap.Data
+		if len(data) > 3000 {
+			data = data[len(data)-3000:]
+		}
+		t.Logf("the thread's screen (%s): %q", s.ID, data)
 	}
 }
