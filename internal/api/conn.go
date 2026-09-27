@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
+	"time"
 )
 
 // method is one dispatchable JSON-RPC method.
@@ -214,6 +216,16 @@ func (s *Server) newConn(netConn net.Conn) *conn {
 func (c *conn) serve(ctx context.Context) {
 	defer func() { _ = c.close() }()
 
+	// REQ-SEC-017: the handshake has a deadline from accept. It is a read deadline on the
+	// socket rather than a timer beside the loop because the loop is where the handshake
+	// state lives: a timer would race a hello arriving at the same instant, and a read
+	// deadline cannot. It is absolute, so blank lines, a partial line or anything else the
+	// peer sends in the meantime does not move it. `handleHello` clears it on success.
+	if err := c.netConn.SetReadDeadline(time.Now().Add(c.server.cfg.handshakeTimeout)); err != nil {
+		c.logger.Debug("set the handshake deadline", slog.Any("error", err))
+		return
+	}
+
 	for c.reader.Scan() {
 		if ctx.Err() != nil {
 			return
@@ -228,6 +240,11 @@ func (c *conn) serve(ctx context.Context) {
 	}
 
 	if err := c.reader.Err(); err != nil && !errors.Is(err, net.ErrClosed) {
+		if !c.authenticated && errors.Is(err, os.ErrDeadlineExceeded) {
+			c.writeError(nil, fmt.Errorf("%w: system.hello was not completed within %v",
+				ErrUnauthorized, c.server.cfg.handshakeTimeout))
+			return
+		}
 		if errors.Is(err, bufio.ErrTooLong) {
 			// The peer is out of contract; tell it why before hanging up, which the lost
 			// framing forces: the rest of the line is still arriving, and reading on would
@@ -281,14 +298,26 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 		return false
 	}
 
+	// REQ-SEC-018: a system.hello must be answerable, so one without an id, or with a null
+	// one, is refused at any point in the connection and before any token is compared — no
+	// path may let a peer probe tokens, nor authenticate a connection that learned nothing
+	// about the daemon (API Spec §2 step 5).
+	if req.Method == methodHello && !req.hasID() {
+		return c.refuse(fmt.Errorf("%w: system.hello must carry a non-null id", ErrUnauthorized))
+	}
+
 	m, known := c.server.methods[req.Method]
 
 	// API Spec §2 step 3: anything before a successful system.hello is UNAUTHORIZED and
 	// the connection is closed. That check comes before "does this method exist", so an
 	// unauthenticated peer cannot probe the method table.
+	//
+	// A notification is answered too, which is API Spec §1's one deviation from JSON-RPC
+	// 2.0 §4.1 (REQ-SEC-018): the rule against answering a notification assumes a session
+	// the peer is entitled to, and this reply is the connection-level refusal, not the
+	// answer to a call.
 	if !c.authenticated && (!known || !m.beforeHello) {
-		c.reply(req, nil, fmt.Errorf("%w: the first call must be system.hello", ErrUnauthorized))
-		return true
+		return c.refuseBeforeHello(invalidRequestID(req.ID))
 	}
 	if !known || (c.authenticated && !m.allows(c.clientKind)) {
 		c.reply(req, nil, fmt.Errorf("%w: %s", ErrMethodNotFound, req.Method))
@@ -329,6 +358,12 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 // on the same connection (REQ-SEC-003).
 func (c *conn) refuseBeforeHello(id json.RawMessage) (closeConn bool) {
 	c.writeError(id, fmt.Errorf("%w: the first call must be system.hello", ErrUnauthorized))
+	return true
+}
+
+// refuse answers UNAUTHORIZED with a null id and asks for the connection to be closed.
+func (c *conn) refuse(err error) (closeConn bool) {
+	c.writeError(nullID, err)
 	return true
 }
 

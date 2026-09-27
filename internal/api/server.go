@@ -136,7 +136,20 @@ type Config struct {
 	Workspaces wsports.Workspaces
 	Bus        *bus.Bus
 	Logger     *slog.Logger
+
+	// handshakeTimeout replaces HandshakeTimeout. It is unexported because nothing
+	// legitimate needs another value (REQ-SEC-017): it exists so a test can measure the
+	// deadline on the real clock in milliseconds rather than seconds. Zero means
+	// HandshakeTimeout.
+	handshakeTimeout time.Duration
 }
+
+// HandshakeTimeout is how long a connection has, from accept, to complete `system.hello`
+// (REQ-SEC-017, API Spec §2 step 3a). Past it the daemon answers UNAUTHORIZED and closes,
+// so a peer that never speaks cannot hold a connection — a file descriptor and a goroutine —
+// for the life of the daemon. It is two and a half times the official client's whole DialTimeout, which covers
+// connect and handshake together, and it is a constant rather than a setting.
+const HandshakeTimeout = 5 * time.Second
 
 // Server accepts client connections on the Unix socket and dispatches JSON-RPC methods.
 type Server struct {
@@ -187,6 +200,9 @@ func Listen(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	if cfg.Bus == nil {
 		cfg.Bus = bus.New()
+	}
+	if cfg.handshakeTimeout == 0 {
+		cfg.handshakeTimeout = HandshakeTimeout
 	}
 
 	token, err := LoadOrCreateToken(cfg.TokenPath)

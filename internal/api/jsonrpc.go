@@ -32,6 +32,11 @@ type request struct {
 // isNotification reports whether the client expects no reply.
 func (r request) isNotification() bool { return len(r.ID) == 0 }
 
+// hasID reports whether the request carries an id a reply can be matched against: present
+// and not null. JSON-RPC allows a null id but discourages it, and the daemon itself uses
+// null only for "undetermined" (REQ-SEC-018).
+func (r request) hasID() bool { return len(r.ID) != 0 && string(r.ID) != "null" }
+
 // response is an outgoing reply. Exactly one of Result and Error is set.
 type response struct {
 	JSONRPC string          `json:"jsonrpc"`

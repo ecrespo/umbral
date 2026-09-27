@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.14 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.15 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -14,11 +14,12 @@
 ---
 
 
-> **Pending from F1 (ratified 2026-09-26, not yet written here).** PRD 1.13 adds REQ-SEC-017/018,
-> REQ-API-005, REQ-CLI-007/008 and REQ-SKL-001…007, which this document does not describe yet:
-> the handshake deadline, `RESULT_TOO_LARGE`, `limits.*`, `skill.*` and the `cli` rows for
-> `limits.*`, `skill.*` and `mcp.server.*`. Tasks T-F1-32, T-F1-33, T-F1-34 and T-F1-37 write
-> that text as they land. Until then, the design is in `changes/_archive/2026-09-{handshake-hardening,frame-limit-monitoring,skills-cli,cli-mcp}/`.
+> **Pending from F1 (ratified 2026-09-26, not yet written here).** PRD 1.13 adds REQ-API-005,
+> REQ-CLI-007/008 and REQ-SKL-001…007, which this document does not describe yet:
+> `RESULT_TOO_LARGE`, `limits.*`, `skill.*` and the `cli` rows for `limits.*`, `skill.*` and
+> `mcp.server.*`. Tasks T-F1-33, T-F1-34 and T-F1-37 write that text as they land. Until then, the
+> design is in `changes/_archive/2026-09-{frame-limit-monitoring,skills-cli,cli-mcp}/`. The
+> handshake deadline and the id-less hello (REQ-SEC-017/018) are written: §1, §2 and §8, by T-F1-32.
 
 ## 1. Overview
 
@@ -46,6 +47,18 @@ A notification carries a sequence number in its envelope, beside `jsonrpc`, `met
 §6 says what `seq` counts. A client that ignores the member behaves exactly as one written
 before it existed, which is why adding it left `protocol_version` at 1 (§9).
 
+**One deviation from JSON-RPC 2.0.** §4.1 of JSON-RPC says a server does not reply to a
+notification. The daemon does, in exactly two cases, both with `UNAUTHORIZED`, `id: null` and a
+close (REQ-SEC-018, §2):
+
+- a notification from a peer that has not completed the handshake. JSON-RPC's rule assumes a
+  session the peer is entitled to; this reply is the connection-level refusal of §2 step 3, not the
+  answer to a call;
+- a `system.hello` without an `id`, at any point in the connection.
+
+After the handshake, a notification to any other method keeps its JSON-RPC meaning and gets no
+reply.
+
 ## 2. Authentication and Authorization
 
 1. On installation the daemon creates `$XDG_RUNTIME_DIR/umbral/token` (32 random bytes in hex,
@@ -53,14 +66,27 @@ before it existed, which is why adding it left `protocol_version` at 1 (§9).
 2. The first call on every connection MUST be `system.hello` with that token (REQ-SEC-003).
 3. Any earlier call, or a call with an invalid token, receives `UNAUTHORIZED` and the connection is
    closed. A line that is not JSON, is not a JSON-RPC request, or is past the frame limit (§1)
-   counts as an earlier call: before the handshake it receives no protocol error in its place.
+   counts as an earlier call: before the handshake it receives no protocol error in its place. So
+   does a JSON-RPC notification, which is answered with `id: null` (§1, REQ-SEC-018).
+
+   3a. IF a connection has not completed `system.hello` within **5 s** of being accepted, THEN THE
+   SYSTEM SHALL reply `UNAUTHORIZED` with `id: null` and close it (REQ-SEC-017). The clock starts at
+   accept and nothing the peer sends moves it: not blank lines, not a partial line. A peer that
+   never speaks would otherwise hold a connection for the life of the daemon. It is a
+   constant, not a setting; the official client completes connect and handshake within its 2 s
+   dial timeout.
 4. The socket is created with permissions `0600` (REQ-SEC-007).
-5. THE SYSTEM SHALL compare the token before validating any other `system.hello` parameter.
-   REQ-SEC-003 admits no exception, so no validation error may answer first and leave the
-   connection open for another attempt.
+5. `system.hello` MUST carry a non-null `id`. IF it has none, or `"id": null`, THEN THE SYSTEM
+   SHALL reply `UNAUTHORIZED` with `id: null` and close the connection, **whatever its token**
+   (REQ-SEC-018). That check comes before the token comparison: an answer that cannot be delivered
+   is not a handshake, and a connection must not be authenticated without learning which daemon,
+   protocol and capabilities it is talking to. After it, THE SYSTEM SHALL compare the token before
+   validating any other `system.hello` parameter. REQ-SEC-003 admits no exception, so no
+   validation error may answer first and leave the connection open for another attempt.
 6. IF `system.hello` arrives on a connection that already completed the handshake, THEN THE SYSTEM
-   SHALL reply `UNAUTHORIZED` and close the connection. That check precedes the token comparison, so
-   an authenticated connection cannot be reused to test tokens.
+   SHALL reply `UNAUTHORIZED` and close the connection — with `id: null` if the repeated hello
+   carries no id (step 5). That check precedes the token comparison, so an authenticated
+   connection cannot be reused to test tokens.
 
 ### Runtime directory
 
@@ -162,7 +188,7 @@ absent one. The field is present on `INTERNAL_ERROR` only (Art. 7).
 | -32600 | `INVALID_REQUEST` | Message is not valid JSON-RPC |
 | -32601 | `METHOD_NOT_FOUND` | Method name this build does not know at all, or not allowed for the `client_kind` |
 | -32602 | `VALIDATION_ERROR` | Invalid parameters |
-| -32001 | `UNAUTHORIZED` | No `system.hello` or invalid token |
+| -32001 | `UNAUTHORIZED` | No `system.hello`, handshake deadline passed, `system.hello` without an id, or invalid token (§2) |
 | -32002 | `NOT_FOUND` | Unknown ID |
 | -32003 | `CONFLICT` | Incompatible state (e.g. `thread.send` while a turn is running) |
 | -32004 | `PERMISSION_DENIED` | `deny` policy |
@@ -748,6 +774,7 @@ stateDiagram-v2
 | JSON message | 4 MiB including the `\n`; past it, `VALIDATION_ERROR` (before the handshake `UNAUTHORIZED`) and the connection is closed (§1) |
 | `session.input` | 64 KiB per message |
 | Concurrent connections | 32 |
+| Handshake deadline | 5 s from accept; past it, `UNAUTHORIZED` with `id: null` and a close (§2 step 3a) |
 | `session.output` notifications | batched every 4 ms or 32 KiB, whichever comes first |
 | Concurrent waits per connection | 32; beyond that `thread.wait` and `block.wait_output` return `VALIDATION_ERROR` |
 | Wait timeout | 1 s to 1 h; there is no wait without a deadline |
@@ -818,3 +845,4 @@ printf '%s\n' \
 | 1.12 | 2026-09-20 | delta `2026-09-restore-semantics`: §4's `Pane` gains `command_pending` (omitted when false) and §5.8 states that `layout.apply` returns a tree's commands as pending, never as launched. Additive within `protocol_version = 1` |
 | 1.13 | 2026-09-26 | delta `2026-09-cli-allowlist`: §2's `cli` row gains `workspace.*`, `tab.*`, `pane.*` except `pane.move`, and `layout.*` — the surface REQ-CLI-005 and REQ-CLI-006 give `umb`, which the row refused. `session.*` stays interactive-only. Additive within `protocol_version = 1` |
 | 1.14 | 2026-09-26 | delta `2026-09-oversized-message`: §1 says the 4 MiB limit counts the `\n`, and that past it the daemon replies `VALIDATION_ERROR` with a null id and closes; §2 step 3 names unparseable, non-JSON-RPC and oversized lines as earlier calls, which get `UNAUTHORIZED`; §8's row says both |
+| 1.15 | 2026-09-27 | delta `2026-09-handshake-hardening` (T-F1-32): §1 records the one deviation from JSON-RPC 2.0 §4.1 — an unauthenticated peer's notification and an id-less `system.hello` are answered; §2 step 3 names notifications among the earlier calls, new step 3a sets the 5 s handshake deadline, step 5 requires a non-null `id` on `system.hello` before the token is compared, and step 6's repeated hello is answered even without an id; §8 gains the deadline row. `protocol_version` unchanged: every conforming client already sends an id and completes the handshake in milliseconds |

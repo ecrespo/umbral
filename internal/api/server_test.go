@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -21,14 +22,19 @@ import (
 // with its token.
 func testServer(t *testing.T, status StatusFunc) *Server {
 	t.Helper()
+	return testServerWithConfig(t, Config{Status: status})
+}
+
+// testServerWithConfig is testServer for a test that needs more than a status function. The
+// socket, the token and the daemon version are filled in; everything else comes from cfg.
+func testServerWithConfig(t *testing.T, cfg Config) *Server {
+	t.Helper()
 
 	dir := socketDir(t)
-	s, err := Listen(t.Context(), Config{
-		SocketPath:    filepath.Join(dir, SocketFileName),
-		TokenPath:     filepath.Join(dir, TokenFileName),
-		DaemonVersion: "0.1.0-test",
-		Status:        status,
-	})
+	cfg.SocketPath = filepath.Join(dir, SocketFileName)
+	cfg.TokenPath = filepath.Join(dir, TokenFileName)
+	cfg.DaemonVersion = "0.1.0-test"
+	s, err := Listen(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
@@ -833,4 +839,188 @@ func (c *client) readNotificationSeq(t *testing.T) uint64 {
 	t.Helper()
 	_, seq, _ := c.readNotification(t)
 	return seq
+}
+
+// TestASilentConnectionIsClosedAfterTheDeadline_REQ_SEC_017: a connection that never
+// completes `system.hello` holds one of the 32 slots of API Spec §8 for as long as it stays.
+// REQ-SEC-017 gives it 5 s from accept, then `UNAUTHORIZED` with a null id and a close. The
+// test shortens the deadline rather than faking time, so what it measures is the real clock
+// between the dial and the hang-up; the last case pins the production value.
+func TestASilentConnectionIsClosedAfterTheDeadline_REQ_SEC_017(t *testing.T) {
+	t.Parallel()
+
+	const deadline = 300 * time.Millisecond
+
+	for _, tc := range []struct {
+		name string
+		// talk is what the peer does while the deadline runs. It must not complete a
+		// handshake; it returns when the daemon hangs up or the test gives up.
+		talk func(c *client, stop <-chan struct{})
+	}{
+		{"silent", func(*client, <-chan struct{}) {}},
+		{"blank lines every 100 ms", func(c *client, stop <-chan struct{}) {
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-ticker.C:
+					// The daemon hanging up makes this write fail, which is the point.
+					_, _ = c.conn.Write([]byte("\n"))
+				}
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := testServerWithConfig(t, Config{handshakeTimeout: deadline})
+			started := time.Now()
+			c := dial(t, s)
+
+			stop := make(chan struct{})
+			talked := make(chan struct{})
+			go func() {
+				defer close(talked)
+				tc.talk(c, stop)
+			}()
+
+			resp := c.read()
+			elapsed := time.Since(started)
+			close(stop)
+			<-talked
+
+			if resp.Error == nil || resp.Error.Code != codeUnauthorized {
+				t.Fatalf("after the deadline = %+v, want UNAUTHORIZED", resp)
+			}
+			if string(resp.ID) != "null" {
+				t.Errorf("id = %s, want null", resp.ID)
+			}
+			if elapsed < deadline || elapsed > deadline+time.Second {
+				t.Errorf("refused after %v, want between %v and %v",
+					elapsed, deadline, deadline+time.Second)
+			}
+			c.expectClosed()
+		})
+	}
+
+	// The deadline bounds the handshake and nothing after it: an authenticated client that
+	// goes quiet — a TUI nobody is typing into — must not be read-timed-out and dropped.
+	t.Run("an authenticated connection outlives the deadline", func(t *testing.T) {
+		t.Parallel()
+
+		s := testServerWithConfig(t, Config{handshakeTimeout: deadline})
+		c := dial(t, s)
+		if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+			t.Fatalf("handshake: %+v", resp.Error)
+		}
+
+		time.Sleep(3 * deadline)
+
+		if resp := c.call(2, "system.status", nil); resp.Error != nil || resp.Result == nil {
+			t.Fatalf("system.status after %v idle = %+v, want a result", 3*deadline, resp)
+		}
+	})
+
+	t.Run("the production deadline is 5 s", func(t *testing.T) {
+		t.Parallel()
+
+		if HandshakeTimeout != 5*time.Second {
+			t.Fatalf("HandshakeTimeout = %v, want 5s (REQ-SEC-017, API Spec §8)", HandshakeTimeout)
+		}
+		s := testServer(t, nil)
+		if s.cfg.handshakeTimeout != HandshakeTimeout {
+			t.Errorf("a server configured without a deadline uses %v, want %v",
+				s.cfg.handshakeTimeout, HandshakeTimeout)
+		}
+	})
+}
+
+// TestANotificationBeforeHelloIsUnauthorized_REQ_SEC_018: JSON-RPC does not answer a
+// notification, and before this requirement the daemon read that as licence to close an
+// unauthenticated connection without a word — or, for an id-less `system.hello` with a good
+// token, to authenticate it and say nothing. REQ-SEC-018 answers both with `UNAUTHORIZED`, a
+// null id and a close, and puts the id check before the token.
+func TestANotificationBeforeHelloIsUnauthorized_REQ_SEC_018(t *testing.T) {
+	t.Parallel()
+
+	helloLine := func(token, id string) []byte {
+		params := fmt.Sprintf(`{"token":%q,"client_kind":"tui","client_version":"0.1.0-test",`+
+			`"protocol_version":%d}`, token, ProtocolVersion)
+		if id == "" {
+			return []byte(`{"jsonrpc":"2.0","method":"system.hello","params":` + params + "}\n")
+		}
+		return []byte(`{"jsonrpc":"2.0","id":` + id + `,"method":"system.hello","params":` + params + "}\n")
+	}
+
+	for _, tc := range []struct {
+		name string
+		// authenticate completes a proper handshake first.
+		authenticate bool
+		line         func(token string) []byte
+	}{
+		{"session.list without an id", false, func(string) []byte {
+			return []byte(`{"jsonrpc":"2.0","method":"session.list"}` + "\n")
+		}},
+		{"system.hello without an id and a valid token", false, func(tok string) []byte {
+			return helloLine(tok, "")
+		}},
+		{"system.hello without an id and an invalid token", false, func(string) []byte {
+			return helloLine("not-the-token", "")
+		}},
+		{"system.hello with a null id", false, func(tok string) []byte {
+			return helloLine(tok, "null")
+		}},
+		{"an id-less system.hello after the handshake", true, func(tok string) []byte {
+			return helloLine(tok, "")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := testServer(t, nil)
+			c := dial(t, s)
+			if tc.authenticate {
+				if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+					t.Fatalf("handshake: %+v", resp.Error)
+				}
+			}
+
+			// A handshake that succeeds reaches the result observer; one refused before
+			// the handler runs does not. That is how the valid-token case shows the
+			// connection was not authenticated behind the refusal. The observer is swapped
+			// before this connection writes anything, and the daemon only reads it after
+			// reading that write.
+			var mu sync.Mutex
+			var handshakes int
+			installResultObserver(t, s)
+			observe := s.observeResult
+			s.observeResult = func(method string, declared, actual any) {
+				observe(method, declared, actual)
+				if method == "system.hello" {
+					mu.Lock()
+					handshakes++
+					mu.Unlock()
+				}
+			}
+
+			c.send(tc.line(s.Token()))
+			resp := c.read()
+			if resp.Error == nil || resp.Error.Code != codeUnauthorized {
+				t.Fatalf("reply = %+v, want UNAUTHORIZED", resp)
+			}
+			if string(resp.ID) != "null" {
+				t.Errorf("id = %s, want null", resp.ID)
+			}
+			c.expectClosed()
+
+			mu.Lock()
+			defer mu.Unlock()
+			if handshakes != 0 {
+				t.Errorf("an id-less system.hello completed %d handshake(s); it must be "+
+					"refused before the token is compared", handshakes)
+			}
+		})
+	}
 }
