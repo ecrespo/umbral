@@ -48,11 +48,14 @@ type Router struct {
 	classes map[string][]string
 }
 
-// Call is one routed model call: the class picks the candidates, so Request.Model is ignored.
+// Call is one routed model call: Model, a catalog id, is the only candidate when set — a
+// thread's chosen model (REQ-AGT-010) — and otherwise the class picks them. Request.Model is
+// ignored either way.
 type Call struct {
 	ThreadID string
 	TurnID   string
 	Class    string
+	Model    string
 	Request  domain.Request
 }
 
@@ -97,14 +100,78 @@ type candidate struct {
 	provider ports.Provider
 }
 
+// Available reports whether a call of this class, or naming this model, has a candidate
+// known to the catalog and not down; capability filters are the call's and not checked here.
+func (r *Router) Available(ctx context.Context, class, model string) bool {
+	ids, err := r.candidateIDs(class, model)
+	if err != nil {
+		return false
+	}
+	listed, err := r.catalog.List(ctx, false)
+	if err != nil {
+		return false
+	}
+	for _, m := range listed {
+		for _, id := range ids {
+			if m.ID == id && m.Health != domain.HealthDown {
+				if _, ok := r.catalog.Provider(m.Provider); ok {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// candidateIDs are the catalog ids a call may go to, in order.
+func (r *Router) candidateIDs(class, model string) ([]string, error) {
+	if model != "" {
+		return []string{model}, nil
+	}
+	r.mu.RLock()
+	ids, ok := r.classes[class]
+	r.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", domain.ErrUnknownClass, class)
+	}
+	return ids, nil
+}
+
+// Window is the smallest known context window among the candidates a call of this class, or
+// naming this model, may go to — the budget a thread compacts to, so a fallback to a smaller
+// model is compacted for rather than skipped (delta `2026-09-context-budget`). A candidate
+// that is down or does not say its window does not count; 0 means none is known.
+func (r *Router) Window(ctx context.Context, class, model string) int64 {
+	ids, err := r.candidateIDs(class, model)
+	if err != nil {
+		return 0
+	}
+	listed, err := r.catalog.List(ctx, false)
+	if err != nil {
+		return 0
+	}
+	wanted := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	var smallest int64
+	for _, m := range listed {
+		if !wanted[m.ID] || m.Health == domain.HealthDown || m.Caps.ContextWindow <= 0 {
+			continue
+		}
+		if smallest == 0 || m.Caps.ContextWindow < smallest {
+			smallest = m.Caps.ContextWindow
+		}
+	}
+	return smallest
+}
+
 // candidates applies DD-004's filters to the class, keeping the declared order. The offline
 // filter is the catalog's: offline, a remote provider is not callable and its models are down.
 func (r *Router) candidates(ctx context.Context, call Call) ([]candidate, error) {
-	r.mu.RLock()
-	ids, ok := r.classes[call.Class]
-	r.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", domain.ErrUnknownClass, call.Class)
+	ids, err := r.candidateIDs(call.Class, call.Model)
+	if err != nil {
+		return nil, err
 	}
 	listed, err := r.catalog.List(ctx, false)
 	if err != nil {
@@ -227,7 +294,7 @@ func (r *Router) Stream(ctx context.Context, call Call) (iter.Seq2[domain.Event,
 		return nil, err
 	}
 	if len(cands) == 0 {
-		return nil, fmt.Errorf("%w: class %q", domain.ErrNoCandidate, call.Class)
+		return nil, fmt.Errorf("%w: class %q, model %q", domain.ErrNoCandidate, call.Class, call.Model)
 	}
 	req := r.redact(call.Request)
 	ctx = domain.WithThread(ctx, call.ThreadID)
@@ -336,6 +403,8 @@ func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain
 		}
 		if it.ev.Kind == domain.EventUsage {
 			usage = it.ev.Usage
+			it.ev.Usage.Model = c.model.ID
+			it.ev.Usage.CostMicroUSD = c.model.Cost(usage.InputTokens, usage.OutputTokens)
 		}
 		if !yield(it.ev, nil) {
 			finish(errors.New("the caller stopped reading"))

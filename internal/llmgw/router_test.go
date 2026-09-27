@@ -553,3 +553,98 @@ func TestAnUnknownClassIsRefused(t *testing.T) {
 		t.Errorf("an empty class: err = %v, want ErrNoCandidate", err)
 	}
 }
+
+// TestAThreadsModelIsItsOnlyCandidate_REQ_AGT_010: a call naming a model goes to that model,
+// whatever its class would pick — a thread whose model was changed uses the new one.
+func TestAThreadsModelIsItsOnlyCandidate_REQ_AGT_010(t *testing.T) {
+	t.Parallel()
+	p := &streamProvider{id: "ol", scripts: map[string]script{"a": {events: answer}, "b": {events: answer}}}
+	r := newRig(t, false, map[string][]string{"code": {"ol/a"}}, []*streamProvider{p}, []domain.Model{model("ol", "a"), model("ol", "b")})
+
+	call := hello("code")
+	call.Model = "ol/b"
+	if _, err := collect(t, r.router, call); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.requests[0].Model; got != "b" {
+		t.Fatalf("the call went to %q, want the named model b", got)
+	}
+	call.Model = "ol/missing"
+	if _, err := collect(t, r.router, call); !errors.Is(err, domain.ErrNoCandidate) {
+		t.Fatalf("a named model that is not in the catalog: %v", err)
+	}
+}
+
+// TestTheWindowIsTheSmallestCandidates_REQ_CTX_004: the budget a thread compacts to is the
+// smallest known window among its candidates, so a fallback is not skipped for size.
+func TestTheWindowIsTheSmallestCandidates_REQ_CTX_004(t *testing.T) {
+	t.Parallel()
+	big, small, unknown := model("ol", "big"), model("ol", "small"), model("ol", "unknown")
+	small.Caps.ContextWindow = 8192
+	unknown.Caps.ContextWindow = 0
+	down := model("ol", "down")
+	down.Caps.ContextWindow, down.Health = 1024, domain.HealthDown
+	r := newRig(t, false, map[string][]string{"code": {"ol/big", "ol/unknown", "ol/small", "ol/down"}},
+		[]*streamProvider{{id: "ol"}}, []domain.Model{big, small, unknown, down})
+
+	if got := r.router.Window(t.Context(), "code", ""); got != 8192 {
+		t.Fatalf("class window %d, want 8192", got)
+	}
+	if got := r.router.Window(t.Context(), "code", "ol/big"); got != 128_000 {
+		t.Fatalf("a named model's window %d, want its own", got)
+	}
+	if got := r.router.Window(t.Context(), "code", "ol/unknown"); got != 0 {
+		t.Fatalf("an unknown window is 0, got %d", got)
+	}
+}
+
+// TestTheUsageEventCarriesModelAndCost_REQ_LLM_005: the caller learns which model served the
+// call and what it cost, which a thread adds to its own total.
+func TestTheUsageEventCarriesModelAndCost_REQ_LLM_005(t *testing.T) {
+	t.Parallel()
+	p := &streamProvider{id: "or", scripts: map[string]script{"kimi": {events: answer}}}
+	m := model("or", "kimi")
+	m.PriceInMicroUSDPerMTok, m.PriceOutMicroUSDPerMTok = 570_000, 2_300_000
+	r := newRig(t, false, map[string][]string{"code": {"or/kimi"}}, []*streamProvider{p}, []domain.Model{m})
+	stream, err := r.router.Stream(t.Context(), hello("code"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var usage domain.Usage
+	for ev, err := range stream {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ev.Kind == domain.EventUsage {
+			usage = ev.Usage
+		}
+	}
+	if usage.Model != "or/kimi" || usage.CostMicroUSD != 2005 {
+		t.Fatalf("usage event %+v", usage)
+	}
+}
+
+// TestAvailableSaysWhetherAnyCandidateCanServe_REQ_LLM_003: thread.send refuses a thread with
+// no candidate up front (PROVIDER_UNAVAILABLE) rather than start a turn that cannot run.
+func TestAvailableSaysWhetherAnyCandidateCanServe_REQ_LLM_003(t *testing.T) {
+	t.Parallel()
+	up, down := model("ol", "up"), model("ol", "down")
+	down.Health = domain.HealthDown
+	r := newRig(t, false, map[string][]string{"code": {"ol/down", "ol/up"}, "plan": {"ol/down"}},
+		[]*streamProvider{{id: "ol"}}, []domain.Model{up, down})
+	for _, c := range []struct {
+		class, model string
+		want         bool
+	}{
+		{"code", "", true},
+		{"plan", "", false},
+		{"nope", "", false},
+		{"code", "ol/up", true},
+		{"code", "ol/down", false},
+		{"code", "ol/missing", false},
+	} {
+		if got := r.router.Available(t.Context(), c.class, c.model); got != c.want {
+			t.Errorf("%s/%s: %v, want %v", c.class, c.model, got, c.want)
+		}
+	}
+}

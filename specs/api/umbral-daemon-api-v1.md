@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.18 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.19 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -168,7 +168,7 @@ before the daemon starts.
 ## 3. General Conventions
 
 ### Identifiers
-- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`
+- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`, and `trn_` for a turn (`turn_id`, T-F1-13)
   (Constitution Art. 6). Example: `blk_01J9Z3K8T2QH6W4V5X7Y8Z9A0B`.
 - **Structural identifiers** are the documented exception to that rule (Art. 6, amendment of
   2026-09-20): a workspace is `w<n>`, a tab `w<n>:t<m>` and a pane `w<n>:p<m>`, with `n` and `m`
@@ -333,7 +333,7 @@ method and the ordering that produced it, so one handed to a different method is
 
 ### Message
 ```json
-{"id":"msg_…","thread_id":"thr_…","role":"assistant","content":"…",
+{"id":"msg_…","thread_id":"thr_…","turn_id":"trn_…","role":"assistant","content":"…",
  "attachments":[{"kind":"block","ref":"blk_…","bytes":1834,"truncated_bytes":0}],
  "created_at":1757592020000}
 ```
@@ -579,12 +579,20 @@ is not already a valid expression. A malformed query returns `VALIDATION_ERROR`.
 
 **Result:** `{turn_id, message_id, final_state?}`. The content arrives through notifications; `final_state` is only present when `wait` was requested.
 
+Until the wait engine (T-F1-23) is built, a `thread.send` carrying `wait` answers
+`NOT_IMPLEMENTED` and sends nothing. An attachment names a `ref` (a path relative to the thread's
+cwd, or a block id); inline `data_b64` arrives with `umb ai` (T-F1-19) and is refused until then.
+The message persisted, and `thread.get` returns, is the text with its attachments' content
+appended, which is what the model read (REQ-AGT-011).
+
 **Errors:**
 - `CONFLICT`: a turn is already running (not raised for a duplicate `client_msg_id`).
 - `THREAD_BLOCKED`: with `wait`, the thread is already awaiting approval; nothing is persisted or sent.
 - `TIMEOUT`: the wait expired; the message was already sent, so do not resend it blindly.
 - `BUDGET_EXCEEDED`.
-- `PROVIDER_UNAVAILABLE`.
+- `PROVIDER_UNAVAILABLE`: none of the thread's candidates — its model, or its class's — is known
+  to the catalog and not down; nothing is persisted. A candidate that fails once the turn runs
+  ends it with `stop_reason = provider_error` instead.
 - `VALIDATION_ERROR`: unknown attachment, or `client_msg_id` that is not a ULID.
 
 ### 5.21 `thread.cancel` — REQ-AGT-007 → `{stopped_at}`
@@ -594,8 +602,16 @@ is not already a valid expression. A malformed query returns `VALIDATION_ERROR`.
 - A `model` change applies from the next turn.
 - **Errors:** `CONFLICT` when changing `mode` during a turn.
 
-### 5.23 `thread.list` / `thread.get`
-`thread.get` accepts `{thread_id, include_messages?: bool, limit, cursor}`.
+### 5.23 `thread.list` / `get`
+
+`list` params: `{}`. **Result:** `{items: Thread[]}`, the threads that are not ephemeral, most
+recently updated first.
+
+`get` params: `{thread_id, include_messages?, limit?, cursor?}`. **Result:** the `Thread`, and
+with `include_messages` a page of its `messages` (`limit` 1-1000, default 100), oldest first;
+`next_cursor` is the last message id of the page when more follow, and passing it as `cursor`
+returns the next page. An unknown thread is `NOT_FOUND`; a `cursor` that names no message of the
+thread is `VALIDATION_ERROR`.
 
 ### 5.24 `approval.list` → `{items: Approval[]}` (only `pending` by default)
 
@@ -834,7 +850,7 @@ share the name; only the envelope one is the subject of REQ-API-002.
 `session.snapshot` reports the envelope `seq` it contains, and a client applies only the events
 above it — for the notifications that snapshot actually carries. §5.3 says which.
 
-`stop_reason`: `end_turn` | `cancelled` | `max_steps` | `budget` | `tool_error` | `provider_error`.
+`stop_reason`: `end_turn` | `cancelled` | `max_steps` | `budget` | `tool_error` | `provider_error` | `storage_error` | `context_overflow`. `storage_error`: a write failed, so the turn stopped without running or announcing what it could not record (Analyze C-01). `context_overflow`: what must be sent does not fit the model's window even compacted (REQ-CTX-004). Delta `2026-09-agent-runtime`.
 
 `session.unsubscribed`'s `reason`: `slow_client`.
 
@@ -965,3 +981,4 @@ printf '%s\n' \
 | 1.16 | 2026-09-27 | delta `2026-09-frame-limit-monitoring` (T-F1-33): §1 makes the frame limit per connection and two-way — 4 MiB and fixed before the handshake, the configured `[api] max_message_bytes` (1–64 MiB) after it — and says what the daemon writes instead of an oversized response or notification; §2's `cli` row gains `limits.get` and `limits.set` and the capability list gains `limits`; §3 adds `RESULT_TOO_LARGE` (-32014); §4 adds `output_response_truncated_bytes`; §5.1 documents the hello result with `max_message_bytes`; §5.2 adds `frames`; §5.17 shortens instead of failing; new §5.38 `limits.get`/`limits.set`; §6 adds `limits.notification_dropped`; §8 and §9 gain the limit row and the capability. Additive within `protocol_version = 1` |
 | 1.17 | 2026-09-27 | T-F1-02: §5.28 specifies `config.get` and `config.reload` — `{settings, providers, rejected}`, credentials as references only, the health reasons, and a reload that validates before applying and answers `CONFIG_INVALID` per entry; §5.2's providers gain `reason`; the capability lists of §2 and §9 gain `config`. Additive within `protocol_version = 1` Delta `2026-09-provider-config` (proposed). |
 | 1.18 | 2026-09-27 | T-F1-05: §4's Model gains `reason`, and says what 0 means for the context window and prices; §5.26 describes `model.list` — background discovery at start and on reload, `refresh`, a provider down for its credential or remote while offline never contacted, and discovery recorded in `egress_log`. Delta `2026-09-provider-config` (proposed). Additive within `protocol_version = 1` |
+| 1.19 | 2026-09-27 | T-F1-13: `thread.create`/`send`/`get`/`list`/`update` served; §5.23 gives `thread.list` and `thread.get` their parameters and results; §5.20 says what `wait` and inline attachments answer until their tasks; §3 adds the `trn_` prefix; §6 adds `storage_error` and `context_overflow`; §4's Message gains `turn_id`; §5.20 says when `PROVIDER_UNAVAILABLE` is answered. Additive within `protocol_version = 1`. Delta `2026-09-agent-runtime` (proposed). |

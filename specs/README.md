@@ -2,9 +2,9 @@
 
 This folder holds all Spec-Driven Development artifacts that precede code.
 
-**Status:** PRD 1.14, API 1.18, Technical Design 1.26, Data Model 1.11, Plan 1.10, constitution 1.2.
+**Status:** PRD 1.14, API 1.19, Technical Design 1.27, Data Model 1.12, Plan 1.10, constitution 1.2.
 Every finding that blocked implementation is folded, thirty-four deltas are archived and the quality
-gate passes with no CRITICAL findings. **Two deltas are pending ratification** (`2026-09-context-assembly`, `2026-09-context-budget`). What remains are
+gate passes with no CRITICAL findings. **Three deltas are pending ratification** (`2026-09-context-assembly`, `2026-09-context-budget`, `2026-09-agent-runtime`). What remains are
 MEDIUM and LOW items tracked as issues. The specs carry both lineages: the orchestration surface of
 2026-09-20 and the deltas raised while F0 was being built.
 

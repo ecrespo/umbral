@@ -48,7 +48,7 @@ func handleModelList(ctx context.Context, c *conn, raw json.RawMessage) (any, er
 		return nil, fmt.Errorf("%w: model.list", ErrNotImplemented)
 	}
 	var params listModelsParams
-	if len(raw) > 0 && string(raw) != "null" {
+	if len(raw) > 0 && string(raw) != jsonNull {
 		if err := json.Unmarshal(raw, &params); err != nil {
 			return nil, ValidationError("model.list parameters are not an object")
 		}

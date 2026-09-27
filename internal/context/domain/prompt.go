@@ -45,5 +45,6 @@ func RenderUser(in UserInput) (string, error) {
 	if err := templates.ExecuteTemplate(&s, "user.tmpl", in); err != nil {
 		return "", err
 	}
-	return s.String(), nil
+	// The template file's own final newline is not the user's.
+	return strings.TrimSuffix(s.String(), "\n"), nil
 }

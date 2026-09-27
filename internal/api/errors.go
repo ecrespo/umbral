@@ -10,10 +10,12 @@ import (
 // The `domain_code` strings of API Spec §3, named because more than one module maps its
 // sentinels onto them and a typo in one place would ship a code no client recognises.
 const (
-	domainNotFound        = "NOT_FOUND"
-	domainValidationError = "VALIDATION_ERROR"
-	domainConflict        = "CONFLICT"
-	domainInputLocked     = "INPUT_LOCKED"
+	domainNotFound            = "NOT_FOUND"
+	domainValidationError     = "VALIDATION_ERROR"
+	domainConflict            = "CONFLICT"
+	domainBudgetExceeded      = "BUDGET_EXCEEDED"
+	domainProviderUnavailable = "PROVIDER_UNAVAILABLE"
+	domainInputLocked         = "INPUT_LOCKED"
 )
 
 // Domain error codes from API Spec §3. The JSON-RPC numbers are part of the contract,
@@ -61,8 +63,8 @@ var errorCodes = map[string]int{
 	"NOT_FOUND":                    codeNotFound,
 	"CONFLICT":                     codeConflict,
 	"PERMISSION_DENIED":            codePermissionDenied,
-	"PROVIDER_UNAVAILABLE":         codeProviderUnavailable,
-	"BUDGET_EXCEEDED":              codeBudgetExceeded,
+	domainProviderUnavailable:      codeProviderUnavailable,
+	domainBudgetExceeded:           codeBudgetExceeded,
 	"UNSUPPORTED_PROTOCOL_VERSION": codeUnsupportedProtocolVersion,
 	domainInputLocked:              codeInputLocked,
 	"CONFIG_INVALID":               codeConfigInvalid,
@@ -149,6 +151,7 @@ func unsupportedProtocolError(got int) error {
 var moduleErrors = []func(error) (int, string, bool){
 	sessionDomainError,
 	workspaceDomainError,
+	agentsDomainError,
 }
 
 // workspaceDomainError maps the workspace tree's sentinels onto the §5.4 table.
@@ -207,9 +210,9 @@ func toWire(err error, traceID string) *wireError {
 	case errors.Is(err, ErrPermissionDenied):
 		code, domainCode = codePermissionDenied, "PERMISSION_DENIED"
 	case errors.Is(err, ErrProviderUnavailable):
-		code, domainCode = codeProviderUnavailable, "PROVIDER_UNAVAILABLE"
+		code, domainCode = codeProviderUnavailable, domainProviderUnavailable
 	case errors.Is(err, ErrBudgetExceeded):
-		code, domainCode = codeBudgetExceeded, "BUDGET_EXCEEDED"
+		code, domainCode = codeBudgetExceeded, domainBudgetExceeded
 	case errors.Is(err, ErrInputLocked):
 		code, domainCode = codeInputLocked, domainInputLocked
 	case errors.Is(err, ErrConfigInvalid):

@@ -46,8 +46,9 @@ Measured against the constraints:
    without its call.
 5. **Where the summary lives.** In the system prompt, under a header saying the conversation was
    compacted, so no role sequence changes. It may take a fifth of the available budget and is cut
-   to it, saying so. The runtime persists it as a `system_note` message (DD-007) and, from then on,
-   sends the base prompt, that summary and the messages after it. **A later compaction replaces
+   to it, saying so. The runtime persists it as a `system_note` message (DD-007) and, within the turn,
+   sends the base prompt, that summary and the messages after it; each turn starts from the whole
+   history (delta `2026-09-agent-runtime`, decision 6). **A later compaction replaces
    the summary**: the previous one is summarized again with the newly old messages, so the prompt
    holds one summary however long the thread.
 6. **The summary is made by the `fast` class** on the previous summary (at most half of the input)

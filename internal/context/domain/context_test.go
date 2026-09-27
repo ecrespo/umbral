@@ -132,6 +132,9 @@ func TestUserMessageCarriesItsAttachments_REQ_CTX_002(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if plain, _ := RenderUser(UserInput{Text: "hi"}); plain != "hi" {
+		t.Fatalf("a message without attachments is its text: %q", plain)
+	}
 	if !strings.HasPrefix(out, "fix it") || !strings.Contains(out, `kind="block" ref="blk_1"`) || !strings.Contains(out, "FAIL") {
 		t.Fatalf("user message:\n%s", out)
 	}

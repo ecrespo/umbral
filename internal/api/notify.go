@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 
+	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
+
 	"github.com/ecrespo/umbral/internal/bus"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
 	wsports "github.com/ecrespo/umbral/internal/workspaces/ports"
@@ -48,6 +50,10 @@ var dispatchedKinds = []bus.Kind{
 	wsports.KindPaneFocused,
 	wsports.KindPaneMoved,
 	wsports.KindLayoutUpdated,
+	agentsports.KindThreadDelta,
+	agentsports.KindThreadToolCall,
+	agentsports.KindThreadTurnFinished,
+	agentsports.KindContextCompacted,
 }
 
 // Notify forwards module events to connected clients as JSON-RPC notifications
@@ -145,6 +151,18 @@ func toNotification(event bus.Event) (string, any) {
 			PreviousWorkspaceID: e.PreviousWorkspaceID,
 			Layout:              toWireLayout(e.Layout),
 		}
+
+	case agentsports.ThreadDelta:
+		return "thread.delta", threadDeltaPayload{ThreadID: e.ThreadID, TurnID: e.TurnID, Kind: e.Kind, Text: e.Text}
+	case agentsports.ThreadToolCall:
+		return "thread.tool_call", toWireToolCall(e.Call)
+	case agentsports.TurnFinished:
+		return "thread.turn_finished", turnFinishedPayload{
+			ThreadID: e.ThreadID, TurnID: e.TurnID, StopReason: string(e.StopReason),
+			Usage: turnUsage{InTokens: e.Usage.InTokens, OutTokens: e.Usage.OutTokens, CostMicroUSD: e.Usage.CostMicroUSD},
+		}
+	case agentsports.ContextCompacted:
+		return "context.compacted", contextCompactedPayload{ThreadID: e.ThreadID, BeforeTokens: e.BeforeTokens, AfterTokens: e.AfterTokens}
 
 	default:
 		return "", nil
