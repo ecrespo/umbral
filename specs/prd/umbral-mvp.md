@@ -6,10 +6,10 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.14 |
+| **Version** | 1.15 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
-| **Last updated** | 2026-09-26 |
+| **Last updated** | 2026-09-27 |
 | **Source** | `docs/ARCHITECTURE.md` v0.1 |
 
 ---
@@ -175,7 +175,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-AGT-008** · MUST · unwanted — IF a turn reaches `max_steps` (50 by default) or the thread's token budget, THEN THE SYSTEM SHALL stop it with `stop_reason = max_steps` or `budget`.
 - **REQ-AGT-009** · MUST · state — WHILE a thread is in `ask` mode, THE SYSTEM SHALL expose only `ReadOnly` tools to the model.
 - **REQ-AGT-010** · MUST · event — WHEN the user changes a thread's model, THE SYSTEM SHALL use the new model from the next turn on, keeping the full history.
-- **REQ-AGT-011** · MUST · ubiquitous — THE SYSTEM SHALL persist every message, tool call, result and approval decision of a thread before sending it to the client.
+- **REQ-AGT-011** · MUST · ubiquitous — THE SYSTEM SHALL persist every message, tool call, result and approval decision of a thread before sending it to the client, and SHALL stop the turn with `stop_reason = storage_error` when a write fails, without running or announcing what it could not record.
 - **REQ-AGT-013** · MUST · state — WHILE a thread is in `auto-edit` mode, THE SYSTEM SHALL allow without approval the `WriteFS` tools whose path is inside the thread's **write root** and SHALL request approval (`ask`) for those pointing outside it. The deny reason reported for the second case is `outside_write_root`.
 - **REQ-AGT-014** · MUST · state — WHILE a thread is in `normal` mode (the default), THE SYSTEM SHALL apply `ask` to every tool that is not `ReadOnly`, unless the user has persisted `allow` rules.
 - **REQ-AGT-015** · MUST · unwanted — IF `thread.send` arrives with a `client_msg_id` already processed in the same thread, THEN THE SYSTEM SHALL reply with the original `turn_id` and `message_id` without creating a new turn or running any tool again.
@@ -188,7 +188,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 
 - **REQ-CTX-001** · MUST · event — WHEN a turn's prompt is assembled, THE SYSTEM SHALL include the rules files `AGENTS.md`, `CLAUDE.md`, `WARP.md` and `CRUSH.md` (and their `.local.md` variants), searched from the repo root down to the thread's cwd. Precedence is by depth — the file closest to the cwd wins — and, at equal depth, `AGENTS.md` → `CLAUDE.md` → `WARP.md` → `CRUSH.md`, with each `.local.md` above its own file.
 - **REQ-CTX-002** · MUST · event — WHEN a message includes `@file`, `@directory` or `@block:<id>` attachments, THE SYSTEM SHALL add their content: file text, directory listing or the block's plain text.
-- **REQ-CTX-003** · MUST · state — WHILE the thread's cwd is inside a git repository, THE SYSTEM SHALL include the current branch, `git status --short` and `git diff --stat` in the context.
+- **REQ-CTX-003** · MUST · state — WHILE the thread's cwd is inside a git repository, THE SYSTEM SHALL include the current branch, `git status --short` and `git diff --stat` in the context, bounded, and without running any command the repository's configuration names.
 - **REQ-CTX-004** · MUST · unwanted — IF the estimated context exceeds the model window minus the response reserve, THEN THE SYSTEM SHALL compact the history with a summary before sending and record the `context.compacted` event.
 - **REQ-CTX-005** · MUST · unwanted — IF an attachment exceeds 256 KiB, THEN THE SYSTEM SHALL truncate it and state in the context how many bytes were omitted.
 
@@ -484,6 +484,7 @@ TUI as text:
 | 1.12 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-pane-term`: REQ-TERM-013 — every pane gets `TERM=xterm-256color` and `COLORTERM=truecolor` over the daemon's own, under the pane's declared `env`. Without it a daemon started with no terminal gave every shell a dumb one, and the first keystroke at a fresh prompt was lost |
 | 1.13 | 2026-09-26 | E. Crespo (assisted draft) | Four deltas ratified together for F1: `2026-09-handshake-hardening` (REQ-SEC-017, REQ-SEC-018), `2026-09-frame-limit-monitoring` (REQ-API-005, REQ-OBS-005, REQ-CLI-007), `2026-09-skills-cli` (§6.16, REQ-SKL-001 to 007; REQ-SEC-006 gains `skill_load` output) and `2026-09-cli-mcp` (REQ-CLI-008, REQ-TUI-004). §5.1's `umb` line also names the workspace tree, true since REQ-CLI-005 |
 | 1.14 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies the five deltas of T-F1-02…T-F1-10. `2026-09-redaction-thresholds`: REQ-SEC-001 states the 23-character floor, that the thresholds are necessary and not sufficient, and the generic detector's recall. `2026-09-router-fallback`: REQ-LLM-003 falls back only before the first token reaches the caller; REQ-LLM-005 counts calls made to a provider. `2026-09-builtin-tools`: REQ-SEC-002 covers `fetch_url`; REQ-AGT-018 refuses private ranges on every connection, not only redirects. `provider-config` and `policy-precedence` change no REQ text. |
+| 1.15 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies the four deltas of T-F1-11…T-F1-14 (`2026-09-context-assembly`, `2026-09-context-budget`, `2026-09-agent-runtime`, `2026-09-approvals`) and folds their optional sharpenings: REQ-AGT-011 stops the turn with `storage_error` when a write fails (closes Analyze C-01); REQ-CTX-003 is bounded and runs no command the repository's configuration names. |
 
 ## Approvals
 

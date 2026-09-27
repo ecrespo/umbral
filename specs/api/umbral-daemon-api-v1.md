@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.20 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.21 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -150,7 +150,7 @@ before the daemon starts.
   the list from its method table rather than declaring it statically, SHALL advertise a namespace
   when at least one of its methods is served by this build, and SHALL NOT advertise one whose
   methods are all unserved: a client that branches on the advertisement must not be sent down a path
-  that cannot work.
+  that cannot work. `approval.*` belongs to the agent, so it is advertised under `threads`.
 - **Registered is not the same as served.** Every method of the protocol stays in the table whether
   or not this build has the module behind it, which is what lets an unserved one answer
   `NOT_IMPLEMENTED` instead of `METHOD_NOT_FOUND` (§9). So the list is derived from what the daemon
@@ -994,3 +994,4 @@ printf '%s\n' \
 | 1.18 | 2026-09-27 | T-F1-05: §4's Model gains `reason`, and says what 0 means for the context window and prices; §5.26 describes `model.list` — background discovery at start and on reload, `refresh`, a provider down for its credential or remote while offline never contacted, and discovery recorded in `egress_log`. Delta `2026-09-provider-config` (proposed). Additive within `protocol_version = 1` |
 | 1.19 | 2026-09-27 | T-F1-13: `thread.create`/`send`/`get`/`list`/`update` served; §5.23 gives `thread.list` and `thread.get` their parameters and results; §5.20 says what `wait` and inline attachments answer until their tasks; §3 adds the `trn_` prefix; §6 adds `storage_error` and `context_overflow`; §4's Message gains `turn_id`; §5.20 says when `PROVIDER_UNAVAILABLE` is answered. Additive within `protocol_version = 1`. Delta `2026-09-agent-runtime` (proposed). |
 | 1.20 | 2026-09-27 | T-F1-14: `approval.list` (`{thread_id?, all?}`) and `approval.respond` served, with `approval.requested`; §5.25 says what a `thread` scope remembers, which decisions are kept `once`, and what a cancel does to a pending approval. Additive within `protocol_version = 1`. Delta `2026-09-approvals` (proposed). |
+| 1.21 | 2026-09-27 | Ratifies deltas `2026-09-agent-runtime` and `2026-09-approvals` as written; §2 says `approval.*` is advertised under `threads`. No wire change. |

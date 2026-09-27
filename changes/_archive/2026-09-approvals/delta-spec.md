@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-09-27 — pending the Tech Lead's ratification. T-F1-14 implements it and is merged with it open, at the user's instruction to carry on through T-F1-20.` |
+| **Status** | `RATIFIED 2026-09-27 — approved by E. Crespo together with the other three F1 deltas of T-F1-11…T-F1-14, as written, with the optional REQ sharpenings folded. Folded into PRD 1.15, API 1.21, Tech Design 1.29 and Data Model 1.13` |
 | **Date** | 2026-09-27 |
 | **Task** | T-F1-14 |
 | **Raised by** | T-F1-14 |
