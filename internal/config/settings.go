@@ -21,6 +21,11 @@ type Settings struct {
 	// the file says otherwise, and off is the default the requirement itself states:
 	// pane output can contain secrets, so this is a thing a user opts into knowingly.
 	PaneHistory bool
+	// MaxMessageBytes is the frame limit a connection gets once it has completed the
+	// handshake (`[api] max_message_bytes`, API Spec §1 and §8). DefaultMaxMessageBytes
+	// unless the file says otherwise. It is the first live key: `limits.set` rewrites it and
+	// the daemon applies it to new connections without a restart.
+	MaxMessageBytes int
 }
 
 // SettingsFileName is the file's name inside the configuration directory.
@@ -65,7 +70,7 @@ func SettingsPath() (string, error) {
 //
 // An unknown key is a warning, so a file written for a later version still starts this one.
 func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
-	settings := Settings{}
+	settings := Settings{MaxMessageBytes: DefaultMaxMessageBytes}
 
 	raw, err := os.ReadFile(path) // #nosec G304 -- the path is the daemon's own config location
 	if errors.Is(err, os.ErrNotExist) {
@@ -77,7 +82,7 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 
 	values, err := parseTOMLSubset(string(raw))
 	if err != nil {
-		return settings, fmt.Errorf("config: %s: %w", path, err)
+		return settings, fmt.Errorf("%w: %s: %w", ErrSettingsInvalid, path, err)
 	}
 
 	for key, value := range values {
@@ -86,9 +91,17 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 			on, err := strconv.ParseBool(value)
 			if err != nil {
 				return Settings{}, fmt.Errorf(
-					"config: %s: experimental.pane_history is %q, want true or false", path, value)
+					"%w: %s: experimental.pane_history is %q, want true or false",
+					ErrSettingsInvalid, path, value)
 			}
 			settings.PaneHistory = on
+		case apiSection + "." + maxMessageKey:
+			n, err := parseMaxMessageBytes(value)
+			if err != nil {
+				return Settings{}, fmt.Errorf("%w: %s: %s.%s: %w",
+					ErrSettingsInvalid, path, apiSection, maxMessageKey, err)
+			}
+			settings.MaxMessageBytes = n
 		default:
 			if logger != nil {
 				logger.Warn("unknown setting ignored",
@@ -137,14 +150,30 @@ func parseTOMLSubset(text string) (map[string]string, error) {
 			return nil, fmt.Errorf("line %d: a value with no key", lineNo)
 		}
 
-		// Trim an inline comment, then quotes. Good enough for the subset and honest about
-		// its limits: a `#` inside a quoted string would be cut, and F0 has no string
-		// setting for that to matter to.
+		// A quoted value ends at its closing quote, and only a comment may follow it; an
+		// unquoted one ends at an inline comment. `[api] max_message_bytes = "8MiB"  # why`
+		// is why the difference matters: reading past the quote made the comment part of
+		// the size. Escapes inside quotes are not part of the subset.
 		value = strings.TrimSpace(value)
-		if i := strings.Index(value, "#"); i >= 0 && !strings.HasPrefix(value, `"`) {
+		if strings.HasPrefix(value, `"`) {
+			end := strings.Index(value[1:], `"`)
+			if end < 0 {
+				return nil, fmt.Errorf("line %d: %q has an unterminated string", lineNo, key)
+			}
+			if rest := strings.TrimSpace(value[end+2:]); rest != "" && !strings.HasPrefix(rest, "#") {
+				return nil, fmt.Errorf("line %d: %q has text after its value", lineNo, key)
+			}
+			value = value[1 : end+1]
+		} else if i := strings.Index(value, "#"); i >= 0 {
 			value = strings.TrimSpace(value[:i])
 		}
-		value = strings.Trim(value, `"`)
+		// Inline tables and arrays are outside the subset. Read as a plain value, an
+		// `api = { max_message_bytes = … }` became an unknown key `api` and the daemon
+		// started with the default, which is the silent fallback this parser refuses.
+		if strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[") {
+			return nil, fmt.Errorf("line %d: %q is an inline table or array, which this file "+
+				"does not support; write it as a [section] with one key per line", lineNo, key)
+		}
 		if value == "" {
 			return nil, fmt.Errorf("line %d: %q has no value", lineNo, key)
 		}

@@ -310,6 +310,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Workspaces:    workspaceService,
 		Bus:           eventBus,
 		Logger:        logger,
+		// The first live setting: `limits.set` rewrites it in this file and applies it to
+		// new connections without a restart (REQ-CLI-007, Tech Design §5.1).
+		MaxMessageBytes: settings.MaxMessageBytes,
+		SettingsPath:    settingsPath,
 	})
 	if err != nil {
 		logger.Error("cannot open the socket", slog.Any("error", err))

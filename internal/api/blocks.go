@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"unicode/utf8"
 
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 )
@@ -127,6 +128,11 @@ type blockResult struct {
 	// OutputRawTruncated says the raw output stops short of the block's own total. It
 	// accompanies output_raw_b64 and nothing else.
 	OutputRawTruncated *bool `json:"output_raw_truncated,omitempty"`
+	// OutputResponseTruncatedBytes is how many bytes of the stored output this response
+	// leaves out to fit the connection's frame limit (REQ-API-005). Absent when nothing was
+	// left out. It is not output_truncated, which says the stored capture itself was cut:
+	// this one is what raising the limit would bring back, that one is gone.
+	OutputResponseTruncatedBytes *int64 `json:"output_response_truncated_bytes,omitempty"`
 }
 
 func handleBlockGet(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -163,7 +169,93 @@ func handleBlockGet(ctx context.Context, c *conn, raw json.RawMessage) (any, err
 		result.OutputRawB64 = &encoded
 		result.OutputRawTruncated = &truncated
 	}
+	return fitBlockResult(result, output, c.limit.Load())
+}
+
+// envelopeReserve is what fitBlockResult leaves for the response around the result: the
+// `jsonrpc`, `id` and `result` members and the `\n`. An id longer than the reserve leaves the
+// encoder to answer RESULT_TOO_LARGE, which is still a frame the client can read.
+const envelopeReserve = 4 << 10
+
+// fitBlockResult shortens block.get's one output field so the response fits the frame
+// limit, instead of letting the encoder refuse it whole (REQ-API-005): a user asking for a
+// block's output would rather have most of it than an error. `include` selects plain or raw,
+// never both, so at most one field is cut:
+//
+//   - raw on a 3-byte boundary before base64, so the encoded text is a prefix of what a
+//     longer answer would have carried;
+//   - plain on a UTF-8 boundary, measured as JSON rather than as Go bytes, because escaping
+//     can double a transcript full of quotes and control characters.
+func fitBlockResult(result blockResult, output sessdomain.BlockOutput, limit int64) (any, error) {
+	budget := int(limit) - envelopeReserve
+	full, err := json.Marshal(result)
+	if err != nil {
+		return nil, err
+	}
+	if len(full) <= budget || (result.OutputPlain == nil && result.OutputRawB64 == nil) {
+		return result, nil
+	}
+
+	// Measure everything but the output, with the new field present at its widest.
+	placeholder := int64(1) << 40
+	result.OutputResponseTruncatedBytes = &placeholder
+	empty := ""
+	if result.OutputPlain != nil {
+		result.OutputPlain = &empty
+	} else {
+		result.OutputRawB64 = &empty
+	}
+	frame, err := json.Marshal(result)
+	if err != nil {
+		return nil, err
+	}
+	room := budget - len(frame)
+	if room < 0 {
+		return result, nil // nothing fits; the encoder answers RESULT_TOO_LARGE
+	}
+
+	var omitted int64
+	if result.OutputPlain != nil {
+		kept := plainPrefix(output.Plain, room)
+		result.OutputPlain = &kept
+		omitted = int64(len(output.Plain) - len(kept))
+	} else {
+		n := min(room/4*3, len(output.Raw))
+		encoded := base64.StdEncoding.EncodeToString(output.Raw[:n])
+		result.OutputRawB64 = &encoded
+		omitted = int64(len(output.Raw) - n)
+	}
+	result.OutputResponseTruncatedBytes = &omitted
 	return result, nil
+}
+
+// plainPrefix is the longest prefix of text, cut on a rune boundary, whose JSON string
+// contents take at most room bytes. Found by bisection over the encoded length: the one
+// measure that cannot disagree with the encoder is the encoder.
+func plainPrefix(text string, room int) string {
+	fits := func(n int) bool {
+		encoded, _ := json.Marshal(text[:n])
+		return len(encoded)-2 <= room
+	}
+	// fits(runeStart(n)) only ever turns from true to false as n grows, so bisect on n.
+	lo, hi := 0, len(text)
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if fits(runeStart(text, mid)) {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return text[:runeStart(text, lo)]
+}
+
+// runeStart moves n back to the start of the rune it falls in.
+func runeStart(text string, n int) int {
+	for n > 0 && n < len(text) && !utf8.RuneStart(text[n]) {
+		n--
+	}
+	return n
 }
 
 type searchBlocksParams struct {

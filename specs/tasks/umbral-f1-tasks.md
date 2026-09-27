@@ -28,7 +28,7 @@ default CI.
   `TestANotificationBeforeHelloIsUnauthorized_REQ_SEC_018` green, each seen red against its own
   deliberate break; `task ci` green.
 
-### [ ] T-F1-33 · The frame limit is enforced outbound, watched, and adjustable from the CLI
+### [x] 2026-09-27 T-F1-33 · The frame limit is enforced outbound, watched, and adjustable from the CLI
 - **What:**
   - **Encoder:** every outbound frame is measured. A response over the limit becomes
     `RESULT_TOO_LARGE` (`-32014`, with `size_bytes` and `limit_bytes`). A notification over it
@@ -46,6 +46,7 @@ default CI.
   - **Spec edits:** API §1–§9, Tech §5.1, §7.2 and §9.4.
 - **REQ:** REQ-API-005, REQ-OBS-005, REQ-CLI-007
 - **Files:** `internal/api/**`, `internal/client/**`, `internal/config/**`, `cmd/umb/**`,
+  `cmd/umbrald/**`,
   `specs/api/umbral-daemon-api-v1.md`, `specs/technical/umbral-architecture.md`
 - **Depends on:** T-F1-32. **Goes before T-F1-01.**
 - **Delta:** `changes/_archive/2026-09-frame-limit-monitoring/` — its Verification and its
@@ -496,9 +497,9 @@ default CI.
 | REQ-OBS-004 | T-F1-18 | TestOrchestrationMetricsExposed_REQ_OBS_004 |
 | REQ-SEC-017 | T-F1-32 | TestASilentConnectionIsClosedAfterTheDeadline_REQ_SEC_017 |
 | REQ-SEC-018 | T-F1-32 | TestANotificationBeforeHelloIsUnauthorized_REQ_SEC_018 |
-| REQ-API-005 | T-F1-33 | TestAResponseOverTheLimitIsResultTooLarge_REQ_API_005 |
-| REQ-OBS-005 | T-F1-33 | TestFramesAreCounted_REQ_OBS_005 |
-| REQ-CLI-007 | T-F1-33 | TestLimitsSetRaisesTheLimitForNewConnections_REQ_CLI_007, TestAnOversizedAnswerTellsTheUserHowToRaiseTheLimit_REQ_CLI_007 |
+| REQ-API-005 | T-F1-33 | TestAResponseOverTheLimitIsResultTooLarge_REQ_API_005, TestResultTooLargeCarriesItsSizes_REQ_API_005 |
+| REQ-OBS-005 | T-F1-33 | TestFramesAreCounted_REQ_OBS_005, TestStatusShowsTheFramesLine_REQ_OBS_005, TestLimitsShowsTheLimitAndTheCounters_REQ_OBS_005 |
+| REQ-CLI-007 | T-F1-33 | TestLimitsSetRaisesTheLimitForNewConnections_REQ_CLI_007, TestAnOversizedAnswerTellsTheUserHowToRaiseTheLimit_REQ_CLI_007, TestLimitsSetSendsTheSizeInBytes_REQ_CLI_007, TestTheClientReadsWithTheLimitTheHandshakeAnnounced_REQ_CLI_007 |
 | REQ-SKL-001 | T-F1-34, T-F1-35 | TestInstallCopiesRecordsAndRunsNothing_REQ_SKL_001, TestInstallAsksOrNeedsYes_REQ_SKL_001 |
 | REQ-SKL-002 | T-F1-34 | TestABadBundleIsRefusedWhole_REQ_SKL_002, TestACrashMidInstallLeavesNothingAfterRestart_REQ_SKL_002 |
 | REQ-SKL-003 | T-F1-35 | TestSkillCommandsMirrorTheMethods_REQ_SKL_003 |
@@ -525,4 +526,5 @@ default CI.
 |---|---|---|---|
 | 2026-09-26 | T-F1-32 to T-F1-37 | added, not started | Four deltas ratified together and folded here. The fold drops the tasks' own "ratification bookkeeping" bullets and PRD entries, because ratification did that work: the REQs are in PRD 1.13, the `skills` table in Data Model 1.9, and the order in Plan 1.10. The API and Tech Design text stays with each task's Spec edits. API and Tech are bumped one step per task, in task order, and the versions each archived delta proposed are only a guide. |
 | 2026-09-27 | T-F1-32 | done | The deadline is an absolute read deadline set at accept and cleared by a successful `system.hello`, so it lives on the read goroutine with the handshake state and cannot race a hello. An id-less or null-id hello is refused in `handleLine`, before the method table and the token. API 1.15 writes §1's JSON-RPC deviation, §2 steps 3/3a/5/6, §7's `UNAUTHORIZED` row and §8's deadline row. Each test was seen red against its own break (deadline removed, id check removed, pre-hello notification left silent, deadline not cleared). The `spec-guardian` review found the last one untested; the case `an authenticated connection outlives the deadline` closes it. It also found that §8's cap of 32 concurrent connections is **not enforced** by `Serve`: pre-existing, outside this task, still open. `task ci` green. |
+| 2026-09-27 | T-F1-33 | done | Every outbound frame is serialised once in `conn.frame` and measured there: a response over the connection's limit becomes `RESULT_TOO_LARGE` (-32014) under its id, a notification becomes `limits.notification_dropped` under its `seq`, and `block.get` shortens its one output field first (raw on a 3-byte boundary, plain by bisection over the encoded JSON). The inbound limit moved from the scanner's buffer size into a split function reading the connection's own limit, so it can rise at `system.hello` without resizing a buffer mid-scan; before the handshake it stays 4 MiB. `limits.set` writes through `config.WriteMaxMessageBytes`, which implements the delta's file-cases table. Writing the real-daemon test found a **parser defect**: a quoted value followed by a comment (`max_message_bytes = "4MiB"  # why`) was read with the comment as part of the value, and the daemon refused to start; fixed in `parseTOMLSubset`, with cases in `TestMaxMessageBytesIsReadAndBounded`. Mutations: outbound refusal off, `block.get` fit off, each counter off, a payload in the warn line, hello keeping 4 MiB, the daemon not reading the setting, `limits.set` without a settings path and the `umb` hint off — each reddens its test. One survives and is equivalent: without `runeStart` the plain cut still lands on a rune boundary, because `encoding/json` makes every stray byte a 6-byte `\ufffd`, so a mid-rune cut is never the longest that fits; `runeStart` stays because it keeps the bisection's predicate monotone. The `spec-guardian` review found four more things, all fixed test-first: the inbound refusal's warn line named no size (it now logs `size_bytes_at_least`, and §5.2 says why it has no method); `api = { max_message_bytes = 128 }` was read as an unknown key and started the daemon at 4 MiB (inline tables and arrays are now refused as outside the subset); `ParseSize` called 100MiB "not a size" instead of out of range; and a CRLF file lost its `\r` on the rewritten line. The delta's Verification names `umb block get`, which does not exist; the hint test runs `umb block last`, `umb status` and `umb workspace list`. `umb limits set` itself runs only against a fake daemon; the real-daemon test drives `limits.set` through `internal/client`. API 1.16, Tech 1.14. `task ci` green. |
 | — | — | — | — |

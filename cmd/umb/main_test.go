@@ -242,6 +242,10 @@ func serveConn(conn net.Conn, results map[string]any, seen chan<- map[string]any
 				"capabilities": []string{"block"}, "connection_id": "con_fake",
 			}
 		} else if r, ok := results[req.Method]; ok {
+			if e, isErr := r.(fakeError); isErr {
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any(e)})
+				continue
+			}
 			result = r
 		} else {
 			_ = enc.Encode(map[string]any{
@@ -256,6 +260,9 @@ func serveConn(conn net.Conn, results map[string]any, seen chan<- map[string]any
 		_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
 	}
 }
+
+// fakeError is a `results` entry the fake daemon answers as a JSON-RPC error object.
+type fakeError map[string]any
 
 // failingWriter reports a full disk on every write.
 type failingWriter struct{ err error }

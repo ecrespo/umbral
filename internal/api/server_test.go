@@ -258,15 +258,18 @@ func TestHelloSucceedsAndReturnsAConnectionID(t *testing.T) {
 	if len(result.ConnectionID) < 5 || result.ConnectionID[:4] != "con_" {
 		t.Errorf("connection_id = %q, want a con_ prefixed ULID (Art. 6)", result.ConnectionID)
 	}
-	// This server is wired with no modules at all, so it advertises nothing. That is the
-	// point: the list names what the daemon can actually serve, not what its method table
-	// happens to contain. `session.*` and `block.*` are registered here — they have to be,
-	// so an unserved call answers NOT_IMPLEMENTED rather than METHOD_NOT_FOUND (§9) — and
-	// they are still not advertised, because nothing is behind them.
+	// This server is wired with no modules at all, so it advertises only `limits`, whose
+	// `limits.get` needs no module behind it. That is the point: the list names what the
+	// daemon can actually serve, not what its method table happens to contain. `session.*`
+	// and `block.*` are registered here — they have to be, so an unserved call answers
+	// NOT_IMPLEMENTED rather than METHOD_NOT_FOUND (§9) — and they are still not
+	// advertised, because nothing is behind them.
 	//
-	// `api` and `system` are excluded by rule: every client may always call them.
-	if len(result.Capabilities) != 0 {
-		t.Errorf("capabilities = %v on a daemon with no modules wired, want none",
+	// `api` and `system` are excluded by rule: every client may always call them. `limits`
+	// is not: a daemon older than delta `2026-09-frame-limit-monitoring` has no such
+	// methods, and the capability is how a client finds out without calling one.
+	if !slices.Equal(result.Capabilities, []string{"limits"}) {
+		t.Errorf("capabilities = %v on a daemon with no modules wired, want [limits]",
 			result.Capabilities)
 	}
 }
@@ -842,7 +845,7 @@ func (c *client) readNotificationSeq(t *testing.T) uint64 {
 }
 
 // TestASilentConnectionIsClosedAfterTheDeadline_REQ_SEC_017: a connection that never
-// completes `system.hello` holds one of the 32 slots of API Spec §8 for as long as it stays.
+// completes `system.hello` holds a connection — a descriptor and a goroutine — for as long as it stays.
 // REQ-SEC-017 gives it 5 s from accept, then `UNAUTHORIZED` with a null id and a close. The
 // test shortens the deadline rather than faking time, so what it measures is the real clock
 // between the dial and the hang-up; the last case pins the production value.
