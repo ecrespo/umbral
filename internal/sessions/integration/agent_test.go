@@ -260,7 +260,7 @@ func TestParallelFirstUsesShareOnePTY_REQ_AGT_003(t *testing.T) {
 // the macOS runner.
 func dumpThreadPTY(t *testing.T, h *harness, threadID string) {
 	t.Helper()
-	if out, err := exec.Command(h.shell, "--version").Output(); err == nil {
+	if out, err := exec.CommandContext(t.Context(), h.shell, "--version").Output(); err == nil {
 		t.Logf("shell %s: %s", h.shell, strings.SplitN(string(out), "\n", 2)[0])
 	}
 	sessions, err := h.List(t.Context())

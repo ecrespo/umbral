@@ -94,11 +94,14 @@ __umbral_precmd() {
 		__umbral_esc "133;D;${exit_code}"
 		unset __umbral_in_command
 	fi
+	# Arm as soon as the block is closed: everything the DEBUG trap sees from here until the
+	# next prompt is the command the user typed — the trap does not fire inside this function,
+	# and the calls below are ours. Arming at the very end left a window an interrupt could
+	# land in: the daemon interrupts a cancelled agent command's shell until it lets go, and
+	# on bash 3.2 one landing here lost the arm, so the next command ran with no block.
+	__umbral_armed=1
 	__umbral_cwd
 	__umbral_mark_prompt
-	# Arm last: everything the DEBUG trap sees from here until the next prompt is the
-	# command the user typed.
-	__umbral_armed=1
 	return "${exit_code}"
 }
 

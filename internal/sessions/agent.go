@@ -145,12 +145,16 @@ func (s *Service) claimPTY(ctx context.Context, live *liveSession, run *agentRun
 }
 
 // stopAgent stops a cancelled run's command: SIGTERM to what the shell runs and SIGINT to the
-// shell, then SIGKILL agentTermGrace later. The interrupt is repeated every
-// agentInterruptEvery while the run holds the PTY, because a shell can lose one: bash runs
-// its DEBUG trap — the integration's preexec — before every command of a loop of builtins,
-// and an interrupt that lands inside the trap may end the trap and not the loop.
+// shell, then SIGKILL agentTermGrace later. A shell can lose an interrupt — bash runs its
+// DEBUG trap, the integration's preexec, before every command of a loop of builtins, and one
+// that lands inside the trap may end the trap and not the loop — so it is interrupted again
+// every agentInterruptEvery while the run holds the PTY and the PTY has stayed silent since
+// the last one. Silence is the tell: a loop of builtins writes nothing, while a shell that
+// did stop writes its prompt at once, and interrupting that shell again could land inside
+// its prompt hook.
 func (s *Service) stopAgent(live *liveSession, run *agentRun) {
-	s.signalRun(live, run, ports.SignalTermForeground)
+	var seen uint64
+	s.signalRun(live, run, ports.SignalTermForeground, nil, &seen)
 	go func() {
 		kill := time.NewTimer(agentTermGrace)
 		defer kill.Stop()
@@ -165,9 +169,9 @@ func (s *Service) stopAgent(live *liveSession, run *agentRun) {
 			case <-give.C:
 				return
 			case <-kill.C:
-				s.signalRun(live, run, ports.SignalKillForeground)
+				s.signalRun(live, run, ports.SignalKillForeground, nil, nil)
 			case <-again.C:
-				if !s.signalRun(live, run, ports.SignalTermForeground) {
+				if !s.signalRun(live, run, ports.SignalTermForeground, &seen, &seen) {
 					return
 				}
 			}
@@ -175,17 +179,27 @@ func (s *Service) stopAgent(live *liveSession, run *agentRun) {
 	}()
 }
 
-// signalRun signals the PTY only while run still holds it, and reports whether it did. The
-// read lock is held across the signal so the next run cannot claim the PTY, and start a
-// command the signal would reach, between the check and the kill.
-func (s *Service) signalRun(live *liveSession, run *agentRun, sig ports.SignalKind) bool {
+// signalRun signals the PTY only while run still holds it, and reports whether it does. With
+// quietSince, it signals only if no output has arrived since that sequence number; seen, if
+// given, receives the sequence number current at the call. The read lock is held across the
+// check and the signal so the next run cannot claim the PTY, and start a command the signal
+// would reach, in between.
+func (s *Service) signalRun(live *liveSession, run *agentRun, sig ports.SignalKind, quietSince, seen *uint64) bool {
 	live.mu.RLock()
 	if live.agent != run {
 		live.mu.RUnlock()
 		return false
 	}
+	seq := live.seq
+	quiet := quietSince == nil || *quietSince == seq
+	if seen != nil {
+		*seen = seq
+	}
+	var err error
+	if quiet {
+		err = live.pty.Signal(sig)
+	}
 	sessionID := live.session.ID
-	err := live.pty.Signal(sig)
 	live.mu.RUnlock()
 	if err != nil {
 		s.cfg.Logger.Warn("could not stop the agent's command", "session_id", sessionID, "error", err)
