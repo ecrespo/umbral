@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | `PROPOSED 2026-09-27 — pending the Tech Lead's ratification. T-F1-09 implements it and is merged with it open, at the user's instruction to carry on through T-F1-10.` |
 | **Date** | 2026-09-27 |
-| **Task** | T-F1-09 |
+| **Task** | T-F1-09 (decisions 1–5); T-F1-10 (decisions 6–10) |
 | **Raised by** | Implementing T-F1-09 against Art. 4, Art. 5, REQ-AGT-018 and Tech §5.3 |
 
 ## Evidence
@@ -68,10 +68,49 @@
    and saying where it stopped when a line is too long, `glob` and `list_dir` at most
    1000 entries; searches skip `.git`, binary files and files over 4 MiB.
 
+6. **A thread's PTY is made on first use** (T-F1-10, REQ-AGT-003): the first `run_command`
+   of a thread creates a session in the thread's cwd with shell integration, the thread as
+   `owner_thread_id` and the agent holding its input; every later command of the thread types
+   into that same shell, so the shell's state — its working directory above all — carries over
+   between commands, as it does for a person. Finding or creating the PTY is serialised, so a
+   thread's first two commands started together share one. A command is one line: the shell
+   starts one block per line and only the first would be waited for. One command runs at a
+   time per thread. The action the policy and an approval see carries the thread's cwd, not the
+   shell's current one after a `cd`; for Exec the policy decides on the command line, so no
+   verdict changes, but what a person reads can differ. A thread whose shell settled on
+   `integration: none` keeps failing until its PTY is closed; the thread PTY's lifecycle (closing
+   it when the thread ends) is T-F1-13's.
+7. **A command is its block.** Its block is marked when it opens (origin `agent`, the thread),
+   and `run_command` returns when that block closes, with the exit code and the tail of the
+   plain output (the last 64 KiB). A thread shell that never proves its integration fails the
+   call rather than running blind.
+8. **A command's time is bounded**: 120 s unless the call asks for 1 to 600; past it the command
+   is stopped and the model is told, with what it printed so far.
+9. **Cancelling stops what the command launched and keeps the shell** (REQ-AGT-007), refining
+   Tech §3 step 3 ("the thread PTY's process group gets SIGTERM; after 300 ms, SIGKILL"): the
+   signals go to the process group of every child of the shell — the foreground command and
+   any background job alike — rather than to the shell's own group, which would end the
+   thread's PTY; SIGTERM first, SIGKILL 300 ms later, and the shell gets SIGINT with the SIGTERM,
+   which ends a loop of builtins. The call returns within 500 ms. A run whose block has not
+   closed by then stays on the PTY, abandoned, until its block closes or the shell prompts
+   again, so a late block is never taken for the next command's; the next command waits up to
+   2 s for it. A process that left the shell's children (a daemon that double-forked out of
+   its group) is not found, and a shell already reaped is not signalled. `thread.cancel` itself
+   is T-F1-13's and T-F1-16's.
+10. **A command's result does not wait on its row** (Analyze C-01 for this path): when the
+   block's row cannot be written or closed, `run_command` still returns the exit code and the
+   output — the command ran — and marks the result not persisted, so the caller does not store
+   a `block_id` that names no row.
+
 ## Impact
 
 - Data Model §2.12: `egress_log.provider` holds a provider id or the tool `fetch_url`. No DDL
   change: the column is free text.
-- Tech §5.3b (new) states decisions 1–5.
+- Tech §5.3b (new) states decisions 1–10, and §3 step 3 points at decision 9.
+- Tech §5.2: `tools/adapters` may import `sessions/ports`, for `AgentTerminal` alone, which
+  `cmd/umbrald` wires (`.go-arch-lint.yml` has allowed it since the scaffold; this is its first
+  use).
+- `session.list`/`session.get` now return `owner_thread_id` for a thread's PTY, which the API
+  already declared and the store never read back.
 - REQ-AGT-018 could gain "and to such ranges directly", and REQ-SEC-002 "or a tool", if the
   Tech Lead wants the PRD to say it outright.

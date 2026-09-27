@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.22 |
+| **Version** | 1.23 |
 | **Date** | 2026-09-27 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -168,8 +168,9 @@ sequenceDiagram
    of the class (REQ-LLM-003). No candidates left → `PROVIDER_UNAVAILABLE` and the turn ends with
    `stop_reason = provider_error`.
 2. Invalid arguments → one retry with a repair message; if it fails, `tool_error` (REQ-AGT-006).
-3. `thread.cancel` → the turn's `context.Context` is cancelled and the thread PTY's process group gets
-   `SIGTERM`; after 300 ms, `SIGKILL` (REQ-AGT-007).
+3. `thread.cancel` → the turn's `context.Context` is cancelled and the process groups the thread
+   PTY's shell launched get `SIGTERM`; after 300 ms, `SIGKILL` (REQ-AGT-007). The shell itself is
+   kept (§5.3b; delta `2026-09-builtin-tools`, decision 9, proposed).
 4. Daemon crash → messages and tool calls are already persisted (REQ-AGT-011). On restart, `running`
    turns become `stopped` and `pending` approvals become `expired`.
 
@@ -557,6 +558,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `tui` | `client`, its own `ports`, and the `domain` packages; never `api`, and never its own adapters — `cmd/umbral-tui` wires those, as `cmd/umbrald` does for the daemon |
 | `tui/ports` | `sessions/domain`, for the size and cursor types the daemon already defines |
 | `tui/adapters/**` | its own `ports`, `client`, `sessions/domain` and external libraries, like every other module's adapters. The `client` allowance is what keeps method names and parameter shapes in one adapter instead of in the model |
+| `tools/adapters` | also `sessions/ports`, for `AgentTerminal` alone: `run_command` runs in the thread's PTY, which the sessions module owns (T-F1-10) |
 | `workspaces` | `ports` of `sessions` and `store`; never `agents`, `api` or `waits` |
 | `waits` | `ports` of `agents`, `sessions` and `store`, plus `bus`; never `api` |
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api` |
@@ -640,7 +642,7 @@ B-09).
 
 The tools module's registry (`internal/tools/adapters/registry`) holds every tool with a JSON
 Schema and a risk (REQ-AGT-002); the built-ins are `internal/tools/adapters/builtin`
-(`run_command` joins them with T-F1-10). Delta `2026-09-builtin-tools` (proposed):
+with `run_command` from T-F1-10. Delta `2026-09-builtin-tools` (proposed):
 
 - **Every call goes through the registry**, which validates the input against the schema
   (`invalid_args` otherwise), refuses a cwd or write root that is not absolute, and runs the
@@ -662,6 +664,14 @@ Schema and a risk (REQ-AGT-002); the built-ins are `internal/tools/adapters/buil
   shared or multicast address, checked at dial time after resolution, redirected or not, with
   no proxy; `http`/`https` only, five redirects, 10 s, 2 MiB (REQ-AGT-018). Its result is
   tainted (REQ-SEC-006).
+- **`run_command` runs in the thread's own PTY** (REQ-AGT-003): a session created on first use
+  in the thread's cwd, owned by the thread, its input held by the agent, and reused after, so
+  the shell's state carries over. The command — one line — is typed as the agent; the block
+  it opens is marked origin `agent` with the thread, and the call returns when that block
+  closes, with the exit code and the last 64 KiB of output, marked not persisted when the
+  block's row could not be written. 120 s by default, 600 at most. Cancelling sends SIGTERM to
+  the process group of every child of the shell and SIGINT to the shell, then SIGKILL 300 ms
+  later, returning within 500 ms with the shell alive (REQ-AGT-007).
 - **Output is bounded**: `read_file` 256 KiB, `grep` 500 matches of 300 characters, `glob` and
   `list_dir` 1000 entries; searches skip `.git`, binary files and files over 4 MiB.
 
@@ -951,3 +961,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.20 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-07: DD-004 says how the router walks candidates — which filters drop one, when a failure falls back and when it ends the call, when the first-token clock starts, redaction of all content once before the first candidate, and what `usage` records for each call, failures included. Delta `2026-09-router-fallback` (proposed). |
 | 1.21 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-08: §5.1 lists the REQ-LLM-007 presets and says that a loopback gateway which forwards to the cloud counts as local. Delta `2026-09-provider-config` (8e, proposed). |
 | 1.22 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-09: §5.3b describes the tool registry and the built-ins — the grant every call needs, symlink resolution of targets, the diff preview, `fetch_url` as Art. 4 egress with its address checks, and output bounds. Delta `2026-09-builtin-tools` (proposed). |
+| 1.23 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-10: §5.3b adds `run_command` — the thread's PTY made on first use and reused, the command's block marked as the agent's and waited for, its time bound, a result that does not wait on its row, and a cancel that sends SIGTERM then SIGKILL to what the command launched and keeps the shell; §3 step 3 and §5.2 follow. Delta `2026-09-builtin-tools` (decisions 6–10, proposed). |

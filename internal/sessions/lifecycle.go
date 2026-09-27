@@ -173,12 +173,12 @@ func (r *replyTarget) write(data []byte) {
 // persistCreate writes the session row before the PTY is announced (DD-007).
 func (s *Service) persistCreate(ctx context.Context, session domain.Session) error {
 	_, err := s.cfg.Store.DB().ExecContext(ctx, `
-		INSERT INTO sessions(id, shell, cwd, cols, rows, state, integration, input_owner, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO sessions(id, shell, cwd, cols, rows, state, integration, input_owner, owner_thread_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.Shell, session.CWD,
 		session.Size.Cols, session.Size.Rows,
 		string(session.State), string(session.Integration), string(session.InputOwner),
-		session.CreatedAt.UTC().UnixMilli())
+		nullable(session.OwnerThreadID), session.CreatedAt.UTC().UnixMilli())
 	if err != nil {
 		return fmt.Errorf("sessions: persist %s: %w", session.ID, err)
 	}
@@ -309,11 +309,12 @@ func scanSession(row rowScanner) (domain.Session, error) {
 		state, integration, inputOwner       string
 		cols, rows                           int64
 		exitCode                             sql.NullInt64
+		owner                                sql.NullString
 		createdAtMillis, exitedAtMillisValue sql.NullInt64
 	)
 
 	err := row.Scan(&session.ID, &session.Shell, &session.CWD, &cols, &rows,
-		&state, &integration, &inputOwner, &exitCode, &createdAtMillis, &exitedAtMillisValue)
+		&state, &integration, &inputOwner, &owner, &exitCode, &createdAtMillis, &exitedAtMillisValue)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return domain.Session{}, fmt.Errorf("%w: %s", domain.ErrNotFound, session.ID)
@@ -326,6 +327,7 @@ func scanSession(row rowScanner) (domain.Session, error) {
 	session.State = domain.State(state)
 	session.Integration = domain.Integration(integration)
 	session.InputOwner = domain.InputOwner(inputOwner)
+	session.OwnerThreadID = owner.String
 	session.CreatedAt = time.UnixMilli(createdAtMillis.Int64).UTC()
 	if exitCode.Valid {
 		code := int(exitCode.Int64)
