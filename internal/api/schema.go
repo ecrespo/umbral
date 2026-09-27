@@ -201,6 +201,8 @@ var notificationShapes = map[string]any{
 	"session.integration":  sessionIntegrationPayload{},
 	"session.input_owner":  sessionInputOwnerPayload{},
 	"session.unsubscribed": sessionUnsubscribedPayload{},
+	// Emitted by the encoder in place of a notification over the frame limit (REQ-API-005).
+	methodNotificationDropped: notificationDroppedPayload{},
 
 	"block.started": Block{},
 	"block.updated": blockUpdatedPayload{},

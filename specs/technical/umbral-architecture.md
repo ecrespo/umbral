@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.13 |
+| **Version** | 1.14 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -17,11 +17,12 @@
 
 > **Pending from F1 (ratified 2026-09-26, not yet written here).** Several sections are still
 > to be updated:
-> - §5.1 gains "live keys" and the `[api]` table (T-F1-33);
 > - §3.2 gains the skill store, the catalog and `skill_load` (T-F1-34, T-F1-36);
 > - §5.3 gains the destructive patterns `umb skill …` and `umb mcp add` (T-F1-36);
-> - §7.2 gains `umbral_frames_refused_total` (T-F1-33);
-> - §9.4 gains `umb limits`, `umb skill` and `umb mcp` (T-F1-33, T-F1-35, T-F1-37).
+> - §9.4 gains `umb skill` and `umb mcp` (T-F1-35, T-F1-37).
+>
+> Written by T-F1-33: §5.1's live keys and `[api]` table, §7.2's `umbral_frames_refused_total` and
+> §9.4's `umb limits`.
 >
 > Each task writes its part. Until then, the design is in `changes/_archive/2026-09-*`.
 
@@ -365,8 +366,11 @@ testdata/vt/                 # VT conformance suite
 
 ### Configuration
 
-`$XDG_CONFIG_HOME/umbral/config.toml`, read once when the daemon starts. Three rules, and the
-second is the one that matters:
+`$XDG_CONFIG_HOME/umbral/config.toml`, read once when the daemon starts, **except the keys listed
+as live**, which the daemon can change while it runs. Today there is one live key,
+`api.max_message_bytes`, and only `limits.set` changes it (API Spec §5.38): it rewrites that one
+line and applies the value to new connections. Every other key still needs a restart; a general
+`config.reload` is T-F1-02's. Three rules, and the second is the one that matters:
 
 - **Absent is the default configuration, not an error.** Umbral runs with no configuration at all;
   a local-first tool owes a new user a working daemon before it owes them a settings file.
@@ -376,13 +380,26 @@ second is the one that matters:
   pointed the other way: when a user has stated an intention, guessing is worse than stopping.
 - **An unknown key warns.** A configuration written for a later version still starts this one.
 
-F0 reads one section and one key:
+The daemon reads two sections:
 
 ```toml
 [experimental]
 pane_history = false   # REQ-TERM-010: capture and replay pane screens. Off by default,
                        # because pane output can contain secrets.
+
+[api]
+max_message_bytes = 4194304   # live. The frame limit after the handshake (API Spec §1):
+                              # bytes, or a quoted "8MiB"/"512KiB"; 1 MiB to 64 MiB.
 ```
+
+A value outside 1–64 MiB is malformed and stops the daemon like any other. The parser is a subset
+of TOML, not a TOML library: comments, `[section]` headers and `key = value` lines, where a quoted
+value ends at its closing quote and only a comment may follow it. An inline table or an array is
+outside the subset and stops the daemon, naming the line, rather than being read as an unknown key
+whose settings are silently ignored. `limits.set` edits the file with
+the same honesty: the key's own line under `[api]`, or a new `[api]` section; a dotted key or an
+inline table holding it is refused as `CONFIG_INVALID` naming the line, and a symlinked file is
+rewritten through its target so the link survives.
 
 ### 5.2 Dependency rules (Art. 3, verified by `go-arch-lint`)
 
@@ -495,6 +512,7 @@ Never prompt contents or output (only sizes and hashes).
 | `umbral_llm_tokens_total` | Counter per direction/model | input and output tokens |
 | `umbral_tool_calls_invalid_total` | Counter per model | REQ-OBS-002 |
 | `umbral_approvals_total` | Counter per decision/reason | approvals |
+| `umbral_frames_refused_total` | Counter per `direction` (`in`/`out`) | frames over the frame limit (REQ-OBS-005): inbound ones that closed their connection, outbound ones replaced by `RESULT_TOO_LARGE` or `limits.notification_dropped`. Exported when OTel lands (T-F1-18); until then `system.status` and `limits.get` carry the same counts under `frames` |
 
 ### 7.3 Traces
 One root span `agent.turn` per turn, with children `llm.call` (attributes `gen_ai.request.model`,
@@ -567,10 +585,33 @@ enforces both rules, with `mustCases` pinned to the 20 MUST rows above.
 
 ### 9.4 The `umb` surface
 
-Commands: `umb status`, `umb block last`, `umb api schema`, `umb version`, `umb help`, and the
-workspace tree below. Flags shared by every command: `--socket PATH` (default: the runtime
+Commands: `umb status`, `umb block last`, `umb api schema`, `umb limits`, `umb version`,
+`umb help`, and the workspace tree below. Flags shared by every command: `--socket PATH` (default: the runtime
 directory of API Spec §2), `--daemon-path PATH` (default: `PATH`, then the directory holding
 `umb`), `--no-autostart`, and `--json`.
+
+**The frame limit** (REQ-OBS-005, REQ-CLI-007; delta `2026-09-frame-limit-monitoring`).
+
+- `umb limits [--json]` calls `limits.get` and prints the limit new connections get, then the
+  `frames` line.
+- `umb limits set --max-message <size>` reads the size — bytes, or with `KiB` or `MiB` — and calls
+  `limits.set` with it in bytes. A size `umb` cannot read is exit 1 before connecting; the range
+  check and the write are the daemon's, so there is nothing for `umb` to roll back.
+- `umb status` gains one line, the same one `umb limits` prints:
+
+  ```
+  frames: limit 4.0 MiB · largest in 12 KiB, out 3.1 MiB · refused 0 in, 2 out · near limit 5
+  ```
+
+- When any command receives `RESULT_TOO_LARGE`, it exits 1 and says, with the smallest
+  power-of-two MiB that holds the answer:
+
+  ```
+  umb: the answer is larger than the 4.0 MiB frame limit (5.3 MiB).
+       Raise it with: umb limits set --max-message 8MiB
+  ```
+
+  Past the 64 MiB ceiling there is nothing to raise it to, and the second line says so instead.
 
 **The workspace tree** (REQ-CLI-005, REQ-CLI-006; deltas `2026-09-cli-workspace-surface` and
 `2026-09-cli-allowlist`). Every command is one call to the method named `<family>.<subcommand>`
@@ -692,3 +733,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.11 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-cli-allowlist`: §9.4 writes down the grammar of `umb workspace`/`tab`/`pane`/`layout` — positionals, flags, defaults, the `--` rule for `pane split`, what `layout apply --from` accepts and where its warnings go — and lists `umb api schema`, which it had omitted |
 | 1.12 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-database-lock`: §9.4 adds the database lock — `<database>.lock` beside the database, taken after the instance lock and before opening it, exit 75 when a daemon of another runtime directory holds it — so recovery cannot run over live sessions through a shared `--db` |
 | 1.13 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-pane-term`: §5.2b gains `TERM` and `COLORTERM` (REQ-TERM-013) and their precedence |
+| 1.14 | 2026-09-27 | E. Crespo (assisted draft) | delta `2026-09-frame-limit-monitoring` (T-F1-33): §5.1 names live keys — today only `api.max_message_bytes`, changed by `limits.set` — adds the `[api]` table and says how a quoted value and its comment are read; §7.2 adds `umbral_frames_refused_total`; §9.4 adds `umb limits`, `umb limits set`, the `frames` line of `umb status` and the `RESULT_TOO_LARGE` hint |

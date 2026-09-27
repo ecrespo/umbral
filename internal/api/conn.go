@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -11,7 +12,10 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/ecrespo/umbral/internal/config"
 )
 
 // method is one dispatchable JSON-RPC method.
@@ -89,7 +93,12 @@ type conn struct {
 	// writeMu serialises writes: replies come from the read loop, notifications will
 	// come from the bus goroutine in T-F0-06.
 	writeMu sync.Mutex
-	encoder *json.Encoder
+
+	// limit is this connection's frame limit in both directions (API Spec §1): the fixed
+	// MaxMessageBytes until `system.hello` succeeds, then the daemon's configured limit as it
+	// stood at that moment, for the rest of the connection. It is atomic because every
+	// writer goroutine reads it; only the read goroutine stores it.
+	limit atomic.Int64
 
 	// authenticated and clientKind are written by system.hello and read afterwards.
 	// Both stay on the read goroutine, so they need no lock.
@@ -196,20 +205,44 @@ func (c *conn) closeSubscriptions() {
 }
 
 func (s *Server) newConn(netConn net.Conn) *conn {
-	scanner := bufio.NewScanner(netConn)
-	// NDJSON with the 4 MiB ceiling of API Spec §1. Without this the scanner stops at
-	// 64 KiB and a large paste would look like a protocol error.
-	scanner.Buffer(make([]byte, 0, 64<<10), MaxMessageBytes)
-
-	return &conn{
+	c := &conn{
 		server:  s,
 		subs:    make(map[string]*subscription),
 		closed:  make(chan struct{}),
 		netConn: netConn,
-		reader:  scanner,
 		logger:  s.cfg.Logger,
-		encoder: json.NewEncoder(netConn),
 	}
+	c.limit.Store(MaxMessageBytes)
+
+	// NDJSON under the connection's own limit (API Spec §1). The scanner's buffer may grow
+	// to the 64 MiB ceiling, but splitLine refuses a line past the limit in force, so before
+	// the handshake it never grows past 4 MiB: the configured limit is not the peer's to
+	// claim until it has authenticated.
+	scanner := bufio.NewScanner(netConn)
+	scanner.Buffer(make([]byte, 0, 64<<10), config.MaxMaxMessageBytes+1)
+	scanner.Split(c.splitLine)
+	c.reader = scanner
+	return c
+}
+
+// splitLine is bufio.ScanLines held to the connection's frame limit, which counts the `\n`.
+// A line past it is bufio.ErrTooLong, the error the scanner itself gives past its buffer,
+// so the read loop has one refusal path however the line came to be too long.
+func (c *conn) splitLine(data []byte, atEOF bool) (int, []byte, error) {
+	limit := int(c.limit.Load())
+	if i := bytes.IndexByte(data, '\n'); i >= 0 {
+		if i+1 > limit {
+			return 0, nil, bufio.ErrTooLong
+		}
+		return i + 1, bytes.TrimSuffix(data[:i], []byte("\r")), nil
+	}
+	if len(data) >= limit {
+		return 0, nil, bufio.ErrTooLong
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), bytes.TrimSuffix(data, []byte("\r")), nil
+	}
+	return 0, nil, nil
 }
 
 // serve reads NDJSON messages until the peer disconnects or the daemon shuts down.
@@ -231,6 +264,7 @@ func (c *conn) serve(ctx context.Context) {
 			return
 		}
 		line := c.reader.Bytes()
+		raise(&c.server.frames.largestIn, int64(len(line))+1)
 		if len(line) == 0 {
 			continue
 		}
@@ -246,6 +280,13 @@ func (c *conn) serve(ctx context.Context) {
 			return
 		}
 		if errors.Is(err, bufio.ErrTooLong) {
+			// No method: the line was never parsed, so its id and method are unknown. The
+			// size is a lower bound for the same reason — reading stopped at the limit.
+			c.server.frames.refusedIn.Add(1)
+			c.logger.Warn("an incoming frame was over the limit; closing the connection",
+				slog.Int64("size_bytes_at_least", c.limit.Load()+1),
+				slog.Int64("limit_bytes", c.limit.Load()),
+				slog.Bool("authenticated", c.authenticated))
 			// The peer is out of contract; tell it why before hanging up, which the lost
 			// framing forces: the rest of the line is still arriving, and reading on would
 			// parse its tail as a message (API Spec §1). The id was never read, so it is
@@ -256,7 +297,7 @@ func (c *conn) serve(ctx context.Context) {
 				return
 			}
 			c.writeError(nil, ValidationError(
-				fmt.Sprintf("message exceeds the %d byte limit", MaxMessageBytes)))
+				fmt.Sprintf("message exceeds the %d byte limit", c.limit.Load())))
 			return
 		}
 		c.logger.Debug("connection read ended", slog.Any("error", err))
@@ -379,7 +420,7 @@ func (c *conn) reply(req request, result any, err error) {
 		c.writeError(req.ID, err)
 		return
 	}
-	c.writeRaw(response{JSONRPC: jsonrpcVersion, ID: req.ID, Result: result})
+	c.writeRaw(response{JSONRPC: jsonrpcVersion, ID: req.ID, Result: result, method: req.Method})
 }
 
 // nullID is the literal JSON null. JSON-RPC 2.0 §5 requires an explicit null id when the
@@ -402,11 +443,16 @@ func (c *conn) writeError(id json.RawMessage, err error) {
 	c.writeRaw(response{JSONRPC: jsonrpcVersion, ID: id, Error: wire})
 }
 
-// writeRaw serialises one message onto the socket.
+// writeRaw serialises one message onto the socket, held to the frame limit (see frame).
 func (c *conn) writeRaw(msg any) {
+	line, err := c.frame(msg)
+	if err != nil {
+		c.logger.Error("encode an outgoing message", slog.Any("error", err))
+		return
+	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	if err := c.encoder.Encode(msg); err != nil {
+	if _, err := c.netConn.Write(line); err != nil {
 		c.logger.Debug("write failed", slog.Any("error", err))
 	}
 }

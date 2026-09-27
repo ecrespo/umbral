@@ -137,6 +137,15 @@ type Config struct {
 	Bus        *bus.Bus
 	Logger     *slog.Logger
 
+	// MaxMessageBytes is the frame limit a connection gets once it completes the handshake
+	// (`[api] max_message_bytes`, API Spec §1). Zero means config.DefaultMaxMessageBytes.
+	// `limits.set` changes it for later connections.
+	MaxMessageBytes int
+	// SettingsPath is the settings file `limits.set` rewrites (REQ-CLI-007). Empty leaves
+	// `limits.set` answering NOT_IMPLEMENTED: a daemon that cannot persist the limit must
+	// not pretend to have raised it.
+	SettingsPath string
+
 	// handshakeTimeout replaces HandshakeTimeout. It is unexported because nothing
 	// legitimate needs another value (REQ-SEC-017): it exists so a test can measure the
 	// deadline on the real clock in milliseconds rather than seconds. Zero means
@@ -178,6 +187,15 @@ type Server struct {
 
 	// observeResult is nil except under test; see resultObserver.
 	observeResult resultObserver
+
+	// maxMessageBytes is the limit the next connection will be greeted with. `limits.set`
+	// stores it; each handshake reads it once, so a live connection keeps its own.
+	maxMessageBytes atomic.Int64
+	// frames counts how close traffic comes to the limit this run (REQ-OBS-005).
+	frames frameStats
+	// settingsMu serialises `limits.set`, so two clients raising the limit at once write
+	// the file one after the other and the daemon keeps the value the file ends with.
+	settingsMu sync.Mutex
 }
 
 // nextSeq hands out the next notification number. Every notification the daemon emits goes
@@ -200,6 +218,12 @@ func Listen(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	if cfg.Bus == nil {
 		cfg.Bus = bus.New()
+	}
+	if cfg.MaxMessageBytes == 0 {
+		cfg.MaxMessageBytes = config.DefaultMaxMessageBytes
+	}
+	if err := config.ValidMaxMessageBytes(cfg.MaxMessageBytes); err != nil {
+		return nil, fmt.Errorf("api: %w", err)
 	}
 	if cfg.handshakeTimeout == 0 {
 		cfg.handshakeTimeout = HandshakeTimeout
@@ -243,6 +267,7 @@ func Listen(ctx context.Context, cfg Config) (*Server, error) {
 		conns:     make(map[*conn]struct{}),
 		events:    cfg.Bus.SubscribeBuffered(dispatchBuffer, dispatchedKinds...),
 	}
+	s.maxMessageBytes.Store(int64(cfg.MaxMessageBytes))
 	s.methods = s.registry()
 	return s, nil
 }

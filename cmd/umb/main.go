@@ -76,6 +76,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return finish(cmdBlock(ctx, args[1:], out, errOut), out, stderr)
 	case "api":
 		return finish(cmdAPI(args[1:], out, errOut), out, stderr)
+	case "limits":
+		return finish(cmdLimits(ctx, args[1:], out, errOut), out, stderr)
 	case famWorkspace, famTab, famPane, famLayout:
 		return finish(cmdTree(ctx, args[0], args[1:], out, errOut), out, stderr)
 	case "version", "--version", "-version":
@@ -98,6 +100,9 @@ Usage:
   umb status [--json]            the daemon's health, providers and MCP servers
   umb block last [--json]        the last closed block of this session (REQ-CLI-002)
   umb api schema --json          the protocol this binary speaks (REQ-API-004)
+  umb limits [--json]            the frame limit and how close traffic comes to it
+  umb limits set --max-message SIZE
+                                 raise or lower it for new connections, e.g. 8MiB
   umb workspace create|list|focus|rename|close
   umb tab create|list|focus|rename|close
   umb pane split|list|get|focus|rename|close
@@ -168,6 +173,7 @@ type statusResult struct {
 		Name  string `json:"name"`
 		State string `json:"state"`
 	} `json:"mcp"`
+	Frames *framesResult `json:"frames,omitempty"`
 }
 
 func cmdStatus(ctx context.Context, args []string, stdout, stderr *printer) int {
@@ -190,8 +196,7 @@ func cmdStatus(ctx context.Context, args []string, stdout, stderr *printer) int 
 
 	var result statusResult
 	if err := c.Call(callCtx, "system.status", nil, &result); err != nil {
-		stderr.printf("umb: %v\n", err)
-		return exitFailure
+		return callFailed(stderr, "", err)
 	}
 
 	if f.asJSON {
@@ -215,6 +220,10 @@ func cmdStatus(ctx context.Context, args []string, stdout, stderr *printer) int 
 			names = append(names, m.Name+" ("+m.State+")")
 		}
 		stdout.printf("mcp: %s\n", strings.Join(names, ", "))
+	}
+	// Absent from a daemon older than REQ-OBS-005, which is not the same as all zeros.
+	if result.Frames != nil {
+		stdout.println(result.Frames.line())
 	}
 	return exitOK
 }
@@ -294,8 +303,7 @@ func cmdBlockLast(ctx context.Context, args []string, stdout, stderr *printer) i
 				"per command; check `umb status` if you expected some.")
 			return exitFailure
 		}
-		stderr.printf("umb: %v\n", err)
-		return exitFailure
+		return callFailed(stderr, "", err)
 	}
 
 	if f.asJSON {

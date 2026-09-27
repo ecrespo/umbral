@@ -37,7 +37,11 @@ const (
 	codeTimeout                    = -32011
 	codeNotImplemented             = -32012
 	codeCancelled                  = -32013
+	codeResultTooLarge             = -32014
 )
+
+// domainResultTooLarge is REQ-API-005's code: a result that does not fit the frame limit.
+const domainResultTooLarge = "RESULT_TOO_LARGE"
 
 // errorCodes is the whole §3 table, in one place a generated schema can read.
 //
@@ -66,6 +70,7 @@ var errorCodes = map[string]int{
 	"TIMEOUT":                      codeTimeout,
 	"NOT_IMPLEMENTED":              codeNotImplemented,
 	"CANCELLED":                    codeCancelled,
+	domainResultTooLarge:           codeResultTooLarge,
 }
 
 // Sentinel errors the modules return. api is the only package that knows which JSON-RPC

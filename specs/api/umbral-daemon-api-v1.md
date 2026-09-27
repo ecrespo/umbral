@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.15 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.16 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -14,12 +14,12 @@
 ---
 
 
-> **Pending from F1 (ratified 2026-09-26, not yet written here).** PRD 1.13 adds REQ-API-005,
-> REQ-CLI-007/008 and REQ-SKL-001…007, which this document does not describe yet:
-> `RESULT_TOO_LARGE`, `limits.*`, `skill.*` and the `cli` rows for `limits.*`, `skill.*` and
-> `mcp.server.*`. Tasks T-F1-33, T-F1-34 and T-F1-37 write that text as they land. Until then, the
-> design is in `changes/_archive/2026-09-{frame-limit-monitoring,skills-cli,cli-mcp}/`. The
-> handshake deadline and the id-less hello (REQ-SEC-017/018) are written: §1, §2 and §8, by T-F1-32.
+> **Pending from F1 (ratified 2026-09-26, not yet written here).** PRD 1.13 adds REQ-CLI-008 and
+> REQ-SKL-001…007, which this document does not describe yet: `skill.*` and the `cli` rows for
+> `skill.*` and `mcp.server.*`. Tasks T-F1-34 and T-F1-37 write that text as they land. Until then,
+> the design is in `changes/_archive/2026-09-{skills-cli,cli-mcp}/`. Already written: the handshake
+> deadline and the id-less hello (REQ-SEC-017/018, T-F1-32), and the frame limit in both directions
+> with `RESULT_TOO_LARGE` and `limits.*` (REQ-API-005, REQ-OBS-005, REQ-CLI-007, T-F1-33).
 
 ## 1. Overview
 
@@ -31,11 +31,27 @@ The channel is bidirectional:
 - the client invokes **methods** (request/response);
 - the daemon emits **notifications** (no `id`) for output streams and events.
 
-Framing: JSON messages delimited by `\n` (NDJSON). A message is at most 4 MiB (4 194 304 bytes)
-including its delimiter. Past that limit the daemon replies `VALIDATION_ERROR` with `id: null` — it
-has not read the id — and closes the connection, because the framing cannot be recovered; before the
-handshake the reply is `UNAUTHORIZED` instead (§2). A client may see its own write fail with `EPIPE`
-or `ECONNRESET` and SHOULD read the reply first.
+Framing: JSON messages delimited by `\n` (NDJSON). A message is at most **the connection's frame
+limit** including its delimiter, in both directions. Before the handshake that limit is 4 MiB
+(4 194 304 bytes) and fixed. From a successful `system.hello` on, it is the limit the hello result
+announces in `max_message_bytes` (§5.1): the daemon's configured `[api] max_message_bytes`, between
+1 MiB and 64 MiB and 4 MiB by default, as it stood when the connection was greeted. A connection
+keeps that limit for its whole life; a change made with `limits.set` (§5.38) reaches only
+connections opened afterwards. The limit before the handshake does not follow the setting, so an
+unauthenticated peer cannot make the daemon reserve more than 4 MiB for it.
+
+- **Inbound.** Past the limit the daemon replies `VALIDATION_ERROR` with `id: null` — it has not
+  read the id — and closes the connection, because the framing cannot be recovered; before the
+  handshake the reply is `UNAUTHORIZED` instead (§2). A client may see its own write fail with
+  `EPIPE` or `ECONNRESET` and SHOULD read the reply first.
+- **Outbound.** THE SYSTEM SHALL NOT write a frame over the connection's limit (REQ-API-005). A
+  response that would exceed it is replaced by `RESULT_TOO_LARGE` (§3) under the request's id, with
+  `data.size_bytes` and `data.limit_bytes`, and the connection stays open: the framing was never
+  broken. A notification that would exceed it is replaced by `limits.notification_dropped` (§6)
+  under the **same** `seq`, so the loss is announced rather than left as a gap. `block.get` shortens
+  its output instead (§5.17). A client SHOULD read with the limit the hello announced; one that
+  ignores the field keeps reading at 4 MiB, and with a raised limit may have to refuse a large
+  frame.
 
 A notification carries a sequence number in its envelope, beside `jsonrpc`, `method` and
 `params`:
@@ -109,7 +125,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list` |
 
 ### Handshake
 
@@ -121,8 +137,8 @@ before the daemon starts.
 ```json
 {"jsonrpc":"2.0","id":1,"result":{
   "daemon_version":"0.1.0","protocol_version":1,
-  "capabilities":["sessions","blocks","threads","mcp","models","workspaces","layouts","waits","integrations","notifications","policy_explain","wait_admin","rules"],
-  "connection_id":"con_01J9Z3K8T2QH6W4V5X7Y8Z9A0B"}}
+  "capabilities":["sessions","blocks","threads","mcp","models","workspaces","layouts","waits","integrations","notifications","policy_explain","wait_admin","rules","limits"],
+  "connection_id":"con_01J9Z3K8T2QH6W4V5X7Y8Z9A0B","max_message_bytes":4194304}}
 ```
 
 - `protocol_version` is **required**. IF it is missing or not compatible → `UNSUPPORTED_PROTOCOL_VERSION`
@@ -130,7 +146,7 @@ before the daemon starts.
   compatible would silently pair this daemon with a client built for a version it never declared.
 - Each entry of `capabilities` names a method namespace (`sessions`, `blocks`, `threads`, `mcp`,
   `models`, `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`,
-  `wait_admin`, `rules`) whose methods the daemon **serves at that moment**. THE SYSTEM SHALL derive
+  `wait_admin`, `rules`, `limits`) whose methods the daemon **serves at that moment**. THE SYSTEM SHALL derive
   the list from its method table rather than declaring it statically, SHALL advertise a namespace
   when at least one of its methods is served by this build, and SHALL NOT advertise one whose
   methods are all unserved: a client that branches on the advertisement must not be sent down a path
@@ -201,6 +217,7 @@ absent one. The field is present on `INTERNAL_ERROR` only (Art. 7).
 | -32011 | `TIMEOUT` | A wait reached its deadline (includes the last observed state) |
 | -32012 | `NOT_IMPLEMENTED` | A method this build knows by name but whose capability is switched off; see §9 |
 | -32013 | `CANCELLED` | The wait was cancelled with `wait.cancel` |
+| -32014 | `RESULT_TOO_LARGE` | The result would exceed this connection's frame limit (§1). `data.size_bytes` is the size it would have had and `data.limit_bytes` the limit, both numbers; the connection stays open (REQ-API-005) |
 | -32603 | `INTERNAL_ERROR` | Unexpected error (always with `trace_id`) |
 
 ### Cursor pagination
@@ -289,6 +306,12 @@ method and the ordering that produced it, so one handed to a different method is
  "state":"finished","exit_code":1,"started_at":1757592001000,"ended_at":1757592005200,
  "duration_ms":4200,"output_bytes":1834,"output_truncated":false}
 ```
+- `output_truncated`: the **stored** capture was cut at 16 MiB raw or 1 MiB plain (Data Model §2.2).
+  Those bytes are gone.
+- `output_response_truncated_bytes` (optional, `block.get` only): how many bytes of the stored
+  output **this response** leaves out to fit the frame limit (§5.17). Absent when nothing was left
+  out. Raising the limit (§5.38) brings those bytes back; it cannot bring back what
+  `output_truncated` reports.
 - `origin`: `user` | `agent`
 - `state`: `running` | `interactive` | `finished` | `abandoned`
 - `abandoned` means the block ended without reporting how. There are two ways: the session
@@ -358,10 +381,32 @@ method and the ordering that produced it, so one handed to a different method is
 ### 5.1 `system.hello`
 **Params:** `{token, client_kind, client_version, protocol_version}`. See §2 for what each one means
 and for the order they are validated in. REQ-SEC-003.
+**Result:** `{daemon_version, protocol_version, capabilities, connection_id, max_message_bytes}`.
+`max_message_bytes` is this connection's frame limit from now on, in both directions (§1).
 
 ### 5.2 `system.status`
-**Params:** `{}`. Returns `{daemon_version, uptime_ms, sessions_alive, threads_running, providers:[{id, health}], mcp:[{name, state}]}`.
+**Params:** `{}`. Returns `{daemon_version, uptime_ms, sessions_alive, threads_running, providers:[{id, health}], mcp:[{name, state}], frames}`.
 Used by `umb status` (REQ-CLI-003).
+
+`frames` reports how close traffic has come to the frame limit **this daemon run** (REQ-OBS-005);
+a restart starts every counter again:
+
+```json
+"frames": {"limit_bytes":4194304, "largest_in_bytes":12288, "largest_out_bytes":3250000,
+           "refused_in":0, "refused_out":2, "near_limit_out":5}
+```
+
+- `limit_bytes`: the limit a new connection gets once greeted.
+- `largest_in_bytes` / `largest_out_bytes`: the largest frame read and written, the `\n` counted.
+- `refused_in`: inbound frames over the limit, each of which closed its connection.
+- `refused_out`: responses answered `RESULT_TOO_LARGE` plus notifications replaced by
+  `limits.notification_dropped`.
+- `near_limit_out`: frames written above 75 % of their connection's limit.
+
+THE SYSTEM SHALL log every refusal, and the run's first frame above 75 %, at `warn` with the method
+and the size and never the content (Art. 7). An inbound refusal is the exception that proves the
+rule: the line was never parsed, so it has no method to name, and its size is logged as
+`size_bytes_at_least`, one byte past the limit, because reading stopped there.
 
 ### 5.3 `session.snapshot` — REQ-API-001, REQ-API-002
 **Params:** `{}`.
@@ -476,7 +521,14 @@ Sends SIGHUP; after 3 s, SIGKILL.
 
 ### 5.17 `block.get` — REQ-CLI-002, REQ-BLK-007
 **Params:** `{block_id | "last", session_id?, include?:"none"|"plain"|"raw"}`.
-**Result:** `Block` plus `output_plain` or `output_raw_b64`.
+**Result:** `Block` plus `output_plain` or `output_raw_b64`, and `output_response_truncated_bytes`
+when the output was shortened.
+
+**It fits the frame limit instead of failing** (REQ-API-005). A result that would exceed the
+connection's limit keeps the block and shortens its one output field until the whole response fits:
+`output_raw_b64` on a 3-byte boundary before encoding, so it is a prefix of what a larger limit would
+return, and `output_plain` on a UTF-8 boundary, measured as encoded JSON. How many stored bytes were
+left out goes in `output_response_truncated_bytes` (§4). `output_truncated` keeps its meaning.
 
 The reserved id `"last"` means the most recent **closed** block: `finished` or `abandoned`,
 never one still running. With `session_id` it is that session's last closed block; without
@@ -658,6 +710,30 @@ copy, and CI SHALL compare it against this specification. The comparison is bloc
 names, required parameters and error codes, and non-blocking for descriptions and added optional
 fields (REQ-API-004); `tools/api_schema_check.py` is the check and `task schema` runs it.
 
+### 5.38 `limits.get` / `set` — REQ-OBS-005, REQ-CLI-007
+Every client kind may call both (§2). The `limits` capability announces them.
+
+`get` params: `{}`. `set` params: `{max_message_bytes}`.
+
+- `limits.get` — **Result:** `{frames, configured_max_message_bytes}`: the
+  counters of §5.2 and the limit a new connection is greeted with, which is also what the settings
+  file holds.
+- `limits.set` — `max_message_bytes` is an integer, in bytes. **Result:**
+  `{max_message_bytes, applies_to: "new_connections"}`.
+  - THE SYSTEM SHALL validate the value first: outside 1 048 576–67 108 864 it is
+    `VALIDATION_ERROR` and the settings file is not touched.
+  - It then rewrites **that one line** of `$XDG_CONFIG_HOME/umbral/config.toml` atomically — a
+    temporary file in the same directory, then a rename — keeping every other line byte for byte,
+    and applies the value to connections opened afterwards. A live connection keeps its limit (§1).
+  - The file cases: an absent file is created with `[api]` and the key only; a file that does not
+    parse is `CONFIG_INVALID` and is not touched; the key written as a dotted key
+    (`api.max_message_bytes = …`) or inside an inline table (`api = {…}`) is `CONFIG_INVALID` naming
+    the line, because this is an edit to one key and not a TOML writer; a trailing comment on the
+    key's line is kept; a symlinked `config.toml` is resolved and its target rewritten, so the link
+    survives.
+  - A daemon with no settings file location answers `NOT_IMPLEMENTED` rather than raising a limit it
+    cannot persist.
+
 ## 6. Notifications (daemon → client)
 
 | Method | Payload | REQ |
@@ -687,6 +763,7 @@ fields (REQ-API-004); `tools/api_schema_check.py` is the check and `task schema`
 | `thread.attention_changed` | `{thread_id, attention_state}` | REQ-AGT-016 |
 | `thread.stalled` | `{thread_id, turn_id, idle_ms, last_event}` | REQ-AUT-008 |
 | `rules.update_rejected` | `{reason, version, source}` | REQ-SEC-013 |
+| `limits.notification_dropped` | `{method, size_bytes, limit_bytes}` — in place of a notification over the frame limit, under that notification's `seq` (§1) | REQ-API-005 |
 
 Every notification carries `seq` in its envelope (§1): a counter that increases by one per **event
 the daemon dispatches**, scoped to **one daemon run** and shared by every connection, so the same
@@ -775,6 +852,7 @@ stateDiagram-v2
 | `session.input` | 64 KiB per message |
 | Concurrent connections | 32 |
 | Handshake deadline | 5 s from accept; past it, `UNAUTHORIZED` with `id: null` and a close (§2 step 3a) |
+| Frame limit after the handshake | `[api] max_message_bytes`: 1 MiB to 64 MiB, 4 MiB by default, fixed per connection at `system.hello` and announced there; outbound frames over it become `RESULT_TOO_LARGE` or `limits.notification_dropped` (§1) |
 | `session.output` notifications | batched every 4 ms or 32 KiB, whichever comes first |
 | Concurrent waits per connection | 32; beyond that `thread.wait` and `block.wait_output` return `VALIDATION_ERROR` |
 | Wait timeout | 1 s to 1 h; there is no wait without a deadline |
@@ -789,8 +867,8 @@ stateDiagram-v2
   for 6 months.
 - **Optional capabilities:** `system.hello` returns the namespaces the daemon **serves** at that
   moment (§2). The protocol's namespaces are `sessions`, `blocks`, `threads`, `mcp`, `models`,
-  `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`, `wait_admin`
-  and `rules`; `worktrees`, `graphics`, `plugins` and `federation` are reserved for later. The §2
+  `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`, `wait_admin`,
+  `rules` and `limits`; `worktrees`, `graphics`, `plugins` and `federation` are reserved for later. The §2
   example shows the full list and is illustrative: what a given daemon returns is whatever it can
   actually do, which is narrower than what its method table holds whenever a module is absent.
 - **Which error a missing method gets.** A name this build does not know receives
@@ -846,3 +924,4 @@ printf '%s\n' \
 | 1.13 | 2026-09-26 | delta `2026-09-cli-allowlist`: §2's `cli` row gains `workspace.*`, `tab.*`, `pane.*` except `pane.move`, and `layout.*` — the surface REQ-CLI-005 and REQ-CLI-006 give `umb`, which the row refused. `session.*` stays interactive-only. Additive within `protocol_version = 1` |
 | 1.14 | 2026-09-26 | delta `2026-09-oversized-message`: §1 says the 4 MiB limit counts the `\n`, and that past it the daemon replies `VALIDATION_ERROR` with a null id and closes; §2 step 3 names unparseable, non-JSON-RPC and oversized lines as earlier calls, which get `UNAUTHORIZED`; §8's row says both |
 | 1.15 | 2026-09-27 | delta `2026-09-handshake-hardening` (T-F1-32): §1 records the one deviation from JSON-RPC 2.0 §4.1 — an unauthenticated peer's notification and an id-less `system.hello` are answered; §2 step 3 names notifications among the earlier calls, new step 3a sets the 5 s handshake deadline, step 5 requires a non-null `id` on `system.hello` before the token is compared, and step 6's repeated hello is answered even without an id; §8 gains the deadline row. `protocol_version` unchanged: every conforming client already sends an id and completes the handshake in milliseconds |
+| 1.16 | 2026-09-27 | delta `2026-09-frame-limit-monitoring` (T-F1-33): §1 makes the frame limit per connection and two-way — 4 MiB and fixed before the handshake, the configured `[api] max_message_bytes` (1–64 MiB) after it — and says what the daemon writes instead of an oversized response or notification; §2's `cli` row gains `limits.get` and `limits.set` and the capability list gains `limits`; §3 adds `RESULT_TOO_LARGE` (-32014); §4 adds `output_response_truncated_bytes`; §5.1 documents the hello result with `max_message_bytes`; §5.2 adds `frames`; §5.17 shortens instead of failing; new §5.38 `limits.get`/`limits.set`; §6 adds `limits.notification_dropped`; §8 and §9 gain the limit row and the capability. Additive within `protocol_version = 1` |

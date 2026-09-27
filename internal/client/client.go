@@ -51,6 +51,11 @@ const (
 // so a daemon that went wrong cannot make the client allocate without bound.
 const maxMessageBytes = 4 << 20
 
+// maxMessageCeiling caps whatever limit a daemon announces: the 64 MiB top of
+// `[api] max_message_bytes`. A daemon that announced more is out of contract, and the
+// client still refuses to allocate without bound for it.
+const maxMessageCeiling = 64 << 20
+
 // DialTimeout caps a whole connection attempt, the handshake included. It is short because
 // the socket is local: anything slower than this is a daemon that is not answering, and
 // the caller has an autostart path for that case.
@@ -86,6 +91,11 @@ type Client struct {
 
 	// DaemonVersion is what the daemon reported in the handshake.
 	DaemonVersion string
+
+	// MaxMessageBytes is the frame limit this client reads with: 4 MiB until the handshake,
+	// then what the daemon announced for this connection, capped at maxMessageCeiling
+	// (API Spec §1, §5.1).
+	MaxMessageBytes int
 }
 
 // Error is a JSON-RPC error the daemon returned. `DomainCode` is the stable name from the
@@ -97,6 +107,10 @@ type Error struct {
 	DomainCode string       `json:"domain_code"`
 	Details    []ErrorField `json:"details,omitempty"`
 	TraceID    string       `json:"trace_id,omitempty"`
+	// SizeBytes and LimitBytes are set on RESULT_TOO_LARGE: how large the answer would
+	// have been and this connection's frame limit (API Spec §3).
+	SizeBytes  int64 `json:"size_bytes,omitempty"`
+	LimitBytes int64 `json:"limit_bytes,omitempty"`
 }
 
 // ErrorField is one entry of an error's `details` array.
@@ -181,9 +195,10 @@ func DialAs(ctx context.Context, socketPath, token, kind string) (*Client, error
 	}
 
 	c := &Client{
-		conn: conn,
-		enc:  json.NewEncoder(conn),
-		rd:   bufio.NewReaderSize(conn, 64<<10),
+		conn:            conn,
+		enc:             json.NewEncoder(conn),
+		rd:              bufio.NewReaderSize(conn, 64<<10),
+		MaxMessageBytes: maxMessageBytes,
 	}
 	// dialCtx, not ctx: the handshake shares the connection attempt's budget. A daemon
 	// that accepts and never answers is the case this closes.
@@ -231,6 +246,7 @@ func (c *Client) hello(ctx context.Context, token, kind string) error {
 		ProtocolVersion int      `json:"protocol_version"`
 		Capabilities    []string `json:"capabilities"`
 		ConnectionID    string   `json:"connection_id"`
+		MaxMessageBytes int      `json:"max_message_bytes"`
 	}
 	params := map[string]any{
 		"token":            token,
@@ -245,6 +261,11 @@ func (c *Client) hello(ctx context.Context, token, kind string) error {
 	c.DaemonVersion = result.DaemonVersion
 	c.Capabilities = result.Capabilities
 	c.ConnectionID = result.ConnectionID
+	// A daemon older than the field announces nothing and keeps reading at 4 MiB, which
+	// is what this client does for it (API Spec §1).
+	if result.MaxMessageBytes > 0 {
+		c.MaxMessageBytes = min(result.MaxMessageBytes, maxMessageCeiling)
+	}
 	return nil
 }
 
@@ -269,6 +290,8 @@ type wireError struct {
 		DomainCode string       `json:"domain_code"`
 		Details    []ErrorField `json:"details"`
 		TraceID    string       `json:"trace_id"`
+		SizeBytes  int64        `json:"size_bytes"`
+		LimitBytes int64        `json:"limit_bytes"`
 	} `json:"data"`
 }
 
@@ -330,6 +353,8 @@ func (c *Client) call(ctx context.Context, method string, params, out any) error
 				DomainCode: resp.Error.Data.DomainCode,
 				Details:    resp.Error.Data.Details,
 				TraceID:    resp.Error.Data.TraceID,
+				SizeBytes:  resp.Error.Data.SizeBytes,
+				LimitBytes: resp.Error.Data.LimitBytes,
 			}
 		}
 		if out == nil || len(resp.Result) == 0 {
@@ -345,7 +370,7 @@ func (c *Client) call(ctx context.Context, method string, params, out any) error
 // readFrame reads one NDJSON message, refusing anything past the 4 MiB frame limit of
 // API Spec §2 instead of growing a buffer to match whatever arrived.
 func (c *Client) readFrame() (*rpcResponse, error) {
-	line, err := readLimitedLine(c.rd, maxMessageBytes)
+	line, err := readLimitedLine(c.rd, c.MaxMessageBytes)
 	if err != nil {
 		return nil, err
 	}

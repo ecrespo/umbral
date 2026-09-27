@@ -35,6 +35,14 @@ func (s *Server) registry() map[string]method {
 		methodHello:     {handle: handleHello, beforeHello: true, params: helloParams{}, result: helloResult{}},
 		"system.status": {handle: handleStatus, params: emptyResult{}, result: StatusResult{}},
 
+		// The frame limit's two narrow methods (REQ-OBS-005, REQ-CLI-007). Every client kind
+		// may call them, `umb` included: raising the limit is what its hint tells a user to do.
+		"limits.get": {handle: handleLimitsGet, params: emptyResult{}, result: limitsResult{}},
+		"limits.set": {
+			handle: handleLimitsSet, available: settingsWritable,
+			params: setLimitsParams{}, result: setLimitsResult{},
+		},
+
 		// api.schema prints the protocol this binary was built with (API Spec §5.37).
 		// It needs no module behind it and is granted to every client kind: a client
 		// that cannot ask what the daemon speaks has to guess.
@@ -151,6 +159,10 @@ func handleHello(_ context.Context, c *conn, raw json.RawMessage) (any, error) {
 		// lingering unauthenticated until the deadline it could not clear.
 		return nil, fmt.Errorf("%w: could not clear the handshake deadline: %w", ErrUnauthorized, err)
 	}
+	// From here on the connection's frame limit is the configured one, as it stands now
+	// (API Spec §1): a later `limits.set` reaches new connections only.
+	limit := c.server.maxMessageBytes.Load()
+	c.limit.Store(limit)
 	c.authenticated = true
 	c.clientKind = kind
 	c.connectionID = store.NewID(store.PrefixConnection)
@@ -160,6 +172,7 @@ func handleHello(_ context.Context, c *conn, raw json.RawMessage) (any, error) {
 		ProtocolVersion: ProtocolVersion,
 		Capabilities:    c.server.capabilities(),
 		ConnectionID:    c.connectionID,
+		MaxMessageBytes: limit,
 	}, nil
 }
 
@@ -188,5 +201,6 @@ func handleStatus(ctx context.Context, c *conn, _ json.RawMessage) (any, error) 
 		}
 		status = reported
 	}
+	status.Frames = c.server.framesNow()
 	return status, nil
 }
