@@ -1,0 +1,481 @@
+{
+  "comment": "REQ-SEC-001 corpus. {{rand:N:CLASS}} expands to N characters drawn by a PRNG seeded with the case name, so no real-looking secret is ever committed (gitleaks, push protection). CLASS: alnum, upper, hex, digits, b64, b64url, crockford. {{PRIVATE}} is the literal word, kept out of the file so a PEM header does not read as a key either. `rules` lists every [REDACTED:<rule>] the output must hold; a negative has none and must come back unchanged.",
+  "positive": [
+    {
+      "name": "openai key in prose",
+      "input": "my key is sk-{{rand:48:alnum}} please keep it",
+      "rules": [
+        "openai_key"
+      ]
+    },
+    {
+      "name": "openai project key",
+      "input": "OPENAI_API_KEY=sk-proj-{{rand:64:b64url}}",
+      "rules": [
+        "openai_key"
+      ]
+    },
+    {
+      "name": "openai key in JSON",
+      "input": "{\"api_key\": \"sk-{{rand:40:alnum}}\"}",
+      "rules": [
+        "openai_key"
+      ]
+    },
+    {
+      "name": "anthropic key",
+      "input": "ANTHROPIC_API_KEY=sk-ant-api03-{{rand:80:b64url}}AA",
+      "rules": [
+        "anthropic_key"
+      ]
+    },
+    {
+      "name": "openrouter key",
+      "input": "api_key: sk-or-v1-{{rand:64:hex}}",
+      "rules": [
+        "openrouter_key"
+      ]
+    },
+    {
+      "name": "github classic token",
+      "input": "git clone https://ghp_{{rand:36:alnum}}@github.com/o/r.git",
+      "rules": [
+        "github_token"
+      ]
+    },
+    {
+      "name": "github oauth token",
+      "input": "token gho_{{rand:36:alnum}}",
+      "rules": [
+        "github_token"
+      ]
+    },
+    {
+      "name": "github fine-grained token",
+      "input": "GH=github_pat_{{rand:22:alnum}}_{{rand:59:alnum}}",
+      "rules": [
+        "github_token"
+      ]
+    },
+    {
+      "name": "github token in a curl header",
+      "input": "curl -H \"Authorization: token ghs_{{rand:36:alnum}}\" https://api.github.com/user",
+      "rules": [
+        "github_token"
+      ]
+    },
+    {
+      "name": "gitlab personal token",
+      "input": "docker login registry.gitlab.com -u me -p glpat-{{rand:20:b64url}}",
+      "rules": [
+        "gitlab_token"
+      ]
+    },
+    {
+      "name": "gitlab deploy token",
+      "input": "gldt-{{rand:24:b64url}}",
+      "rules": [
+        "gitlab_token"
+      ]
+    },
+    {
+      "name": "hugging face token",
+      "input": "huggingface-cli login --token hf_{{rand:34:alnum}}",
+      "rules": [
+        "huggingface_token"
+      ]
+    },
+    {
+      "name": "aws access key id",
+      "input": "aws_access_key_id = AKIA{{rand:16:upper}}",
+      "rules": [
+        "aws_access_key_id"
+      ]
+    },
+    {
+      "name": "aws temporary key id",
+      "input": "found ASIA{{rand:16:upper}} in the log",
+      "rules": [
+        "aws_access_key_id"
+      ]
+    },
+    {
+      "name": "aws secret key in credentials",
+      "input": "[default]\naws_secret_access_key = {{rand:40:b64}}\n",
+      "rules": [
+        "aws_secret_access_key"
+      ]
+    },
+    {
+      "name": "aws secret key in env",
+      "input": "export AWS_SECRET_ACCESS_KEY={{rand:40:b64}}",
+      "rules": [
+        "aws_secret_access_key"
+      ]
+    },
+    {
+      "name": "aws pair",
+      "input": "AKIA{{rand:16:upper}} / aws_secret_access_key: {{rand:40:b64}}",
+      "rules": [
+        "aws_access_key_id",
+        "aws_secret_access_key"
+      ]
+    },
+    {
+      "name": "gcp api key",
+      "input": "https://maps.googleapis.com/maps/api/js?key=AIza{{rand:35:b64url}}",
+      "rules": [
+        "gcp_api_key"
+      ]
+    },
+    {
+      "name": "gcp service account",
+      "input": "{\"type\": \"service_account\", \"private_key_id\": \"{{rand:40:hex}}\", \"private_key\": \"-----BEGIN {{PRIVATE}} KEY-----\\n{{rand:64:b64}}\\n{{rand:64:b64}}\\n-----END {{PRIVATE}} KEY-----\\n\"}",
+      "rules": [
+        "gcp_private_key_id",
+        "pem_private_key"
+      ]
+    },
+    {
+      "name": "rsa private key",
+      "input": "-----BEGIN RSA {{PRIVATE}} KEY-----\n{{rand:64:b64}}\n{{rand:64:b64}}\n{{rand:20:b64}}==\n-----END RSA {{PRIVATE}} KEY-----",
+      "rules": [
+        "pem_private_key"
+      ]
+    },
+    {
+      "name": "openssh private key",
+      "input": "cat ~/.ssh/id_ed25519\n-----BEGIN OPENSSH {{PRIVATE}} KEY-----\n{{rand:70:b64}}\n{{rand:70:b64}}\n-----END OPENSSH {{PRIVATE}} KEY-----\n$ ",
+      "rules": [
+        "pem_private_key"
+      ]
+    },
+    {
+      "name": "ec private key",
+      "input": "-----BEGIN EC {{PRIVATE}} KEY-----\n{{rand:64:b64}}\n-----END EC {{PRIVATE}} KEY-----",
+      "rules": [
+        "pem_private_key"
+      ]
+    },
+    {
+      "name": "pgp private key block",
+      "input": "-----BEGIN PGP {{PRIVATE}} KEY BLOCK-----\n\n{{rand:64:b64}}\n-----END PGP {{PRIVATE}} KEY BLOCK-----",
+      "rules": [
+        "pem_private_key"
+      ]
+    },
+    {
+      "name": "truncated private key",
+      "input": "$ head key.pem\n-----BEGIN {{PRIVATE}} KEY-----\n{{rand:64:b64}}\n{{rand:64:b64}}",
+      "rules": [
+        "pem_private_key"
+      ]
+    },
+    {
+      "name": "jwt",
+      "input": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ{{rand:40:b64url}}.{{rand:43:b64url}}",
+      "rules": [
+        "jwt"
+      ]
+    },
+    {
+      "name": "bearer jwt",
+      "input": "Authorization: Bearer eyJ{{rand:30:b64url}}.eyJ{{rand:60:b64url}}.{{rand:43:b64url}}",
+      "rules": [
+        "jwt"
+      ]
+    },
+    {
+      "name": "slack bot token",
+      "input": "SLACK=xoxb-{{rand:12:digits}}-{{rand:12:digits}}-{{rand:24:alnum}}",
+      "rules": [
+        "slack_token"
+      ]
+    },
+    {
+      "name": "dotenv password",
+      "input": "DATABASE_PASSWORD=correct-horse-battery",
+      "rules": [
+        "dotenv_secret"
+      ]
+    },
+    {
+      "name": "dotenv quoted secret",
+      "input": "export SESSION_SECRET=\"{{rand:32:alnum}}\"",
+      "rules": [
+        "dotenv_secret"
+      ]
+    },
+    {
+      "name": "dotenv single-quoted api key",
+      "input": "STRIPE_API_KEY='{{rand:32:alnum}}'",
+      "rules": [
+        "dotenv_secret"
+      ]
+    },
+    {
+      "name": "dotenv file",
+      "input": "PORT=8080\nDB_PASSWORD=s3cr3t-pass\nDEBUG=true\nJWT_SECRET={{rand:24:alnum}}\n",
+      "rules": [
+        "dotenv_secret",
+        "dotenv_secret"
+      ]
+    },
+    {
+      "name": "high entropy token in yaml",
+      "input": "webhook:\n  token: {{rand:40:alnum}}\n",
+      "rules": [
+        "high_entropy"
+      ]
+    },
+    {
+      "name": "high entropy in a url",
+      "input": "https://hooks.example.com/services/{{rand:32:alnum}}",
+      "rules": [
+        "high_entropy"
+      ]
+    },
+    {
+      "name": "two providers in one line",
+      "input": "ghp_{{rand:36:alnum}} and AKIA{{rand:16:upper}}",
+      "rules": [
+        "github_token",
+        "aws_access_key_id"
+      ]
+    },
+    {
+      "name": "key in command output",
+      "input": "$ env | grep KEY\nOPENAI_API_KEY=sk-{{rand:48:alnum}}\nHF_TOKEN=hf_{{rand:34:alnum}}\n",
+      "rules": [
+        "openai_key",
+        "huggingface_token"
+      ]
+    },
+    {
+      "name": "dotenv name that is only the keyword",
+      "input": "PASSWORD=hunter2hunter2",
+      "rules": [
+        "dotenv_secret"
+      ]
+    },
+    {
+      "name": "dotenv name starting with the keyword",
+      "input": "SECRET_KEY_BASE={{rand:64:hex}}",
+      "rules": [
+        "dotenv_secret"
+      ]
+    },
+    {
+      "name": "dotenv token",
+      "input": "export TOKEN='{{rand:12:alnum}}'",
+      "rules": [
+        "dotenv_secret"
+      ]
+    },
+    {
+      "name": "dotenv value holding a key",
+      "input": "DB_PASSWORD=hunter2hunter2:AKIA{{rand:16:upper}}",
+      "rules": [
+        "dotenv_secret"
+      ]
+    },
+    {
+      "name": "dotenv value around an openai key",
+      "input": "DB_PASSWORD=myrealpassword/sk-{{rand:40:alnum}}",
+      "rules": [
+        "dotenv_secret"
+      ]
+    },
+    {
+      "name": "a literal placeholder exempts nothing",
+      "input": "DB_PASSWORD=pass[REDACTED:x]word123",
+      "rules": [
+        "dotenv_secret"
+      ]
+    },
+    {
+      "name": "dotenv name ending in KEY",
+      "input": "STRIPE_KEY=value-for-test",
+      "rules": [
+        "dotenv_secret"
+      ]
+    },
+    {
+      "name": "aws secret longer than forty",
+      "input": "aws_secret_access_key = {{rand:44:b64}}",
+      "rules": [
+        "aws_secret_access_key"
+      ]
+    }
+  ],
+  "negative": [
+    {
+      "name": "git sha",
+      "input": "commit 9fceb02d0ae598e95dc970b74767f19372d61af8"
+    },
+    {
+      "name": "sha256 digest",
+      "input": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "uuid",
+      "input": "request 550e8400-e29b-41d4-a716-446655440000 failed"
+    },
+    {
+      "name": "sk- in prose",
+      "input": "use sk-learn for that"
+    },
+    {
+      "name": "a word ending in sk-",
+      "input": "the task-runner-for-our-monorepo-builds is slow"
+    },
+    {
+      "name": "ghp_ prefix alone",
+      "input": "tokens look like ghp_ followed by 36 characters"
+    },
+    {
+      "name": "hf_ identifier",
+      "input": "from huggingface_hub import hf_hub_download"
+    },
+    {
+      "name": "AKIA in prose",
+      "input": "AWS key ids start with AKIA"
+    },
+    {
+      "name": "eyJ alone",
+      "input": "base64 of {\" is eyJ"
+    },
+    {
+      "name": "public key",
+      "input": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\n-----END PUBLIC KEY-----"
+    },
+    {
+      "name": "certificate header",
+      "input": "-----BEGIN CERTIFICATE-----"
+    },
+    {
+      "name": "keyring reference",
+      "input": "api_key = \"keyring:umbral/hf_token\""
+    },
+    {
+      "name": "env reference",
+      "input": "api_key = \"env:OPENROUTER_API_KEY\""
+    },
+    {
+      "name": "dotenv harmless keys",
+      "input": "PORT=8080\nDEBUG=true\nLOG_LEVEL=info\n"
+    },
+    {
+      "name": "dotenv empty password",
+      "input": "PASSWORD=\n"
+    },
+    {
+      "name": "dotenv short value",
+      "input": "TOKEN_TTL=3600"
+    },
+    {
+      "name": "go test name",
+      "input": "--- PASS: TestPolicyAutoEditWorkspace_REQ_AGT_013 (0.00s)"
+    },
+    {
+      "name": "long go test name",
+      "input": "=== RUN   TestADaemonWithoutAKeyringStartsDegraded_REQ_SEC_008"
+    },
+    {
+      "name": "go identifier",
+      "input": "func getProviderConfigurationFromKeyring() {}"
+    },
+    {
+      "name": "go import path",
+      "input": "\"github.com/ecrespo/umbral/internal/security/domain\""
+    },
+    {
+      "name": "file path",
+      "input": "internal/security/domain/policy_destructive.go:42"
+    },
+    {
+      "name": "python path",
+      "input": "/usr/local/lib/python3.12/site-packages/numpy/core/multiarray.py"
+    },
+    {
+      "name": "umbral thread id",
+      "input": "thread thr_{{rand:26:crockford}} is waiting"
+    },
+    {
+      "name": "umbral block id",
+      "input": "block blk_{{rand:26:crockford}} exited 1"
+    },
+    {
+      "name": "english sentence",
+      "input": "The quick brown fox jumps over the lazy dog while the daemon restarts."
+    },
+    {
+      "name": "kebab case name",
+      "input": "kubernetes-deployment-configuration-v2"
+    },
+    {
+      "name": "repeated characters",
+      "input": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "name": "semver and ipv6",
+      "input": "v1.24.3 on fe80::1ff:fe23:4567:890a"
+    },
+    {
+      "name": "markdown table",
+      "input": "| REQ-SEC-001 | T-F1-04, T-F1-07 | TestRedactionCorpus_REQ_SEC_001 |"
+    },
+    {
+      "name": "already redacted",
+      "input": "OPENAI_API_KEY=[REDACTED:openai_key]"
+    },
+    {
+      "name": "go build output",
+      "input": "go: downloading github.com/pelletier/go-toml/v2 v2.2.4"
+    },
+    {
+      "name": "compiler error",
+      "input": "./main.go:12:2: undefined: HandshakeTimeoutAndMaxMessageBytes"
+    },
+    {
+      "name": "dotenv setting named like a secret",
+      "input": "PASSWORD_MIN_LENGTH=8"
+    },
+    {
+      "name": "dotenv short quoted value",
+      "input": "AUTH_MODE=\"basic\""
+    },
+    {
+      "name": "AKIA with a short suffix",
+      "input": "the AKIASHORT prefix is not a key"
+    },
+    {
+      "name": "dotenv token budget",
+      "input": "MAX_TOKENS=100000"
+    },
+    {
+      "name": "dotenv bypass flag",
+      "input": "BYPASS_CACHE=enabled"
+    },
+    {
+      "name": "dotenv author name",
+      "input": "GIT_AUTHOR_NAME=ernesto123"
+    },
+    {
+      "name": "dotenv key path",
+      "input": "SSH_KEY_PATH=/home/u/.ssh/id_ed25519"
+    },
+    {
+      "name": "dotenv token url",
+      "input": "TOKEN_URL=https://auth.example.com/oauth/token"
+    },
+    {
+      "name": "dotenv keyword inside a word",
+      "input": "COMPASS=northwest"
+    },
+    {
+      "name": "dotenv KEY inside a word",
+      "input": "MONKEY=banana123"
+    }
+  ]
+}

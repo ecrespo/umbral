@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.16 |
+| **Version** | 1.17 |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -249,6 +249,32 @@ sequenceDiagram
 - **Decision:** redaction happens in `security` right before `llmgw` serializes the request. Local
   providers also receive redacted content (defense in depth and consistent prompts).
 - **`egress_log`** only records non-loopback destinations.
+- **The rules** (T-F1-04, `internal/security/domain/redact.go`) run in order, each match — or,
+  for a `KEY=value` rule, the value only — becoming `[REDACTED:<rule>]`, and a match that already
+  is nothing but placeholders is left alone, so redacting twice changes nothing — any other match
+  is replaced whole, placeholders it holds included: `pem_private_key`
+  (through `-----END…-----`, or to the end of a truncated text), `anthropic_key` (`sk-ant-`),
+  `openrouter_key` (`sk-or-v1-`), `openai_key` (`sk-`, `sk-proj-`…), `github_token` (`gh[pousr]_`,
+  `github_pat_`), `gitlab_token` (`glpat-`, `gldt-`…), `huggingface_token` (`hf_`),
+  `aws_access_key_id` (`AKIA`, `ASIA`…), `aws_secret_access_key`, `gcp_api_key` (`AIza`),
+  `gcp_private_key_id`, `jwt`, `slack_token` (`xox?-`) and `dotenv_secret` (an upper-case name
+  with a `_`-separated segment `SECRET(S)`, `TOKEN`, `PASSWORD`, `PASSWD`, `PASS`, `PWD`, `KEY`,
+  `APIKEY`, `ACCESSKEY`, `CREDENTIAL(S)` or `AUTH`, followed only by `_KEY`, `_SECRET`, `_TOKEN`,
+  `_BASE`, `_VALUE`, `_DATA` or digits, and a value of 6 or more characters — so `MAX_TOKENS`,
+  `BYPASS_CACHE`, `SSH_KEY_PATH` and `TOKEN_TTL` are not secrets).
+  A rule bundle replaces the list (REQ-SEC-010).
+- **The generic detector** (`high_entropy`) looks at runs of `[A-Za-z0-9+/=_-]`. REQ-SEC-001's
+  two thresholds, ≥ 4.5 bits per character and ≥ 20 characters, are necessary and not sufficient
+  ("only fires on"). Two things above them are still not secrets and are left alone: an Umbral id
+  (`thr_` + ULID), which the model needs, and a token built like an identifier — split at `_ - + / =`,
+  case changes and letter–digit boundaries, no more than a tenth of its characters in pieces
+  shorter than three (`TestPolicyAutoEditWorkspace_REQ_AGT_013` reaches 4.56 bits). Measured on
+  random keys: the filter costs about 0.05 %, but the 4.5-bit floor itself passes ~98 % of
+  40-character keys, ~70 % at 32 and ~5 % at 24 — entropy over a string's own characters cannot
+  reach 4.5 bits below 23 characters (log2 22 ≈ 4.46). Short keys of unknown formats rely on
+  the named rules. A key containing a `.` is split into candidates, and a lower-case
+  `password: …` is caught by no named rule. Delta `2026-09-redaction-thresholds` (proposed)
+  holds these decisions and the PRD amendment they need.
 
 ### DD-009: The daemon owns the workspace tree; the client only renders it
 
@@ -831,3 +857,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.14 | 2026-09-27 | E. Crespo (assisted draft) | delta `2026-09-frame-limit-monitoring` (T-F1-33): §5.1 names live keys — today only `api.max_message_bytes`, changed by `limits.set` — adds the `[api]` table and says how a quoted value and its comment are read; §7.2 adds `umbral_frames_refused_total`; §9.4 adds `umb limits`, `umb limits set`, the `frames` line of `umb status` and the `RESULT_TOO_LARGE` hint |
 | 1.15 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-02: §5.1 specifies `[secrets] allow_env` and `models.toml` — the reference architecture's shape, real TOML validated by an embedded JSON Schema, credentials as references, a plaintext key refusing its entry, the keyring probed only when needed, the REQ-SEC-008/012 outcomes and what `config.reload` applies; §9.4's `umb status` shows each provider's reason. Delta `2026-09-provider-config` (proposed). |
 | 1.16 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-03: §5.3 writes down how the table's "not exposed" cells and DD-006's precedence meet — in `ask` mode a tool that is not ReadOnly is denied as `not_exposed` before any step, destructive included — lists the built-in destructive patterns and how a command line is normalised, and states how rules read a compound line and what the trace holds. Delta `2026-09-policy-precedence` (proposed). |
+| 1.17 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-04: DD-008 lists the built-in redaction rules and how the generic detector reads REQ-SEC-001's thresholds — as necessary conditions, with Umbral ids and identifier-shaped tokens left alone — and records the recall the 4.5-bit floor allows at each length. Delta `2026-09-redaction-thresholds` (proposed). |
