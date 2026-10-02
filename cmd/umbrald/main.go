@@ -30,6 +30,7 @@ import (
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/egresslog"
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/modelstore"
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/usagelog"
+	"github.com/ecrespo/umbral/internal/obs"
 	"github.com/ecrespo/umbral/internal/security/adapters/keyring"
 	"github.com/ecrespo/umbral/internal/sessions"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/blockstore"
@@ -350,7 +351,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// for each to record how it ended.
 	runtime, err := newRuntime(ctx, agentDeps{
 		logger: logger, db: db, bus: eventBus, gateway: models, egress: egress,
-		terminal: sessionService, blocks: blockReader,
+		terminal: sessionService, blocks: blockReader, metrics: obs.NewMetrics(),
 	})
 	if err != nil {
 		logger.Error("cannot build the agent runtime", slog.Any("error", err))

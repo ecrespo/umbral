@@ -23,7 +23,7 @@ import (
 	toolsports "github.com/ecrespo/umbral/internal/tools/ports"
 )
 
-// Config wires the runtime. Store, Models, Tools and Bus are required.
+// Config wires the runtime. Store, Models, Tools, Bus, NewID and Metrics are required.
 type Config struct {
 	Store  ports.Store
 	Models ports.Models
@@ -33,6 +33,8 @@ type Config struct {
 	Context ctxports.Gatherer
 	// NewID makes a type-prefixed ULID (store.NewID).
 	NewID func(prefix string) string
+	// Metrics counts what the runtime measures.
+	Metrics ports.Metrics
 	// IsRepo says whether a directory is a repository root, for the write root; nil looks for
 	// a `.git` entry.
 	IsRepo func(dir string) bool
@@ -88,6 +90,8 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 		return nil, errors.New("agents: a Bus is required")
 	case cfg.NewID == nil:
 		return nil, errors.New("agents: NewID is required")
+	case cfg.Metrics == nil:
+		return nil, errors.New("agents: Metrics are required")
 	}
 	if cfg.IsRepo == nil {
 		cfg.IsRepo = func(dir string) bool {

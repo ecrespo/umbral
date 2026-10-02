@@ -14,6 +14,7 @@ import (
 	"github.com/ecrespo/umbral/internal/llmgw"
 	llmdomain "github.com/ecrespo/umbral/internal/llmgw/domain"
 	llmports "github.com/ecrespo/umbral/internal/llmgw/ports"
+	"github.com/ecrespo/umbral/internal/obs"
 	"github.com/ecrespo/umbral/internal/sessions"
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
@@ -31,6 +32,7 @@ type agentDeps struct {
 	egress   llmports.EgressLog
 	terminal sessports.AgentTerminal
 	blocks   *sessions.Reader
+	metrics  *obs.Metrics
 }
 
 // newRuntime wires the agent runtime (T-F1-13) to the modules it reaches through their ports:
@@ -54,6 +56,7 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, error) {
 		Bus:     d.bus,
 		Context: local.New(local.Config{Blocks: blockText{reader: d.blocks}}),
 		NewID:   store.NewID,
+		Metrics: d.metrics,
 		Logger:  d.logger,
 	})
 }

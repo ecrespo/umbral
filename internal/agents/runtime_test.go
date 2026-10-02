@@ -129,8 +129,8 @@ func TestAskModeReadOnlyTools_REQ_AGT_009(t *testing.T) {
 	th := r.thread(t, domain.CreateParams{Mode: secdomain.ModeAsk})
 	r.send(t, th.ID, "write", "")
 	offered := r.models.requests()[0].Request.Tools
-	if len(offered) != 1 || offered[0].Name != "read_file" {
-		t.Fatalf("ask mode offered %+v", offered)
+	if len(offered) != 2 || offered[0].Name != "list_dir" || offered[1].Name != "read_file" {
+		t.Fatalf("ask mode offered %+v, want the two ReadOnly tools", offered)
 	}
 	if r.tools.tools["write_file"].ran.Load() != 0 {
 		t.Fatal("a tool ask mode does not expose ran")
@@ -420,7 +420,7 @@ func TestTheTurnRunsWithTheModeItStartedIn_REQ_AGT_009(t *testing.T) {
 	}
 	r.send(t, th.ID, "hi", "")
 	offered := r.models.requests()[0].Request.Tools
-	if len(offered) != 1 || offered[0].Name != "read_file" {
+	if len(offered) != 2 || offered[0].Name != "list_dir" || offered[1].Name != "read_file" {
 		t.Fatalf("the turn ran in the stale mode: offered %+v", offered)
 	}
 }

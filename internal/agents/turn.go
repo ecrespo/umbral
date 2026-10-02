@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,6 +33,15 @@ type turnRun struct {
 	tools     []llm.ToolSpec
 	tainted   bool
 	usage     domain.Usage
+
+	// model is the catalog id that served the last model call, as the router reports it.
+	model string
+	// notJSON are the calls of this step whose input was not JSON, by call id.
+	notJSON map[string]bool
+	// invalid is set when this step made an invalid call; repairing, when the step before
+	// did, so this step is its one retry (REQ-AGT-006).
+	invalid   bool
+	repairing bool
 
 	// system is the base prompt; summary is the one compaction left (delta
 	// `2026-09-context-budget`, decision 5); history is what the model reads after them.
@@ -81,11 +91,13 @@ func (t *turnRun) run(ctx context.Context) domain.StopReason {
 		if len(calls) == 0 {
 			return domain.StopEndTurn
 		}
+		t.invalid = false
 		for _, c := range calls {
 			if err := t.runTool(ctx, c); err != nil {
 				return t.stopFor(ctx, err)
 			}
 		}
+		t.repairing = t.invalid
 	}
 }
 
@@ -100,6 +112,10 @@ func (t *turnRun) stopFor(ctx context.Context, err error) domain.StopReason {
 		return domain.StopStorageError
 	case errors.Is(err, ctxdomain.ErrContextOverflow):
 		return domain.StopContextOverflow
+	case errors.Is(err, errRepairFailed):
+		t.r.cfg.Logger.Warn("a turn stopped: a tool call was invalid after its repair", slog.String("thread", t.thread.ID),
+			slog.String("turn", t.turnID), slog.String("model", t.servedModel()))
+		return domain.StopToolError
 	default:
 		t.r.cfg.Logger.Warn("a turn stopped: the model call failed", slog.String("thread", t.thread.ID),
 			slog.String("turn", t.turnID), slog.Any("error", err))
@@ -245,6 +261,9 @@ func (t *turnRun) step(ctx context.Context) ([]domain.ToolCall, error) {
 			t.usage.InTokens += ev.Usage.InputTokens
 			t.usage.OutTokens += ev.Usage.OutputTokens
 			t.usage.CostMicroUSD += ev.Usage.CostMicroUSD
+			if ev.Usage.Model != "" {
+				t.model = ev.Usage.Model
+			}
 		case llm.EventDone:
 		}
 	}
@@ -256,13 +275,20 @@ func (t *turnRun) step(ctx context.Context) ([]domain.ToolCall, error) {
 
 	am := llm.Message{Role: llm.RoleAssistant, Text: answer.String()}
 	calls := make([]domain.ToolCall, 0, len(asked))
+	t.notJSON = map[string]bool{}
 	for _, a := range asked {
 		c := domain.ToolCall{
 			ID: cfg.NewID(prefixToolCall), ThreadID: t.thread.ID, MessageID: messageID, Tool: a.Name,
 			Args: json.RawMessage(a.Input), Status: domain.ToolPending, StartedAt: t.r.now(),
 		}
-		if !json.Valid(c.Args) {
+		if len(bytes.TrimSpace(c.Args)) == 0 {
+			// No arguments at all is the empty object, as the registry reads it.
 			c.Args = json.RawMessage("{}")
+		} else if !json.Valid(c.Args) {
+			// The row holds JSON; the call is invalid and never reaches its tool as `{}`,
+			// which a tool with no required field would accept.
+			c.Args = json.RawMessage("{}")
+			t.notJSON[c.ID] = true
 		}
 		calls = append(calls, c)
 		am.ToolCalls = append(am.ToolCalls, llm.ToolCall{ID: c.ID, Name: a.Name, Input: a.Input})
@@ -343,14 +369,20 @@ func (t *turnRun) runTool(ctx context.Context, c domain.ToolCall) error {
 	env := toolsdomain.Env{ThreadID: t.thread.ID, Cwd: t.thread.Cwd, WriteRoot: t.writeRoot}
 	call := toolsdomain.Call{Tool: c.Tool, Input: c.Args}
 
-	action, err := cfg.Tools.Action(env, call)
+	var action secdomain.Action
+	var err error
+	if t.notJSON[c.ID] {
+		err = fmt.Errorf("%w: %s: the input is not JSON", toolsdomain.ErrInvalidInput, c.Tool)
+	} else {
+		action, err = cfg.Tools.Action(env, call)
+	}
+	if errors.Is(err, toolsdomain.ErrUnknownTool) || errors.Is(err, toolsdomain.ErrInvalidInput) {
+		return t.invalidCall(ctx, c, action, err)
+	}
 	if err != nil {
-		// An unknown tool has no risk of its own; it is recorded as the most guarded one.
+		// Not the model's fault — an environment the daemon built wrong: no repair, no count.
 		c.Risk = string(secdomain.RiskExec)
-		if action.Risk != "" {
-			c.Risk = string(action.Risk)
-		}
-		return t.finishTool(ctx, c, domain.ToolInvalidArgs, "invalid call: "+err.Error(), "", false)
+		return t.finishTool(ctx, c, domain.ToolError, "error: "+err.Error(), "", false)
 	}
 	c.Risk = string(action.Risk)
 	if err := cfg.Store.SaveToolCall(ctx, c); err != nil {

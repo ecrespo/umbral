@@ -360,6 +360,10 @@ type fakeTool struct {
 	risk secdomain.Risk
 	ran  atomic.Int32
 	out  string
+	// optional makes "path" optional: the tool accepts {}.
+	optional bool
+	// actionErr, when set, is what Action returns for every call.
+	actionErr error
 }
 
 // fakeTools is the tool registry: every tool takes {"path": …}.
@@ -384,8 +388,11 @@ func (f *fakeTools) Action(env toolsdomain.Env, call toolsdomain.Call) (secdomai
 	if !ok {
 		return secdomain.Action{}, toolsdomain.ErrUnknownTool
 	}
+	if t.actionErr != nil {
+		return secdomain.Action{}, t.actionErr
+	}
 	var in struct{ Path string }
-	if err := json.Unmarshal(call.Input, &in); err != nil || in.Path == "" {
+	if err := json.Unmarshal(call.Input, &in); err != nil || (in.Path == "" && !t.optional) {
 		return secdomain.Action{}, toolsdomain.ErrInvalidInput
 	}
 	return secdomain.Action{ThreadID: env.ThreadID, Tool: call.Tool, Risk: t.risk, Target: in.Path, Cwd: env.Cwd, WriteRoot: env.WriteRoot}, nil
@@ -500,12 +507,34 @@ func (b *checkingBus) events() []bus.Event {
 	return append([]bus.Event(nil), b.evs...)
 }
 
+// fakeMetrics is ports.Metrics: it counts invalid tool calls by model.
+type fakeMetrics struct {
+	mu      sync.Mutex
+	invalid map[string]int
+}
+
+func (m *fakeMetrics) ToolCallInvalid(model string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.invalid == nil {
+		m.invalid = map[string]int{}
+	}
+	m.invalid[model]++
+}
+
+func (m *fakeMetrics) count(model string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.invalid[model]
+}
+
 type rig struct {
-	rt     *Runtime
-	store  *memStore
-	models *scripted
-	tools  *fakeTools
-	bus    *checkingBus
+	rt      *Runtime
+	store   *memStore
+	models  *scripted
+	tools   *fakeTools
+	bus     *checkingBus
+	metrics *fakeMetrics
 }
 
 var ids atomic.Int64
@@ -524,9 +553,12 @@ func newRig(t *testing.T, scripts ...[]llm.Event) *rig {
 		"read_file":  {risk: secdomain.RiskReadOnly, out: "file contents"},
 		"write_file": {risk: secdomain.RiskWriteFS, out: "written"},
 		"run":        {risk: secdomain.RiskExec, out: "ran"},
+		"list_dir":   {risk: secdomain.RiskReadOnly, out: "a b c", optional: true},
+		"broken_env": {risk: secdomain.RiskWriteFS, actionErr: toolsdomain.ErrInvalidEnv},
 	}}
+	metrics := &fakeMetrics{}
 	rt, err := New(t.Context(), Config{
-		Store: store, Models: models, Tools: tools, Bus: b, NewID: newID,
+		Store: store, Models: models, Tools: tools, Bus: b, NewID: newID, Metrics: metrics,
 		IsRepo: func(string) bool { return false },
 	})
 	if err != nil {
@@ -538,7 +570,7 @@ func newRig(t *testing.T, scripts ...[]llm.Event) *rig {
 			t.Error(f)
 		}
 	})
-	return &rig{rt: rt, store: store, models: models, tools: tools, bus: b}
+	return &rig{rt: rt, store: store, models: models, tools: tools, bus: b, metrics: metrics}
 }
 
 func (r *rig) thread(t *testing.T, p domain.CreateParams) domain.Thread {

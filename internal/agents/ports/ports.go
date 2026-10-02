@@ -125,3 +125,10 @@ type SendResult struct {
 	TurnID    string
 	MessageID string
 }
+
+// Metrics is what the runtime counts (Tech Design §7.2); internal/obs implements it.
+type Metrics interface {
+	// ToolCallInvalid counts one tool call whose tool or arguments did not validate, by the
+	// model that made it: umbral_tool_calls_invalid_total (REQ-OBS-002).
+	ToolCallInvalid(model string)
+}
