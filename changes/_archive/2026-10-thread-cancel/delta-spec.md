@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED` |
+| **Status** | `RATIFIED 2026-10-01 — approved by E. Crespo as written, with decision 5's proposed option (only a cancel leads to `stopped`). Folded into API 1.24, Tech Design 1.32, Data Model 1.15 and the F1 tasks file` |
 | **Date** | 2026-10-01 |
 | **Task** | T-F1-16 |
 | **Raised by** | T-F1-16: API §5.21 had a heading and a result, and no body |
