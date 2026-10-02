@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED` |
+| **Status** | `RATIFIED 2026-10-01 — approved by E. Crespo as written. Folded into PRD 1.17, Tech Design 1.33, Data Model 1.16 and the F1 tasks file (API 1.25 was written by the task)` |
 | **Date** | 2026-10-01 |
 | **Task** | T-F1-17 |
 | **Raised by** | T-F1-17: REQ-MCP-001…004 and API §5.27 leave the decisions below to the implementation |

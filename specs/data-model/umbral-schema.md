@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.15 |
+| **Version** | 1.16 |
 | **Date** | 2026-10-01 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -535,14 +535,16 @@ CREATE INDEX idx_egress_created ON egress_log(created_at DESC);
 
 Insert-only table: no `UPDATE` or `DELETE` except for retention. `provider` is the provider id
 of a model call, or the tool `fetch_url` for its requests (Art. 4; delta
-`2026-09-builtin-tools`), whose payload is the request URL.
+`2026-09-builtin-tools`), whose payload is the request URL, or `mcp:<name>` for a request to an
+MCP server off this machine, whose payload is the request body, or its URL when it has none
+(delta `2026-10-mcp-client`).
 
 ### 2.13 `mcp_servers`
 
 ```sql
 CREATE TABLE mcp_servers (
   id            TEXT PRIMARY KEY CHECK (id LIKE 'mcp\_%' ESCAPE '\'),
-  name          TEXT NOT NULL UNIQUE CHECK (name GLOB '[a-z0-9_-]*'),
+  name          TEXT NOT NULL UNIQUE CHECK (name GLOB '[a-z0-9_-]*'),  -- the application takes [a-z0-9]{1,32}
   transport     TEXT NOT NULL CHECK (transport IN ('stdio','http')),
   command       TEXT,
   args_json     TEXT NOT NULL DEFAULT '[]',
@@ -677,3 +679,4 @@ earlier drafts named.
 | 1.13 | 2026-09-27 | Ratifies delta `2026-09-agent-runtime` (§2.6's `result_json`). No DDL change. |
 | 1.14 | 2026-09-27 | §2.4e: `trust_keys` is seeded from the binary by fingerprint, removal is revocation, a re-add clears it, revocation discards the bundles a key verified, and `builtin` is version 0. No DDL change. Delta `2026-09-rule-signing-custody`. |
 | 1.15 | 2026-10-01 | §6 step 3 also sets `attention_state = idle` on the threads it stops (delta `2026-10-thread-cancel`, T-F1-16) |
+| 1.16 | 2026-10-01 | §2.12 `egress_log.provider` also takes `mcp:<name>`; §2.13 notes that the application narrows `name` to `[a-z0-9]{1,32}` (delta `2026-10-mcp-client`, T-F1-17); the CHECK is unchanged, migrations being forward-only |
