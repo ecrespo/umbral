@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.14 |
-| **Date** | 2026-09-27 |
+| **Version** | 1.15 |
+| **Date** | 2026-10-01 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
 | **Related Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -637,7 +637,8 @@ earlier drafts named.
    left `pending` by a daemon older than T-F0-21 are repaired too. Steps 1 and 2 share one
    transaction (delta `2026-09-recovery-integration`).
 2. `blocks.state IN ('running','interactive')` → `abandoned`.
-3. `threads.state IN ('running','awaiting_approval')` → `stopped`.
+3. `threads.state IN ('running','awaiting_approval')` → `stopped`, with `attention_state = 'idle'`, as a
+   cancelled turn leaves it (delta `2026-10-thread-cancel`).
 4. `approvals.state = 'pending'` → `expired`.
 5. Structure: `workspaces`, `tabs` and `panes` that were not closed are reopened with their labels,
    cwd and `layout_json`; **every pane launches a fresh shell**, whatever it was running before
@@ -675,3 +676,4 @@ earlier drafts named.
 | 1.12 | 2026-09-27 | T-F1-13: `tool_calls.result_json` holds `{"text", "tainted"}`. No DDL change. Delta `2026-09-agent-runtime` (proposed). |
 | 1.13 | 2026-09-27 | Ratifies delta `2026-09-agent-runtime` (§2.6's `result_json`). No DDL change. |
 | 1.14 | 2026-09-27 | §2.4e: `trust_keys` is seeded from the binary by fingerprint, removal is revocation, a re-add clears it, revocation discards the bundles a key verified, and `builtin` is version 0. No DDL change. Delta `2026-09-rule-signing-custody`. |
+| 1.15 | 2026-10-01 | §6 step 3 also sets `attention_state = idle` on the threads it stops (delta `2026-10-thread-cancel`, T-F1-16) |

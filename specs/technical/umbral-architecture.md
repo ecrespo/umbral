@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.31 |
+| **Version** | 1.32 |
 | **Date** | 2026-10-01 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -175,7 +175,9 @@ sequenceDiagram
    recorded. A daemon-side fault (`ErrInvalidEnv`) is a plain tool `error`: no repair, no count
    (delta `2026-10-tool-call-repair`).
 3. `thread.cancel` → the turn's `context.Context` is cancelled and the process groups the thread
-   PTY's shell launched get `SIGTERM`; after 300 ms, `SIGKILL` (REQ-AGT-007). The shell itself is
+   PTY's shell launched get `SIGTERM`; after 300 ms, `SIGKILL` (REQ-AGT-007). `thread.cancel`
+   answers once the turn has recorded its end, leaving the thread `stopped` (delta
+   `2026-10-thread-cancel`). The shell itself is
    kept (§5.3b; delta `2026-09-builtin-tools`, decision 9).
 4. Daemon crash → messages and tool calls are already persisted (REQ-AGT-011). On restart, `running`
    turns become `stopped` and `pending` approvals become `expired`.
@@ -1110,3 +1112,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.29 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies the four deltas of T-F1-11…T-F1-14 as written: `2026-09-context-assembly` (§5.3c), `2026-09-context-budget` (§3, §5.3c, Q-03), `2026-09-agent-runtime` (§5.3d, DD-007) and `2026-09-approvals` (§5.3d). Analyze C-01 is closed by `storage_error`. |
 | 1.30 | 2026-09-27 | E. Crespo (assisted draft) | Closes Analyze C-02: DD-016 points at `docs/runbooks/rule-signing.md` for custody, and states the bundle and signature formats, the trust seed built into the binary, rotation with two signatures instead of revocation, removal as revocation, and revocation discarding the bundles a key verified; §4 gains `[update] rules_check`/`rules_url`. Delta `2026-09-rule-signing-custody` (ratified). |
 | 1.31 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-tool-call-repair` (T-F1-15): §3.3 item 2 says what an invalid call is, what the one retry is and what the failing step leaves; §5.2 gains the `obs` row; §7.2 gives `umbral_tool_calls_invalid_total` its label and its interim home |
+| 1.32 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-thread-cancel` (T-F1-16): §3.3 item 3 says `thread.cancel` answers once the turn has ended, leaving the thread `stopped` |
