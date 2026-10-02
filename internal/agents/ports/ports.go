@@ -98,6 +98,9 @@ type Threads interface {
 	Get(ctx context.Context, id string) (domain.Thread, error)
 	List(ctx context.Context) ([]domain.Thread, error)
 	Update(ctx context.Context, id string, p domain.UpdateParams) (domain.Thread, error)
+	// Cancel is thread.cancel (API §5.21): it stops the running turn and returns when it has
+	// ended, with the moment it did; nil when no turn was running.
+	Cancel(ctx context.Context, threadID string) (*int64, error)
 	Messages(ctx context.Context, threadID string) ([]domain.Message, error)
 	// Approvals is approval.list (API §5.24).
 	Approvals(ctx context.Context, threadID string, all bool) ([]domain.Approval, error)

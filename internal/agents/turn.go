@@ -52,25 +52,34 @@ type turnRun struct {
 
 // runTurn is the turn's loop: a model call, then the tools it asked for, until the model
 // answers without asking for one or a limit stops it (REQ-AGT-008).
-func (r *Runtime) runTurn(ctx context.Context, thread domain.Thread, turnID string) {
+// It returns how the turn ended: its stop reason, and the moment its end was written, 0 when
+// the write failed.
+func (r *Runtime) runTurn(ctx context.Context, thread domain.Thread, turnID string) (domain.StopReason, int64) {
 	t := &turnRun{r: r, thread: thread, turnID: turnID}
 	stop := t.run(ctx)
 
-	// What a cancelled turn leaves is thread.cancel's (T-F1-16); every turn ends idle here.
+	// A cancelled turn — thread.cancel, or the daemon closing — leaves the thread stopped
+	// (API §7); every other end leaves it idle.
 	state := domain.StateIdle
+	if stop == domain.StopCancelled {
+		state = domain.StateStopped
+	}
 	// The end is written even when the turn was cancelled: that is what lets the thread take
 	// the next message.
 	// Retried once: a thread left `running` takes no message until the daemon restarts.
-	err := r.cfg.Store.FinishTurn(context.WithoutCancel(ctx), thread.ID, state, t.usage, r.now())
+	ended := r.now()
+	err := r.cfg.Store.FinishTurn(context.WithoutCancel(ctx), thread.ID, state, t.usage, ended)
 	if err != nil {
-		err = r.cfg.Store.FinishTurn(context.WithoutCancel(ctx), thread.ID, state, t.usage, r.now())
+		ended = r.now()
+		err = r.cfg.Store.FinishTurn(context.WithoutCancel(ctx), thread.ID, state, t.usage, ended)
 	}
 	if err != nil {
 		r.cfg.Logger.Error("a turn's end could not be written", slog.String("thread", thread.ID),
 			slog.String("turn", turnID), slog.Any("error", err))
-		stop = domain.StopStorageError
+		stop, ended = domain.StopStorageError, 0
 	}
 	r.publish(ports.TurnFinished{ThreadID: thread.ID, TurnID: turnID, StopReason: stop, Usage: t.usage})
+	return stop, ended
 }
 
 func (t *turnRun) run(ctx context.Context) domain.StopReason {

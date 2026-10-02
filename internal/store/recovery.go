@@ -116,7 +116,7 @@ func (s *Store) Recover(ctx context.Context, now time.Time) (RecoveryReport, err
 	}{
 		{
 			"stop the threads a restart interrupted",
-			`UPDATE threads SET state = 'stopped' WHERE state IN ('running','awaiting_approval')`,
+			`UPDATE threads SET state = 'stopped', attention_state = 'idle' WHERE state IN ('running','awaiting_approval')`,
 			&report.ThreadsStopped,
 		},
 		{

@@ -67,6 +67,9 @@ type turn struct {
 	id     string
 	cancel context.CancelFunc
 	done   chan struct{}
+	// stop and ended are how the turn ended, set before done is closed.
+	stop  domain.StopReason
+	ended int64
 }
 
 // ID prefixes (Art. 6; API §3).
@@ -269,7 +272,7 @@ func (r *Runtime) start(thread domain.Thread, msg domain.Message) bool {
 		defer r.wg.Done()
 		defer close(t.done)
 		defer cancel()
-		r.runTurn(ctx, thread, msg.TurnID)
+		t.stop, t.ended = r.runTurn(ctx, thread, msg.TurnID)
 		r.mu.Lock()
 		if r.turns[thread.ID] == t {
 			delete(r.turns, thread.ID)
