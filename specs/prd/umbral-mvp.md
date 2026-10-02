@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.16 |
+| **Version** | 1.17 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-09-27 |
@@ -228,7 +228,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 
 - **REQ-MCP-001** · MUST · event — WHEN an MCP server is configured (stdio or streamable HTTP), THE SYSTEM SHALL connect it and expose its tools to the model with the prefix `mcp_<server>_<tool>`.
 - **REQ-MCP-002** · MUST · event — WHEN a server is added with `mcp.server.add` during a thread, THE SYSTEM SHALL offer its tools from the next turn on without restarting the thread.
-- **REQ-MCP-003** · MUST · unwanted — IF an MCP server crashes or does not respond within 10 s, THEN THE SYSTEM SHALL mark it `unavailable`, return an error to pending tool calls and retry the connection with exponential backoff (at most 5 attempts).
+- **REQ-MCP-003** · MUST · unwanted — IF an MCP server crashes or does not respond within 10 s, THEN THE SYSTEM SHALL mark it `unavailable`, return an error to pending tool calls and retry the connection with exponential backoff (1, 2, 4, 8 and 16 s, at most 5 attempts; only a connection up for a minute resets the count — delta `2026-10-mcp-client`).
 - **REQ-MCP-004** · MUST · ubiquitous — THE SYSTEM SHALL apply the `ask` policy to MCP tools by default, unless there are explicit per-server or per-tool rules.
 
 ### 6.8 CLI and TUI
@@ -486,6 +486,7 @@ TUI as text:
 | 1.14 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies the five deltas of T-F1-02…T-F1-10. `2026-09-redaction-thresholds`: REQ-SEC-001 states the 23-character floor, that the thresholds are necessary and not sufficient, and the generic detector's recall. `2026-09-router-fallback`: REQ-LLM-003 falls back only before the first token reaches the caller; REQ-LLM-005 counts calls made to a provider. `2026-09-builtin-tools`: REQ-SEC-002 covers `fetch_url`; REQ-AGT-018 refuses private ranges on every connection, not only redirects. `provider-config` and `policy-precedence` change no REQ text. |
 | 1.15 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies the four deltas of T-F1-11…T-F1-14 (`2026-09-context-assembly`, `2026-09-context-budget`, `2026-09-agent-runtime`, `2026-09-approvals`) and folds their optional sharpenings: REQ-AGT-011 stops the turn with `storage_error` when a write fails (closes Analyze C-01); REQ-CTX-003 is bounded and runs no command the repository's configuration names. |
 | 1.16 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-tool-call-repair` (T-F1-15): REQ-AGT-006 says what an invalid call is and that the retry is one per invalid call |
+| 1.17 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-mcp-client` (T-F1-17): REQ-MCP-003 states the backoff and what resets it |
 
 ## Approvals
 

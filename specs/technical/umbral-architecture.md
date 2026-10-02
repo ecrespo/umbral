@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.32 |
+| **Version** | 1.33 |
 | **Date** | 2026-10-01 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -181,6 +181,10 @@ sequenceDiagram
    kept (§5.3b; delta `2026-09-builtin-tools`, decision 9).
 4. Daemon crash → messages and tool calls are already persisted (REQ-AGT-011). On restart, `running`
    turns become `stopped` and `pending` approvals become `expired`.
+5. MCP server lost → a crash, or a call unanswered in 10 s, marks it `unavailable` and fails the
+   pending calls; it is reconnected after 1, 2, 4, 8 and 16 s, and only a connection up for a
+   minute resets the count. Its tools stay offered meanwhile and fail at once. A call the turn
+   cancels leaves the server alone (REQ-MCP-003, delta `2026-10-mcp-client`).
 
 ## 4. Design Decisions
 
@@ -620,6 +624,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `waits` | `ports` of `agents`, `sessions` and `store`, plus `bus`; never `api` |
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api` |
 | `notify` | `bus` and stdlib only; it is a sink and imports no other module |
+| `mcp` | its own `ports` and `domain`, plus `bus`. `tools/adapters` may use `mcp/domain`, for `mcptools`, which offers a server's tools; `api` the `ports` and `domain` of `mcp`; only `cmd/*` wires the manager to the registry (delta `2026-10-mcp-client`) |
 | `obs` | stdlib, and OpenTelemetry from T-F1-18; imported only by `cmd/*`. Modules count through a port of their own, which `cmd/umbrald` gives the `obs` implementation (delta `2026-10-tool-call-repair`) |
 | `cmd/*` | everything |
 
@@ -692,6 +697,11 @@ B-09).
   `shred`, `wipefs`; `shutdown`, `reboot`, `halt`, `poweroff`; SQL `DROP TABLE|DATABASE|SCHEMA`;
   a redirection onto a block device; recursive `chmod`/`chown` of `/`. A rule bundle replaces
   it (REQ-SEC-010).
+- **MCP tools are `Network`**, whatever their transport and whatever the server says of them:
+  what they do happens outside Umbral's view. They ask by default (REQ-MCP-004), a tainted turn
+  asks for them, `ask` mode does not offer them, and a rule `mcp_<server>_*` or one naming the
+  tool decides instead. The target is the call's arguments as compact JSON. Server names are
+  `[a-z0-9]{1,32}`, so a server's prefix covers its own tools only (delta `2026-10-mcp-client`).
 - **The write-root test is lexical**: the target is resolved against the thread's cwd and
   cleaned, so `..` cannot escape, and a sibling sharing the root's prefix is outside. Resolving
   symlinks is the caller's (the tool, T-F1-09), which does I/O.
@@ -843,7 +853,7 @@ var (
 | Destructive commands | patterns always ask | SEC-005 |
 | Secret exfiltration | redaction + `egress_log` + offline mode | SEC-001, SEC-002, LLM-004 |
 | Keys on disk | only `keyring:<path>`; plaintext rejected | SEC-004 |
-| Malicious MCP server | `trust = untrusted` by default when added; ask by default | MCP-004 |
+| Malicious MCP server | `trust = untrusted` by default when added; ask by default; every MCP tool `Network`; its results, reported failures and protocol errors tainted; a stdio process inherits only an allowlist of the environment; a remote server's requests in `egress_log`, secrets refused, redirects to the same host only (delta `2026-10-mcp-client`) | MCP-004, SEC-006, Art. 4 |
 
 ### 6.2 Sensitive Data
 
@@ -1113,3 +1123,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.30 | 2026-09-27 | E. Crespo (assisted draft) | Closes Analyze C-02: DD-016 points at `docs/runbooks/rule-signing.md` for custody, and states the bundle and signature formats, the trust seed built into the binary, rotation with two signatures instead of revocation, removal as revocation, and revocation discarding the bundles a key verified; §4 gains `[update] rules_check`/`rules_url`. Delta `2026-09-rule-signing-custody` (ratified). |
 | 1.31 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-tool-call-repair` (T-F1-15): §3.3 item 2 says what an invalid call is, what the one retry is and what the failing step leaves; §5.2 gains the `obs` row; §7.2 gives `umbral_tool_calls_invalid_total` its label and its interim home |
 | 1.32 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-thread-cancel` (T-F1-16): §3.3 item 3 says `thread.cancel` answers once the turn has ended, leaving the thread `stopped` |
+| 1.33 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-mcp-client` (T-F1-17): §3.3 item 5 (losing an MCP server), §5.2 the `mcp` row, §5.3 MCP tools are `Network`, §6.1 the MCP threat row |

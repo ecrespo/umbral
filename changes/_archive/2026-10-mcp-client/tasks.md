@@ -5,6 +5,6 @@
   `internal/api/mcp.go` and `cmd/umbrald/mcp.go`, with API §5.27 written.
 - **REQ:** REQ-MCP-001, REQ-MCP-002, REQ-MCP-003, REQ-MCP-004
 
-### [ ] Ratification
+### [x] 2026-10-01 Ratification
 - The Tech Lead ratifies or amends the delta, folds it into the PRD and the Tech Design, and
   moves it to `changes/_archive/`.
