@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.15 |
+| **Version** | 1.16 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-09-27 |
@@ -170,7 +170,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-AGT-003** · MUST · event — WHEN the agent runs `run_command`, THE SYSTEM SHALL execute it in a PTY dedicated to the thread and record it as a block with `origin = agent`.
 - **REQ-AGT-004** · MUST · event — WHEN the policy engine returns `ask` for a tool, THE SYSTEM SHALL emit `approval.requested` and pause the turn until it receives `approval.respond`.
 - **REQ-AGT-005** · MUST · unwanted — IF the user denies an approval, THEN THE SYSTEM SHALL return a `denied_by_user` tool result to the model and continue the turn without running the tool.
-- **REQ-AGT-006** · MUST · unwanted — IF the arguments of a tool call do not validate against its schema, THEN THE SYSTEM SHALL retry once with a repair message and, if it fails again, end the turn with `stop_reason = tool_error`.
+- **REQ-AGT-006** · MUST · unwanted — IF the arguments of a tool call do not validate against its schema, THEN THE SYSTEM SHALL retry once with a repair message and, if it fails again, end the turn with `stop_reason = tool_error`. An invalid call is one whose tool does not exist, whose input is not JSON, or whose input fails the schema; the retry is the model's next step, one per invalid call (delta `2026-10-tool-call-repair`).
 - **REQ-AGT-007** · MUST · event — WHEN the user invokes `thread.cancel`, THE SYSTEM SHALL stop the turn and terminate the processes it launched in under 500 ms.
 - **REQ-AGT-008** · MUST · unwanted — IF a turn reaches `max_steps` (50 by default) or the thread's token budget, THEN THE SYSTEM SHALL stop it with `stop_reason = max_steps` or `budget`.
 - **REQ-AGT-009** · MUST · state — WHILE a thread is in `ask` mode, THE SYSTEM SHALL expose only `ReadOnly` tools to the model.
@@ -485,6 +485,7 @@ TUI as text:
 | 1.13 | 2026-09-26 | E. Crespo (assisted draft) | Four deltas ratified together for F1: `2026-09-handshake-hardening` (REQ-SEC-017, REQ-SEC-018), `2026-09-frame-limit-monitoring` (REQ-API-005, REQ-OBS-005, REQ-CLI-007), `2026-09-skills-cli` (§6.16, REQ-SKL-001 to 007; REQ-SEC-006 gains `skill_load` output) and `2026-09-cli-mcp` (REQ-CLI-008, REQ-TUI-004). §5.1's `umb` line also names the workspace tree, true since REQ-CLI-005 |
 | 1.14 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies the five deltas of T-F1-02…T-F1-10. `2026-09-redaction-thresholds`: REQ-SEC-001 states the 23-character floor, that the thresholds are necessary and not sufficient, and the generic detector's recall. `2026-09-router-fallback`: REQ-LLM-003 falls back only before the first token reaches the caller; REQ-LLM-005 counts calls made to a provider. `2026-09-builtin-tools`: REQ-SEC-002 covers `fetch_url`; REQ-AGT-018 refuses private ranges on every connection, not only redirects. `provider-config` and `policy-precedence` change no REQ text. |
 | 1.15 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies the four deltas of T-F1-11…T-F1-14 (`2026-09-context-assembly`, `2026-09-context-budget`, `2026-09-agent-runtime`, `2026-09-approvals`) and folds their optional sharpenings: REQ-AGT-011 stops the turn with `storage_error` when a write fails (closes Analyze C-01); REQ-CTX-003 is bounded and runs no command the repository's configuration names. |
+| 1.16 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-tool-call-repair` (T-F1-15): REQ-AGT-006 says what an invalid call is and that the retry is one per invalid call |
 
 ## Approvals
 
