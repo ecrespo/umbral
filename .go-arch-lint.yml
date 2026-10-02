@@ -58,6 +58,9 @@ components:
   api:    { in: internal/api }
   store:  { in: internal/store }
   config: { in: internal/config }
+  # The daemon's counters (T-F1-15); modules count through a port of their own and
+  # cmd/umbrald hands them this implementation, so nothing imports obs but the root.
+  obs:    { in: internal/obs }
   client: { in: internal/client }
   tui:          { in: internal/tui }
   tui-ports:    { in: internal/tui/ports }
@@ -403,12 +406,21 @@ deps:
       - store
       - bus
 
+  # A leaf over the standard library until T-F1-18 brings OpenTelemetry. The allowance is
+  # unused, as workspaces-domain's is: go-arch-lint requires one, and `bus` is the narrowest
+  # a sink can be given — the one Tech Design §5.2 gives `notify`.
+  obs:
+    anyVendorDeps: false
+    mayDependOn:
+      - bus
+
   # --- composition root: the only place that wires modules together (Art. 3) ---
   cmd:
     anyVendorDeps: true
     mayDependOn:
       - api
       - bus
+      - obs
       - store
       - config
       - client
