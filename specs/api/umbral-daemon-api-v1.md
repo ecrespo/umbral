@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.22 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.23 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -596,6 +596,25 @@ appended, which is what the model read (REQ-AGT-011).
 - `VALIDATION_ERROR`: unknown attachment, or `client_msg_id` that is not a ULID.
 
 ### 5.21 `thread.cancel` — REQ-AGT-007 → `{stopped_at}`
+**Params:** `{thread_id}`.
+**Result:** `{stopped_at: int | null}`.
+
+- The running turn's context is cancelled: a model call ends, a pending approval becomes
+  `expired`, and `run_command` sends SIGTERM to the process groups the thread's shell launched
+  and SIGKILL 300 ms later, keeping the shell (§5.3b of the Tech Design).
+- The call returns once the turn has recorded its end, within 500 ms (REQ-AGT-007).
+  `stopped_at` is that moment. The turn ends with `thread.turn_finished`, whose
+  `stop_reason = cancelled`, and the thread is left `stopped` (§7).
+- A thread with no turn running is left as it is, and `stopped_at` is `null`. That cancel lost
+  the race with the turn's own end, which is not an error for a script that cancels
+  defensively (as `thread.wait` returns at once on a thread already in its target state,
+  §5.29). So is a cancel that found the turn already recording another end, and one whose end
+  could not be written (`storage_error`). The cancel takes the same per-thread lock as
+  `thread.send`, so a cancel issued after a send has answered always finds that send's turn.
+- 500 ms is a budget, not a deadline: the answer waits for the turn, bounded only by the
+  request.
+
+**Errors:** `NOT_FOUND` (an unknown thread), `VALIDATION_ERROR` (no `thread_id`).
 
 ### 5.22 `thread.update` — REQ-AGT-010
 **Params:** `{thread_id, mode?, model?, title?}`.
@@ -1005,3 +1024,4 @@ printf '%s\n' \
 | 1.20 | 2026-09-27 | T-F1-14: `approval.list` (`{thread_id?, all?}`) and `approval.respond` served, with `approval.requested`; §5.25 says what a `thread` scope remembers, which decisions are kept `once`, and what a cancel does to a pending approval. Additive within `protocol_version = 1`. Delta `2026-09-approvals` (proposed). |
 | 1.21 | 2026-09-27 | Ratifies deltas `2026-09-agent-runtime` and `2026-09-approvals` as written; §2 says `approval.*` is advertised under `threads`. No wire change. |
 | 1.22 | 2026-09-27 | §3 adds `key_`; §5.34: `trust_keys` entries gain `source` (`builtin`/`user`) and `revoked_at`; `rules.key.add` takes base64 and is the only way out of fail-closed; `remove` revokes and discards the bundles the key verified; `rotate` is add plus revoke; `rollback` with nothing to return to is `CONFLICT`; `source` covers the seed's retired and revoked keys; adding a seed-revoked fingerprint is `CONFLICT` and re-adding a valid one is a recorded no-op; the active bundle survives a revocation that did not verify it. Delta `2026-09-rule-signing-custody`. Additive within `protocol_version = 1` |
+| 1.23 | 2026-10-01 | Additive within `protocol_version = 1`. §5.21 `thread.cancel` written (T-F1-16, delta `2026-10-thread-cancel`): `{thread_id}` → `{stopped_at}`, returning once the turn has ended, the thread left `stopped`, and `null` when no turn was running |

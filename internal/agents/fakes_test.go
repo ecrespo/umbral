@@ -34,6 +34,8 @@ type memStore struct {
 	failAfter int
 	// beforeBegin runs between the send's read of the thread and BeginTurn's.
 	beforeBegin func()
+	// beforeFinish runs in the turn's goroutine as FinishTurn starts, before it writes.
+	beforeFinish func()
 }
 
 func newMemStore() *memStore {
@@ -177,6 +179,9 @@ func (s *memStore) SaveToolCall(_ context.Context, c domain.ToolCall) error {
 }
 
 func (s *memStore) FinishTurn(_ context.Context, id string, state domain.State, u domain.Usage, now int64) error {
+	if s.beforeFinish != nil {
+		s.beforeFinish()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t := s.threads[id]
@@ -323,7 +328,7 @@ func callTool(name, input string) []llm.Event {
 	}
 }
 
-func (m *scripted) Stream(_ context.Context, call ports.ModelCall) (iter.Seq2[llm.Event, error], error) {
+func (m *scripted) Stream(ctx context.Context, call ports.ModelCall) (iter.Seq2[llm.Event, error], error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, call)
@@ -335,7 +340,13 @@ func (m *scripted) Stream(_ context.Context, call ports.ModelCall) (iter.Seq2[ll
 	hold := m.hold
 	return func(yield func(llm.Event, error) bool) {
 		if hold != nil {
-			<-hold
+			// A provider's stream ends when its call's context does.
+			select {
+			case <-hold:
+			case <-ctx.Done():
+				yield(llm.Event{}, ctx.Err())
+				return
+			}
 		}
 		for _, ev := range events {
 			if !yield(ev, nil) {

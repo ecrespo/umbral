@@ -136,13 +136,14 @@ func threads(c *conn) (agentsports.Threads, error) {
 	return c.server.cfg.Threads, nil
 }
 
-// threadMethods is §5.19–§5.23. §2's `cli` row gives `umb` thread.create and thread.send —
-// what `umb ai` needs — and not get, list or update: `umb` must not, for one, switch a thread
-// to `auto-edit`.
+// threadMethods is §5.19–§5.23. §2's `cli` row gives `umb` thread.create, thread.send and
+// thread.cancel — what `umb ai` needs, and a way to stop it — and not get, list or update:
+// `umb` must not, for one, switch a thread to `auto-edit`.
 func threadMethods() map[string]method {
 	return map[string]method{
 		"thread.create": {handle: handleThreadCreate, params: createThreadParams{}, result: Thread{}},
 		"thread.send":   {handle: handleThreadSend, params: sendParams{}, result: sendResult{}},
+		"thread.cancel": {handle: handleThreadCancel, params: cancelThreadParams{}, result: cancelResult{}},
 		"thread.get":    {handle: handleThreadGet, kinds: interactiveClients, params: getThreadParams{}, result: threadResult{}},
 		"thread.list":   {handle: handleThreadList, kinds: interactiveClients, params: emptyResult{}, result: threadListResult{}},
 		"thread.update": {handle: handleThreadUpdate, kinds: interactiveClients, params: updateThreadParams{}, result: Thread{}},
@@ -359,6 +360,35 @@ func handleThreadUpdate(ctx context.Context, c *conn, raw json.RawMessage) (any,
 		return nil, err
 	}
 	return toWireThread(t), nil
+}
+
+type cancelThreadParams struct {
+	ThreadID string `json:"thread_id"`
+}
+
+// cancelResult is thread.cancel's answer: when the turn ended, null when none was running.
+type cancelResult struct {
+	StoppedAt *int64 `json:"stopped_at"`
+}
+
+// handleThreadCancel is §5.21 (REQ-AGT-007): it returns once the turn has ended.
+func handleThreadCancel(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
+	svc, err := threads(c)
+	if err != nil {
+		return nil, err
+	}
+	var p cancelThreadParams
+	if err := decode(raw, &p, "thread.cancel"); err != nil {
+		return nil, err
+	}
+	if p.ThreadID == "" {
+		return nil, ValidationError("thread_id is required", ErrorField{Field: fieldThreadID, Issue: requiredTag})
+	}
+	at, err := svc.Cancel(ctx, p.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	return cancelResult{StoppedAt: at}, nil
 }
 
 // agentsDomainError maps the agent runtime's sentinels onto §3 (API §5.20, §5.22).

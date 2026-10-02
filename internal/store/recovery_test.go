@@ -334,3 +334,31 @@ func TestRecoveryClearsPaneStateAndMetadata_REQ_INT_002(t *testing.T) {
 		t.Errorf("the pane itself is gone (%d, %v); only what was reported about it may be", panes, err)
 	}
 }
+
+// TestRecoveryLeavesStoppedThreadsIdleAttention_REQ_AGT_011: a thread a restart stops reads as
+// a cancelled one does — `stopped` with attention `idle` — not as still working or blocked
+// (delta `2026-10-thread-cancel`, decision 6). A thread recovery does not stop keeps its own.
+func TestRecoveryLeavesStoppedThreadsIdleAttention_REQ_AGT_011(t *testing.T) {
+	t.Parallel()
+
+	s := openTestStore(t)
+	db := s.DB()
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO threads(id, cwd, state, attention_state, created_at, updated_at) VALUES
+		('thr_running', '/r', 'running', 'working', 1, 1),
+		('thr_waiting', '/r', 'awaiting_approval', 'blocked', 1, 1),
+		('thr_done', '/r', 'idle', 'done', 1, 1)`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := s.Recover(t.Context(), time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	for id, want := range map[string]string{"thr_running": "idle", "thr_waiting": "idle", "thr_done": "done"} {
+		var attention string
+		if err := db.QueryRowContext(t.Context(), "SELECT attention_state FROM threads WHERE id = ?", id).Scan(&attention); err != nil {
+			t.Fatal(err)
+		}
+		if attention != want {
+			t.Errorf("%s has attention %s after recovery, want %s", id, attention, want)
+		}
+	}
+}

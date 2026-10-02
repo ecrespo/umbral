@@ -21,6 +21,16 @@ type fakeThreads struct {
 	approval   agentsdomain.Approval
 	answered   []agentsdomain.Response
 	respondErr error
+	cancelled  []string
+	stoppedAt  *int64
+}
+
+func (f *fakeThreads) Cancel(_ context.Context, id string) (*int64, error) {
+	if id != f.thread.ID {
+		return nil, fmt.Errorf("%w: %s", agentsdomain.ErrNotFound, id)
+	}
+	f.cancelled = append(f.cancelled, id)
+	return f.stoppedAt, nil
 }
 
 func (f *fakeThreads) Approvals(context.Context, string, bool) ([]agentsdomain.Approval, error) {
@@ -114,6 +124,9 @@ func TestUmbReachesOnlyCreateAndSend_REQ_API_001(t *testing.T) {
 	}
 	if resp := c.call(3, "thread.send", map[string]any{"thread_id": "thr_1", "text": "x"}); resp.Error != nil {
 		t.Fatalf("thread.send from umb = %+v", resp.Error)
+	}
+	if resp := c.call(9, "thread.cancel", map[string]any{"thread_id": "thr_1"}); resp.Error != nil {
+		t.Fatalf("thread.cancel from umb = %+v", resp.Error)
 	}
 	for i, m := range []string{"thread.get", "thread.list", "thread.update"} {
 		if resp := c.call(4+i, m, map[string]any{"thread_id": "thr_1", "mode": "auto-edit"}); resp.Error == nil || resp.Error.Code != codeMethodNotFound {
@@ -312,5 +325,33 @@ func TestUmbCannotAnswerApprovals_REQ_API_001(t *testing.T) {
 	}
 	if len(svc.answered) != 0 {
 		t.Fatal("umb answered an approval")
+	}
+}
+
+// TestThreadCancelReachesTheWire_REQ_AGT_007: thread.cancel answers {stopped_at} — the moment
+// the turn ended, or null when none was running — and maps a missing or unknown thread onto §3.
+func TestThreadCancelReachesTheWire_REQ_AGT_007(t *testing.T) {
+	t.Parallel()
+	svc, c, _ := threadRig(t)
+
+	at := int64(1234)
+	svc.stoppedAt = &at
+	resp := c.call(2, "thread.cancel", map[string]any{"thread_id": "thr_1"})
+	if raw, _ := json.Marshal(resp.Result); resp.Error != nil || string(raw) != `{"stopped_at":1234}` {
+		t.Fatalf("thread.cancel = %s %+v", raw, resp.Error)
+	}
+	svc.stoppedAt = nil
+	resp = c.call(3, "thread.cancel", map[string]any{"thread_id": "thr_1"})
+	if raw, _ := json.Marshal(resp.Result); resp.Error != nil || string(raw) != `{"stopped_at":null}` {
+		t.Fatalf("thread.cancel with no turn = %s %+v", raw, resp.Error)
+	}
+	if resp := c.call(4, "thread.cancel", map[string]any{}); resp.Error == nil || resp.Error.Code != codeValidationError {
+		t.Fatalf("no thread_id = %+v", resp.Error)
+	}
+	if resp := c.call(5, "thread.cancel", map[string]any{"thread_id": "thr_x"}); resp.Error == nil || resp.Error.Code != codeNotFound {
+		t.Fatalf("an unknown thread = %+v", resp.Error)
+	}
+	if len(svc.cancelled) != 2 {
+		t.Fatalf("the runtime saw %d cancels, want 2", len(svc.cancelled))
 	}
 }
