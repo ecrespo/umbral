@@ -15,6 +15,7 @@ import (
 	"time"
 
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
+	mcpports "github.com/ecrespo/umbral/internal/mcp/ports"
 
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/config"
@@ -146,8 +147,11 @@ type Config struct {
 	// Threads is the agent runtime's inbound port, served as thread.*. A nil value leaves
 	// those methods answering NOT_IMPLEMENTED.
 	Threads agentsports.Threads
-	Bus     *bus.Bus
-	Logger  *slog.Logger
+	// MCP is the MCP client's inbound port, served as mcp.server.*. A nil value leaves those
+	// methods answering NOT_IMPLEMENTED.
+	MCP    mcpports.Servers
+	Bus    *bus.Bus
+	Logger *slog.Logger
 
 	// MaxMessageBytes is the frame limit a connection gets once it completes the handshake
 	// (`[api] max_message_bytes`, API Spec §1). Zero means config.DefaultMaxMessageBytes.

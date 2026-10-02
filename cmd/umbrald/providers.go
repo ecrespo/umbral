@@ -225,3 +225,27 @@ func (p *providerConfig) viewLocked() api.ConfigView {
 	}
 	return view
 }
+
+// credential resolves one credential outside models.toml — an MCP server's env_refs — by
+// the same rules, probing the keyring only when the reference needs it.
+func (p *providerConfig) credential(ctx context.Context, req secdomain.CredentialRequest) secdomain.ResolvedCredential {
+	p.mu.RLock()
+	allowEnv := p.settings.AllowEnvSecrets
+	p.mu.RUnlock()
+	available := p.keyring.Probe(ctx) == nil
+	return secdomain.ResolveCredentials([]secdomain.CredentialRequest{req}, secdomain.Lookups{
+		KeyringAvailable: available,
+		Keyring:          func(path string) (string, error) { return p.keyring.Get(ctx, path) },
+		Env:              p.lookupEnv,
+		AllowEnv:         allowEnv,
+	})[0]
+}
+
+// envFallback reports whether REQ-SEC-012's fallback is in force: the keyring unavailable and
+// `[secrets] allow_env = true`.
+func (p *providerConfig) envFallback(ctx context.Context) bool {
+	p.mu.RLock()
+	allowEnv := p.settings.AllowEnvSecrets
+	p.mu.RUnlock()
+	return allowEnv && p.keyring.Probe(ctx) != nil
+}

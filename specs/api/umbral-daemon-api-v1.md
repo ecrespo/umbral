@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.24 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.25 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -16,7 +16,8 @@
 
 > **Pending from F1 (ratified 2026-09-26, not yet written here).** PRD 1.13 adds REQ-CLI-008 and
 > REQ-SKL-001…007, which this document does not describe yet: `skill.*` and the `cli` rows for
-> `skill.*` and `mcp.server.*`. Tasks T-F1-34 and T-F1-37 write that text as they land. Until then,
+> `skill.*` and `mcp.server.*`. Tasks T-F1-34 and T-F1-37 write that text as they land (§5.27's
+> methods are written, by T-F1-17; their `cli` row is T-F1-37's). Until then,
 > the design is in `changes/_archive/2026-09-{skills-cli,cli-mcp}/`. Already written: the handshake
 > deadline and the id-less hello (REQ-SEC-017/018, T-F1-32), and the frame limit in both directions
 > with `RESULT_TOO_LARGE` and `limits.*` (REQ-API-005, REQ-OBS-005, REQ-CLI-007, T-F1-33).
@@ -668,9 +669,24 @@ that was never discovered has no models to list. Open to `umb` (§2). A daemon w
 answers `NOT_IMPLEMENTED`.
 
 ### 5.27 `mcp.server.list` / `mcp.server.add` / `mcp.server.remove` — REQ-MCP-001, REQ-MCP-002
-`add` params: `{name, transport, command?, args?, url?, env_refs?, trust?:"untrusted"}`.
+`mcp.server.list` params: `{}`. **Result:** `{items: McpServer[]}`, by name, each with its live
+state and the tools it offers, by the server's own names.
+
+`mcp.server.add` params: `{name, transport, command?, args?, url?, env_refs?, trust?:"untrusted"}`.
+**Result:** the `McpServer`, `connecting`. The server is persisted, then connected in the
+background; its tools reach the registry once it is `connected`, and a thread offers them from
+its next turn (REQ-MCP-002). `name` is 1-32 characters of `a-z` and `0-9`, so that
+`mcp_<name>_*` names one server's tools only. A `stdio` server needs `command` (with `args`) and
+takes no `url`; an `http` server needs an `http` or `https` `url` and takes no `command`, `args`
+or `env_refs`. A `url` with credentials in it, or one the redaction rules would change, is
+`CONFIG_INVALID`: it would be stored in clear (REQ-SEC-004).
+
+`mcp.server.remove` params: `{name}`. **Result:** `{}`. The server is disconnected, its tools
+leave the registry, and its row is deleted.
 `env_refs` maps environment variable names to `keyring:<path>` references (column `mcp_servers.env_refs_json`); plaintext values are rejected with `CONFIG_INVALID` (REQ-SEC-004). When the keyring is unavailable and the fallback is enabled, an `env:<VAR>` reference is accepted instead and the daemon reports the degraded mode (REQ-SEC-012, Art. 5 amendment of 2026-09-20).
-Errors: `VALIDATION_ERROR`, `CONFIG_INVALID`.
+Errors: `VALIDATION_ERROR`, `CONFIG_INVALID`, `CONFLICT` (a name already taken, at `add`),
+`NOT_FOUND` (an unknown name, at `remove`). Interactive clients only, until T-F1-37 gives the
+`cli` kind these three methods (§2).
 
 ### 5.28 `config.get` / `reload` — REQ-SEC-004, REQ-SEC-008, REQ-SEC-012
 `get` params: `{}`. `reload` params: `{}`. Interactive clients only (§2). Both return
@@ -1026,3 +1042,4 @@ printf '%s\n' \
 | 1.22 | 2026-09-27 | §3 adds `key_`; §5.34: `trust_keys` entries gain `source` (`builtin`/`user`) and `revoked_at`; `rules.key.add` takes base64 and is the only way out of fail-closed; `remove` revokes and discards the bundles the key verified; `rotate` is add plus revoke; `rollback` with nothing to return to is `CONFLICT`; `source` covers the seed's retired and revoked keys; adding a seed-revoked fingerprint is `CONFLICT` and re-adding a valid one is a recorded no-op; the active bundle survives a revocation that did not verify it. Delta `2026-09-rule-signing-custody`. Additive within `protocol_version = 1` |
 | 1.23 | 2026-10-01 | Additive within `protocol_version = 1`. §5.21 `thread.cancel` written (T-F1-16, delta `2026-10-thread-cancel`): `{thread_id}` → `{stopped_at}`, returning once the turn has ended, the thread left `stopped`, and `null` when no turn was running |
 | 1.24 | 2026-10-01 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-thread-cancel`: in §7 only a cancel leads to `stopped`; every other end of a turn leads to `idle` (attention `done`), its `stop_reason` saying how it ended |
+| 1.25 | 2026-10-01 | Additive within `protocol_version = 1`. §5.27 written (T-F1-17, delta `2026-10-mcp-client`): `list` `{}` → `{items}`, `add` → the `McpServer` `connecting`, `remove` `{name}` → `{}`, and `CONFLICT`/`NOT_FOUND`; interactive clients only until T-F1-37 |

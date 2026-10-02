@@ -349,7 +349,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// The agent runtime (T-F1-13). Its turns run on the daemon's context; closing it waits
 	// for each to record how it ended.
-	runtime, err := newRuntime(ctx, agentDeps{
+	runtime, tools, err := newRuntime(ctx, agentDeps{
 		logger: logger, db: db, bus: eventBus, gateway: models, egress: egress,
 		terminal: sessionService, blocks: blockReader, metrics: obs.NewMetrics(),
 	})
@@ -359,14 +359,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	defer runtime.Close()
 
+	// The MCP client (T-F1-17): every configured server is connected in the background and
+	// its tools join the registry the runtime offers from.
+	mcpClient, err := newMCP(ctx, logger, db, eventBus, egress, tools, providers)
+	if err != nil {
+		logger.Error("cannot build the MCP client", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer mcpClient.Close()
+
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
 		TokenPath:     tokenPath,
 		DaemonVersion: buildVersion(),
-		Status:        withProviders(statusFromStore(db), providers),
+		Status:        withMCP(withProviders(statusFromStore(db), providers), mcpClient),
 		Configuration: providers,
 		Models:        models,
 		Threads:       runtime,
+		MCP:           mcpClient,
 		Sessions:      sessionService,
 		Blocks:        blockReader,
 		Workspaces:    workspaceService,

@@ -83,6 +83,17 @@ func (r *Registry) Register(t ports.Tool) error {
 	return nil
 }
 
+// Unregister removes a tool, and reports whether it was there. An MCP server's tools come and
+// go with the server (REQ-MCP-002); a turn under way keeps the list it read when it started,
+// and a call to a tool removed since is refused as an unknown tool.
+func (r *Registry) Unregister(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.tools[name]
+	delete(r.tools, name)
+	return ok
+}
+
 func compile(spec domain.Spec) (*jsonschema.Schema, error) {
 	raw, err := json.Marshal(spec.InputSchema)
 	if err != nil {
