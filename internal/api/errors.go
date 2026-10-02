@@ -13,6 +13,7 @@ const (
 	domainNotFound            = "NOT_FOUND"
 	domainValidationError     = "VALIDATION_ERROR"
 	domainConflict            = "CONFLICT"
+	domainConfigInvalid       = "CONFIG_INVALID"
 	domainBudgetExceeded      = "BUDGET_EXCEEDED"
 	domainProviderUnavailable = "PROVIDER_UNAVAILABLE"
 	domainInputLocked         = "INPUT_LOCKED"
@@ -67,7 +68,7 @@ var errorCodes = map[string]int{
 	domainBudgetExceeded:           codeBudgetExceeded,
 	"UNSUPPORTED_PROTOCOL_VERSION": codeUnsupportedProtocolVersion,
 	domainInputLocked:              codeInputLocked,
-	"CONFIG_INVALID":               codeConfigInvalid,
+	domainConfigInvalid:            codeConfigInvalid,
 	"THREAD_BLOCKED":               codeThreadBlocked,
 	"TIMEOUT":                      codeTimeout,
 	"NOT_IMPLEMENTED":              codeNotImplemented,
@@ -152,6 +153,7 @@ var moduleErrors = []func(error) (int, string, bool){
 	sessionDomainError,
 	workspaceDomainError,
 	agentsDomainError,
+	mcpDomainError,
 }
 
 // workspaceDomainError maps the workspace tree's sentinels onto the §5.4 table.
@@ -216,7 +218,7 @@ func toWire(err error, traceID string) *wireError {
 	case errors.Is(err, ErrInputLocked):
 		code, domainCode = codeInputLocked, domainInputLocked
 	case errors.Is(err, ErrConfigInvalid):
-		code, domainCode = codeConfigInvalid, "CONFIG_INVALID"
+		code, domainCode = codeConfigInvalid, domainConfigInvalid
 	default:
 		code, domainCode = codeInternalError, "INTERNAL_ERROR"
 	}

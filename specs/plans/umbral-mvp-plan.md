@@ -167,7 +167,7 @@ The six exit criteria, and what closed each:
 | T-F1-14 | Approval flow | 2d | T-F1-13 | ✅ 2026-09-27 |
 | T-F1-15 | Repair of invalid arguments + metric | 1d | T-F1-13 | ✅ 2026-10-01 |
 | T-F1-16 | Cancellation < 500 ms | 1d | T-F1-13 | ✅ 2026-10-01 |
-| T-F1-17 | MCP client | 3d | T-F1-09 | ☐ |
+| T-F1-17 | MCP client | 3d | T-F1-09 | ✅ 2026-10-01 |
 | T-F1-18 | OTel observability | 1.5d | T-F1-13 | ☐ |
 | T-F1-19 | `umb ai` with stdin | 1d | T-F1-13 | ☐ |
 | T-F1-20 | TUI: agent panel, mode toggle, approvals, attach block | 4d | T-F1-14 | ☐ |

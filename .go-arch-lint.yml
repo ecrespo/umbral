@@ -44,6 +44,10 @@ components:
   # llmgw, security, store), and belongs in neither domain nor adapters.
   agents-service: { in: internal/agents }
 
+  # The MCP client (T-F1-17), for the same reason: the manager orchestrates the module's own
+  # ports — the store, the SDK connector, the secrets, and the sink its tools go to.
+  mcp-service: { in: internal/mcp }
+
   # The tree's integration tests wire the real store to the service, which is the job
   # Art. 3 reserves for a composition root — the same exception sessions-integration has.
   workspaces-integration: { in: internal/workspaces/integration }
@@ -94,6 +98,10 @@ components:
   security-domain:   { in: internal/security/domain }
   security-ports:    { in: internal/security/ports }
   security-adapters: { in: internal/security/adapters/** }
+
+  mcp-domain:   { in: internal/mcp/domain }
+  mcp-ports:    { in: internal/mcp/ports }
+  mcp-adapters: { in: internal/mcp/adapters/** }
 deps:
   # --- domain: the standard library and other domains, nothing else -----------
   sessions-domain:
@@ -143,6 +151,13 @@ deps:
       - agents-domain
       - tools-domain
       - context-domain
+      - llmgw-domain
+
+  # The MCP domain imports nothing but the standard library. The allowance is unused: go-arch-lint
+  # requires one, and another domain is the narrowest, as workspaces-domain's is.
+  mcp-domain:
+    anyVendorDeps: false
+    mayDependOn:
       - llmgw-domain
 
   # --- ports: domain types only; no infrastructure, no external libraries -----
@@ -203,6 +218,13 @@ deps:
       - llmgw-domain
       - security-domain
 
+  mcp-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - bus
+      - mcp-domain
+      - llmgw-domain
+
   # --- adapters: its own ports, infrastructure and external libraries ---------
   # sessions and llmgw never reach the agent runtime (Tech Design §5.2).
   shellscripts:
@@ -240,6 +262,8 @@ deps:
   tools-adapters:
     anyVendorDeps: true
     mayDependOn:
+      # mcptools offers an MCP server's tools in the mcp module's own types (T-F1-17).
+      - mcp-domain
       # the registry's tests assemble the built-ins (T-F1-09).
       - tools-adapters
       - tools-ports
@@ -276,6 +300,16 @@ deps:
       - context-domain
       - llmgw-domain
       - security-domain
+
+  # The store over `mcp_servers`, and the SDK connector with its test server (T-F1-17).
+  mcp-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - mcp-adapters
+      - mcp-ports
+      - mcp-domain
+      - store
+      - llmgw-domain
 
   # agents is the only module allowed to reach the other modules' ports.
   agents-adapters:
@@ -343,6 +377,8 @@ deps:
       - security-domain
       - workspaces-ports
       - workspaces-domain
+      - mcp-ports
+      - mcp-domain
   client:
     anyVendorDeps: true
     mayDependOn:
@@ -388,6 +424,13 @@ deps:
       - security-domain
       - bus
 
+  mcp-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - mcp-ports
+      - mcp-domain
+      - bus
+
   sessions-service:
     anyVendorDeps: true
     mayDependOn:
@@ -431,6 +474,7 @@ deps:
       - workspaces-service
       - llmgw-service
       - agents-service
+      - mcp-service
       - shellscripts
       - sessions-ports
       - sessions-adapters
@@ -438,6 +482,8 @@ deps:
       - workspaces-adapters
       - agents-ports
       - agents-adapters
+      - mcp-ports
+      - mcp-adapters
       - tools-ports
       - tools-adapters
       - context-ports
@@ -453,6 +499,7 @@ deps:
       - context-domain
       - llmgw-domain
       - security-domain
+      - mcp-domain
 
 
   # --- the workspace tree (Tech Design §5.2) ----------------------------------

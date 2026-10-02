@@ -36,20 +36,21 @@ type agentDeps struct {
 }
 
 // newRuntime wires the agent runtime (T-F1-13) to the modules it reaches through their ports:
-// the thread store, the model router, the built-in tools and the context gatherer.
-func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, error) {
+// the thread store, the model router, the tool registry and the context gatherer. It returns
+// the registry too, where the MCP client puts its servers' tools (T-F1-17).
+func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, *registry.Registry, error) {
 	st, err := threadstore.New(d.db)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	tools, err := registry.New(builtin.All(builtin.Config{
 		Fetch:    builtin.FetchConfig{Egress: d.egress, Redact: redact},
 		Terminal: d.terminal,
 	})...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return agents.New(ctx, agents.Config{
+	rt, err := agents.New(ctx, agents.Config{
 		Store:   st,
 		Models:  routerModels{router: d.gateway.router},
 		Tools:   tools,
@@ -59,6 +60,7 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, error) {
 		Metrics: d.metrics,
 		Logger:  d.logger,
 	})
+	return rt, tools, err
 }
 
 // routerModels is the runtime's model gateway: the router, a thread's model or class.

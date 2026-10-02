@@ -135,7 +135,9 @@ def parse_spec() -> tuple[dict[str, dict], dict[str, int], set[str]]:
             continue
         namespace = names[0].split(".")[0]
         # `### 5.4 `workspace.create` / `list` / `focus`` names five methods in one heading.
-        full = [names[0]] + [f"{namespace}.{n}" for n in names[1:] if "." not in n]
+        # A later name written in full — §5.27's `mcp.server.add` — is taken as written; it
+        # used to be dropped, which left the method compared with nothing.
+        full = [names[0]] + [n if "." in n else f"{namespace}.{n}" for n in names[1:]]
 
         body, j = [], i + 1
         while j < len(lines) and not lines[j].startswith("###") and not lines[j].startswith("## "):
@@ -166,7 +168,7 @@ def parse_spec() -> tuple[dict[str, dict], dict[str, int], set[str]]:
             # Several per line: §5.4 writes "`list` params: `{}`. `focus` params:
             # `{workspace_id}`." on one. A regex anchored at the start of the line read the
             # first and silently left the rest uncompared.
-            for m2 in re.finditer(r"`(\w+)`\s+params:\s*`(\{.*?\})`", line):
+            for m2 in re.finditer(r"`([\w.]+)`\s+params:\s*`(\{.*?\})`", line):
                 verb, shape = m2.group(1), m2.group(2)
                 target = verb if "." in verb else f"{namespace}.{verb}"
                 if target in methods:

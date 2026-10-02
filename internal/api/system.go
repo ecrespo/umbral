@@ -98,6 +98,10 @@ func (s *Server) registry() map[string]method {
 		m.available = hasThreads
 		table[name] = m
 	}
+	for name, m := range mcpMethods() {
+		m.available = hasMCP
+		table[name] = m
+	}
 	return table
 }
 

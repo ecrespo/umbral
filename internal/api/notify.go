@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
+	mcpports "github.com/ecrespo/umbral/internal/mcp/ports"
 
 	"github.com/ecrespo/umbral/internal/bus"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
@@ -55,6 +56,7 @@ var dispatchedKinds = []bus.Kind{
 	agentsports.KindThreadTurnFinished,
 	agentsports.KindContextCompacted,
 	agentsports.KindApprovalRequested,
+	mcpports.KindServerState,
 }
 
 // Notify forwards module events to connected clients as JSON-RPC notifications
@@ -166,6 +168,8 @@ func toNotification(event bus.Event) (string, any) {
 		return "approval.requested", toWireApproval(e.Approval)
 	case agentsports.ContextCompacted:
 		return "context.compacted", contextCompactedPayload{ThreadID: e.ThreadID, BeforeTokens: e.BeforeTokens, AfterTokens: e.AfterTokens}
+	case mcpports.ServerState:
+		return "mcp.server_state", mcpServerStatePayload{Name: e.Name, State: string(e.State), LastError: emptyAsNull(e.LastError)}
 
 	default:
 		return "", nil

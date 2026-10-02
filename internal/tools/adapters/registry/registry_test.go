@@ -338,3 +338,21 @@ func TestTheWriteUsesTheCheckedTarget_REQ_AGT_013(t *testing.T) {
 		t.Error("the write escaped the root")
 	}
 }
+
+// TestAnUnregisteredToolIsUnknown_REQ_MCP_002: a tool taken out of the registry is no longer
+// offered, and a call to it is an unknown tool.
+func TestAnUnregisteredToolIsUnknown_REQ_MCP_002(t *testing.T) {
+	r := builtins(t)
+	if !r.Unregister("grep") || r.Unregister("grep") {
+		t.Fatal("Unregister did not report what it removed")
+	}
+	for _, s := range r.Specs() {
+		if s.Name == "grep" {
+			t.Fatal("grep is still offered")
+		}
+	}
+	env := domain.Env{Cwd: t.TempDir(), WriteRoot: t.TempDir()}
+	if _, err := r.Action(env, domain.Call{Tool: "grep", Input: json.RawMessage(`{"pattern":"x"}`)}); !errors.Is(err, domain.ErrUnknownTool) {
+		t.Fatalf("a call to it: %v", err)
+	}
+}

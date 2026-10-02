@@ -228,6 +228,7 @@ var notificationShapes = map[string]any{
 	"thread.turn_finished": turnFinishedPayload{},
 	"context.compacted":    contextCompactedPayload{},
 	"approval.requested":   Approval{},
+	"mcp.server_state":     mcpServerStatePayload{},
 }
 
 func schemaNotifications() []SchemaNotification {
