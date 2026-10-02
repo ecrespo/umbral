@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED` |
+| **Status** | `RATIFIED 2026-10-01 — approved by E. Crespo as written, with decision 5's recommended option (export in T-F1-18, not `system.status`). Folded into PRD 1.16, Tech Design 1.31 and the F1 tasks file` |
 | **Date** | 2026-10-01 |
 | **Task** | T-F1-15 |
 | **Raised by** | `spec-guardian`'s review of T-F1-15 (verdict "needs a delta", findings 1–4) |

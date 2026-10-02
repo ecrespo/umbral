@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.30 |
-| **Date** | 2026-09-27 |
+| **Version** | 1.31 |
+| **Date** | 2026-10-01 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
 | **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
@@ -167,7 +167,13 @@ sequenceDiagram
 1. Provider returns 429/5xx or no first token within the deadline → `llmgw` tries the next candidate
    of the class (REQ-LLM-003). No candidates left → `PROVIDER_UNAVAILABLE` and the turn ends with
    `stop_reason = provider_error`.
-2. Invalid arguments → one retry with a repair message; if it fails, `tool_error` (REQ-AGT-006).
+2. Invalid call — an unknown tool, input that is not JSON, or input the schema refuses; empty
+   input is `{}` → recorded `invalid_args`, counted, and answered with a repair message; the
+   model's next step is its one retry, and an invalid call there ends the turn with `tool_error`
+   (REQ-AGT-006). A step of only valid calls spends the retry. In the step that fails again, the
+   calls before the invalid one keep their results and the ones after it are neither run nor
+   recorded. A daemon-side fault (`ErrInvalidEnv`) is a plain tool `error`: no repair, no count
+   (delta `2026-10-tool-call-repair`).
 3. `thread.cancel` → the turn's `context.Context` is cancelled and the process groups the thread
    PTY's shell launched get `SIGTERM`; after 300 ms, `SIGKILL` (REQ-AGT-007). The shell itself is
    kept (§5.3b; delta `2026-09-builtin-tools`, decision 9).
@@ -612,6 +618,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `waits` | `ports` of `agents`, `sessions` and `store`, plus `bus`; never `api` |
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api` |
 | `notify` | `bus` and stdlib only; it is a sink and imports no other module |
+| `obs` | stdlib, and OpenTelemetry from T-F1-18; imported only by `cmd/*`. Modules count through a port of their own, which `cmd/umbrald` gives the `obs` implementation (delta `2026-10-tool-call-repair`) |
 | `cmd/*` | everything |
 
 Each of those four modules needs its own `components` entry and `deps` block in
@@ -859,7 +866,7 @@ Never prompt contents or output (only sizes and hashes).
 | `umbral_session_output_latency_seconds` | Histogram | PTY read → notification queued (REQ-TERM-006) |
 | `umbral_llm_first_token_seconds` | Histogram per provider/model | time to first token |
 | `umbral_llm_tokens_total` | Counter per direction/model | input and output tokens |
-| `umbral_tool_calls_invalid_total` | Counter per model | REQ-OBS-002 |
+| `umbral_tool_calls_invalid_total` | Counter per model | REQ-OBS-002. Labelled by the model the router reports in the step's usage, else the thread's `model`, else `unknown`. Counted in memory in `internal/obs`; exported when OTel lands (T-F1-18) |
 | `umbral_approvals_total` | Counter per decision/reason | approvals |
 | `umbral_frames_refused_total` | Counter per `direction` (`in`/`out`) | frames over the frame limit (REQ-OBS-005): inbound ones that closed their connection, outbound ones replaced by `RESULT_TOO_LARGE` or `limits.notification_dropped`. Exported when OTel lands (T-F1-18); until then `system.status` and `limits.get` carry the same counts under `frames` |
 
@@ -1102,3 +1109,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.28 | 2026-09-27 | E. Crespo (assisted draft) | T-F1-14: §5.3d adds the approval flow — pause, persist-then-resume, what `thread` and `always` remember, which decisions stay `once`, and what a cancel leaves. Delta `2026-09-approvals` (proposed). |
 | 1.29 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies the four deltas of T-F1-11…T-F1-14 as written: `2026-09-context-assembly` (§5.3c), `2026-09-context-budget` (§3, §5.3c, Q-03), `2026-09-agent-runtime` (§5.3d, DD-007) and `2026-09-approvals` (§5.3d). Analyze C-01 is closed by `storage_error`. |
 | 1.30 | 2026-09-27 | E. Crespo (assisted draft) | Closes Analyze C-02: DD-016 points at `docs/runbooks/rule-signing.md` for custody, and states the bundle and signature formats, the trust seed built into the binary, rotation with two signatures instead of revocation, removal as revocation, and revocation discarding the bundles a key verified; §4 gains `[update] rules_check`/`rules_url`. Delta `2026-09-rule-signing-custody` (ratified). |
+| 1.31 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-tool-call-repair` (T-F1-15): §3.3 item 2 says what an invalid call is, what the one retry is and what the failing step leaves; §5.2 gains the `obs` row; §7.2 gives `umbral_tool_calls_invalid_total` its label and its interim home |
