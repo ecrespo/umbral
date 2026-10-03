@@ -46,7 +46,18 @@ type method struct {
 	// TestEveryMethodDeclaresItsShapes_REQ_API_004 fails the build when one is missing.
 	params any
 	result any
+	// capability overrides the namespace the method is advertised under, for a method
+	// whose prefix names another one: thread.wait and block.wait_output are `waits`.
+	capability string
 }
+
+// deferred is an answer that comes later. A handler returns one when it has done, in
+// order with the requests around it, everything that must happen before the next request
+// is read — validating, subscribing, pinning, sending — and what is left is a wait. The
+// connection keeps serving while it runs: the approval.respond that unblocks a wait may
+// arrive on the same connection. The wait gets a context that ends with the connection,
+// and its answer is written whenever it comes; JSON-RPC matches it by its id.
+type deferred func(ctx context.Context) (any, error)
 
 // served reports whether this build can actually run the method.
 func (m method) served(cfg Config) bool {
@@ -119,6 +130,9 @@ type conn struct {
 
 	closed    chan struct{}
 	closeOnce sync.Once
+	// pending counts the deferred answers still running; serve waits for them once the
+	// connection is closed, so none outlives it.
+	pending sync.WaitGroup
 }
 
 // closedCh is closed when the connection goes away, which is how each subscription's
@@ -247,6 +261,7 @@ func (c *conn) splitLine(data []byte, atEOF bool) (int, []byte, error) {
 
 // serve reads NDJSON messages until the peer disconnects or the daemon shuts down.
 func (c *conn) serve(ctx context.Context) {
+	defer c.pending.Wait()
 	defer func() { _ = c.close() }()
 
 	// REQ-SEC-017: the handshake has a deadline from accept. It is a read deadline on the
@@ -375,6 +390,12 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 	}
 
 	result, err := m.handle(ctx, c, req.Params)
+	if later, ok := result.(deferred); ok && err == nil {
+		// A deferred handler schedules nothing for after its reply: the reply comes later.
+		c.afterReply = nil
+		c.answerLater(ctx, req, m, later)
+		return false
+	}
 	if err == nil && c.server.observeResult != nil {
 		c.server.observeResult(req.Method, m.result, result)
 	}
@@ -390,6 +411,41 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 		hook()
 	}
 	return false
+}
+
+// answerLater runs a deferred answer beside the read loop and writes it when it comes. A
+// connection that closes first ends the wait and leaves nothing to write.
+func (c *conn) answerLater(ctx context.Context, req request, m method, later deferred) {
+	ctx, cancel := context.WithCancel(ctx)
+	if req.isNotification() {
+		// Nobody can be answered: end the wait at once, releasing what it holds. A
+		// thread.send sent this way has still sent its message.
+		cancel()
+		_, _ = later(ctx)
+		return
+	}
+	c.pending.Add(1)
+	go func() {
+		defer c.pending.Done()
+		defer cancel()
+		go func() {
+			select {
+			case <-c.closed:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		result, err := later(ctx)
+		// A wait cut short by the connection closing or the daemon stopping has nobody
+		// left to answer, and its context error is no fault to report (API §1).
+		if ctx.Err() != nil {
+			return
+		}
+		if err == nil && c.server.observeResult != nil {
+			c.server.observeResult(req.Method, m.result, result)
+		}
+		c.reply(req, result, err)
+	}()
 }
 
 // refuseBeforeHello answers a line that is not a valid request, on a connection that has

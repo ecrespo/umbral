@@ -274,10 +274,7 @@ func (s *Store) SaveToolCall(ctx context.Context, c domain.ToolCall) error {
 
 // FinishTurn adds the turn's usage to the thread and sets its state.
 func (s *Store) FinishTurn(ctx context.Context, threadID string, state domain.State, usage domain.Usage, now int64) error {
-	attention := "done"
-	if state == domain.StateStopped {
-		attention = "idle"
-	}
+	attention := domain.AttentionAfter(state)
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE threads SET state = ?, attention_state = ?, tokens_used = tokens_used + ?,
 			cost_micro_usd = cost_micro_usd + ?, updated_at = ?
@@ -287,6 +284,26 @@ func (s *Store) FinishTurn(ctx context.Context, threadID string, state domain.St
 		return fmt.Errorf("threadstore: finish turn: %w", err)
 	}
 	return nil
+}
+
+// TurnStatus reads the thread's state, attention state and latest turn — the turn of its
+// newest user message — in one statement, so a turn that begins meanwhile cannot pair one
+// turn's id with another's state.
+func (s *Store) TurnStatus(ctx context.Context, threadID string) (ports.Status, error) {
+	var st ports.Status
+	var state string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT t.state, t.attention_state, COALESCE((SELECT m.turn_id FROM messages m
+			WHERE m.thread_id = t.id AND m.role = 'user' ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1), '')
+		FROM threads t WHERE t.id = ?`, threadID).Scan(&state, &st.Attention, &st.TurnID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ports.Status{}, fmt.Errorf("%w: thread %s", domain.ErrNotFound, threadID)
+	}
+	if err != nil {
+		return ports.Status{}, fmt.Errorf("threadstore: turn status: %w", err)
+	}
+	st.State = domain.State(state)
+	return st, nil
 }
 
 // Messages is a thread's history, oldest first.

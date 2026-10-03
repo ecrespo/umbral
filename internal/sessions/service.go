@@ -429,6 +429,31 @@ func (s *Service) Snapshot(_ context.Context, id string) (ports.Snapshot, error)
 	return ports.Snapshot{Data: data, CursorX: cursorX, CursorY: cursorY, Seq: seq}, nil
 }
 
+// ScreenText renders the session's screen as plain text, with the sequence number it is
+// current as of and the line still being written at the cursor ("" when there is none), all
+// read under the same lock as Snapshot: output after it is exactly what carries a higher
+// sequence number (block.wait_output, REQ-AUT-003).
+func (s *Service) ScreenText(_ context.Context, id string) (text string, seq uint64, open string, err error) {
+	live := s.lookup(id)
+	if live == nil {
+		return "", 0, "", fmt.Errorf("%w: %s", domain.ErrNotFound, id)
+	}
+
+	live.snapshotMu.Lock()
+	defer live.snapshotMu.Unlock()
+
+	if text, err = live.emu.PlainText(); err != nil {
+		return "", 0, "", err
+	}
+	if open, err = live.emu.OpenLine(); err != nil {
+		return "", 0, "", err
+	}
+	live.mu.RLock()
+	seq = live.seq
+	live.mu.RUnlock()
+	return text, seq, open, nil
+}
+
 // Close asks the shell to exit, then insists (API Spec §5.9).
 func (s *Service) Close(_ context.Context, id string) error {
 	live := s.lookup(id)

@@ -111,6 +111,8 @@ type Error struct {
 	// have been and this connection's frame limit (API Spec §3).
 	SizeBytes  int64 `json:"size_bytes,omitempty"`
 	LimitBytes int64 `json:"limit_bytes,omitempty"`
+	// LastState is set on TIMEOUT: what the wait last observed (API Spec §3, REQ-AUT-004).
+	LastState string `json:"last_state,omitempty"`
 }
 
 // ErrorField is one entry of an error's `details` array.
@@ -292,6 +294,7 @@ type wireError struct {
 		TraceID    string       `json:"trace_id"`
 		SizeBytes  int64        `json:"size_bytes"`
 		LimitBytes int64        `json:"limit_bytes"`
+		LastState  string       `json:"last_state"`
 	} `json:"data"`
 }
 
@@ -355,6 +358,7 @@ func (c *Client) call(ctx context.Context, method string, params, out any) error
 				TraceID:    resp.Error.Data.TraceID,
 				SizeBytes:  resp.Error.Data.SizeBytes,
 				LimitBytes: resp.Error.Data.LimitBytes,
+				LastState:  resp.Error.Data.LastState,
 			}
 		}
 		if out == nil || len(resp.Result) == 0 {

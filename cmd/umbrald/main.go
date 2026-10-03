@@ -368,6 +368,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	defer mcpClient.Close()
 
+	// The wait engine (T-F1-23): thread.wait, block.wait_output and thread.send's wait.
+	waitEngine, err := newWaits(eventBus, runtime, sessionService, blockReader)
+	if err != nil {
+		logger.Error("cannot build the wait engine", slog.Any("error", err))
+		return exitCantCreate
+	}
+
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
 		TokenPath:     tokenPath,
@@ -377,6 +384,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Models:        models,
 		Threads:       runtime,
 		MCP:           mcpClient,
+		Waits:         waitEngine,
 		Sessions:      sessionService,
 		Blocks:        blockReader,
 		Workspaces:    workspaceService,

@@ -57,12 +57,42 @@ type Runtime struct {
 	turns  map[string]*turn // thread id → running turn
 	// waiting are the turns paused on an approval, by approval id.
 	waiting map[string]chan domain.Approval
-	wg      sync.WaitGroup
+	// ends is guarded by mu.
+	ends turnEnds
+	wg   sync.WaitGroup
 }
 
 var _ ports.Threads = (*Runtime)(nil)
 
 // turn is a running turn, which thread.cancel (T-F1-16) stops through cancel.
+// maxTurnEnds bounds the runtime's memory of how turns ended: enough for every wait of a
+// session to find its turn, small beside the daemon's memory budget.
+const maxTurnEnds = 4096
+
+// turnEnds remembers the end state of the last maxTurnEnds turns, for a wait whose pinned
+// turn a later one has replaced (DD-011). It lives for the daemon's run only.
+type turnEnds struct {
+	byTurn map[string]turnEnd
+	order  []string
+}
+
+type turnEnd struct {
+	threadID string
+	state    string
+}
+
+func (e *turnEnds) add(threadID, turnID, state string) {
+	if e.byTurn == nil {
+		e.byTurn = map[string]turnEnd{}
+	}
+	if len(e.order) >= maxTurnEnds {
+		delete(e.byTurn, e.order[0])
+		e.order = e.order[1:]
+	}
+	e.byTurn[turnID] = turnEnd{threadID: threadID, state: state}
+	e.order = append(e.order, turnID)
+}
+
 type turn struct {
 	id     string
 	cancel context.CancelFunc
@@ -186,6 +216,16 @@ func (r *Runtime) Send(ctx context.Context, p ports.SendParams) (ports.SendResul
 	lock.Lock()
 	defer lock.Unlock()
 
+	if p.RejectBlocked {
+		// Read again under the lock: the state read above may predate an approval.
+		st, err := r.cfg.Store.TurnStatus(ctx, thread.ID)
+		if err != nil {
+			return ports.SendResult{}, err
+		}
+		if st.State == domain.StateAwaitingApproval {
+			return ports.SendResult{}, fmt.Errorf("%w: thread %s", domain.ErrThreadBlocked, thread.ID)
+		}
+	}
 	if p.ClientMsgID != "" {
 		orig, found, err := r.cfg.Store.MessageByClientID(ctx, p.ThreadID, p.ClientMsgID)
 		if err != nil {
@@ -223,6 +263,24 @@ func (r *Runtime) Send(ctx context.Context, p ports.SendParams) (ports.SendResul
 		return ports.SendResult{}, errors.New("agents: the runtime is closed")
 	}
 	return ports.SendResult{TurnID: msg.TurnID, MessageID: msg.ID}, nil
+}
+
+// Status reads what a wait pins (DD-011): the thread's state, its attention state and its
+// latest turn, in one consistent reading.
+func (r *Runtime) Status(ctx context.Context, threadID string) (ports.Status, error) {
+	return r.cfg.Store.TurnStatus(ctx, threadID)
+}
+
+// TurnEnd is how a turn of this run ended, as its end event said; false for a turn still
+// running, another thread's, or one the runtime no longer remembers.
+func (r *Runtime) TurnEnd(threadID, turnID string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	end, ok := r.ends.byTurn[turnID]
+	if !ok || end.threadID != threadID {
+		return "", false
+	}
+	return end.state, true
 }
 
 func (r *Runtime) threadLock(id string) *sync.Mutex {

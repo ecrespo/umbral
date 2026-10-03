@@ -88,6 +88,8 @@ type errorData struct {
 	// have had and this connection's limit, as numbers a client can act on (REQ-API-005).
 	SizeBytes  *int64 `json:"size_bytes,omitempty"`
 	LimitBytes *int64 `json:"limit_bytes,omitempty"`
+	// LastState is set only on TIMEOUT: what the wait last observed (REQ-AUT-004).
+	LastState *string `json:"last_state,omitempty"`
 }
 
 // ErrorField explains which field of the request was wrong.

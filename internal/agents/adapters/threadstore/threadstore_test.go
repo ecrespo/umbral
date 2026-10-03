@@ -250,3 +250,34 @@ func TestApprovalsRoundTrip_REQ_AGT_004(t *testing.T) {
 		t.Fatalf("another thread's %+v", other)
 	}
 }
+
+// TestTurnStatusReadsTheThreadAndItsLatestTurn: one query answers what a wait pins — the
+// thread's state, its attention state and its latest user message's turn.
+func TestTurnStatusReadsTheThreadAndItsLatestTurn(t *testing.T) {
+	s := open(t)
+	th := thread(t, s, 100000)
+	ctx := t.Context()
+	st, err := s.TurnStatus(ctx, th.ID)
+	if err != nil || st.State != domain.StateIdle || st.Attention != "idle" || st.TurnID != "" {
+		t.Fatalf("before a turn: %+v %v", st, err)
+	}
+	first := userMessage(th, "")
+	if _, _, err := s.BeginTurn(ctx, first, 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishTurn(ctx, th.ID, domain.StateIdle, domain.Usage{}, 4); err != nil {
+		t.Fatal(err)
+	}
+	second := userMessage(th, "")
+	second.TurnID, second.CreatedAt = "trn_2", 5
+	if _, _, err := s.BeginTurn(ctx, second, 5); err != nil {
+		t.Fatal(err)
+	}
+	st, err = s.TurnStatus(ctx, th.ID)
+	if err != nil || st.State != domain.StateRunning || st.Attention != "working" || st.TurnID != "trn_2" {
+		t.Fatalf("during the second turn: %+v %v", st, err)
+	}
+	if _, err := s.TurnStatus(ctx, "thr_nope"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("unknown thread: %v", err)
+	}
+}

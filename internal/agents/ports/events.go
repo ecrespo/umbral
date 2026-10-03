@@ -47,6 +47,10 @@ type TurnFinished struct {
 	TurnID     string
 	StopReason domain.StopReason
 	Usage      domain.Usage
+	// EndState is what the end left for a wait to observe: `stopped` after a cancel, else
+	// the attention state written with it. A wait pinned to this turn reads it here,
+	// because the store may already show the next turn (DD-011). It is not on the wire.
+	EndState string
 }
 
 // EventKind implements bus.Event.

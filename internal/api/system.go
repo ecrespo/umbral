@@ -102,6 +102,10 @@ func (s *Server) registry() map[string]method {
 		m.available = hasMCP
 		table[name] = m
 	}
+	for name, m := range waitMethods() {
+		m.capability = capabilityWaits
+		table[name] = m
+	}
 	return table
 }
 

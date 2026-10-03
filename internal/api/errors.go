@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	wsdomain "github.com/ecrespo/umbral/internal/workspaces/domain"
+
+	waitsdomain "github.com/ecrespo/umbral/internal/waits/domain"
 )
 
 // The `domain_code` strings of API Spec §3, named because more than one module maps its
@@ -13,6 +15,8 @@ const (
 	domainNotFound            = "NOT_FOUND"
 	domainValidationError     = "VALIDATION_ERROR"
 	domainConflict            = "CONFLICT"
+	domainThreadBlocked       = "THREAD_BLOCKED"
+	domainTimeout             = "TIMEOUT"
 	domainConfigInvalid       = "CONFIG_INVALID"
 	domainBudgetExceeded      = "BUDGET_EXCEEDED"
 	domainProviderUnavailable = "PROVIDER_UNAVAILABLE"
@@ -69,8 +73,8 @@ var errorCodes = map[string]int{
 	"UNSUPPORTED_PROTOCOL_VERSION": codeUnsupportedProtocolVersion,
 	domainInputLocked:              codeInputLocked,
 	domainConfigInvalid:            codeConfigInvalid,
-	"THREAD_BLOCKED":               codeThreadBlocked,
-	"TIMEOUT":                      codeTimeout,
+	domainThreadBlocked:            codeThreadBlocked,
+	domainTimeout:                  codeTimeout,
 	"NOT_IMPLEMENTED":              codeNotImplemented,
 	"CANCELLED":                    codeCancelled,
 	domainResultTooLarge:           codeResultTooLarge,
@@ -154,6 +158,7 @@ var moduleErrors = []func(error) (int, string, bool){
 	workspaceDomainError,
 	agentsDomainError,
 	mcpDomainError,
+	waitsDomainError,
 }
 
 // workspaceDomainError maps the workspace tree's sentinels onto the §5.4 table.
@@ -198,9 +203,9 @@ func toWire(err error, traceID string) *wireError {
 	case errors.Is(err, ErrNotImplemented):
 		code, domainCode = codeNotImplemented, "NOT_IMPLEMENTED"
 	case errors.Is(err, ErrThreadBlocked):
-		code, domainCode = codeThreadBlocked, "THREAD_BLOCKED"
+		code, domainCode = codeThreadBlocked, domainThreadBlocked
 	case errors.Is(err, ErrTimeout):
-		code, domainCode = codeTimeout, "TIMEOUT"
+		code, domainCode = codeTimeout, domainTimeout
 	case errors.Is(err, ErrCancelled):
 		code, domainCode = codeCancelled, "CANCELLED"
 	case errors.Is(err, ErrUnsupportedProtocol):
@@ -233,6 +238,10 @@ func finishWire(err error, code int, domainCode, traceID string) *wireError {
 	if errors.As(err, &detailed) {
 		data.Details = detailed.details
 		data.Supported = detailed.supported
+	}
+	var timedOut *waitsdomain.TimeoutError
+	if code == codeTimeout && errors.As(err, &timedOut) {
+		data.LastState = &timedOut.LastState
 	}
 
 	message := err.Error()

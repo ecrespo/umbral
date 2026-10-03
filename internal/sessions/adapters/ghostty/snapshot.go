@@ -13,6 +13,7 @@ package ghostty
 
 import (
 	"fmt"
+	"strings"
 
 	"go.mitchellh.com/libghostty"
 
@@ -98,6 +99,55 @@ func Snapshot(term *libghostty.Terminal, opts SnapshotOptions) ([]byte, error) {
 		return nil, fmt.Errorf("ghostty: format snapshot: %w", err)
 	}
 	return out, nil
+}
+
+// OpenLine renders the screen untrimmed — every row, scrollback first, so the active area
+// is the last `rows` of them — and returns the cursor's row up to the cursor, provided no
+// row below it holds anything. A full-screen program's cursor, mid-screen above a status
+// line, has no open line.
+func OpenLine(term *libghostty.Terminal) (string, error) {
+	x, err := term.CursorX()
+	if err != nil {
+		return "", fmt.Errorf("ghostty: cursor x: %w", err)
+	}
+	if x == 0 {
+		return "", nil
+	}
+	y, err := term.CursorY()
+	if err != nil {
+		return "", fmt.Errorf("ghostty: cursor y: %w", err)
+	}
+	rows, err := term.Rows()
+	if err != nil {
+		return "", fmt.Errorf("ghostty: rows: %w", err)
+	}
+	formatter, err := libghostty.NewFormatter(term,
+		libghostty.WithFormatterFormat(libghostty.FormatterFormatPlain),
+		libghostty.WithFormatterTrim(false),
+	)
+	if err != nil {
+		return "", fmt.Errorf("ghostty: create plain formatter: %w", err)
+	}
+	defer formatter.Close()
+	out, err := formatter.FormatString()
+	if err != nil {
+		return "", fmt.Errorf("ghostty: format plain text: %w", err)
+	}
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	row := len(lines) - int(rows) + int(y)
+	if row < 0 || row >= len(lines) {
+		return "", nil
+	}
+	for _, below := range lines[row+1:] {
+		if strings.TrimSpace(below) != "" {
+			return "", nil
+		}
+	}
+	cells := []rune(lines[row])
+	if int(x) < len(cells) {
+		cells = cells[:x]
+	}
+	return string(cells), nil
 }
 
 // PlainText renders the screen as text with no escape sequences. It is what `block`
