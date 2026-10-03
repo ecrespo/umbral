@@ -412,6 +412,13 @@ func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain
 		}
 		next, ok := <-events
 		if !ok {
+			// The pump stops forwarding once the call is cancelled, so a channel closed with
+			// the call done is the cancellation, not a finished stream.
+			if err := ctx.Err(); err != nil {
+				finish(err)
+				yield(domain.Event{}, err)
+				return true, nil
+			}
 			finish(nil)
 			return true, nil
 		}
