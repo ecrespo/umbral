@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.33 |
+| **Version** | 1.34 |
 | **Date** | 2026-10-01 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -360,6 +360,20 @@ sequenceDiagram
   not satisfy it, and `thread.send` with `wait` is one ordered submission.
 - **Consequence:** a timeout does not prove that nothing was sent. The contract states it and the CLI
   repeats it, because the safe recovery is to read the thread before resending.
+- **How it holds (delta `2026-10-wait-engine`):**
+  - **Order and answers.** A wait subscribes before it pins, so no event between the two is lost.
+    The daemon does everything a request must do before reading the next one, then answers the
+    wait when it settles, out of order, while the connection keeps being served (API §1).
+    Closing the connection ends its waits.
+  - **A lossy bus.** The bus may drop events (§3), so a thread wait also re-reads the store
+    once a second as a backstop. This is not the client polling this decision forbids: the
+    client makes one call and gets one answer.
+  - **A later turn never answers for the pinned one.**
+    - A turn's end event carries the state its end wrote.
+    - The runtime remembers the last 4096 ends of its run.
+    - A wait that reads a later turn first takes the pinned turn's own end from either of
+      those, or answers `unknown`. `unknown` also covers a turn that ended before the daemon
+      started and one whose end could not be written.
 
 ### DD-012: One state authority per pane, with a fixed precedence
 
@@ -621,7 +635,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `tui/adapters/**` | its own `ports`, `client`, `sessions/domain` and external libraries, like every other module's adapters. The `client` allowance is what keeps method names and parameter shapes in one adapter instead of in the model |
 | `tools/adapters` | also `sessions/ports`, for `AgentTerminal` alone: `run_command` runs in the thread's PTY, which the sessions module owns (T-F1-10) |
 | `workspaces` | `ports` of `sessions` and `store`; never `agents`, `api` or `waits` |
-| `waits` | `ports` of `agents`, `sessions` and `store`, plus `bus`; never `api` |
+| `waits` | `ports` and `domain` of `agents` and `sessions`, plus `bus`; never `api`. It reads the store only through the agents runtime, and its own domain reuses the sessions domain's escape-sequence stripper (delta `2026-10-wait-engine`) |
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api` |
 | `notify` | `bus` and stdlib only; it is a sink and imports no other module |
 | `mcp` | its own `ports` and `domain`, plus `bus`. `tools/adapters` may use `mcp/domain`, for `mcptools`, which offers a server's tools; `api` the `ports` and `domain` of `mcp`; only `cmd/*` wires the manager to the registry (delta `2026-10-mcp-client`) |
@@ -1124,3 +1138,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.31 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-tool-call-repair` (T-F1-15): §3.3 item 2 says what an invalid call is, what the one retry is and what the failing step leaves; §5.2 gains the `obs` row; §7.2 gives `umbral_tool_calls_invalid_total` its label and its interim home |
 | 1.32 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-thread-cancel` (T-F1-16): §3.3 item 3 says `thread.cancel` answers once the turn has ended, leaving the thread `stopped` |
 | 1.33 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-mcp-client` (T-F1-17): §3.3 item 5 (losing an MCP server), §5.2 the `mcp` row, §5.3 MCP tools are `Network`, §6.1 the MCP threat row |
+| 1.34 | 2026-10-03 | E. Crespo (assisted draft) | Ratifies delta `2026-10-wait-engine` (T-F1-23): DD-011 says how waits hold — subscribe before pinning, out-of-order answers, the store backstop, a replaced turn answering with its own end or `unknown`; §5.2's `waits` row names the domains it uses |
