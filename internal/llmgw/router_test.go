@@ -27,6 +27,10 @@ type script struct {
 	// events are yielded in order, then err ends the stream when set.
 	events []domain.Event
 	err    error
+	// hangAfter holds the stream open after events until the call is cancelled: a model
+	// still generating. quietStop makes it then end without an error, which ports.Provider
+	// allows an adapter that honours its context.
+	hangAfter, quietStop bool
 }
 
 // streamProvider serves models by script and remembers every call it got.
@@ -79,6 +83,13 @@ func (p *streamProvider) Stream(ctx context.Context, req domain.Request) (iter.S
 		}
 		if s.err != nil {
 			yield(domain.Event{}, s.err)
+			return
+		}
+		if s.hangAfter {
+			<-ctx.Done()
+			if !s.quietStop {
+				yield(domain.Event{}, ctx.Err())
+			}
 		}
 	}, nil
 }
@@ -280,6 +291,51 @@ func TestAFailureAfterTheFirstTokenIsReturned_REQ_LLM_003(t *testing.T) {
 	recs := r.usage.all()
 	if len(recs) != 1 || recs[0].Status != domain.UsageError || recs[0].FirstTokenMS == nil {
 		t.Errorf("usage = %+v, want one error with its first-token time", recs)
+	}
+}
+
+// TestACancelAfterTheFirstTokenIsAnError_REQ_AGT_007: a call cancelled while the model is
+// still generating ends with the cancellation, never as a stream that finished. Found live
+// against gpt-oss:20b: the pump dropped the error when the call's context was done, the
+// caller saw a clean end, and a cancelled turn was recorded `end_turn`.
+func TestACancelAfterTheFirstTokenIsAnError_REQ_AGT_007(t *testing.T) {
+	t.Parallel()
+
+	// An adapter that reports the cancellation races the pump for it; one that just stops
+	// loses every time without the fix.
+	for name, quiet := range map[string]bool{"reports it": false, "stops quietly": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			a := &streamProvider{id: "a", scripts: map[string]script{"m": {
+				events: []domain.Event{{Kind: domain.EventTextDelta, Text: "par"}}, hangAfter: true, quietStop: quiet,
+			}}}
+			r := newRig(t, false, map[string][]string{"code": {"a/m"}},
+				[]*streamProvider{a}, []domain.Model{model("a", "m")})
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			stream, err := r.router.Stream(ctx, hello("code"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var end error
+			for ev, err := range stream {
+				if err != nil {
+					end = err
+					break
+				}
+				if ev.Kind == domain.EventTextDelta {
+					cancel()
+				}
+			}
+			if !errors.Is(end, context.Canceled) {
+				t.Fatalf("the cancelled call ended with %v, want context.Canceled", end)
+			}
+			recs := r.usage.all()
+			if len(recs) != 1 || recs[0].Status != domain.UsageError {
+				t.Errorf("usage = %+v, want one error", recs)
+			}
+		})
 	}
 }
 
