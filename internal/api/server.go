@@ -16,6 +16,7 @@ import (
 
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	mcpports "github.com/ecrespo/umbral/internal/mcp/ports"
+	waitsports "github.com/ecrespo/umbral/internal/waits/ports"
 
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/config"
@@ -105,6 +106,9 @@ func (s *Server) capabilities() []string {
 		if mapped, ok := capabilityOf[prefix]; ok {
 			namespace = mapped
 		}
+		if m.capability != "" {
+			namespace = m.capability
+		}
 		seen[namespace] = struct{}{}
 	}
 
@@ -149,7 +153,10 @@ type Config struct {
 	Threads agentsports.Threads
 	// MCP is the MCP client's inbound port, served as mcp.server.*. A nil value leaves those
 	// methods answering NOT_IMPLEMENTED.
-	MCP    mcpports.Servers
+	MCP mcpports.Servers
+	// Waits is the wait engine, served as thread.wait, block.wait_output and the wait
+	// inside thread.send. A nil value leaves them answering NOT_IMPLEMENTED.
+	Waits  waitsports.Waits
 	Bus    *bus.Bus
 	Logger *slog.Logger
 

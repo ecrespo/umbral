@@ -127,6 +127,10 @@ type Emulator interface {
 	// Cursor reports the cursor's cell, which `session.subscribe` returns alongside the
 	// snapshot so a client can place its own cursor without parsing the VT it just got.
 	Cursor() (x, y uint16, err error)
+	// OpenLine is the text of the cursor's row up to the cursor, trailing blanks kept, when
+	// that row is the last one written and the cursor is past its first column: a line still
+	// being written, such as a prompt. It is "" otherwise (block.wait_output, REQ-AUT-003).
+	OpenLine() (string, error)
 	// Close releases the emulator.
 	Close() error
 }

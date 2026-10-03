@@ -142,4 +142,16 @@ var (
 	// ErrProviderUnavailable is a thread.send whose thread has no model that can serve it:
 	// none of its candidates is known and not down (API §5.20).
 	ErrProviderUnavailable = errors.New("no model can serve the thread")
+	// ErrThreadBlocked is a thread.send with a wait on a thread paused on an approval
+	// (REQ-AUT-002): nothing is persisted and no wait starts.
+	ErrThreadBlocked = errors.New("the thread is awaiting an approval")
 )
+
+// AttentionAfter is the attention state a turn's end leaves (API §7): `idle` after a cancel
+// left the thread stopped, `done` — finished, not yet viewed — after any other end.
+func AttentionAfter(state State) string {
+	if state == StateStopped {
+		return "idle"
+	}
+	return "done"
+}

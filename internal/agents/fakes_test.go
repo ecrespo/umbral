@@ -36,6 +36,8 @@ type memStore struct {
 	beforeBegin func()
 	// beforeFinish runs in the turn's goroutine as FinishTurn starts, before it writes.
 	beforeFinish func()
+	// failFinish makes every FinishTurn fail.
+	failFinish bool
 }
 
 func newMemStore() *memStore {
@@ -126,7 +128,7 @@ func (s *memStore) BeginTurn(_ context.Context, msg domain.Message, now int64) (
 	switch {
 	case !ok:
 		return domain.Message{}, domain.Thread{}, domain.ErrNotFound
-	case t.State == domain.StateRunning:
+	case t.State == domain.StateRunning || t.State == domain.StateAwaitingApproval:
 		return domain.Message{}, domain.Thread{}, domain.ErrConflict
 	case t.TokensUsed >= t.BudgetTokens:
 		return domain.Message{}, domain.Thread{}, domain.ErrBudgetExceeded
@@ -184,12 +186,39 @@ func (s *memStore) FinishTurn(_ context.Context, id string, state domain.State, 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failFinish {
+		return errors.New("disk full")
+	}
 	t := s.threads[id]
-	t.State, t.UpdatedAt = state, now
+	t.State, t.UpdatedAt, t.AttentionState = state, now, domain.AttentionAfter(state)
 	t.TokensUsed += u.InTokens + u.OutTokens
 	t.CostMicroUSD += u.CostMicroUSD
 	s.threads[id] = t
 	return nil
+}
+
+func (s *memStore) TurnStatus(_ context.Context, id string) (ports.Status, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.threads[id]
+	if !ok {
+		return ports.Status{}, fmt.Errorf("%w: %s", domain.ErrNotFound, id)
+	}
+	st := ports.Status{State: t.State}
+	switch t.State {
+	case domain.StateRunning:
+		st.Attention = "working"
+	case domain.StateAwaitingApproval:
+		st.Attention = "blocked"
+	default:
+		st.Attention = t.AttentionState
+	}
+	for _, m := range s.messages {
+		if m.ThreadID == id && m.Role == domain.RoleUser {
+			st.TurnID = m.TurnID
+		}
+	}
+	return st, nil
 }
 
 func (s *memStore) MessageByClientID(_ context.Context, threadID, clientID string) (domain.Message, bool, error) {
@@ -484,7 +513,8 @@ func (b *checkingBus) Publish(ev bus.Event) {
 		b.store.mu.Lock()
 		state := b.store.threads[e.ThreadID].State
 		b.store.mu.Unlock()
-		if state == domain.StateRunning {
+		// A storage_error end is the one whose write failed: there is nothing to persist first.
+		if state == domain.StateRunning && e.StopReason != domain.StopStorageError {
 			b.fail = append(b.fail, "turn_finished published while the thread is still running")
 		}
 		defer func() { b.ended <- e }()

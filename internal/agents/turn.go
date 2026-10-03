@@ -78,7 +78,18 @@ func (r *Runtime) runTurn(ctx context.Context, thread domain.Thread, turnID stri
 			slog.String("turn", turnID), slog.Any("error", err))
 		stop, ended = domain.StopStorageError, 0
 	}
-	r.publish(ports.TurnFinished{ThreadID: thread.ID, TurnID: turnID, StopReason: stop, Usage: t.usage})
+	endState := domain.AttentionAfter(state)
+	switch {
+	case ended == 0:
+		// Nothing was written: the store still says running, so the end is not known.
+		endState = "unknown"
+	case state == domain.StateStopped:
+		endState = string(domain.StateStopped)
+	}
+	r.mu.Lock()
+	r.ends.add(thread.ID, turnID, endState)
+	r.mu.Unlock()
+	r.publish(ports.TurnFinished{ThreadID: thread.ID, TurnID: turnID, StopReason: stop, Usage: t.usage, EndState: endState})
 	return stop, ended
 }
 

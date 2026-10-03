@@ -9,6 +9,8 @@ import (
 	agentsdomain "github.com/ecrespo/umbral/internal/agents/domain"
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
+
+	waitsports "github.com/ecrespo/umbral/internal/waits/ports"
 )
 
 // Thread is API Spec §4's Thread.
@@ -197,9 +199,17 @@ type sendParams struct {
 	Wait        json.RawMessage  `json:"wait" api:"optional"`
 }
 
+// sendWait is thread.send's optional `wait` (API §5.20).
+type sendWait struct {
+	Until     []string `json:"until"`
+	TimeoutMS int64    `json:"timeout_ms"`
+}
+
 type sendResult struct {
 	TurnID    string `json:"turn_id"`
 	MessageID string `json:"message_id"`
+	// FinalState is present only when the send brought a wait (API §5.20).
+	FinalState *string `json:"final_state,omitempty" api:"optional"`
 }
 
 func handleThreadSend(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -214,10 +224,20 @@ func handleThreadSend(ctx context.Context, c *conn, raw json.RawMessage) (any, e
 	if p.ThreadID == "" {
 		return nil, ValidationError("thread_id is required", ErrorField{Field: fieldThreadID, Issue: requiredTag})
 	}
+	// A wait is validated and subscribed before anything is sent, so an invalid one sends
+	// nothing and a valid one misses none of the turn's events (REQ-AUT-001).
+	var wait waitsports.ThreadWait
 	if len(p.Wait) > 0 && string(p.Wait) != jsonNull {
-		// REQ-AUT-001's wait arrives with its own task (T-F1-23); until then a send that asks
-		// for one is refused rather than answered without waiting.
-		return nil, fmt.Errorf("%w: thread.send's wait", ErrNotImplemented)
+		if c.server.cfg.Waits == nil {
+			return nil, fmt.Errorf("%w: thread.send's wait: the wait engine is not wired in", ErrNotImplemented)
+		}
+		var w sendWait
+		if err := decode(p.Wait, &w, "thread.send's wait"); err != nil {
+			return nil, err
+		}
+		if wait, err = c.server.cfg.Waits.Thread(ctx, p.ThreadID, w.Until, w.TimeoutMS); err != nil {
+			return nil, err
+		}
 	}
 	refs := make([]agentsports.AttachmentRef, 0, len(p.Attachments))
 	for i, a := range p.Attachments {
@@ -227,11 +247,29 @@ func handleThreadSend(ctx context.Context, c *conn, raw json.RawMessage) (any, e
 		}
 		refs = append(refs, agentsports.AttachmentRef{Kind: a.Kind, Ref: a.Ref})
 	}
-	res, err := svc.Send(ctx, agentsports.SendParams{ThreadID: p.ThreadID, Text: p.Text, Attachments: refs, ClientMsgID: p.ClientMsgID})
+	res, err := svc.Send(ctx, agentsports.SendParams{
+		ThreadID: p.ThreadID, Text: p.Text, Attachments: refs, ClientMsgID: p.ClientMsgID, RejectBlocked: wait != nil,
+	})
 	if err != nil {
+		if wait != nil {
+			wait.Close()
+		}
 		return nil, err
 	}
-	return sendResult{TurnID: res.TurnID, MessageID: res.MessageID}, nil
+	if wait == nil {
+		return sendResult{TurnID: res.TurnID, MessageID: res.MessageID}, nil
+	}
+	// One ordered submission (DD-011): the wait is pinned to the turn this send started — or
+	// the one its repeated client_msg_id names — before the next request is read.
+	wait.Pin(res.TurnID)
+	return deferred(func(ctx context.Context) (any, error) {
+		got, err := wait.Wait(ctx)
+		if err != nil {
+			return nil, err
+		}
+		state := string(got.State)
+		return sendResult{TurnID: res.TurnID, MessageID: res.MessageID, FinalState: &state}, nil
+	}), nil
 }
 
 type getThreadParams struct {
@@ -404,6 +442,8 @@ func agentsDomainError(err error) (int, string, bool) {
 		return codeBudgetExceeded, domainBudgetExceeded, true
 	case errors.Is(err, agentsdomain.ErrProviderUnavailable):
 		return codeProviderUnavailable, domainProviderUnavailable, true
+	case errors.Is(err, agentsdomain.ErrThreadBlocked):
+		return codeThreadBlocked, domainThreadBlocked, true
 	default:
 		return 0, "", false
 	}

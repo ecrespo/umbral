@@ -40,6 +40,8 @@ type Store interface {
 	SaveToolCall(ctx context.Context, call domain.ToolCall) error
 	// FinishTurn adds the turn's usage to the thread and sets its state.
 	FinishTurn(ctx context.Context, threadID string, state domain.State, usage domain.Usage, now int64) error
+	// TurnStatus reads the thread's state, attention state and latest turn in one query.
+	TurnStatus(ctx context.Context, threadID string) (Status, error)
 
 	// MessageByClientID finds the message a client id names in a thread.
 	MessageByClientID(ctx context.Context, threadID, clientMsgID string) (domain.Message, bool, error)
@@ -121,6 +123,18 @@ type SendParams struct {
 	Text        string
 	Attachments []AttachmentRef
 	ClientMsgID string
+	// RejectBlocked is set by a send that brings a wait: on a thread awaiting an approval
+	// it is ErrThreadBlocked rather than CONFLICT, and it is checked before a repeated
+	// client_msg_id is looked up (REQ-AUT-002).
+	RejectBlocked bool
+}
+
+// Status is one consistent reading of a thread for a wait: its state, its attention state
+// and its latest turn, "" when it never had one (DD-011).
+type Status struct {
+	State     domain.State
+	Attention string
+	TurnID    string
 }
 
 // SendResult is thread.send's answer.

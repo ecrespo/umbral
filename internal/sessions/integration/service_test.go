@@ -1,9 +1,11 @@
 package integration_test
 
 import (
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -397,5 +399,55 @@ func TestOperationsOnAnUnknownSession(t *testing.T) {
 	}
 	if _, err := h.Get(t.Context(), missing); err == nil {
 		t.Error("Get on an unknown session succeeded")
+	}
+}
+
+// TestScreenTextIsThePlainScreenWithItsSeq: block.wait_output's starting point (REQ-AUT-003)
+// is the screen without escape sequences, paired with the sequence number it is current as of.
+func TestScreenTextIsThePlainScreenWithItsSeq(t *testing.T) {
+	h := newHarness(t)
+	session := h.create(t, domain.CreateParams{ShellIntegration: false})
+	if err := h.Input(t.Context(), session.ID, []byte("printf '\\033[1mbold-%s\\033[0m\\n' $((6*7))\n"), domain.InputOwnerHuman); err != nil {
+		t.Fatal(err)
+	}
+	if !waitForScreen(t, h, session.ID, "bold-42") {
+		t.Fatal("the command never printed")
+	}
+	text, seq, _, err := h.ScreenText(t.Context(), session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "bold-42\n") || strings.Contains(text, "\x1b") || seq == 0 {
+		t.Fatalf("ScreenText = %q, seq %d", text, seq)
+	}
+	if _, _, _, err := h.ScreenText(t.Context(), "ses_nope"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("unknown session: %v", err)
+	}
+}
+
+// TestScreenTextReportsTheOpenLine: a prompt the shell printed without a newline is the open
+// line, trailing space kept; once a newline follows there is none.
+func TestScreenTextReportsTheOpenLine(t *testing.T) {
+	h := newHarness(t)
+	session := h.create(t, domain.CreateParams{ShellIntegration: false})
+	if err := h.Input(t.Context(), session.ID, []byte("for i in $(seq 1 60); do echo row-$i; done; printf 'Pass%s: ' word; read x\n"), domain.InputOwnerHuman); err != nil {
+		t.Fatal(err)
+	}
+	var open string
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if _, _, open, _ = h.ScreenText(t.Context(), session.ID); open == "Password: " {
+			break
+		}
+	}
+	if open != "Password: " {
+		t.Fatalf("open line %q, want %q", open, "Password: ")
+	}
+	if err := h.Input(t.Context(), session.ID, []byte("x\n"), domain.InputOwnerHuman); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	text, _, open, err := h.ScreenText(t.Context(), session.ID)
+	if err != nil || strings.Contains(open, "Password") {
+		t.Fatalf("after the answer: open %q, err %v, screen %q", open, err, text)
 	}
 }

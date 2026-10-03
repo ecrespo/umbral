@@ -48,6 +48,8 @@ components:
   # ports — the store, the SDK connector, the secrets, and the sink its tools go to.
   mcp-service: { in: internal/mcp }
 
+  waits-service: { in: internal/waits }
+
   # The tree's integration tests wire the real store to the service, which is the job
   # Art. 3 reserves for a composition root — the same exception sessions-integration has.
   workspaces-integration: { in: internal/workspaces/integration }
@@ -102,6 +104,9 @@ components:
   mcp-domain:   { in: internal/mcp/domain }
   mcp-ports:    { in: internal/mcp/ports }
   mcp-adapters: { in: internal/mcp/adapters/** }
+
+  waits-domain: { in: internal/waits/domain }
+  waits-ports:  { in: internal/waits/ports }
 deps:
   # --- domain: the standard library and other domains, nothing else -----------
   sessions-domain:
@@ -379,6 +384,8 @@ deps:
       - workspaces-domain
       - mcp-ports
       - mcp-domain
+      - waits-ports
+      - waits-domain
   client:
     anyVendorDeps: true
     mayDependOn:
@@ -475,6 +482,7 @@ deps:
       - llmgw-service
       - agents-service
       - mcp-service
+      - waits-service
       - shellscripts
       - sessions-ports
       - sessions-adapters
@@ -484,6 +492,7 @@ deps:
       - agents-adapters
       - mcp-ports
       - mcp-adapters
+      - waits-ports
       - tools-ports
       - tools-adapters
       - context-ports
@@ -555,4 +564,33 @@ deps:
       - workspaces-adapters
       - sessions-domain
       - store
+      - bus
+
+  # --- the wait engine (Tech Design §5.2, DD-011) -----------------------------
+  # `waits` -> ports of `agents` and `sessions`, plus `bus`; never `api`. It reads a
+  # thread's status and a pane's screen through its own ports, which `cmd` implements over
+  # the runtime and the terminal, and follows both through their published events. It has
+  # no adapters and no store of its own: a wait lives only as long as its call. The domain
+  # reuses the sessions domain's escape-sequence stripper, so a pane's output is read the
+  # way a block's is.
+  waits-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+
+  waits-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - waits-domain
+      - sessions-domain
+
+  waits-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - waits-ports
+      - waits-domain
+      - agents-ports
+      - agents-domain
+      - sessions-ports
+      - sessions-domain
       - bus

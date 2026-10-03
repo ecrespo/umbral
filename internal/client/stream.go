@@ -140,6 +140,7 @@ func (s *Stream) Call(ctx context.Context, method string, params, out any) error
 					DomainCode: resp.Error.Data.DomainCode,
 					Details:    resp.Error.Data.Details,
 					TraceID:    resp.Error.Data.TraceID,
+					LastState:  resp.Error.Data.LastState,
 				}
 			}
 			if out == nil || len(resp.Result) == 0 {

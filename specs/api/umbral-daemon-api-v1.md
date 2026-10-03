@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.25 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.26 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -75,6 +75,14 @@ close (REQ-SEC-018, §2):
 
 After the handshake, a notification to any other method keeps its JSON-RPC meaning and gets no
 reply.
+
+**Responses come in the order their answers are ready.** The daemon reads a connection's requests in
+order and does, in that order, everything a request must do before the next one is read. A wait —
+`thread.wait`, `block.wait_output`, `thread.send` with `wait` — then answers later, when it settles,
+and the daemon keeps reading and answering that connection's other requests meanwhile: the
+`approval.respond` that unblocks a wait may arrive on the same connection. A client matches a
+response to its request by `id`, as JSON-RPC 2.0 requires. Closing the connection ends its pending
+waits, and nothing is written for them.
 
 ## 2. Authentication and Authorization
 
@@ -215,7 +223,7 @@ absent one. The field is present on `INTERNAL_ERROR` only (Art. 7).
 | -32008 | `INPUT_LOCKED` | Input to a session locked by the agent |
 | -32009 | `CONFIG_INVALID` | Configuration rejected (e.g. plaintext secret) |
 | -32010 | `THREAD_BLOCKED` | `thread.send` with `wait` on a thread awaiting approval |
-| -32011 | `TIMEOUT` | A wait reached its deadline (includes the last observed state) |
+| -32011 | `TIMEOUT` | A wait reached its deadline. `data.last_state` is what it last observed: the pinned turn's state for a thread wait, the last line evaluated for `block.wait_output` (`""` when none was). Nothing was resent or retried (REQ-AUT-004) |
 | -32012 | `NOT_IMPLEMENTED` | A method this build knows by name but whose capability is switched off; see §9 |
 | -32013 | `CANCELLED` | The wait was cancelled with `wait.cancel` |
 | -32014 | `RESULT_TOO_LARGE` | The result would exceed this connection's frame limit (§1). `data.size_bytes` is the size it would have had and `data.limit_bytes` the limit, both numbers; the connection stays open (REQ-API-005) |
@@ -580,8 +588,13 @@ is not already a valid expression. A malformed query returns `VALIDATION_ERROR`.
 
 **Result:** `{turn_id, message_id, final_state?}`. The content arrives through notifications; `final_state` is only present when `wait` was requested.
 
-Until the wait engine (T-F1-23) is built, a `thread.send` carrying `wait` answers
-`NOT_IMPLEMENTED` and sends nothing. An attachment names a `ref` (a path relative to the thread's
+With `wait`, the wait is validated before anything is sent: an invalid `until` or `timeout_ms` is
+`VALIDATION_ERROR` and nothing is persisted. It is pinned to the turn this send started — or, for a
+repeated `client_msg_id`, to the turn that id names — before the next request on the connection is
+read, and `final_state` is what §5.29 would have answered. `THREAD_BLOCKED` is checked before a
+repeated `client_msg_id` is looked up, so a retry against a paused thread is refused too. A daemon
+built without the wait engine answers a send that carries `wait` with `NOT_IMPLEMENTED` and sends
+nothing. An attachment names a `ref` (a path relative to the thread's
 cwd, or a block id); inline `data_b64` arrives with `umb ai` (T-F1-19) and is refused until then.
 The message persisted, and `thread.get` returns, is the text with its attachments' content
 appended, which is what the model read (REQ-AGT-011).
@@ -713,9 +726,38 @@ changes (§5.38).
 
 ### 5.29 `thread.wait` — REQ-AUT-001, REQ-AUT-004
 **Params:** `{thread_id, until: string[], timeout_ms}`.
-**Result:** `{thread_id, turn_id, state, waited_ms}`.
+**Result:** `{thread_id, turn_id: string | null, state, waited_ms}`.
 
 The daemon pins the turn in progress when the wait starts: a later turn does not satisfy it. If the thread is already in one of the target states, it returns immediately. On expiry it returns `TIMEOUT` with `data.last_state`.
+
+- **What a wait observes** is the thread's `attention_state` (§4) — `idle`, `working`, `blocked`
+  or `done` — or `stopped` for a stopped thread. `until` holds one or more of `idle`, `done`,
+  `blocked` and `stopped`; `working` is observed and reported but is not a target. An empty or
+  unknown `until`, and a `timeout_ms` outside §8's 1 s to 1 h, are `VALIDATION_ERROR`.
+- **The pinned turn** is the thread's turn in progress or, when none is running, its latest one.
+  A thread that never had a turn pins none: `turn_id` is `null`, and the wait answers at once with
+  the thread's state, whatever `until` says.
+- **Once the pinned turn has ended**, the only change left without a new turn is a client
+  viewing it, `done` to `idle` (§7). When that cannot reach a target, the wait answers at once with
+  the state the turn ended in rather than running to its deadline: a turn cancelled into `stopped`
+  answers `stopped` although `stopped` is not a target, and a turn that ended `done` answers `done`
+  unless `idle` is a target. A later turn ends the wait the same way, with the pinned turn's last
+  state. This is a result, not an error: the client compares `state` with its `until`.
+- **A pinned turn already replaced** — a later turn is what the daemon reads, before it has seen
+  the pinned turn end — answers with the pinned turn's own end, from its end event or from the
+  daemon's memory of the turns that ended during its run. When neither tells, as for a turn
+  that ended before the daemon started or one whose end could not be written, it answers
+  `unknown`, and a timeout reached first reports `unknown` as its `data.last_state`. A later turn's state never answers
+  for the pinned one.
+- Nothing moves `done` to `idle` until a client views the thread (REQ-AGT-016, T-F1-24), so
+  until then a wait for `idle` alone after a turn ends runs to its deadline.
+- `blocked` is reported when the pinned turn asks for an approval, even if the approval is
+  answered before the daemon reads the thread again.
+- The answer comes when the wait settles; the connection keeps serving meanwhile (§1). A wait
+  sent as a JSON-RPC notification has nobody to answer and ends at once; a `thread.send` sent so
+  has still sent its message.
+- **Errors:** `NOT_FOUND` (an unknown thread), `VALIDATION_ERROR`, `TIMEOUT`. Interactive clients
+  only (§2). Advertised under `waits`.
 
 ### 5.30 `block.wait_output` — REQ-AUT-003
 **Params:** `{session_id | block_id, regex (RE2), lines?: 1-2000 (default 200), timeout_ms}` —
@@ -724,6 +766,30 @@ Matching includes output already on screen when the wait started.
 **Result:** `{block_id, matched_line, line_number}`.
 
 It evaluates the pane's recent output line by line, including what was already on screen when the call started. It does not interpret agent state.
+
+- **The window.** With `session_id`, the last `lines` lines of the pane's screen as plain text —
+  the screen as rendered, without the blank lines below the last one written — then the output
+  that follows, read through the same escape-sequence stripper as a block's `output_plain`.
+  Line numbers count from the first line of that window, from 1. When the daemon dropped output
+  on its way to the wait, it reads the screen again and numbering restarts from that new window.
+- **The line still being written** — a prompt waiting for input — is evaluated too, and can
+  match: `matched_line` is then the line as it stood, which may be the start of a longer one. A
+  line the wait finds half written — the cursor past its start, on the last row written — is
+  evaluated with its trailing blanks and continued by the output that follows rather than cut in
+  two. A cursor elsewhere, as a full-screen program leaves it, opens no line.
+- `lines` defaults to 200 only when absent; an explicit `0` is `VALIDATION_ERROR`.
+- Only a live session can be waited on: a session of an earlier daemon run is `NOT_FOUND`.
+- **With `block_id`:** a closed block's window is the last `lines` lines of its stored output,
+  and nothing follows it. A running block's window is its pane's, as with `session_id`, followed
+  while that block is open.
+- **`block_id` in the result** is the block named, or else the block that was running when the
+  line was read, or else the session's most recent block; `null` when the session has none.
+- A closed block, a session that exits or a block that ends without a match does not answer
+  early: the wait runs to its deadline. Nothing is resent or retried.
+- **Errors:** `NOT_FOUND` (an unknown session or block), `VALIDATION_ERROR` (an invalid RE2
+  expression, both or neither of the ids, `lines` or `timeout_ms` out of range), `TIMEOUT` with the
+  last line evaluated as `data.last_state`. Every client kind (§2's `block.*`). Advertised under
+  `waits`.
 
 ### 5.31 `pane.report_state` / `pane.release_state` — REQ-INT-002, REQ-INT-003, REQ-INT-005
 `report_state` params: `{pane_id, source, agent?, state:"idle"|"working"|"blocked"|"done", message?, seq?}`.
@@ -1043,3 +1109,4 @@ printf '%s\n' \
 | 1.23 | 2026-10-01 | Additive within `protocol_version = 1`. §5.21 `thread.cancel` written (T-F1-16, delta `2026-10-thread-cancel`): `{thread_id}` → `{stopped_at}`, returning once the turn has ended, the thread left `stopped`, and `null` when no turn was running |
 | 1.24 | 2026-10-01 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-thread-cancel`: in §7 only a cancel leads to `stopped`; every other end of a turn leads to `idle` (attention `done`), its `stop_reason` saying how it ended |
 | 1.25 | 2026-10-01 | Additive within `protocol_version = 1`. §5.27 written (T-F1-17, delta `2026-10-mcp-client`): `list` `{}` → `{items}`, `add` → the `McpServer` `connecting`, `remove` `{name}` → `{}`, and `CONFLICT`/`NOT_FOUND`; interactive clients only until T-F1-37 |
+| 1.26 | 2026-10-03 | Additive within `protocol_version = 1`. T-F1-23, delta `2026-10-wait-engine` (proposed): §1 says waits answer out of order and end with their connection; §3's `TIMEOUT` carries `data.last_state`; §5.20's `wait` is served — validated before sending, pinned to its own turn, `THREAD_BLOCKED` before a repeated `client_msg_id`; §5.29 and §5.30 say what a wait observes, what it pins, how an ended or replaced turn settles it (`unknown` when its end is no longer known), the output window, line numbers, the line being written and continued, `lines`, live sessions only and `block_id`; a wait sent as a notification ends at once |
