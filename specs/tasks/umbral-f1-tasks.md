@@ -257,6 +257,7 @@ default CI.
 ### [ ] T-F1-19 · `umb ai` with stdin
 - **What:** ephemeral thread in `ask` mode; stdin as an attachment (at most 1 MiB, truncation noted); streaming to stdout; non-zero exit code if the turn ends in error.
 - **REQ:** REQ-CLI-001
+- **Note (delta `2026-10-wait-engine`, decision 12):** `umb` gets no wait command of its own; `umb ai` is the CLI's consumer of `thread.send`'s `wait`, which §2's `cli` row allows.
 - **Files:** `cmd/umb/ai.go`
 - **Depends on:** T-F1-13
 - **Done:** `TestUmbAiPipesStdin_REQ_CLI_001` green.
@@ -298,7 +299,7 @@ default CI.
 - **Note (delta `2026-10-thread-cancel`, decision 7):** a pinned turn can end `stopped` (a
   cancel); §5.29 must say what a wait whose targets do not include `stopped` does then.
 - **REQ:** REQ-AUT-001, REQ-AUT-002, REQ-AUT-003, REQ-AUT-004
-- **Files:** `internal/agents/wait/**`, `internal/api/waits.go`, `cmd/umb/wait.go`
+- **Files:** `internal/waits/**`, `internal/api/waits.go`, `cmd/umbrald/waits.go` (delta `2026-10-wait-engine`, decisions 10 and 12)
 - **Depends on:** T-F1-13
 - **Done:** tests `TestWaitPinsTurn_REQ_AUT_001`, `TestSendWaitRejectsBlocked_REQ_AUT_002`, `TestWaitOutputMatchesLine_REQ_AUT_003` and `TestWaitTimeoutReportsLastState_REQ_AUT_004` green.
 

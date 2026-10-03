@@ -7,6 +7,7 @@
   written.
 - **REQ:** REQ-AUT-001, REQ-AUT-002, REQ-AUT-003, REQ-AUT-004
 
-### [ ] Ratification
-- The Tech Lead ratifies decisions 3, 7 and 8 (each has an alternative), folds the delta into API
-  §2, Tech §3/§4/§5.2 and the F1 tasks file, and moves it to `changes/_archive/`.
+### [x] 2026-10-03 Ratification
+- The Tech Lead ratifies decisions 3, 3a, 7 and 8 with their proposed options; the delta is folded
+  into API §2 (1.27), Tech DD-011 and §5.2 (1.34) and the F1 tasks file, and moved to
+  `changes/_archive/`.

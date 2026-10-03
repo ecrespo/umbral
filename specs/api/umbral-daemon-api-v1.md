@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.26 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.27 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -159,7 +159,9 @@ before the daemon starts.
   the list from its method table rather than declaring it statically, SHALL advertise a namespace
   when at least one of its methods is served by this build, and SHALL NOT advertise one whose
   methods are all unserved: a client that branches on the advertisement must not be sent down a path
-  that cannot work. `approval.*` belongs to the agent, so it is advertised under `threads`.
+  that cannot work. `approval.*` belongs to the agent, so it is advertised under `threads`. `thread.wait` and
+  `block.wait_output` are advertised under `waits`, which their prefixes would not give them: a
+  method may name its own namespace.
 - **Registered is not the same as served.** Every method of the protocol stays in the table whether
   or not this build has the module behind it, which is what lets an unserved one answer
   `NOT_IMPLEMENTED` instead of `METHOD_NOT_FOUND` (§9). So the list is derived from what the daemon
@@ -1110,3 +1112,4 @@ printf '%s\n' \
 | 1.24 | 2026-10-01 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-thread-cancel`: in §7 only a cancel leads to `stopped`; every other end of a turn leads to `idle` (attention `done`), its `stop_reason` saying how it ended |
 | 1.25 | 2026-10-01 | Additive within `protocol_version = 1`. §5.27 written (T-F1-17, delta `2026-10-mcp-client`): `list` `{}` → `{items}`, `add` → the `McpServer` `connecting`, `remove` `{name}` → `{}`, and `CONFLICT`/`NOT_FOUND`; interactive clients only until T-F1-37 |
 | 1.26 | 2026-10-03 | Additive within `protocol_version = 1`. T-F1-23, delta `2026-10-wait-engine` (proposed): §1 says waits answer out of order and end with their connection; §3's `TIMEOUT` carries `data.last_state`; §5.20's `wait` is served — validated before sending, pinned to its own turn, `THREAD_BLOCKED` before a repeated `client_msg_id`; §5.29 and §5.30 say what a wait observes, what it pins, how an ended or replaced turn settles it (`unknown` when its end is no longer known), the output window, line numbers, the line being written and continued, `lines`, live sessions only and `block_id`; a wait sent as a notification ends at once |
+| 1.27 | 2026-10-03 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-wait-engine` as written, decisions 3, 3a, 7 and 8 with their proposed options: §2 says `thread.wait` and `block.wait_output` are advertised under `waits` |

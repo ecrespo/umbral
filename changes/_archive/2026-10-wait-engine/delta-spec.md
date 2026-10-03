@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED` |
+| **Status** | `RATIFIED 2026-10-03 — approved by E. Crespo as written, with the proposed options of decisions 3, 3a (answer `unknown`), 7 and 8. Folded into API 1.27, Tech Design 1.34 and the F1 tasks file` |
 | **Date** | 2026-10-03 |
 | **Task** | T-F1-23 |
 | **Raised by** | T-F1-23: API §5.29 and §5.30 had a paragraph each; the decisions below are the ones the code had to take and no REQ states |
