@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED` |
+| **Status** | `RATIFIED 2026-10-04` — approved in advance by E. Crespo, to be reviewed afterwards; amended after a spec-guardian review. Folded into PRD 1.20, API 1.31, Tech Design 1.40 and the F1 tasks file |
 | **Date** | 2026-10-04 |
 | **Task** | none; asked for by the Tech Lead on 2026-10-04, after T-F1-22's delta, decision 12 |
 | **Raised by** | `router.max_cost_usd_per_thread` was parsed and converted to micro-USD (Tech §5.1), and nothing enforced it |

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.19 |
+| **Version** | 1.20 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-09-27 |
@@ -177,7 +177,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-AGT-005** · MUST · unwanted — IF the user denies an approval, THEN THE SYSTEM SHALL return a `denied_by_user` tool result to the model and continue the turn without running the tool.
 - **REQ-AGT-006** · MUST · unwanted — IF the arguments of a tool call do not validate against its schema, THEN THE SYSTEM SHALL retry once with a repair message and, if it fails again, end the turn with `stop_reason = tool_error`. An invalid call is one whose tool does not exist, whose input is not JSON, or whose input fails the schema; the retry is the model's next step, one per invalid call (delta `2026-10-tool-call-repair`).
 - **REQ-AGT-007** · MUST · event — WHEN the user invokes `thread.cancel`, THE SYSTEM SHALL stop the turn and terminate the processes it launched in under 500 ms.
-- **REQ-AGT-008** · MUST · unwanted — IF a turn reaches `max_steps` (50 by default) or the thread's token budget, THEN THE SYSTEM SHALL stop it with `stop_reason = max_steps` or `budget`.
+- **REQ-AGT-008** · MUST · unwanted — IF a turn reaches `max_steps` (50 by default), the thread's token budget, or the thread's cost cap `router.max_cost_usd_per_thread` where one is set, THEN THE SYSTEM SHALL stop it with `stop_reason = max_steps` or `budget`. The cost cap is checked before every priced call against what the thread has spent, earlier turns included, so a thread overshoots it by one call at most; a `thread.send` to a thread that has reached it answers `BUDGET_EXCEEDED` (delta `2026-10-cost-cap`).
 - **REQ-AGT-009** · MUST · state — WHILE a thread is in `ask` mode, THE SYSTEM SHALL expose only `ReadOnly` tools to the model.
 - **REQ-AGT-010** · MUST · event — WHEN the user changes a thread's model, THE SYSTEM SHALL use the new model from the next turn on, keeping the full history.
 - **REQ-AGT-011** · MUST · ubiquitous — THE SYSTEM SHALL persist every message, tool call, result and approval decision of a thread before sending it to the client, and SHALL stop the turn with `stop_reason = storage_error` when a write fails, without running or announcing what it could not record.
@@ -494,6 +494,7 @@ TUI as text:
 | 1.17 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-mcp-client` (T-F1-17): REQ-MCP-003 states the backoff and what resets it |
 | 1.18 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-us003-e2e` (T-F1-21): §4.1 says how "the rate of invalid tool calls after repair" is counted — the calls the one repair did not fix, over every tool call, per model |
 | 1.19 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-retention` (T-F1-22): REQ-TERM-005 names its one retention exception, an ephemeral thread's agent blocks |
+| 1.20 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cost-cap`: REQ-AGT-008 stops a turn at the thread's cost cap too, checked before every priced call, and `thread.send` answers `BUDGET_EXCEEDED` past it |
 
 ## Approvals
 
