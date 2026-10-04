@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.37 |
+| **Version** | 1.38 |
 | **Date** | 2026-10-03 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -173,7 +173,10 @@ sequenceDiagram
    (REQ-AGT-006). A step of only valid calls spends the retry. In the step that fails again, the
    calls before the invalid one keep their results and the ones after it are neither run nor
    recorded. A daemon-side fault (`ErrInvalidEnv`) is a plain tool `error`: no repair, no count
-   (delta `2026-10-tool-call-repair`).
+   (delta `2026-10-tool-call-repair`). The repair message carries the schema validator's own
+   English text for each failing location — `list_dir: /: additional properties 'depth' not
+   allowed` — never the error kind's Go value, which told the model nothing it could act on
+   (delta `2026-10-us003-e2e`).
 3. `thread.cancel` → the turn's `context.Context` is cancelled and the process groups the thread
    PTY's shell launched get `SIGTERM`; after 300 ms, `SIGKILL` (REQ-AGT-007). `thread.cancel`
    answers once the turn has recorded its end, leaving the thread `stopped` (delta
@@ -1027,7 +1030,7 @@ One root span `agent.turn` per turn, with children `llm.call` and `tool.<name>` 
 | Integration | critical flows | real PTY with bash/zsh/fish in CI; temporary SQLite | blocks, snapshots, cancellation |
 | API contract | every method | test JSON-RPC client | errors and notifications from the API Spec |
 | Providers | adapters | fake OpenAI-compat and Ollama servers; optionally real Ollama with `-tags live` | streaming, 429/5xx, timeouts |
-| E2E | US-003 | fixture repo with a broken test + `ollama/gpt-oss:20b` (`-tags live`) | 70 % target over 20 runs |
+| E2E | US-003 | `e2e/us003/fixture` + `ollama/gpt-oss:20b`, driven by `e2e/us003/run.sh` (`cmd/umbrald/us003_live_test.go`, `-tags live`) | 70 % target over 20 runs; see below |
 | Waits and automation | AUT-* | scripted fake provider + fake PTY | pinning, race between send and wait, timeouts |
 | Integrations | INT-* | test process that reports over the socket | authority, stale `seq`, release, metadata limits |
 | Rules and signing | SEC-011/013/014/015/016 | test bundles with valid, invalid and unknown-key signatures | verification, downgrade, fail closed, offline recovery |
@@ -1037,6 +1040,26 @@ One root span `agent.turn` per turn, with children `llm.call` and `tool.<name>` 
 | Performance | NFRs | `go test -bench`, 100,000-block fixture | TERM-006, BLK-006, TERM-001 |
 
 Convention: every test that verifies a REQ cites it, e.g. `TestBlockClosedOnOSC133D_REQ_BLK_002`.
+
+**The live US-003 run** (T-F1-21, delta `2026-10-us003-e2e`). Each of `UMBRAL_US003_RUNS` runs
+(20 by default) copies the fixture — a module of its own, outside `./...` and excluded from
+`go-arch-lint` — commits it under git, types `go test ./...` in a new pane, and sends `fix it`
+with the failing block attached to an `auto-edit` thread in the copy.
+
+- **Approvals:** `run_command` is approved `once` only for a plain `go test` — one command, no
+  quote or shell metacharacter, package patterns inside the repository, and only `-v`,
+  `-race`, `-short`, `-failfast`, `-run`, `-count` and `-timeout`. Anything else asked about is
+  denied. A turn gets 10 minutes and is then cancelled.
+- **Success:** `go test -count=1 ./...` passes outside the daemon, the test file is
+  byte-identical, and git reports no path changed but the fixed file.
+- **Offline, shown:** `[router] offline = true` with a remote candidate listed first in every
+  class, `GOTOOLCHAIN=local` and `GOPROXY=off` in the daemon's environment, and after the run
+  zero rows in `egress_log` and zero `usage` rows for the remote provider. The daemon has its
+  own XDG directories and `HOME`; the Go build and module caches are the developer's.
+- **The report** (`docs/reports/us003-<date>.md`): runs green, the egress and remote counts,
+  invalid calls before and after repair (PRD §4.1), repairs that failed, latency p50/p90/max,
+  tokens, and per run its stop reason, calls, deltas, tools, approvals and denials, every
+  invalid call with its repair message and every failed `usage` row.
 
 ### 8.1 Appendix: VT conformance cases (finding A-02)
 
@@ -1286,3 +1309,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.35 | 2026-10-03 | E. Crespo (assisted draft) | Ratifies delta `2026-10-agent-panel`, amended after review (T-F1-20): §5.3e records the agent panel's keys, its approvals of every thread and how they are answered and dropped, the thread's directory, what is sent and how model text is drawn; §3.2's `tui` row names the panel |
 | 1.36 | 2026-10-03 | E. Crespo (assisted draft) | Ratifies delta `2026-10-otel` (T-F1-18): §5.1 adds `[otel] endpoint`, local only; §7.1 says which lines carry a trace id; §7.2 adds the four REQ-OBS-004 metrics, the labels, and what "exposed" means; §7.3 says who makes each span, what it carries and how it is exported |
 | 1.37 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-umb-ai` (T-F1-19): §5.3c builds the `stdin` attachment inline and says what a client's truncation tells the model; §9.4 adds `umb ai` — stdin, the frame-limit fit, the thread, the wait's targets, streaming and exit codes — and `--json` is not among its flags |
+| 1.38 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-us003-e2e` (T-F1-21): §3.3 item 2 says the repair message carries the validator's text; §8 describes the live US-003 run — approvals, success, offline evidence and the report |

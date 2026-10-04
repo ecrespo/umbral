@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED` |
+| **Status** | `RATIFIED 2026-10-04` — approved in advance by E. Crespo, to be reviewed afterwards; amended after a spec-guardian review. Folded into PRD 1.18, Tech Design 1.38, Plan 1.11 and the F1 tasks file |
 | **Date** | 2026-10-04 |
 | **Task** | T-F1-21 |
 | **Raised by** | T-F1-21: PRD §4.1's goals and US-003, REQ-AGT-006, which leave these points open |
