@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.39 |
+| **Version** | 1.40 |
 | **Date** | 2026-10-03 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -570,7 +570,7 @@ reference. The shape is the reference architecture's (`docs/ARCHITECTURE.md` §7
 [router]
 policy = "local-first"          # local-first | cost | quality
 offline = false                 # REQ-LLM-004: local providers only
-max_cost_usd_per_thread = 1.5   # converted to micro-USD at load (Art. 6)
+max_cost_usd_per_thread = 1.5   # micro-USD at load (Art. 6); a thread stops at it (REQ-AGT-008); absent or 0 = no cap
 
 [classes]                       # fast | code | plan | embed: candidates in order
 code = ["ollama/gpt-oss:20b", "openrouter/moonshotai/kimi-k2"]
@@ -633,8 +633,14 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
   them beside Ollama and OpenRouter, commented, and a test loads it as shipped.
 - **`config.reload` validates both files before applying anything**, and an entry it would
   refuse refuses the reload, with one `details` entry per entry, or one naming the file that
-  does not parse. It applies the providers and `allow_env`; the other keys of
-  `config.toml` still need a restart, as above.
+  does not parse. It applies the providers, the `[router]` table and `allow_env`; the other keys
+  of `config.toml` still need a restart, as above.
+- **The cost cap** (delta `2026-10-cost-cap`). The agent runtime reads
+  `max_cost_usd_per_thread` live (`agents.Config.MaxCostMicroUSD`). `Store.BeginTurn` refuses a
+  send to a thread whose `cost_micro_usd` has reached it, in the same transaction as the token
+  budget. A turn checks the thread's spend plus its own before every priced call — each step,
+  and between a step's compaction and its main call — and stops with `budget`. A positive cap
+  that rounds to 0 micro-USD is a malformed file.
 
 ### 5.2 Dependency rules (Art. 3, verified by `go-arch-lint`)
 
@@ -1316,3 +1322,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.37 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-umb-ai` (T-F1-19): §5.3c builds the `stdin` attachment inline and says what a client's truncation tells the model; §9.4 adds `umb ai` — stdin, the frame-limit fit, the thread, the wait's targets, streaming and exit codes — and `--json` is not among its flags |
 | 1.38 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-us003-e2e` (T-F1-21): §3.3 item 2 says the repair message carries the validator's text; §8 describes the live US-003 run — approvals, success, offline evidence and the report |
 | 1.39 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-retention` (T-F1-22): §5.1 adds `[retention]` and its four keys |
+| 1.40 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cost-cap`: §5.1 says what enforces `max_cost_usd_per_thread`, and that a reload applies the `[router]` table |

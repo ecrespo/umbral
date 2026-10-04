@@ -6,6 +6,6 @@
   `examples/models.toml` say what the key does.
 - **REQ:** REQ-AGT-008
 
-### [ ] Ratification
+### [x] 2026-10-04 Ratification
 - The Tech Lead ratifies decisions 1–6. The delta is folded into the PRD, the API, the Tech
   Design and the F1 tasks file, then moved to `changes/_archive/`.

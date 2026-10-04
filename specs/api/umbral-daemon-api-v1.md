@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.30 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.31 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -620,7 +620,9 @@ appended, which is what the model read (REQ-AGT-011).
 - `CONFLICT`: a turn is already running (not raised for a duplicate `client_msg_id`).
 - `THREAD_BLOCKED`: with `wait`, the thread is already awaiting approval; nothing is persisted or sent.
 - `TIMEOUT`: the wait expired; the message was already sent, so do not resend it blindly.
-- `BUDGET_EXCEEDED`.
+- `BUDGET_EXCEEDED`: the thread has spent its token budget, or reached the cost cap
+  `router.max_cost_usd_per_thread` where one is set (REQ-AGT-008); nothing is persisted. Both are
+  checked with the conflict check, after `PROVIDER_UNAVAILABLE`.
 - `PROVIDER_UNAVAILABLE`: none of the thread's candidates — its model, or its class's — is known
   to the catalog and not down; nothing is persisted. A candidate that fails once the turn runs
   ends it with `stop_reason = provider_error` instead.
@@ -742,7 +744,8 @@ Errors: `VALIDATION_ERROR`, `CONFIG_INVALID`, `CONFLICT` (a name already taken, 
 anything**, probes the keyring again and resolves every credential afresh. A malformed file, or
 any provider entry it would refuse, is `CONFIG_INVALID` with one `details` entry per problem — `providers.<id>.<field>` for an
 entry, the file's name for a file that does not parse — and
-the daemon keeps the configuration it had. It applies the providers and `[secrets] allow_env`;
+the daemon keeps the configuration it had. It applies the providers, `models.toml`'s `[router]`
+table — the cost cap among it, from the next model call — and `[secrets] allow_env`;
 every other key still needs a restart, except the live `api.max_message_bytes`, which `limits.set`
 changes (§5.38).
 
@@ -1137,3 +1140,4 @@ printf '%s\n' \
 | 1.28 | 2026-10-03 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-otel` (T-F1-18): §5.28's `settings` gains `otel_endpoint?`; §1 says an `INTERNAL_ERROR` carries the `connection_id` when the failing work ran outside a turn, which today is every case |
 | 1.29 | 2026-10-04 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-umb-ai` (T-F1-19): §5.20 serves the inline `stdin` attachment — `data_b64`, `truncated?`, one per message, 1 MiB — and its `VALIDATION_ERROR` reasons; §4's Message records it as `ref: "stdin"`; §8 lists the limit |
 | 1.30 | 2026-10-04 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-retention` (T-F1-22): §4's Block says what retention leaves of a purged output — an empty `output_raw_b64`/`output_plain` with `output_bytes` kept |
+| 1.31 | 2026-10-04 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-cost-cap`: §5.20's `BUDGET_EXCEEDED` covers the cost cap too; §5.28's reload applies `models.toml`'s `[router]` table |
