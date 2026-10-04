@@ -140,3 +140,71 @@ func (m *Model) resizeSessionCmd(sessionID string, size sessdomain.Size) tea.Cmd
 		return nil
 	}
 }
+
+// createThreadCmd starts the panel's thread in the focused pane's directory.
+func (m *Model) createThreadCmd(cwd string) tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		id, err := daemon.CreateThread(ctx, cwd)
+		if err != nil {
+			return threadFailedMsg{err: err}
+		}
+		return threadCreatedMsg{threadID: id}
+	}
+}
+
+// sendCmd sends a message to the panel's thread.
+func (m *Model) sendCmd(threadID string, out outgoing) tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		_, err := daemon.Send(ctx, threadID, out.text, out.attachments)
+		return sentMsg{err: err}
+	}
+}
+
+// respondCmd answers an approval.
+func (m *Model) respondCmd(apr ports.Approval, decision, scope string) tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		if err := daemon.Respond(ctx, apr.ID, decision, scope); err != nil {
+			return respondFailedMsg{approval: apr, err: err}
+		}
+		return nil
+	}
+}
+
+// cancelCmd stops a thread's running turn.
+func (m *Model) cancelCmd(threadID string) tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		stopped, err := daemon.Cancel(ctx, threadID)
+		if err != nil {
+			return errorMsg{err: err}
+		}
+		return cancelledMsg{threadID: threadID, stopped: stopped}
+	}
+}
+
+// loadApprovalsCmd lists the approvals already pending when the TUI starts.
+func (m *Model) loadApprovalsCmd() tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		list, err := daemon.Approvals(ctx)
+		return approvalsLoadedMsg{approvals: list, err: err}
+	}
+}

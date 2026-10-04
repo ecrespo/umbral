@@ -140,8 +140,9 @@ wait:
 }
 
 // agentDaemon starts a daemon whose only model is the scripted Ollama at url, connects a
-// streaming TUI client, and waits for the model to be discovered.
-func agentDaemon(t *testing.T, url string) (*client.Stream, context.Context) {
+// streaming TUI client, and waits for the model to be discovered. extraEnv reaches the
+// daemon's process only.
+func agentDaemon(t *testing.T, url string, extraEnv ...string) (*client.Stream, context.Context) {
 	t.Helper()
 	bin := buildDaemon(t)
 	rt, daemonDir := isolatedRuntime(t)
@@ -159,7 +160,7 @@ id = "ollama"
 type = "ollama"
 base_url = %q
 `, url))
-	startDaemon(t, bin, rt)
+	startDaemon(t, bin, rt, extraEnv...)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	t.Cleanup(cancel)
