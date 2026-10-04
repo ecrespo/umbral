@@ -18,6 +18,8 @@ import (
 	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"golang.org/x/text/language"
+	xmessage "golang.org/x/text/message"
 
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 	"github.com/ecrespo/umbral/internal/tools/domain"
@@ -154,6 +156,9 @@ func (r *Registry) checked(call domain.Call) (entry, error) {
 	return e, nil
 }
 
+// english prints the validator's messages for the repair message the model reads.
+var english = xmessage.NewPrinter(language.English)
+
 // message is a schema failure as one line the model can act on.
 func message(err error) string {
 	var verr *jsonschema.ValidationError
@@ -165,7 +170,9 @@ func message(err error) string {
 	walk = func(e *jsonschema.ValidationError) {
 		if len(e.Causes) == 0 {
 			where := "/" + strings.Join(e.InstanceLocation, "/")
-			leaves = append(leaves, fmt.Sprintf("%s: %s", where, e.ErrorKind))
+			// The kind's own String is a Go value (`&{[depth]}`), which tells the model nothing it
+			// can repair; its localized text names the property and the rule (T-F1-21).
+			leaves = append(leaves, fmt.Sprintf("%s: %s", where, e.ErrorKind.LocalizedString(english)))
 			return
 		}
 		for _, c := range e.Causes {
