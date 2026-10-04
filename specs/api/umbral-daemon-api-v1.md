@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.27 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.28 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -201,9 +201,11 @@ before the daemon starts.
           "trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"}}}
 ```
 
-`trace_id` carries the OpenTelemetry trace id of the turn that produced the error. Until tracing
-exists (T-F1-18) THE SYSTEM SHALL put the `connection_id` there instead, and SHALL leave the field
-empty when the error precedes the handshake and there is no connection id yet. THE SYSTEM SHALL NOT
+`trace_id` carries the OpenTelemetry trace id of the turn that produced the error. When the failing
+work ran outside a turn THE SYSTEM SHALL put the `connection_id` there instead, and SHALL leave the
+field empty when the error precedes the handshake and there is no connection id yet. Requests are
+not traced, only turns are (Tech §7.3), and a turn's failure is a stop reason rather than an error
+response, so today every `INTERNAL_ERROR` carries the `connection_id`. THE SYSTEM SHALL NOT
 mint an identifier that correlates to nothing: an id appearing in no other log line is worse than an
 absent one. The field is present on `INTERNAL_ERROR` only (Art. 7).
 
@@ -707,7 +709,10 @@ Errors: `VALIDATION_ERROR`, `CONFIG_INVALID`, `CONFLICT` (a name already taken, 
 `get` params: `{}`. `reload` params: `{}`. Interactive clients only (§2). Both return
 `{settings, providers, rejected}`:
 
-- `settings`: `{pane_history, max_message_bytes, allow_env}`, as `config.toml` sets them.
+- `settings`: `{pane_history, max_message_bytes, allow_env, otel_endpoint?}`, as `config.toml`
+  sets them. `otel_endpoint` is the collector traces and metrics are exported to, absent when
+  nothing is exported. It is the one the daemon started with: the key needs a restart, so a
+  reload never changes it.
 - `providers`: one per entry of `models.toml` (Tech Design §5.1), `{id, type, base_url?,
   credential?, health, reason?}`. `credential` is the reference the file writes —
   `keyring:<path>` or `env:<VAR>` — and never a value. `health` is `unknown`, `degraded` or
@@ -1113,3 +1118,4 @@ printf '%s\n' \
 | 1.25 | 2026-10-01 | Additive within `protocol_version = 1`. §5.27 written (T-F1-17, delta `2026-10-mcp-client`): `list` `{}` → `{items}`, `add` → the `McpServer` `connecting`, `remove` `{name}` → `{}`, and `CONFLICT`/`NOT_FOUND`; interactive clients only until T-F1-37 |
 | 1.26 | 2026-10-03 | Additive within `protocol_version = 1`. T-F1-23, delta `2026-10-wait-engine` (proposed): §1 says waits answer out of order and end with their connection; §3's `TIMEOUT` carries `data.last_state`; §5.20's `wait` is served — validated before sending, pinned to its own turn, `THREAD_BLOCKED` before a repeated `client_msg_id`; §5.29 and §5.30 say what a wait observes, what it pins, how an ended or replaced turn settles it (`unknown` when its end is no longer known), the output window, line numbers, the line being written and continued, `lines`, live sessions only and `block_id`; a wait sent as a notification ends at once |
 | 1.27 | 2026-10-03 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-wait-engine` as written, decisions 3, 3a, 7 and 8 with their proposed options: §2 says `thread.wait` and `block.wait_output` are advertised under `waits` |
+| 1.28 | 2026-10-03 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-otel` (T-F1-18): §5.28's `settings` gains `otel_endpoint?`; §1 says an `INTERNAL_ERROR` carries the `connection_id` when the failing work ran outside a turn, which today is every case |
