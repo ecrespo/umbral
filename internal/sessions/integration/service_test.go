@@ -413,9 +413,20 @@ func TestScreenTextIsThePlainScreenWithItsSeq(t *testing.T) {
 	if !waitForScreen(t, h, session.ID, "bold-42") {
 		t.Fatal("the command never printed")
 	}
-	text, seq, _, err := h.ScreenText(t.Context(), session.ID)
-	if err != nil {
-		t.Fatal(err)
+	// The snapshot can show `bold-42` before the shell has moved past it; the line is only
+	// complete, and followed by "\n" in the screen's text, once the next one has started.
+	var (
+		text string
+		seq  uint64
+		err  error
+	)
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if text, seq, _, err = h.ScreenText(t.Context(), session.ID); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(text, "bold-42\n") {
+			break
+		}
 	}
 	if !strings.Contains(text, "bold-42\n") || strings.Contains(text, "\x1b") || seq == 0 {
 		t.Fatalf("ScreenText = %q, seq %d", text, seq)
