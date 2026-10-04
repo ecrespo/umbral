@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.28 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.29 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -352,6 +352,7 @@ method and the ordering that produced it, so one handed to a different method is
 ```
 - `role`: `user` | `assistant` | `tool` | `system_note`
 - `attachments[].kind`: `file` | `dir` | `block` | `stdin`
+- `attachments[].ref`: the path or block id the message named; `stdin` for a `stdin` attachment, whose data arrived inline (§5.20)
 
 ### ToolCall
 ```json
@@ -599,7 +600,14 @@ read, and `final_state` is what §5.29 would have answered. `THREAD_BLOCKED` is 
 repeated `client_msg_id` is looked up, so a retry against a paused thread is refused too. A daemon
 built without the wait engine answers a send that carries `wait` with `NOT_IMPLEMENTED` and sends
 nothing. An attachment names a `ref` (a path relative to the thread's
-cwd, or a block id); inline `data_b64` arrives with `umb ai` (T-F1-19) and is refused until then.
+cwd, or a block id), except `stdin`, which carries its data inline (REQ-CLI-001, delta
+`2026-10-umb-ai`): `{kind: "stdin", data_b64, truncated?: false}`. Only `stdin` carries
+`data_b64`, and it carries no `ref`; every other kind carries a `ref` and neither `data_b64` nor
+`truncated`. A message has at most one `stdin` attachment, of at most 1 MiB once decoded
+(§8); an empty `data_b64` is accepted. `truncated: true` says the client stopped reading
+stdin before its end, and the context tells the model the rest was never read. The data then
+goes through the 256 KiB cap of every attachment (REQ-CTX-005), and is recorded with
+`ref: "stdin"`. Any client kind that may call `thread.send` may send it.
 The message persisted, and `thread.get` returns, is the text with its attachments' content
 appended, which is what the model read (REQ-AGT-011).
 
@@ -611,7 +619,9 @@ appended, which is what the model read (REQ-AGT-011).
 - `PROVIDER_UNAVAILABLE`: none of the thread's candidates — its model, or its class's — is known
   to the catalog and not down; nothing is persisted. A candidate that fails once the turn runs
   ends it with `stop_reason = provider_error` instead.
-- `VALIDATION_ERROR`: unknown attachment, or `client_msg_id` that is not a ULID.
+- `VALIDATION_ERROR`: unknown attachment, `client_msg_id` that is not a ULID, `data_b64` or
+  `truncated` on a kind other than `stdin`, a `ref` on `stdin`, a second `stdin`, `stdin` data
+  over 1 MiB, or `data_b64` that is not base64.
 
 ### 5.21 `thread.cancel` — REQ-AGT-007 → `{stopped_at}`
 **Params:** `{thread_id}`.
@@ -1032,6 +1042,7 @@ stateDiagram-v2
 |---|---|
 | JSON message | 4 MiB including the `\n`; past it, `VALIDATION_ERROR` (before the handshake `UNAUTHORIZED`) and the connection is closed (§1) |
 | `session.input` | 64 KiB per message |
+| `stdin` attachment (§5.20) | 1 MiB once decoded, one per message |
 | Concurrent connections | 32 |
 | Handshake deadline | 5 s from accept; past it, `UNAUTHORIZED` with `id: null` and a close (§2 step 3a) |
 | Frame limit after the handshake | `[api] max_message_bytes`: 1 MiB to 64 MiB, 4 MiB by default, fixed per connection at `system.hello` and announced there; outbound frames over it become `RESULT_TOO_LARGE` or `limits.notification_dropped` (§1) |
@@ -1119,3 +1130,4 @@ printf '%s\n' \
 | 1.26 | 2026-10-03 | Additive within `protocol_version = 1`. T-F1-23, delta `2026-10-wait-engine` (proposed): §1 says waits answer out of order and end with their connection; §3's `TIMEOUT` carries `data.last_state`; §5.20's `wait` is served — validated before sending, pinned to its own turn, `THREAD_BLOCKED` before a repeated `client_msg_id`; §5.29 and §5.30 say what a wait observes, what it pins, how an ended or replaced turn settles it (`unknown` when its end is no longer known), the output window, line numbers, the line being written and continued, `lines`, live sessions only and `block_id`; a wait sent as a notification ends at once |
 | 1.27 | 2026-10-03 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-wait-engine` as written, decisions 3, 3a, 7 and 8 with their proposed options: §2 says `thread.wait` and `block.wait_output` are advertised under `waits` |
 | 1.28 | 2026-10-03 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-otel` (T-F1-18): §5.28's `settings` gains `otel_endpoint?`; §1 says an `INTERNAL_ERROR` carries the `connection_id` when the failing work ran outside a turn, which today is every case |
+| 1.29 | 2026-10-04 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-umb-ai` (T-F1-19): §5.20 serves the inline `stdin` attachment — `data_b64`, `truncated?`, one per message, 1 MiB — and its `VALIDATION_ERROR` reasons; §4's Message records it as `ref: "stdin"`; §8 lists the limit |

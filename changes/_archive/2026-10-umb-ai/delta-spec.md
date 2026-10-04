@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED` |
+| **Status** | `RATIFIED 2026-10-04` — approved in advance by E. Crespo as written (decisions 1–9 and 3a), to be reviewed afterwards. Folded into API 1.29, Tech Design 1.37 and the F1 tasks file |
 | **Date** | 2026-10-04 |
 | **Task** | T-F1-19 |
 | **Raised by** | T-F1-19: REQ-CLI-001, API §5.20 and Tech §5.3c, which leave these points open |

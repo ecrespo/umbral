@@ -6,6 +6,6 @@
   `Runtime.attach` and `context/domain.NewStdinAttachment`.
 - **REQ:** REQ-CLI-001
 
-### [ ] Ratification
+### [x] 2026-10-04 Ratification
 - The Tech Lead ratifies decisions 1–9 and 3a. The delta is folded into the API, the Tech Design and
   the F1 tasks file, then moved to `changes/_archive/`.

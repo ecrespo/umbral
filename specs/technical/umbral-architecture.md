@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.36 |
+| **Version** | 1.37 |
 | **Date** | 2026-10-03 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -786,8 +786,12 @@ runtime (T-F1-13).
   plain text. Each keeps at most 256 KiB, cut on a UTF-8 boundary, and says how many bytes it
   left out, counted against the file's size, not what was read. Content with a NUL byte is
   binary: none of it is included, and the context says so. An attachment that names nothing of
-  its kind is `domain.ErrUnknownAttachment`, which `thread.send` answers with `VALIDATION_ERROR`;
-  `stdin` arrives with `umb ai` (T-F1-19).
+  its kind is `domain.ErrUnknownAttachment`, which `thread.send` answers with `VALIDATION_ERROR`.
+  A `stdin` attachment (REQ-CLI-001, delta `2026-10-umb-ai`) arrives inline with the request,
+  so the runtime builds it without the gatherer (`domain.NewStdinAttachment`); it takes the same
+  256 KiB cap, is recorded with `ref: "stdin"`, and when the client stopped reading before the
+  end the context says `[the client stopped reading stdin after <n> bytes; the rest was never
+  read]` — bytes past the client's limit were never counted, so no omitted count is given.
 - **Git** (REQ-CTX-003): the repository root, the branch (or `(detached at <sha>)`),
   `git status --short` and `git diff --stat`, run at the repository root, 5 s each, each section
   capped at 32 KiB. **No command the repository's configuration names runs**: in `auto-edit` the
@@ -1081,10 +1085,36 @@ enforces both rules, with `mustCases` pinned to the 20 MUST rows above.
 
 ### 9.4 The `umb` surface
 
-Commands: `umb status`, `umb block last`, `umb api schema`, `umb limits`, `umb version`,
+Commands: `umb status`, `umb block last`, `umb ai`, `umb api schema`, `umb limits`, `umb version`,
 `umb help`, and the workspace tree below. Flags shared by every command: `--socket PATH` (default: the runtime
 directory of API Spec §2), `--daemon-path PATH` (default: `PATH`, then the directory holding
-`umb`), `--no-autostart`, and `--json`.
+`umb`), `--no-autostart`, and `--json`, which every command but `umb ai` takes.
+
+**`umb ai`** (REQ-CLI-001; delta `2026-10-umb-ai`). `umb ai PROMPT… [--model M] [--timeout D]`;
+positionals are joined with spaces and may come before or after the flags, and an empty prompt
+is exit 1 before anything is read or sent. There is no `--json`: the output is the answer.
+
+- **stdin.** A terminal is never read; an empty pipe attaches nothing. Otherwise stdin is read to
+  its end, or to 1 MiB and one byte, before anything is sent — a pipe that never closes is waited
+  on, as by any filter, and `--timeout` bounds the turn, not the input. Past 1 MiB the first
+  1 MiB is sent with `truncated: true` and stderr says so. What is sent also fits the frame limit
+  `system.hello` announced: the request is measured without the data, the largest prefix whose
+  base64 fits (64 bytes kept for the id) is sent, marked `truncated`, and stderr says why with
+  the next limit to set, as for `RESULT_TOO_LARGE` below.
+- **The thread.** `thread.create {mode: "ask", cwd: <the shell's directory>, ephemeral: true,
+  title: "umb ai", model?}`: read-only tools only (§5.3). Never reused; Data Model §4 purges it.
+- **The send.** A ULID `client_msg_id` and `wait: {until: ["done", "stopped", "blocked"],
+  timeout_ms}`; `--timeout` is 10 min by default, 1 s to 1 h. `idle` is not a target: a turn
+  nobody views ends `done`, and a wait for `idle` would run to its deadline (API Spec §5.29).
+- **Streaming.** Every `thread.delta` of its thread whose `kind` is `text` is printed as it
+  arrives; reasoning and other threads' deltas are not. One goroutine drains the stream and holds
+  this thread's events, unbounded, for the printer, so a slow stdout never fills the client's
+  bounded buffer. The output ends with a newline.
+- **Exit codes** (REQ-CLI-004): 0 only for `thread.turn_finished` with `end_turn`; 1 naming any
+  other `stop_reason`; 1 after cancelling the turn when the wait answers `blocked` (`umb` cannot
+  answer an approval), on `TIMEOUT`, and on Ctrl-C (the cancel with its own 3 s deadline); 1 when
+  the wait answered but no `thread.turn_finished` arrived within 5 s; 1 for a daemon error; 69
+  when the daemon is unavailable.
 
 **The frame limit** (REQ-OBS-005, REQ-CLI-007; delta `2026-09-frame-limit-monitoring`).
 
@@ -1255,3 +1285,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.34 | 2026-10-03 | E. Crespo (assisted draft) | Ratifies delta `2026-10-wait-engine` (T-F1-23): DD-011 says how waits hold — subscribe before pinning, out-of-order answers, the store backstop, a replaced turn answering with its own end or `unknown`; §5.2's `waits` row names the domains it uses |
 | 1.35 | 2026-10-03 | E. Crespo (assisted draft) | Ratifies delta `2026-10-agent-panel`, amended after review (T-F1-20): §5.3e records the agent panel's keys, its approvals of every thread and how they are answered and dropped, the thread's directory, what is sent and how model text is drawn; §3.2's `tui` row names the panel |
 | 1.36 | 2026-10-03 | E. Crespo (assisted draft) | Ratifies delta `2026-10-otel` (T-F1-18): §5.1 adds `[otel] endpoint`, local only; §7.1 says which lines carry a trace id; §7.2 adds the four REQ-OBS-004 metrics, the labels, and what "exposed" means; §7.3 says who makes each span, what it carries and how it is exported |
+| 1.37 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-umb-ai` (T-F1-19): §5.3c builds the `stdin` attachment inline and says what a client's truncation tells the model; §9.4 adds `umb ai` — stdin, the frame-limit fit, the thread, the wait's targets, streaming and exit codes — and `--json` is not among its flags |
