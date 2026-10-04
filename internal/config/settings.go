@@ -36,7 +36,29 @@ type Settings struct {
 	// machine that traces and metrics are exported to (REQ-OBS-003). Empty, the default,
 	// exports nothing: there is no telemetry the user has not asked for (Art. 4).
 	OTelEndpoint string
+	// Retention is `[retention]`: Data Model §4's configurable windows, which the daily
+	// maintenance job applies (T-F1-22).
+	Retention Retention
 }
+
+// Retention is Data Model §4's configurable retention windows, in days.
+type Retention struct {
+	RawOutputDays       int // `raw_output_days`: a closed block's raw chunks
+	PlainOutputDays     int // `plain_output_days`: a closed block's transcript
+	ClosedStructureDays int // `closed_structure_days`: closed workspaces, tabs and panes
+	AuditDays           int // `audit_days`: egress_log and usage
+}
+
+// DefaultRetention is Data Model §4's defaults.
+func DefaultRetention() Retention {
+	return Retention{RawOutputDays: 30, PlainOutputDays: 180, ClosedStructureDays: 30, AuditDays: 365}
+}
+
+// The bounds of a retention window, in days: at least one, at most ten years.
+const (
+	MinRetentionDays = 1
+	MaxRetentionDays = 3650
+)
 
 // SettingsFileName is the file's name inside the configuration directory.
 const SettingsFileName = "config.toml"
@@ -80,7 +102,7 @@ func SettingsPath() (string, error) {
 //
 // An unknown key is a warning, so a file written for a later version still starts this one.
 func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
-	settings := Settings{MaxMessageBytes: DefaultMaxMessageBytes}
+	settings := Settings{MaxMessageBytes: DefaultMaxMessageBytes, Retention: DefaultRetention()}
 
 	raw, err := os.ReadFile(path) // #nosec G304 -- the path is the daemon's own config location
 	if errors.Is(err, os.ErrNotExist) {
@@ -118,6 +140,23 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 				return Settings{}, fmt.Errorf("%w: %s: otel.endpoint: %w", ErrSettingsInvalid, path, err)
 			}
 			settings.OTelEndpoint = endpoint
+		case "retention.raw_output_days", "retention.plain_output_days",
+			"retention.closed_structure_days", "retention.audit_days":
+			days, err := strconv.Atoi(value)
+			if err != nil || days < MinRetentionDays || days > MaxRetentionDays {
+				return Settings{}, fmt.Errorf("%w: %s: %s is %q, want whole days from %d to %d",
+					ErrSettingsInvalid, path, key, value, MinRetentionDays, MaxRetentionDays)
+			}
+			switch key {
+			case "retention.raw_output_days":
+				settings.Retention.RawOutputDays = days
+			case "retention.plain_output_days":
+				settings.Retention.PlainOutputDays = days
+			case "retention.closed_structure_days":
+				settings.Retention.ClosedStructureDays = days
+			default:
+				settings.Retention.AuditDays = days
+			}
 		case apiSection + "." + maxMessageKey:
 			n, err := parseMaxMessageBytes(value)
 			if err != nil {

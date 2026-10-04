@@ -158,3 +158,34 @@ func TestTheOTelEndpointMustBeLocal(t *testing.T) {
 		}
 	}
 }
+
+// TestRetentionWindowsAreConfigurable: `[retention]` sets Data Model §4's
+// configurable windows, in whole days from 1 to 3650; without it the defaults apply, and a
+// value outside the range stops the daemon naming the key, as any malformed setting does.
+func TestRetentionWindowsAreConfigurable(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, write(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := settings.Retention, DefaultRetention(); got != want || want != (Retention{RawOutputDays: 30, PlainOutputDays: 180, ClosedStructureDays: 30, AuditDays: 365}) {
+		t.Fatalf("defaults %+v, want Data Model §4's", got)
+	}
+
+	settings, err = LoadSettings(nil, write(t, "[retention]\nraw_output_days = 7\nplain_output_days = 90 # shorter\nclosed_structure_days = 1\naudit_days = 3650\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Retention{RawOutputDays: 7, PlainOutputDays: 90, ClosedStructureDays: 1, AuditDays: 3650}); settings.Retention != want {
+		t.Fatalf("retention %+v, want %+v", settings.Retention, want)
+	}
+
+	for _, bad := range []string{"raw_output_days = 0", "plain_output_days = -1", "audit_days = 3651", "closed_structure_days = 99999", "raw_output_days = 1.5", "audit_days = 30d"} {
+		_, err := LoadSettings(nil, write(t, "[retention]\n"+bad+"\n"))
+		key := "retention." + strings.Fields(bad)[0]
+		if !errors.Is(err, ErrSettingsInvalid) || !strings.Contains(err.Error(), key) {
+			t.Errorf("%q: %v, want ErrSettingsInvalid naming %s", bad, err, key)
+		}
+	}
+}
