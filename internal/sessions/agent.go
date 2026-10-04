@@ -32,8 +32,8 @@ const (
 var (
 	// ErrAgentBusy is a second command for a thread whose PTY is still running one.
 	ErrAgentBusy = errors.New("sessions: the thread's PTY is running another command")
-	// ErrNoIntegration is a thread shell that never spoke OSC 133, so no block could record
-	// the command.
+	// ErrNoIntegration is a thread shell that did not speak OSC 133 within agentReadyTimeout,
+	// so no block could record the command.
 	ErrNoIntegration = errors.New("sessions: the thread's shell has no shell integration")
 )
 
@@ -244,6 +244,13 @@ func validThread(id string) bool { return len(id) > 4 && id[:4] == "thr_" }
 
 // awaitIntegration waits for the session's shell to prove its integration, which is when it
 // can be typed into and its commands become blocks.
+//
+// `none` is not an answer here. REQ-BLK-003 sets it when the shell has been silent for 5 s and
+// promotes the session to `osc133` when its markers arrive later — "the window is a heuristic
+// about silence, not a verdict about the shell". A thread shell is always started with the
+// integration, so a slow one is waited for up to agentReadyTimeout, like a shell that has not
+// spoken yet; failing on the provisional `none` made run_command fail for good on a loaded
+// machine, where a shell's hooks can take longer than the window.
 func (s *Service) awaitIntegration(ctx context.Context, live *liveSession) error {
 	deadline := time.NewTimer(agentReadyTimeout)
 	defer deadline.Stop()
@@ -258,8 +265,6 @@ func (s *Service) awaitIntegration(ctx context.Context, live *liveSession) error
 			return fmt.Errorf("%w: %s", domain.ErrExited, live.session.ID)
 		case integration == domain.IntegrationOSC133:
 			return nil
-		case integration == domain.IntegrationNone:
-			return ErrNoIntegration
 		}
 		select {
 		case <-ctx.Done():
