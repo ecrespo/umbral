@@ -437,3 +437,34 @@ func TestAClosedRuntimeStartsNoTurn_REQ_AGT_001(t *testing.T) {
 		t.Fatal("a closed runtime persisted a message it will never answer")
 	}
 }
+
+// TestAStdinAttachmentNeedsNoGatherer_REQ_CLI_001: what `umb ai` piped arrives inline, so it
+// is read without the context gatherer — this rig has none — rendered into the message the
+// model reads and persisted with it, and recorded as a `stdin` attachment with its sizes.
+func TestAStdinAttachmentNeedsNoGatherer_REQ_CLI_001(t *testing.T) {
+	r := newRig(t, answer("it panicked"))
+	th := r.thread(t, domain.CreateParams{Mode: "ask", Ephemeral: true})
+	if _, err := r.rt.Send(t.Context(), ports.SendParams{
+		ThreadID: th.ID, Text: "why?",
+		Attachments: []ports.AttachmentRef{{Kind: "stdin", Data: []byte("panic: boom\n"), Truncated: true}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	<-r.bus.ended
+	msgs, _ := r.rt.Messages(t.Context(), th.ID)
+	if len(msgs) != 2 {
+		t.Fatalf("messages %+v", msgs)
+	}
+	user := msgs[0]
+	if !strings.Contains(user.Content, "why?") || !strings.Contains(user.Content, "panic: boom") ||
+		!strings.Contains(user.Content, `kind="stdin"`) || !strings.Contains(user.Content, "stopped reading stdin") {
+		t.Fatalf("the persisted message:\n%s", user.Content)
+	}
+	if len(user.Attachments) != 1 || user.Attachments[0] != (domain.Attachment{Kind: "stdin", Ref: "stdin", Bytes: 12}) {
+		t.Fatalf("recorded attachments %+v", user.Attachments)
+	}
+	reqs := r.models.requests()
+	if last := reqs[0].Request.Messages; last[len(last)-1].Role != llm.RoleUser || !strings.Contains(last[len(last)-1].Text, "panic: boom") {
+		t.Fatalf("the model never read stdin: %+v", last)
+	}
+}

@@ -40,6 +40,17 @@ type Attachment struct {
 	TruncatedBytes int64
 	// Binary is set when the content was not text and none of it is included.
 	Binary bool
+	// Unread is set when the client stopped reading before the end, as `umb ai` does past
+	// 1 MiB of stdin: more followed, and no one counted it.
+	Unread bool
+}
+
+// NewStdinAttachment is what `umb ai` piped (REQ-CLI-001): capped like any attachment, and
+// marked when the client stopped reading before the end.
+func NewStdinAttachment(data []byte, unread bool) Attachment {
+	a := NewAttachment(KindStdin, "stdin", data, int64(len(data)))
+	a.Unread = unread
+	return a
 }
 
 // NewAttachment builds an attachment from the first bytes of its content and its whole size,
@@ -91,6 +102,9 @@ func (a Attachment) Render() string {
 		if a.TruncatedBytes > 0 {
 			fmt.Fprintf(&s, "[truncated: %d bytes omitted]\n", a.TruncatedBytes)
 		}
+	}
+	if a.Unread {
+		fmt.Fprintf(&s, "[the client stopped reading stdin after %d bytes; the rest was never read]\n", a.Bytes)
 	}
 	s.WriteString("</attachment>")
 	return s.String()

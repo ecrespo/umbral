@@ -295,15 +295,12 @@ func (r *Runtime) threadLock(id string) *sync.Mutex {
 // userContent is the user's text with its attachments read and rendered (REQ-CTX-002): what
 // the model reads, and so what is persisted (REQ-AGT-011).
 func (r *Runtime) userContent(ctx context.Context, thread domain.Thread, p ports.SendParams) (string, []domain.Attachment, error) {
-	if len(p.Attachments) > 0 && r.cfg.Context == nil {
-		return "", nil, fmt.Errorf("%w: attachments are not available", domain.ErrValidation)
-	}
 	var read []ctxdomain.Attachment
 	var recorded []domain.Attachment
 	for _, ref := range p.Attachments {
-		a, err := r.cfg.Context.Attach(ctx, thread.Cwd, ctxdomain.Ref{Kind: ctxdomain.Kind(ref.Kind), Ref: ref.Ref})
+		a, err := r.attach(ctx, thread.Cwd, ref)
 		if err != nil {
-			return "", nil, fmt.Errorf("%w: %w", domain.ErrValidation, err)
+			return "", nil, err
 		}
 		read = append(read, a)
 		recorded = append(recorded, domain.Attachment{Kind: string(a.Kind), Ref: a.Ref, Bytes: a.Bytes, TruncatedBytes: a.TruncatedBytes})
@@ -313,6 +310,22 @@ func (r *Runtime) userContent(ctx context.Context, thread domain.Thread, p ports
 		return "", nil, fmt.Errorf("agents: render the message: %w", err)
 	}
 	return content, recorded, nil
+}
+
+// attach reads one attachment. A `stdin` one arrived inline with the request, so it needs no
+// gatherer; the others are read from the machine.
+func (r *Runtime) attach(ctx context.Context, cwd string, ref ports.AttachmentRef) (ctxdomain.Attachment, error) {
+	if ctxdomain.Kind(ref.Kind) == ctxdomain.KindStdin {
+		return ctxdomain.NewStdinAttachment(ref.Data, ref.Truncated), nil
+	}
+	if r.cfg.Context == nil {
+		return ctxdomain.Attachment{}, fmt.Errorf("%w: attachments are not available", domain.ErrValidation)
+	}
+	a, err := r.cfg.Context.Attach(ctx, cwd, ctxdomain.Ref{Kind: ctxdomain.Kind(ref.Kind), Ref: ref.Ref})
+	if err != nil {
+		return ctxdomain.Attachment{}, fmt.Errorf("%w: %w", domain.ErrValidation, err)
+	}
+	return a, nil
 }
 
 // start runs the turn in its own goroutine, on the runtime's context rather than the

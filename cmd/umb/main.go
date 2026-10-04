@@ -54,10 +54,16 @@ func main() {
 	// turns that default off (os/signal, "SIGPIPE"); nothing needs to read the channel.
 	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(runIO(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
+// run is runIO with nothing on stdin. Only `umb ai` reads the stdin it is given;
+// `umb layout apply --from -` reads the process's own.
 func run(args []string, stdout, stderr io.Writer) int {
+	return runIO(args, strings.NewReader(""), stdout, stderr)
+}
+
+func runIO(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	out, errOut := newPrinter(stdout), newPrinter(stderr)
 	if len(args) == 0 {
 		usage(errOut)
@@ -76,6 +82,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return finish(cmdBlock(ctx, args[1:], out, errOut), out, stderr)
 	case "api":
 		return finish(cmdAPI(args[1:], out, errOut), out, stderr)
+	case "ai":
+		return finish(cmdAI(ctx, args[1:], stdin, out, errOut), out, stderr)
 	case "limits":
 		return finish(cmdLimits(ctx, args[1:], out, errOut), out, stderr)
 	case famWorkspace, famTab, famPane, famLayout:
@@ -99,6 +107,9 @@ func usage(p *printer) {
 Usage:
   umb status [--json]            the daemon's health, providers and MCP servers
   umb block last [--json]        the last closed block of this session (REQ-CLI-002)
+  umb ai PROMPT [--model M] [--timeout D]
+                                 ask the agent, read-only, with stdin attached
+                                 (REQ-CLI-001), e.g. go test 2>&1 | umb ai "why?"
   umb api schema --json          the protocol this binary speaks (REQ-API-004)
   umb limits [--json]            the frame limit and how close traffic comes to it
   umb limits set --max-message SIZE

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -353,5 +354,70 @@ func TestThreadCancelReachesTheWire_REQ_AGT_007(t *testing.T) {
 	}
 	if len(svc.cancelled) != 2 {
 		t.Fatalf("the runtime saw %d cancels, want 2", len(svc.cancelled))
+	}
+}
+
+// TestThreadSendTakesStdinInline_REQ_CLI_001: `umb ai` sends what it read from stdin inline,
+// as a `stdin` attachment whose `data_b64` the daemon decodes and hands the runtime. Only a
+// `stdin` attachment carries data, it carries nothing else, there is at most one, and its
+// data is at most 1 MiB once decoded; anything else is refused before the runtime sees it.
+func TestThreadSendTakesStdinInline_REQ_CLI_001(t *testing.T) {
+	t.Parallel()
+	svc := &fakeThreads{thread: agentsdomain.Thread{ID: "thr_1", Mode: "ask", ModelClass: "code", Cwd: "/w"}}
+	s := testServerWithConfig(t, Config{Threads: svc, Bus: bus.New()})
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientCLI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+
+	data := "panic: boom\n\tmain.go:12\n"
+	resp := c.call(2, "thread.send", map[string]any{
+		"thread_id": "thr_1", "text": "why?",
+		"attachments": []map[string]any{{"kind": "stdin", "data_b64": base64.StdEncoding.EncodeToString([]byte(data)), "truncated": true}},
+	})
+	if resp.Error != nil {
+		t.Fatalf("thread.send with stdin = %+v", resp.Error)
+	}
+	if len(svc.sent) != 1 || len(svc.sent[0].Attachments) != 1 {
+		t.Fatalf("the runtime got %+v", svc.sent)
+	}
+	if a := svc.sent[0].Attachments[0]; a.Kind != "stdin" || string(a.Data) != data || !a.Truncated || a.Ref != "" {
+		t.Fatalf("the runtime got the attachment %+v", a)
+	}
+
+	// Empty stdin is still an attachment the client chose to send.
+	if resp := c.call(3, "thread.send", map[string]any{
+		"thread_id": "thr_1", "text": "why?", "attachments": []map[string]any{{"kind": "stdin", "data_b64": ""}},
+	}); resp.Error != nil || len(svc.sent) != 2 || svc.sent[1].Attachments[0].Data == nil {
+		t.Fatalf("an empty stdin = %+v, the runtime got %+v", resp.Error, svc.sent[len(svc.sent)-1])
+	}
+
+	tooBig := base64.StdEncoding.EncodeToString(make([]byte, agentsports.MaxStdinBytes+1))
+	b64 := base64.StdEncoding.EncodeToString([]byte("x"))
+	for name, atts := range map[string][]map[string]any{
+		"data on a file":       {{"kind": "file", "ref": "a.txt", "data_b64": b64}},
+		"a ref on stdin":       {{"kind": "stdin", "ref": "x", "data_b64": b64}},
+		"stdin without data":   {{"kind": "stdin"}},
+		"not base64":           {{"kind": "stdin", "data_b64": "%%%"}},
+		"over 1 MiB":           {{"kind": "stdin", "data_b64": tooBig}},
+		"two stdins":           {{"kind": "stdin", "data_b64": b64}, {"kind": "stdin", "data_b64": b64}},
+		"truncated on a file":  {{"kind": "file", "ref": "a.txt", "truncated": true}},
+		"a file without a ref": {{"kind": "file"}},
+	} {
+		before := len(svc.sent)
+		resp := c.call(4, "thread.send", map[string]any{"thread_id": "thr_1", "text": "x", "attachments": atts})
+		if resp.Error == nil || resp.Error.Code != codeValidationError {
+			t.Errorf("%s = %+v, want VALIDATION_ERROR", name, resp.Error)
+		}
+		if len(svc.sent) != before {
+			t.Errorf("%s reached the runtime", name)
+		}
+	}
+	// At exactly 1 MiB it is accepted: the limit is inclusive.
+	exact := base64.StdEncoding.EncodeToString(make([]byte, agentsports.MaxStdinBytes))
+	if resp := c.call(5, "thread.send", map[string]any{
+		"thread_id": "thr_1", "text": "x", "attachments": []map[string]any{{"kind": "stdin", "data_b64": exact}},
+	}); resp.Error != nil {
+		t.Fatalf("1 MiB of stdin = %+v", resp.Error)
 	}
 }
