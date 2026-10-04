@@ -22,6 +22,18 @@ type fakeDaemon struct {
 	input    [][]byte
 	resizes  []sessdomain.Size
 	events   chan ports.Event
+
+	// The agent panel's calls (agent_test.go).
+	threads []string
+	sent    []sentMessage
+	answers []approvalAnswer
+	cancels []string
+	// pending is what approval.list answers; idle makes a cancel find no turn to stop;
+	// holdCreate keeps thread.create from answering until it is closed.
+	pending    []ports.Approval
+	idle       bool
+	holdCreate chan struct{}
+	respondErr error
 }
 
 func newFakeDaemon() *fakeDaemon {
@@ -37,6 +49,7 @@ func (f *fakeDaemon) CreateSession(_ context.Context, size sessdomain.Size) (ses
 	f.sessions++
 	return sessdomain.Session{
 		ID:    sessionID(f.sessions),
+		CWD:   "/work",
 		Size:  size,
 		State: sessdomain.StateAlive,
 	}, nil

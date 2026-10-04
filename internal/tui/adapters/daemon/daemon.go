@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/oklog/ulid/v2"
+
 	"github.com/ecrespo/umbral/internal/client"
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 	"github.com/ecrespo/umbral/internal/tui/ports"
@@ -181,6 +183,96 @@ func (d *Daemon) Blocks(ctx context.Context, sessionID string, limit int) ([]ses
 	return blocks, nil
 }
 
+// CreateThread starts a thread in cwd (API Spec §5.19).
+func (d *Daemon) CreateThread(ctx context.Context, cwd string) (string, error) {
+	var out struct {
+		ID string `json:"id"`
+	}
+	if err := d.stream.Call(ctx, "thread.create", map[string]any{"cwd": cwd}, &out); err != nil {
+		return "", err
+	}
+	return out.ID, nil
+}
+
+// Send sends a message with a fresh client_msg_id (API Spec §5.20, REQ-AGT-015).
+func (d *Daemon) Send(ctx context.Context, threadID, text string, attachments []ports.Attachment) (string, error) {
+	params := map[string]any{"thread_id": threadID, "text": text, "client_msg_id": newClientMsgID()}
+	if len(attachments) > 0 {
+		list := make([]map[string]string, 0, len(attachments))
+		for _, a := range attachments {
+			list = append(list, map[string]string{"kind": a.Kind, "ref": a.Ref})
+		}
+		params["attachments"] = list
+	}
+	var out struct {
+		TurnID string `json:"turn_id"`
+	}
+	if err := d.stream.Call(ctx, "thread.send", params, &out); err != nil {
+		return "", err
+	}
+	return out.TurnID, nil
+}
+
+// Respond answers an approval (API Spec §5.25). One already decided or expired is
+// ports.ErrApprovalGone, so the panel can tell it from an answer that never arrived.
+func (d *Daemon) Respond(ctx context.Context, approvalID, decision, scope string) error {
+	params := map[string]any{"approval_id": approvalID, "decision": decision, "scope": scope}
+	err := d.stream.Call(ctx, "approval.respond", params, nil)
+	if code := client.DomainCode(err); code == "CONFLICT" || code == "NOT_FOUND" {
+		return fmt.Errorf("%w: %w", ports.ErrApprovalGone, err)
+	}
+	return err
+}
+
+// Cancel stops a thread's running turn (API Spec §5.21). A null `stopped_at` is a thread
+// with no turn to stop.
+func (d *Daemon) Cancel(ctx context.Context, threadID string) (bool, error) {
+	var out struct {
+		StoppedAt *int64 `json:"stopped_at"`
+	}
+	if err := d.stream.Call(ctx, "thread.cancel", map[string]any{"thread_id": threadID}, &out); err != nil {
+		return false, err
+	}
+	return out.StoppedAt != nil, nil
+}
+
+// Approvals lists the pending approvals of every thread (API Spec §5.24).
+func (d *Daemon) Approvals(ctx context.Context) ([]ports.Approval, error) {
+	var out struct {
+		Items []wireApproval `json:"items"`
+	}
+	if err := d.stream.Call(ctx, "approval.list", map[string]any{}, &out); err != nil {
+		return nil, err
+	}
+	list := make([]ports.Approval, 0, len(out.Items))
+	for _, a := range out.Items {
+		list = append(list, a.approval())
+	}
+	return list, nil
+}
+
+// wireApproval is API §4's Approval, as `approval.list` and `approval.requested` carry it.
+type wireApproval struct {
+	ID       string  `json:"id"`
+	ThreadID string  `json:"thread_id"`
+	Tool     string  `json:"tool"`
+	Risk     string  `json:"risk"`
+	Reason   string  `json:"reason"`
+	Summary  string  `json:"summary"`
+	Diff     *string `json:"diff"`
+}
+
+func (w wireApproval) approval() ports.Approval {
+	a := ports.Approval{ID: w.ID, ThreadID: w.ThreadID, Tool: w.Tool, Risk: w.Risk, Reason: w.Reason, Summary: w.Summary}
+	if w.Diff != nil {
+		a.Diff = *w.Diff
+	}
+	return a
+}
+
+// newClientMsgID is a ULID, which is what API Spec §5.20 asks client_msg_id to be.
+func newClientMsgID() string { return ulid.Make().String() }
+
 // translate turns notifications into the events the model reacts to.
 //
 // Unknown methods are dropped rather than reported: API Spec §9 makes a new notification
@@ -240,11 +332,12 @@ func toEvent(n client.Notification) (ports.Event, bool) {
 	case "block.closed":
 		var p struct {
 			SessionID string `json:"session_id"`
+			CWD       string `json:"cwd"`
 		}
 		if err := n.Decode(&p); err != nil {
 			return ports.Event{}, false
 		}
-		return ports.Event{Kind: ports.EventBlockClosed, SessionID: p.SessionID}, true
+		return ports.Event{Kind: ports.EventBlockClosed, SessionID: p.SessionID, CWD: p.CWD}, true
 
 	case "session.exited":
 		var p struct {
@@ -272,6 +365,46 @@ func toEvent(n client.Notification) (ports.Event, bool) {
 			SessionID: p.SessionID,
 			Err:       fmt.Errorf("the daemon dropped the subscription: %s", p.Reason),
 		}, true
+
+	case "thread.delta":
+		var p struct {
+			ThreadID string `json:"thread_id"`
+			Kind     string `json:"kind"`
+			Text     string `json:"text"`
+		}
+		if err := n.Decode(&p); err != nil {
+			return ports.Event{}, false
+		}
+		return ports.Event{Kind: ports.EventThreadDelta, ThreadID: p.ThreadID, Text: p.Text, Reasoning: p.Kind == "reasoning"}, true
+
+	case "thread.tool_call":
+		var p struct {
+			ID       string `json:"id"`
+			ThreadID string `json:"thread_id"`
+			Tool     string `json:"tool"`
+			Status   string `json:"status"`
+		}
+		if err := n.Decode(&p); err != nil {
+			return ports.Event{}, false
+		}
+		return ports.Event{Kind: ports.EventToolCall, ThreadID: p.ThreadID, ToolCallID: p.ID, Tool: p.Tool, Status: p.Status}, true
+
+	case "approval.requested":
+		var p wireApproval
+		if err := n.Decode(&p); err != nil {
+			return ports.Event{}, false
+		}
+		return ports.Event{Kind: ports.EventApprovalRequested, ThreadID: p.ThreadID, Approval: p.approval()}, true
+
+	case "thread.turn_finished":
+		var p struct {
+			ThreadID   string `json:"thread_id"`
+			StopReason string `json:"stop_reason"`
+		}
+		if err := n.Decode(&p); err != nil {
+			return ports.Event{}, false
+		}
+		return ports.Event{Kind: ports.EventTurnFinished, ThreadID: p.ThreadID, StopReason: p.StopReason}, true
 	}
 	return ports.Event{}, false
 }

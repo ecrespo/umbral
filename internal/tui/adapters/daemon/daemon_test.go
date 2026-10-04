@@ -135,3 +135,47 @@ func TestSubscribeRefusesASnapshotItCannotReplay(t *testing.T) {
 		t.Errorf("the documented format was refused: %v", err)
 	}
 }
+
+// TestToEventMapsTheAgentsNotifications_REQ_TUI_001: the four notifications the agent panel
+// draws from, in the shapes API Spec §4 and §6 give them.
+func TestToEventMapsTheAgentsNotifications_REQ_TUI_001(t *testing.T) {
+	t.Parallel()
+
+	ev, ok := toEvent(client.Notification{Method: "thread.delta", Params: json.RawMessage(
+		`{"thread_id":"thr_x","turn_id":"trn_x","kind":"reasoning","text":"hmm"}`)})
+	if !ok || ev.Kind != ports.EventThreadDelta || ev.ThreadID != "thr_x" || ev.Text != "hmm" || !ev.Reasoning {
+		t.Fatalf("thread.delta = %+v %v", ev, ok)
+	}
+	ev, ok = toEvent(client.Notification{Method: "thread.tool_call", Params: json.RawMessage(
+		`{"id":"tc_x","thread_id":"thr_x","message_id":"msg_x","tool":"run_command","risk":"Exec","args":{"command":"ls"},"status":"ok"}`)})
+	if !ok || ev.Kind != ports.EventToolCall || ev.ThreadID != "thr_x" || ev.Tool != "run_command" || ev.Status != "ok" || ev.ToolCallID != "tc_x" {
+		t.Fatalf("thread.tool_call = %+v %v", ev, ok)
+	}
+	ev, ok = toEvent(client.Notification{Method: "approval.requested", Params: json.RawMessage(
+		`{"id":"apr_x","thread_id":"thr_x","tool_call_id":"tc_x","tool":"write_file","risk":"WriteFS","reason":"policy","summary":"a.go","diff":"+x\n","state":"pending"}`)})
+	want := ports.Approval{ID: "apr_x", ThreadID: "thr_x", Tool: "write_file", Risk: "WriteFS", Reason: "policy", Summary: "a.go", Diff: "+x\n"}
+	if !ok || ev.Kind != ports.EventApprovalRequested || ev.ThreadID != "thr_x" || ev.Approval != want {
+		t.Fatalf("approval.requested = %+v %v", ev, ok)
+	}
+	ev, ok = toEvent(client.Notification{Method: "thread.turn_finished", Params: json.RawMessage(
+		`{"thread_id":"thr_x","turn_id":"trn_x","stop_reason":"end_turn","usage":{"in_tokens":1,"out_tokens":2,"cost_micro_usd":0}}`)})
+	if !ok || ev.Kind != ports.EventTurnFinished || ev.ThreadID != "thr_x" || ev.StopReason != "end_turn" {
+		t.Fatalf("thread.turn_finished = %+v %v", ev, ok)
+	}
+	// A closed block says where its command ran: the panel's thread starts there.
+	ev, ok = toEvent(client.Notification{Method: "block.closed", Params: json.RawMessage(
+		`{"id":"blk_x","session_id":"ses_x","command":"ls","cwd":"/work/scratch","state":"closed"}`)})
+	if !ok || ev.Kind != ports.EventBlockClosed || ev.SessionID != "ses_x" || ev.CWD != "/work/scratch" {
+		t.Fatalf("block.closed = %+v %v", ev, ok)
+	}
+}
+
+// TestEveryMessageGetsAFreshClientMsgID: REQ-AGT-015 needs a ULID per message, so a retry
+// of the same call is recognised and two messages are not.
+func TestEveryMessageGetsAFreshClientMsgID(t *testing.T) {
+	t.Parallel()
+	a, b := newClientMsgID(), newClientMsgID()
+	if len(a) != 26 || len(b) != 26 || a == b {
+		t.Fatalf("client_msg_ids %q and %q", a, b)
+	}
+}

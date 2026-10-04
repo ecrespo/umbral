@@ -53,6 +53,20 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+g":
 		return m, m.jumpBlock(+1)
+
+	case "ctrl+space":
+		// REQ-TUI-002. A terminal sends ctrl+space as NUL, which Bubble Tea names this way.
+		return m, m.toggleMode()
+
+	case "alt+a":
+		// Only where there is a block to attach: elsewhere it is the shell's ESC a.
+		if m.showBlocks {
+			return m, m.attachBlock()
+		}
+	}
+
+	if m.agent.mode {
+		return m, m.handleAgentKey(msg)
 	}
 
 	p := m.focusedPane()
@@ -82,7 +96,7 @@ func keyBytes(msg tea.KeyPressMsg) []byte {
 		return []byte{0x7f}
 	case "delete":
 		return []byte("\x1b[3~")
-	case "esc":
+	case keyEsc:
 		return []byte{0x1b}
 	case "up":
 		return []byte("\x1b[A")
@@ -106,6 +120,10 @@ func keyBytes(msg tea.KeyPressMsg) []byte {
 	if key.Mod&tea.ModCtrl != 0 && key.Code >= 'a' && key.Code <= 'z' {
 		return []byte{byte(key.Code - 'a' + 1)}
 	}
+	// alt plus a key is ESC and the key, which readline and zsh bind.
+	if key.Mod == tea.ModAlt && key.Code >= ' ' && key.Code < 0x7f {
+		return []byte{0x1b, byte(key.Code)}
+	}
 	if key.Text != "" {
 		return []byte(key.Text)
 	}
@@ -120,7 +138,7 @@ func (m *Model) addTab(msg tabOpenedMsg) tea.Cmd {
 		m.status = err.Error()
 		return nil
 	}
-	p := &pane{sessionID: msg.session.ID, screen: screen, size: size}
+	p := &pane{sessionID: msg.session.ID, cwd: msg.session.CWD, screen: screen, size: size}
 	m.tabs = append(m.tabs, &tab{panes: []*pane{p}})
 	m.current = len(m.tabs) - 1
 	return m.subscribeCmd(p.sessionID)
@@ -142,7 +160,7 @@ func (m *Model) attach(msg paneAttachedMsg) tea.Cmd {
 		m.status = err.Error()
 		return nil
 	}
-	p := &pane{sessionID: msg.session.ID, screen: screen, size: size}
+	p := &pane{sessionID: msg.session.ID, cwd: msg.session.CWD, screen: screen, size: size}
 	t.panes = append(t.panes, p)
 	t.focused = len(t.panes) - 1
 
@@ -235,6 +253,11 @@ func (m *Model) applyEvent(msg daemonEventMsg) tea.Cmd {
 		m.applyOutput(ev)
 
 	case ports.EventBlockClosed:
+		// The pane's agent thread starts where its last command ran, which a `cd` moved
+		// from where the session started.
+		if p := m.paneByID(ev.SessionID); p != nil && ev.CWD != "" {
+			p.cwd = ev.CWD
+		}
 		// A command finished, so the list changed. Refetching is cheaper to get right
 		// than merging: the daemon's ordering is the one the list is defined by.
 		if m.showBlocks {
@@ -269,6 +292,14 @@ func (m *Model) applyEvent(msg daemonEventMsg) tea.Cmd {
 		}
 		m.status = "the daemon dropped a subscription; re-attaching"
 		return tea.Batch(m.subscribeCmd(ev.SessionID), m.waitForEvent())
+
+	case ports.EventThreadDelta, ports.EventToolCall, ports.EventApprovalRequested, ports.EventTurnFinished:
+		wasOpen := m.agent.open
+		m.applyAgentEvent(ev)
+		if m.agent.open && !wasOpen {
+			// An approval opened the panel: the panes just got narrower.
+			return tea.Batch(m.resize(m.width, m.height), m.waitForEvent())
+		}
 
 	case ports.EventDisconnected:
 		m.disconnected = true
