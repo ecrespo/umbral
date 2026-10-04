@@ -17,6 +17,9 @@ import (
 	"github.com/ecrespo/umbral/internal/client"
 )
 
+// scriptedHold, as a line of a reply, holds the stream there until the request is cancelled.
+const scriptedHold = "<hold>"
+
 // scriptedOllama is an Ollama that answers /api/chat from a script, one reply per call.
 type scriptedOllama struct {
 	mu      sync.Mutex
@@ -40,8 +43,18 @@ func (o *scriptedOllama) server(t *testing.T) *httptest.Server {
 		}
 		o.mu.Unlock()
 		w.Header().Set("Content-Type", "application/x-ndjson")
+		flusher, _ := w.(http.Flusher)
 		for _, line := range reply {
+			// scriptedHold stops the stream mid-answer until the caller hangs up, as a model
+			// still generating does when the daemon dies under it.
+			if line == scriptedHold {
+				<-r.Context().Done()
+				return
+			}
 			_, _ = fmt.Fprintln(w, line)
+			if flusher != nil {
+				flusher.Flush()
+			}
 		}
 	})
 	srv := httptest.NewServer(mux)

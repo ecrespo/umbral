@@ -38,6 +38,9 @@ const busyTimeout = 5 * time.Second
 type Store struct {
 	db   *sql.DB
 	path string
+	// onRetentionBatch, when set, is told how many rows each retention batch touched. Tests
+	// use it to hold the batch bound; nothing else sets it.
+	onRetentionBatch func(rows int64)
 }
 
 // Options configures Open. The zero value opens the database at DefaultPath with the

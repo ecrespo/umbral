@@ -442,6 +442,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}()
 	defer func() { <-captureDone }()
 
+	// Data Model §4's maintenance job: once now, then daily.
+	// Its own context, cancelled on the way out: Serve can return without ctx ending, and the
+	// wait below must not outlive the daemon.
+	retentionCtx, stopRetention := context.WithCancel(ctx)
+	retentionDone := make(chan struct{})
+	go func() {
+		defer close(retentionDone)
+		runRetention(retentionCtx, db, storeRetention(settings.Retention), retentionInterval, logger)
+	}()
+	defer func() {
+		stopRetention()
+		<-retentionDone
+	}()
+
 	logger.Info("umbrald listening",
 		slog.String("socket", server.SocketPath()),
 		slog.String("token_file", tokenPath))
