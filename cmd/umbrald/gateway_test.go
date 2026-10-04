@@ -153,7 +153,7 @@ func TestOfflineReachesTheCatalog_REQ_LLM_004(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	g, err := newGateway(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), nopStore{}, nil, nopUsage{})
+	g, err := newGateway(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), nopStore{}, nil, nopUsage{}, nopTracer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func (nopUsage) Record(context.Context, llmdomain.UsageRecord) error { return ni
 func TestTheGatewayNeedsAUsageLog_REQ_LLM_005(t *testing.T) {
 	t.Parallel()
 
-	if _, err := newGateway(context.Background(), slog.New(slog.DiscardHandler), nopStore{}, nil, nil); err == nil {
+	if _, err := newGateway(context.Background(), slog.New(slog.DiscardHandler), nopStore{}, nil, nil, nopTracer{}); err == nil {
 		t.Error("a gateway that records no model call was built")
 	}
 }
@@ -263,7 +263,7 @@ func TestEgressLoggedForRemote_REQ_SEC_002(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	g, err := newGateway(ctx, slog.New(slog.DiscardHandler), &memModels{}, egress, nopUsage{})
+	g, err := newGateway(ctx, slog.New(slog.DiscardHandler), &memModels{}, egress, nopUsage{}, nopTracer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +360,7 @@ func TestAServerThatHoldsItsHeadersTimesOut_REQ_LLM_003(t *testing.T) {
 	usage := &memUsageLog{}
 	router, err := llmgw.NewRouter(catalog, llmgw.RouterConfig{
 		Classes: map[string][]string{"code": {"loading/m", "ready/m"}},
-		Redact:  redact, Usage: usage, FirstTokenLocal: 200 * time.Millisecond,
+		Redact:  redact, Usage: usage, Tracer: nopTracer{}, FirstTokenLocal: 200 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -445,3 +445,8 @@ func TestPresetsGetTheOpenAICompatAdapter_REQ_LLM_007(t *testing.T) {
 		}
 	}
 }
+
+// nopTracer traces nothing; these tests are about routing.
+type nopTracer struct{}
+
+func (nopTracer) ModelCall(context.Context, llmdomain.UsageRecord, time.Time, time.Time) {}

@@ -54,7 +54,7 @@ func (t *turnRun) awaitApproval(ctx context.Context, c domain.ToolCall, action s
 	case <-ctx.Done():
 		_, err := r.cfg.Store.DecideApproval(context.WithoutCancel(ctx), a.ID, domain.ApprovalExpired, "", nil, r.now())
 		if err != nil && !errors.Is(err, domain.ErrConflict) {
-			r.cfg.Logger.Warn("a cancelled turn's approval could not be expired", "approval", a.ID, "error", err)
+			r.cfg.Logger.WarnContext(ctx, "a cancelled turn's approval could not be expired", "approval", a.ID, "error", err)
 		}
 		return false, ctx.Err()
 	}

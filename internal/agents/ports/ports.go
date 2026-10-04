@@ -143,6 +143,32 @@ type SendResult struct {
 	MessageID string
 }
 
+// Tracer traces the runtime's turns (REQ-OBS-001, Art. 7). Each method returns the context
+// the span lives in — a turn's model calls, tools and log lines run inside it, which is how
+// the router's `llm.call` spans and the log lines' trace ids join the turn — and the
+// function that ends it.
+type Tracer interface {
+	// Turn starts a turn's span, the root of the turn's trace.
+	Turn(ctx context.Context, threadID, turnID string) (context.Context, func(TurnTrace))
+	// Tool starts a tool call's span inside the turn's.
+	Tool(ctx context.Context, callID, tool string) (context.Context, func(ToolTrace))
+}
+
+// TurnTrace is how a turn ended, for its span.
+type TurnTrace struct {
+	StopReason domain.StopReason
+	// Model is the catalog id that served the turn's last model call, if any did.
+	Model string
+	Usage domain.Usage
+}
+
+// ToolTrace is how a tool call ended, for its span. Risk is empty for a call that never got
+// as far as being classified.
+type ToolTrace struct {
+	Status domain.ToolStatus
+	Risk   string
+}
+
 // Metrics is what the runtime counts (Tech Design §7.2); internal/obs implements it.
 type Metrics interface {
 	// ToolCallInvalid counts one tool call whose tool or arguments did not validate, by the

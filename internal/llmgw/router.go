@@ -29,6 +29,8 @@ type RouterConfig struct {
 	// Redact applies the redaction rules to one piece of content (REQ-SEC-001).
 	Redact func(string) string
 	Usage  ports.UsageLog
+	// Tracer receives every call usage records, as a span of the caller's trace.
+	Tracer ports.Tracer
 	Logger *slog.Logger
 	// FirstTokenRemote and FirstTokenLocal override the REQ-LLM-003 timeouts; zero keeps them.
 	FirstTokenRemote, FirstTokenLocal time.Duration
@@ -69,6 +71,9 @@ func NewRouter(catalog *Catalog, cfg RouterConfig) (*Router, error) {
 	}
 	if cfg.Usage == nil {
 		return nil, errors.New("llmgw: a router needs a usage log (REQ-LLM-005)")
+	}
+	if cfg.Tracer == nil {
+		return nil, errors.New("llmgw: a router needs a tracer (REQ-OBS-001)")
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
@@ -370,7 +375,7 @@ func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain
 		cancel()
 		err := &domain.ProviderError{Provider: c.model.Provider, Err: fmt.Errorf("no first token within %v", timeout)}
 		rec.Status, rec.Error = domain.UsageTimeout, err.Error()
-		r.record(ctx, rec)
+		r.record(ctx, rec, start)
 		return false, err
 	case <-ctx.Done():
 		first = item{err: ctx.Err()}
@@ -380,7 +385,7 @@ func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain
 		first.err = &domain.ProviderError{Provider: c.model.Provider, Err: errors.New("the stream ended without an event")}
 	}
 	if first.err != nil {
-		return r.failedBeforeFirst(ctx, rec, first.err, yield)
+		return r.failedBeforeFirst(ctx, rec, start, first.err, yield)
 	}
 
 	ms := r.now().Sub(start).Milliseconds()
@@ -393,7 +398,7 @@ func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain
 		if err != nil {
 			rec.Status, rec.Error = domain.UsageError, err.Error()
 		}
-		r.record(ctx, rec)
+		r.record(ctx, rec, start)
 	}
 	for it := first; ; {
 		if it.err != nil {
@@ -429,7 +434,7 @@ func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain
 // failedBeforeFirst handles a failure before any event reached the caller: a request the
 // adapter cannot carry is skipped unrecorded; a retryable provider failure is recorded and
 // moves on; anything else is recorded and ends the call.
-func (r *Router) failedBeforeFirst(ctx context.Context, rec domain.UsageRecord, err error, yield func(domain.Event, error) bool) (bool, error) {
+func (r *Router) failedBeforeFirst(ctx context.Context, rec domain.UsageRecord, start time.Time, err error, yield func(domain.Event, error) bool) (bool, error) {
 	if errors.Is(err, domain.ErrUnsupported) {
 		return false, err
 	}
@@ -439,7 +444,7 @@ func (r *Router) failedBeforeFirst(ctx context.Context, rec domain.UsageRecord, 
 	if retry && pe.Status == 429 {
 		rec.Status = domain.UsageRateLimited
 	}
-	r.record(ctx, rec)
+	r.record(ctx, rec, start)
 	if retry {
 		return false, err
 	}
@@ -447,12 +452,14 @@ func (r *Router) failedBeforeFirst(ctx context.Context, rec domain.UsageRecord, 
 	return true, nil
 }
 
-// record writes one usage row. It uses a context the caller's cancellation cannot stop, since
-// a cancelled call is still a call that happened.
-func (r *Router) record(ctx context.Context, rec domain.UsageRecord) {
-	rec.CreatedAt = r.now().UnixMilli()
+// record writes one usage row and traces the call. It uses a context the caller's
+// cancellation cannot stop, since a cancelled call is still a call that happened.
+func (r *Router) record(ctx context.Context, rec domain.UsageRecord, start time.Time) {
+	end := r.now()
+	rec.CreatedAt = end.UnixMilli()
+	r.cfg.Tracer.ModelCall(context.WithoutCancel(ctx), rec, start, end)
 	if err := r.cfg.Usage.Record(context.WithoutCancel(ctx), rec); err != nil {
-		r.cfg.Logger.Warn("a model call could not be recorded in usage",
+		r.cfg.Logger.WarnContext(ctx, "a model call could not be recorded in usage",
 			slog.String("thread", rec.ThreadID), slog.String("turn", rec.TurnID),
 			slog.String("model", rec.ModelID), slog.String("status", rec.Status), slog.Any("error", err))
 	}

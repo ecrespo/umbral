@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"iter"
+	"time"
 
 	"github.com/ecrespo/umbral/internal/llmgw/domain"
 )
@@ -44,4 +45,11 @@ type EgressLog interface {
 // UsageLog records every model call (REQ-LLM-005, Data Model §2.11).
 type UsageLog interface {
 	Record(ctx context.Context, rec domain.UsageRecord) error
+}
+
+// Tracer traces the router's model calls (REQ-OBS-001): one per call made — the same calls
+// usage records — in the context the caller streamed with, which holds the turn's span. It is
+// given the call once it has ended, with when it started and ended.
+type Tracer interface {
+	ModelCall(ctx context.Context, rec domain.UsageRecord, start, end time.Time)
 }

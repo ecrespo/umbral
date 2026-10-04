@@ -33,6 +33,7 @@ type agentDeps struct {
 	terminal sessports.AgentTerminal
 	blocks   *sessions.Reader
 	metrics  *obs.Metrics
+	tracer   agentsports.Tracer
 }
 
 // newRuntime wires the agent runtime (T-F1-13) to the modules it reaches through their ports:
@@ -58,6 +59,7 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, *registry.Re
 		Context: local.New(local.Config{Blocks: blockText{reader: d.blocks}}),
 		NewID:   store.NewID,
 		Metrics: d.metrics,
+		Tracer:  d.tracer,
 		Logger:  d.logger,
 	})
 	return rt, tools, err

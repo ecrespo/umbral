@@ -53,6 +53,6 @@ func (t *turnRun) servedModel() string {
 	case t.thread.Model != "":
 		return t.thread.Model
 	default:
-		return "unknown"
+		return unknown
 	}
 }

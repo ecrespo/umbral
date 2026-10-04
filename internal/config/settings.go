@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -30,6 +32,10 @@ type Settings struct {
 	// keyring the machine does not have (REQ-SEC-012). Off by default, since the environment
 	// is the weaker store — every child process inherits it.
 	AllowEnvSecrets bool
+	// OTelEndpoint is `[otel] endpoint`: the base URL of an OTLP/HTTP collector on this
+	// machine that traces and metrics are exported to (REQ-OBS-003). Empty, the default,
+	// exports nothing: there is no telemetry the user has not asked for (Art. 4).
+	OTelEndpoint string
 }
 
 // SettingsFileName is the file's name inside the configuration directory.
@@ -106,6 +112,12 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 					ErrSettingsInvalid, path, value)
 			}
 			settings.AllowEnvSecrets = on
+		case "otel.endpoint":
+			endpoint, err := parseOTelEndpoint(value)
+			if err != nil {
+				return Settings{}, fmt.Errorf("%w: %s: otel.endpoint: %w", ErrSettingsInvalid, path, err)
+			}
+			settings.OTelEndpoint = endpoint
 		case apiSection + "." + maxMessageKey:
 			n, err := parseMaxMessageBytes(value)
 			if err != nil {
@@ -121,6 +133,26 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 		}
 	}
 	return settings, nil
+}
+
+// parseOTelEndpoint checks `[otel] endpoint`: an http or https base URL — no path, query,
+// fragment or credentials — whose host is `localhost` or a loopback address. A collector
+// elsewhere would make the telemetry an egress Art. 4 requires to be recorded and redacted;
+// F1 exports to a local collector only, which forwards wherever the user configures it to.
+// The error never repeats the value, which may hold a credential.
+func parseOTelEndpoint(value string) (string, error) {
+	u, err := url.Parse(value)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", errors.New("want an http:// or https:// URL such as http://127.0.0.1:4318")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Trim(u.Path, "/") != "" {
+		return "", errors.New("want the collector's base URL, with no path, query or credentials")
+	}
+	host := u.Hostname()
+	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return "", errors.New("the collector must be on this machine: localhost or a loopback address")
+	}
+	return strings.TrimSuffix(u.String(), "/"), nil
 }
 
 // parseTOMLSubset reads the part of TOML this file uses: comments, `[section]` headers and

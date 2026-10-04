@@ -28,9 +28,9 @@ type gateway struct {
 	egress  llmports.EgressLog
 }
 
-func newGateway(ctx context.Context, logger *slog.Logger, store llmports.ModelStore, egress llmports.EgressLog, usage llmports.UsageLog) (*gateway, error) {
+func newGateway(ctx context.Context, logger *slog.Logger, store llmports.ModelStore, egress llmports.EgressLog, usage llmports.UsageLog, tracer llmports.Tracer) (*gateway, error) {
 	catalog := llmgw.NewCatalog(store, logger)
-	router, err := llmgw.NewRouter(catalog, llmgw.RouterConfig{Redact: redact, Usage: usage, Logger: logger})
+	router, err := llmgw.NewRouter(catalog, llmgw.RouterConfig{Redact: redact, Usage: usage, Tracer: tracer, Logger: logger})
 	if err != nil {
 		return nil, err
 	}

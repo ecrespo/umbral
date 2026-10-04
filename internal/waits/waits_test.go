@@ -508,3 +508,39 @@ func TestAGapRestartsTheNumbering_REQ_AUT_003(t *testing.T) {
 		t.Fatalf("Wait = %+v %v", r.res, r.err)
 	}
 }
+
+// TestActiveCountsTheOpenWaits_REQ_OBS_004: umbral_waits_active is the waits open now — of a
+// thread or of output — from their start until they are closed, however many times; a wait
+// that failed to start is not one.
+func TestActiveCountsTheOpenWaits_REQ_OBS_004(t *testing.T) {
+	threads := &fakeThreads{}
+	threads.set("running", "working", "trn_a")
+	term := &fakeTerminal{screen: "$ ", seq: 1}
+	s, _ := newService(t, threads, term)
+	if n := s.Active(); n != 0 {
+		t.Fatalf("Active = %d before any wait", n)
+	}
+	tw, err := s.Thread(t.Context(), "thr_1", []string{"done"}, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ow, err := s.Output(t.Context(), domain.OutputParams{SessionID: "ses_1", Regex: "x", TimeoutMS: 5000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Output(t.Context(), domain.OutputParams{SessionID: "ses_1", Regex: "(", TimeoutMS: 5000}); err == nil {
+		t.Fatal("an invalid regex started a wait")
+	}
+	if n := s.Active(); n != 2 {
+		t.Fatalf("Active = %d with a thread wait and an output wait open", n)
+	}
+	tw.Close()
+	tw.Close()
+	if n := s.Active(); n != 1 {
+		t.Fatalf("Active = %d after closing the thread wait twice", n)
+	}
+	ow.Close()
+	if n := s.Active(); n != 0 {
+		t.Fatalf("Active = %d after closing both", n)
+	}
+}

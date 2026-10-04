@@ -100,3 +100,37 @@ func TestAMalformedFileReloadNamesTheFile(t *testing.T) {
 		t.Errorf("details = %+v, want one entry naming %s", details, config.ModelsFileName)
 	}
 }
+
+// TestConfigGetShowsTheEndpointInUse: `[otel] endpoint` needs a restart, so after a reload
+// that adds, changes or removes it, config.get still shows the one the daemon exports to —
+// not the file's, which nothing is using (delta `2026-10-otel`, decisions 4 and 8).
+func TestConfigGetShowsTheEndpointInUse(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	settingsPath := writeConfigFile(t, dir, config.SettingsFileName, "")
+	modelsPath := writeConfigFile(t, dir, config.ModelsFileName, "")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	p, err := loadProviders(context.Background(), logger, settingsPath, modelsPath, config.Settings{}, &fakeKeyring{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeConfigFile(t, dir, config.SettingsFileName, "[otel]\nendpoint = \"http://127.0.0.1:4318\"\n")
+	view, err := p.Reload(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Settings.OTelEndpoint != "" {
+		t.Fatalf("after adding an endpoint by reload, config.get shows %q; nothing is exported", view.Settings.OTelEndpoint)
+	}
+
+	started := config.Settings{OTelEndpoint: "http://127.0.0.1:4318"}
+	p, err = loadProviders(context.Background(), logger, settingsPath, modelsPath, started, &fakeKeyring{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeConfigFile(t, dir, config.SettingsFileName, "")
+	if view, err = p.Reload(context.Background()); err != nil || view.Settings.OTelEndpoint != started.OTelEndpoint {
+		t.Fatalf("after removing it by reload, config.get shows %q (%v), want the one in use", view.Settings.OTelEndpoint, err)
+	}
+}
