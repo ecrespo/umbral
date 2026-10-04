@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.34 |
-| **Date** | 2026-10-01 |
+| **Version** | 1.35 |
+| **Date** | 2026-10-03 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
 | **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
@@ -110,7 +110,7 @@ flowchart LR
 | Component | Technology | Responsibility | Main REQs |
 |---|---|---|---|
 | `api` | own JSON-RPC 2.0 over a Unix `net.Listener` | handshake, auth, dispatch, notification fan-out with a per-client queue | SEC-003, SEC-007 |
-| `tui` | Bubble Tea v2 (`charm.land/bubbletea/v2`), go-libghostty for the client's own renderer (DD-001) | tabs, panes, block list, keyboard | TUI-* |
+| `tui` | Bubble Tea v2 (`charm.land/bubbletea/v2`), go-libghostty for the client's own renderer (DD-001) | tabs, panes, block list, keyboard, agent panel | TUI-* |
 | `sessions` | `creack/pty`, go-libghostty, `shell/` bootstrap, `klauspost/compress/zstd` | PTY, VT, blocks, input lock, snapshots | TERM-*, BLK-* |
 | `agents` | own runtime over ports | per-turn loop, modes, limits, cancellation, persist-first | AGT-* |
 | `context` | `text/template`, a byte estimate of tokens (Q-03) | rules, attachments, git, budget, compaction | CTX-* |
@@ -841,6 +841,55 @@ gatherer — and publishes through a `Publisher`; `cmd/umbrald` wires them. Delt
   `*` or `?`, or a compound command line is kept `once`. A denial is a `denied_by_user` result the model reads; a turn
   cancelled while it waits leaves the approval `expired`.
 
+### 5.3e The TUI's agent panel (T-F1-20)
+
+The agent panel is part of the TUI model (`internal/tui/agent.go`), not a package of its own. It
+shares the model's layout, key routing and event loop. It is a column beside the panes, two
+fifths of the window within 30–72 columns. The panes, and `session.resize`, give up its width
+and the column that separates it, and do the same for the block list.
+
+- **Keys.**
+  - ctrl+space toggles input between the focused shell and the panel (REQ-TUI-002). The key is
+    fixed in F1. Leaving agent mode keeps the panel on screen.
+  - alt+a attaches the selected block (REQ-TUI-003), and acts only while the block list is
+    open. Otherwise it reaches the shell as ESC a.
+  - esc clears the input, or closes the panel when the input is empty.
+  - In agent mode, ctrl+c stops a turn and never reaches the shell. It stops the turn whose
+    approval is shown, else the panel's own. It takes back a message still waiting for
+    `thread.create`, and clears the input when there is nothing to stop.
+  - Text pasted in agent mode goes into the input.
+- **Approvals.**
+  - Approvals are every thread's: `approval.list` at start, then `approval.requested`,
+    deduplicated by id. The TUI is the client that answers them (API §2).
+  - They are answered oldest first, with control chords and never with letters, so a word typed
+    as an approval arrives cannot answer it:
+    - ctrl+y approves `once`;
+    - ctrl+r approves for the `thread`;
+    - ctrl+l approves `always`;
+    - ctrl+x denies;
+    - ctrl+e shows or hides the diff.
+  - A thread's `thread.turn_finished`, or a `thread.cancel` answered `stopped_at: null`, takes
+    that thread's approvals off the panel.
+  - An answer that never reached the daemon puts its approval back. A `CONFLICT` or `NOT_FOUND`
+    answer means it was already decided or has expired.
+  - In shell mode the status line says the agent is waiting while any approval is pending.
+- **One thread per TUI run.**
+  - The first message creates the thread in the directory of the focused pane's last command,
+    the `cwd` of its latest `block.closed`. That is where the command started, so a `cd` counts
+    from the command after it.
+  - A pane that has run nothing uses its session's starting directory.
+  - The transcript shows only that thread. Tool calls are one row each, matched by id.
+- **What is sent and drawn.**
+  - `@block:`, `@file:` and `@directory:` (or `@dir:`) tokens become `thread.send`
+    attachments.
+  - Every send carries a fresh ULID `client_msg_id`. A message typed while a turn runs is
+    refused in the client.
+  - Model text, approval summaries and diffs are drawn without escape, control or format
+    characters (bidi overrides, zero-width spaces), with tabs expanded.
+  - A long approval keeps its head, and it and its diff are cut to the panel's height with
+    `… n more lines`, so the keys and the input stay visible.
+  - Rows are measured in runes, not terminal cells: wide characters can overflow a row.
+
 ### 5.4 Error Handling
 
 ```go
@@ -1139,3 +1188,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.32 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-thread-cancel` (T-F1-16): §3.3 item 3 says `thread.cancel` answers once the turn has ended, leaving the thread `stopped` |
 | 1.33 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-mcp-client` (T-F1-17): §3.3 item 5 (losing an MCP server), §5.2 the `mcp` row, §5.3 MCP tools are `Network`, §6.1 the MCP threat row |
 | 1.34 | 2026-10-03 | E. Crespo (assisted draft) | Ratifies delta `2026-10-wait-engine` (T-F1-23): DD-011 says how waits hold — subscribe before pinning, out-of-order answers, the store backstop, a replaced turn answering with its own end or `unknown`; §5.2's `waits` row names the domains it uses |
+| 1.35 | 2026-10-03 | E. Crespo (assisted draft) | Ratifies delta `2026-10-agent-panel`, amended after review (T-F1-20): §5.3e records the agent panel's keys, its approvals of every thread and how they are answered and dropped, the thread's directory, what is sent and how model text is drawn; §3.2's `tui` row names the panel |
