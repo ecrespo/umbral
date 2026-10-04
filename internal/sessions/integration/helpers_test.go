@@ -2,7 +2,9 @@ package integration_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -58,4 +60,31 @@ func waitForScreen(t *testing.T, h *harness, sessionID, want string) bool {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return false
+}
+
+// TestMain gives every shell this package starts a home of its own, empty, so none reads the
+// developer's rc files: the bash bootstrap sources ~/.bashrc and zsh and fish read theirs, and
+// with the real home a session ran the developer's prompt framework. That made a shell's start
+// slow enough under `task ci` to miss REQ-BLK-003's 5 s window, and its prompt something no
+// assertion could predict (TestTheShellsDoNotReadTheDevelopersHome). A test that needs a
+// particular rc file sets HOME itself.
+func TestMain(m *testing.M) {
+	home, err := os.MkdirTemp("", "TestSessionsHome")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "create a home for the shells:", err)
+		os.Exit(1)
+	}
+	for k, v := range map[string]string{"HOME": home, "ZDOTDIR": home, "XDG_CONFIG_HOME": filepath.Join(home, ".config")} {
+		if err := os.Setenv(k, v); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+	// Files a non-interactive or POSIX shell would read whatever the home.
+	for _, k := range []string{"BASH_ENV", "ENV"} {
+		_ = os.Unsetenv(k)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(home)
+	os.Exit(code)
 }
