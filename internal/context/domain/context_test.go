@@ -149,3 +149,28 @@ func TestAnUnreadableRepositoryIsStated_REQ_CTX_003(t *testing.T) {
 		t.Fatalf("system prompt:\n%s", out)
 	}
 }
+
+// TestStdinAttachmentSaysTheClientStoppedReading_REQ_CLI_001: what `umb ai` piped is an
+// attachment like any other — capped at 256 KiB with the omitted bytes counted — and, when
+// the client stopped reading at its 1 MiB limit, the context says the rest was never read,
+// since the bytes past it were not counted by anyone.
+func TestStdinAttachmentSaysTheClientStoppedReading_REQ_CLI_001(t *testing.T) {
+	data := []byte(strings.Repeat("l", 300<<10))
+	a := NewStdinAttachment(data, true)
+	if a.Kind != KindStdin || a.Ref != "stdin" || a.Bytes != 300<<10 || a.TruncatedBytes != 44<<10 || !a.Unread {
+		t.Fatalf("attachment %+v", a)
+	}
+	r := a.Render()
+	if !strings.Contains(r, `kind="stdin"`) || !strings.Contains(r, "45056 bytes omitted") ||
+		!strings.Contains(r, "stopped reading stdin") {
+		t.Fatalf("render:\n%s", r[len(r)-300:])
+	}
+
+	whole := NewStdinAttachment([]byte("all of it\n"), false)
+	if whole.Unread || strings.Contains(whole.Render(), "stopped reading") || strings.Contains(whole.Render(), "omitted") {
+		t.Fatalf("a whole stdin says nothing was left: %s", whole.Render())
+	}
+	if bin := NewStdinAttachment([]byte("a\x00b"), true); !bin.Binary || !strings.Contains(bin.Render(), "stopped reading stdin") {
+		t.Fatalf("binary stdin: %s", bin.Render())
+	}
+}

@@ -111,10 +111,21 @@ type Threads interface {
 	Respond(ctx context.Context, r domain.Response) (domain.Approval, error)
 }
 
-// AttachmentRef is an attachment as thread.send names it.
+// MaxStdinBytes is REQ-CLI-001's limit on what `umb ai` sends from stdin: the decoded size
+// of a `stdin` attachment's `data_b64`. It bounds the frame, not the prompt: the attachment
+// is then capped at 256 KiB like any other (REQ-CTX-005).
+const MaxStdinBytes = 1 << 20
+
+// AttachmentRef is an attachment as thread.send names it: a `ref` for a file, a directory or
+// a block, or, for `stdin`, the data itself (API §5.20).
 type AttachmentRef struct {
 	Kind string
 	Ref  string
+	// Data is a `stdin` attachment's content, never nil for one: what `umb ai` read.
+	Data []byte
+	// Truncated says the client stopped reading stdin at MaxStdinBytes, so more followed
+	// that nobody read.
+	Truncated bool
 }
 
 // SendParams is thread.send's input (API §5.20).

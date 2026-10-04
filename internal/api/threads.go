@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -185,11 +186,18 @@ func handleThreadCreate(ctx context.Context, c *conn, raw json.RawMessage) (any,
 	return toWireThread(t), nil
 }
 
+// sendAttachment is one of thread.send's attachments: a `ref`, or for `stdin` the data
+// inline (API §5.20). DataB64 is a pointer because an empty stdin is still data, and only
+// an absent field is no data.
 type sendAttachment struct {
-	Kind    string `json:"kind"`
-	Ref     string `json:"ref" api:"optional"`
-	DataB64 string `json:"data_b64" api:"optional"`
+	Kind      string  `json:"kind"`
+	Ref       string  `json:"ref" api:"optional"`
+	DataB64   *string `json:"data_b64" api:"optional"`
+	Truncated bool    `json:"truncated" api:"optional"`
 }
+
+// kindStdin is the one attachment kind that carries its data (REQ-CLI-001).
+const kindStdin = "stdin"
 
 type sendParams struct {
 	ThreadID    string           `json:"thread_id"`
@@ -239,13 +247,12 @@ func handleThreadSend(ctx context.Context, c *conn, raw json.RawMessage) (any, e
 			return nil, err
 		}
 	}
-	refs := make([]agentsports.AttachmentRef, 0, len(p.Attachments))
-	for i, a := range p.Attachments {
-		if a.DataB64 != "" || a.Ref == "" {
-			return nil, ValidationError("an attachment needs a ref; inline data arrives with umb ai",
-				ErrorField{Field: fmt.Sprintf("attachments[%d]", i), Issue: "unsupported"})
+	refs, err := sendAttachments(p.Attachments)
+	if err != nil {
+		if wait != nil {
+			wait.Close()
 		}
-		refs = append(refs, agentsports.AttachmentRef{Kind: a.Kind, Ref: a.Ref})
+		return nil, err
 	}
 	res, err := svc.Send(ctx, agentsports.SendParams{
 		ThreadID: p.ThreadID, Text: p.Text, Attachments: refs, ClientMsgID: p.ClientMsgID, RejectBlocked: wait != nil,
@@ -270,6 +277,47 @@ func handleThreadSend(ctx context.Context, c *conn, raw json.RawMessage) (any, e
 		state := string(got.State)
 		return sendResult{TurnID: res.TurnID, MessageID: res.MessageID, FinalState: &state}, nil
 	}), nil
+}
+
+// sendAttachments checks thread.send's attachments and decodes a `stdin` one's data. A
+// `stdin` attachment carries `data_b64` and nothing else, at most MaxStdinBytes of it once
+// decoded, and comes once per message; every other kind carries a `ref` and nothing else.
+func sendAttachments(in []sendAttachment) ([]agentsports.AttachmentRef, error) {
+	refs := make([]agentsports.AttachmentRef, 0, len(in))
+	stdin := false
+	for i, a := range in {
+		field := fmt.Sprintf("attachments[%d]", i)
+		if a.Kind != kindStdin {
+			if a.DataB64 != nil || a.Truncated || a.Ref == "" {
+				return nil, ValidationError("only a stdin attachment carries data; any other needs a ref",
+					ErrorField{Field: field, Issue: "unsupported"})
+			}
+			refs = append(refs, agentsports.AttachmentRef{Kind: a.Kind, Ref: a.Ref})
+			continue
+		}
+		switch {
+		case stdin:
+			return nil, ValidationError("a message has at most one stdin attachment", ErrorField{Field: field, Issue: "duplicate"})
+		case a.DataB64 == nil || a.Ref != "":
+			return nil, ValidationError("a stdin attachment carries data_b64 and no ref", ErrorField{Field: field, Issue: "unsupported"})
+		case base64.StdEncoding.DecodedLen(len(*a.DataB64)) > agentsports.MaxStdinBytes+2:
+			// Refused before decoding: a frame can hold 64 MiB.
+			return nil, ValidationError(fmt.Sprintf("stdin is over %d bytes", agentsports.MaxStdinBytes), ErrorField{Field: field, Issue: "too_large"})
+		}
+		data, err := base64.StdEncoding.DecodeString(*a.DataB64)
+		if err != nil {
+			return nil, ValidationError("data_b64 is not base64", ErrorField{Field: field + "." + fieldDataB64, Issue: "invalid"})
+		}
+		if len(data) > agentsports.MaxStdinBytes {
+			return nil, ValidationError(fmt.Sprintf("stdin is over %d bytes", agentsports.MaxStdinBytes), ErrorField{Field: field, Issue: "too_large"})
+		}
+		if data == nil {
+			data = []byte{}
+		}
+		stdin = true
+		refs = append(refs, agentsports.AttachmentRef{Kind: kindStdin, Data: data, Truncated: a.Truncated})
+	}
+	return refs, nil
 }
 
 type getThreadParams struct {
