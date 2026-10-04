@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED` |
+| **Status** | `RATIFIED 2026-10-03` (amended after review, ratified again the same day) |
 | **Date** | 2026-10-03 |
 | **Task** | T-F1-20 |
 | **Raised by** | T-F1-20: REQ-TUI-001…003 name the panel, the mode shortcut and "attach to agent", and leave the rest to the client |
@@ -107,4 +107,5 @@
   - its Files become `internal/tui/agent.go`, `internal/tui/ports/ports.go` and
     `internal/tui/adapters/daemon/daemon.go`;
   - its Done says "the model's harness tests".
-- **Tech Design**, the TUI's section: decisions 1–4 as the panel's behaviour.
+- **Tech Design**, the TUI's section: decisions 1–4 as the panel's behaviour. Folded as §5.3e
+  in Tech 1.35.
