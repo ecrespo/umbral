@@ -14,6 +14,12 @@
 version: 3
 workdir: .
 
+# e2e/us003/fixture is a module of its own, not Umbral's code: the Go repository with a broken
+# test that the live US-003 run copies and asks the agent to fix (T-F1-21). It imports nothing
+# of Umbral's and nothing of Umbral's imports it, so no component applies to it.
+exclude:
+  - e2e/us003/fixture
+
 components:
   # --- composition root -------------------------------------------------------
   cmd: { in: cmd/** }

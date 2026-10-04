@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
@@ -354,5 +355,38 @@ func TestAnUnregisteredToolIsUnknown_REQ_MCP_002(t *testing.T) {
 	env := domain.Env{Cwd: t.TempDir(), WriteRoot: t.TempDir()}
 	if _, err := r.Action(env, domain.Call{Tool: "grep", Input: json.RawMessage(`{"pattern":"x"}`)}); !errors.Is(err, domain.ErrUnknownTool) {
 		t.Fatalf("a call to it: %v", err)
+	}
+}
+
+// TestTheRepairNamesWhatIsWrong_REQ_AGT_006: the error the repair message carries (T-F1-15)
+// says in words what the schema refused, and where. The live US-003 run (T-F1-21) found it
+// printing the validator's struct — `/: &{[depth]}` — so gpt-oss:20b, told nothing it could
+// act on, sent the same unknown property again and lost the turn.
+func TestTheRepairNamesWhatIsWrong_REQ_AGT_006(t *testing.T) {
+	t.Parallel()
+
+	r := builtins(t)
+	env := domain.Env{Cwd: t.TempDir()}
+	for _, tc := range []struct {
+		tool, input string
+		want        []string
+	}{
+		{"list_dir", `{"path":"","depth":2}`, []string{"list_dir", "depth", "not allowed"}},
+		{"read_file", `{"path":7}`, []string{"read_file", "/path", "string", "number"}},
+		{"read_file", `{"path":"a","line_start":1}`, []string{"read_file", "line_start", "not allowed"}},
+	} {
+		_, err := r.Action(env, domain.Call{Tool: tc.tool, Input: json.RawMessage(tc.input)})
+		if !errors.Is(err, domain.ErrInvalidInput) {
+			t.Fatalf("%s %s: err = %v", tc.tool, tc.input, err)
+		}
+		msg := err.Error()
+		if strings.Contains(msg, "&{") {
+			t.Errorf("%s %s: the message prints a Go value: %s", tc.tool, tc.input, msg)
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(msg, w) {
+				t.Errorf("%s %s: %q does not say %q", tc.tool, tc.input, msg, w)
+			}
+		}
 	}
 }
