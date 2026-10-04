@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
@@ -43,6 +45,24 @@ type Config struct {
 // Service is the wait engine.
 type Service struct {
 	cfg Config
+	// active counts the waits open now: umbral_waits_active (REQ-OBS-004).
+	active atomic.Int64
+}
+
+// Active is how many waits are open now (REQ-OBS-004).
+func (s *Service) Active() int64 { return s.active.Load() }
+
+// opened counts a wait from its subscription on, and returns its Close: the subscription's
+// and the count's, once however often it is called.
+func (s *Service) opened(sub *bus.Subscription) func() {
+	s.active.Add(1)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			sub.Close()
+			s.active.Add(-1)
+		})
+	}
 }
 
 // New returns the service.
@@ -75,14 +95,17 @@ func (s *Service) Thread(_ context.Context, threadID string, until []string, tim
 	if s.cfg.Threads == nil {
 		return nil, errors.New("waits: the agent runtime is not wired in")
 	}
-	return &threadWait{
+	w := &threadWait{
 		s: s, threadID: threadID, targets: targets, timeout: timeout, start: s.cfg.Now(),
 		sub: s.cfg.Bus.Subscribe(agentsports.KindThreadTurnFinished, agentsports.KindApprovalRequested),
-	}, nil
+	}
+	w.close = s.opened(w.sub)
+	return w, nil
 }
 
 type threadWait struct {
 	s        *Service
+	close    func()
 	threadID string
 	targets  domain.Targets
 	timeout  time.Duration
@@ -108,7 +131,7 @@ func (w *threadWait) Pin(turnID string) {
 	w.tracker = domain.NewTracker(turnID, w.targets)
 }
 
-func (w *threadWait) Close() { w.sub.Close() }
+func (w *threadWait) Close() { w.close() }
 
 func (w *threadWait) Wait(ctx context.Context) (ports.ThreadResult, error) {
 	defer w.Close()
@@ -281,6 +304,7 @@ func (s *Service) Output(ctx context.Context, p domain.OutputParams) (ports.Outp
 	}
 	w.sub = s.cfg.Bus.SubscribeBuffered(outputBuffer,
 		sessports.KindSessionOutput, sessports.KindBlockStarted, sessports.KindBlockClosed, sessports.KindSessionExited)
+	w.close = s.opened(w.sub)
 
 	if w.pinnedBlock && !block.Open() {
 		// A closed block is its own output; nothing more will be written to it.
@@ -314,6 +338,7 @@ func (s *Service) Output(ctx context.Context, p domain.OutputParams) (ports.Outp
 
 type outputWait struct {
 	s         *Service
+	close     func()
 	matcher   *domain.Matcher
 	timeout   time.Duration
 	start     time.Time
@@ -331,7 +356,7 @@ type outputWait struct {
 	feed        domain.Feed
 }
 
-func (w *outputWait) Close() { w.sub.Close() }
+func (w *outputWait) Close() { w.close() }
 
 // window takes a screen as the wait's starting point. A line still open at the cursor — a
 // prompt — is not consumed: it is evaluated as it stands, trailing blanks and all, and seeds

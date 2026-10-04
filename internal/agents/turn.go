@@ -23,6 +23,10 @@ var errStorage = errors.New("storage")
 
 func storageErr(err error) error { return fmt.Errorf("%w: %w", errStorage, err) }
 
+// unknown is the value a label or a state takes when the runtime does not know it: a turn's
+// end that was not written, a model the router did not name, a tool the registry lacks.
+const unknown = "unknown"
+
 // turnRun is one turn's state.
 type turnRun struct {
 	r         *Runtime
@@ -42,6 +46,10 @@ type turnRun struct {
 	// did, so this step is its one retry (REQ-AGT-006).
 	invalid   bool
 	repairing bool
+	// ended is how the tool call running now ended, for its span.
+	ended ports.ToolTrace
+	// known are the registry's tools, the names a span may carry.
+	known map[string]bool
 
 	// system is the base prompt; summary is the one compaction left (delta
 	// `2026-09-context-budget`, decision 5); history is what the model reads after them.
@@ -55,6 +63,8 @@ type turnRun struct {
 // It returns how the turn ended: its stop reason, and the moment its end was written, 0 when
 // the write failed.
 func (r *Runtime) runTurn(ctx context.Context, thread domain.Thread, turnID string) (domain.StopReason, int64) {
+	// The turn's span holds everything below: model calls, tools and log lines (REQ-OBS-001).
+	ctx, endSpan := r.cfg.Tracer.Turn(ctx, thread.ID, turnID)
 	t := &turnRun{r: r, thread: thread, turnID: turnID}
 	stop := t.run(ctx)
 
@@ -74,7 +84,7 @@ func (r *Runtime) runTurn(ctx context.Context, thread domain.Thread, turnID stri
 		err = r.cfg.Store.FinishTurn(context.WithoutCancel(ctx), thread.ID, state, t.usage, ended)
 	}
 	if err != nil {
-		r.cfg.Logger.Error("a turn's end could not be written", slog.String("thread", thread.ID),
+		r.cfg.Logger.ErrorContext(ctx, "a turn's end could not be written", slog.String("thread", thread.ID),
 			slog.String("turn", turnID), slog.Any("error", err))
 		stop, ended = domain.StopStorageError, 0
 	}
@@ -82,10 +92,11 @@ func (r *Runtime) runTurn(ctx context.Context, thread domain.Thread, turnID stri
 	switch {
 	case ended == 0:
 		// Nothing was written: the store still says running, so the end is not known.
-		endState = "unknown"
+		endState = unknown
 	case state == domain.StateStopped:
 		endState = string(domain.StateStopped)
 	}
+	endSpan(ports.TurnTrace{StopReason: stop, Model: t.model, Usage: t.usage})
 	r.mu.Lock()
 	r.ends.add(thread.ID, turnID, endState)
 	r.mu.Unlock()
@@ -127,17 +138,17 @@ func (t *turnRun) stopFor(ctx context.Context, err error) domain.StopReason {
 	case ctx.Err() != nil:
 		return domain.StopCancelled
 	case errors.Is(err, errStorage):
-		t.r.cfg.Logger.Error("a turn stopped: a write failed", slog.String("thread", t.thread.ID),
+		t.r.cfg.Logger.ErrorContext(ctx, "a turn stopped: a write failed", slog.String("thread", t.thread.ID),
 			slog.String("turn", t.turnID), slog.Any("error", err))
 		return domain.StopStorageError
 	case errors.Is(err, ctxdomain.ErrContextOverflow):
 		return domain.StopContextOverflow
 	case errors.Is(err, errRepairFailed):
-		t.r.cfg.Logger.Warn("a turn stopped: a tool call was invalid after its repair", slog.String("thread", t.thread.ID),
+		t.r.cfg.Logger.WarnContext(ctx, "a turn stopped: a tool call was invalid after its repair", slog.String("thread", t.thread.ID),
 			slog.String("turn", t.turnID), slog.String("model", t.servedModel()))
 		return domain.StopToolError
 	default:
-		t.r.cfg.Logger.Warn("a turn stopped: the model call failed", slog.String("thread", t.thread.ID),
+		t.r.cfg.Logger.WarnContext(ctx, "a turn stopped: the model call failed", slog.String("thread", t.thread.ID),
 			slog.String("turn", t.turnID), slog.Any("error", err))
 		return domain.StopProviderError
 	}
@@ -153,7 +164,9 @@ func (t *turnRun) prepare(ctx context.Context) error {
 		return storageErr(err)
 	}
 	t.rules = rules
+	t.known = map[string]bool{}
 	for _, spec := range cfg.Tools.Specs() {
+		t.known[spec.Name] = true
 		// REQ-AGT-009: `ask` offers only ReadOnly tools; the policy refuses the rest anyway.
 		if secdomain.Exposed(t.thread.Mode, spec.Risk) {
 			t.tools = append(t.tools, llm.ToolSpec{Name: spec.Name, Description: spec.Description, InputSchema: spec.InputSchema})
@@ -385,6 +398,25 @@ func (t *turnRun) summarize(ctx context.Context, transcript string) (string, err
 // runTool takes one tool call through the policy and, when a decision allows it, the tool.
 // Every status change is persisted, then published; the model reads the result.
 func (t *turnRun) runTool(ctx context.Context, c domain.ToolCall) error {
+	// A tool the registry does not have is named by the model, so its span is not: that
+	// would put model text in a span name and an unbounded label (delta `2026-10-otel`).
+	name := c.Tool
+	if !t.known[name] {
+		name = unknown
+	}
+	ctx, endSpan := t.r.cfg.Tracer.Tool(ctx, c.ID, name)
+	t.ended = ports.ToolTrace{}
+	err := t.callTool(ctx, c)
+	if t.ended.Status == "" {
+		// The call stopped before a status was recorded: a failed write or a cancel.
+		t.ended.Status = domain.ToolError
+	}
+	endSpan(t.ended)
+	return err
+}
+
+// callTool runs one tool call: classify, record, decide, ask if it must, invoke.
+func (t *turnRun) callTool(ctx context.Context, c domain.ToolCall) error {
 	cfg := t.r.cfg
 	env := toolsdomain.Env{ThreadID: t.thread.ID, Cwd: t.thread.Cwd, WriteRoot: t.writeRoot}
 	call := toolsdomain.Call{Tool: c.Tool, Input: c.Args}
@@ -442,6 +474,7 @@ func (t *turnRun) runTool(ctx context.Context, c domain.ToolCall) error {
 
 // finishTool records a call's outcome, publishes it, and adds its result to the history.
 func (t *turnRun) finishTool(ctx context.Context, c domain.ToolCall, status domain.ToolStatus, result, summary string, tainted bool) error {
+	t.ended = ports.ToolTrace{Status: status, Risk: c.Risk}
 	ended := t.r.now()
 	c.Status, c.Result, c.ResultSummary, c.Tainted, c.EndedAt = status, result, summary, tainted, &ended
 	if c.ResultSummary == "" {

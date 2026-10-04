@@ -29,6 +29,8 @@ type ConfigSettings struct {
 	PaneHistory     bool  `json:"pane_history"`
 	MaxMessageBytes int64 `json:"max_message_bytes"`
 	AllowEnv        bool  `json:"allow_env"`
+	// OTelEndpoint is `[otel] endpoint`, absent when nothing is exported (REQ-OBS-003).
+	OTelEndpoint string `json:"otel_endpoint,omitempty"`
 }
 
 // ConfigProvider is one provider of models.toml and its state.

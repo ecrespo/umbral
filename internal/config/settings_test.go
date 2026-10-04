@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,4 +124,37 @@ func write(t *testing.T, body string) string {
 		t.Fatalf("write the settings file: %v", err)
 	}
 	return path
+}
+
+// TestTheOTelEndpointMustBeLocal: `[otel] endpoint` names an OTLP/HTTP collector on this
+// machine. Anything else stops the daemon rather than send telemetry off it (Art. 4); unset,
+// nothing is exported.
+func TestTheOTelEndpointMustBeLocal(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, write(t, ""))
+	if err != nil || settings.OTelEndpoint != "" {
+		t.Fatalf("no file: endpoint %q, %v", settings.OTelEndpoint, err)
+	}
+	for _, ok := range []string{
+		"http://127.0.0.1:4318", "http://localhost:4318", "http://[::1]:4318", "https://127.0.0.2:4318/",
+	} {
+		settings, err := LoadSettings(nil, write(t, "[otel]\nendpoint = \""+ok+"\"  # a local collector\n"))
+		if err != nil || settings.OTelEndpoint != strings.TrimSuffix(ok, "/") {
+			t.Errorf("%s: endpoint %q, %v", ok, settings.OTelEndpoint, err)
+		}
+	}
+	for _, bad := range []string{
+		"http://collector.example.com:4318", "http://10.0.0.2:4318", "http://0.0.0.0:4318",
+		"127.0.0.1:4318", "grpc://127.0.0.1:4317", "http://127.0.0.1:4318/v1/traces",
+		"http://user:pw@127.0.0.1:4318", "http://127.0.0.1:4318?x=1", "http://localhost.example.com",
+	} {
+		_, err := LoadSettings(nil, write(t, "[otel]\nendpoint = \""+bad+"\"\n"))
+		if !errors.Is(err, ErrSettingsInvalid) || !strings.Contains(err.Error(), "otel.endpoint") {
+			t.Errorf("%s was accepted, or refused without naming the key: %v", bad, err)
+		}
+		if strings.Contains(bad, "pw@") && strings.Contains(fmt.Sprint(err), "pw") {
+			t.Errorf("the refusal repeats the credential: %v", err)
+		}
+	}
 }

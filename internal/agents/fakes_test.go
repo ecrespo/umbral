@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -336,6 +337,8 @@ type scripted struct {
 	hold chan struct{}
 	// unavailable makes Available report no candidate.
 	unavailable bool
+	// spans is the span each call's context carried.
+	spans []string
 }
 
 // answer is a script that says text and ends.
@@ -361,6 +364,7 @@ func (m *scripted) Stream(ctx context.Context, call ports.ModelCall) (iter.Seq2[
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, call)
+	m.spans = append(m.spans, spanOf(ctx))
 	if len(m.scripts) == 0 {
 		return nil, fmt.Errorf("%w: no script left", llm.ErrNoCandidate)
 	}
@@ -569,6 +573,79 @@ func (m *fakeMetrics) count(model string) int {
 	return m.invalid[model]
 }
 
+// spanKey holds the fake tracer's span in a context.
+type spanKey struct{}
+
+func spanOf(ctx context.Context) string {
+	s, _ := ctx.Value(spanKey{}).(string)
+	return s
+}
+
+// tracedTurn and tracedTool are what the fake tracer saw of a span: where it started and how
+// it ended.
+type tracedTurn struct {
+	threadID, turnID string
+	end              *ports.TurnTrace
+}
+
+type tracedTool struct {
+	callID, tool, parent string
+	end                  *ports.ToolTrace
+}
+
+// fakeTracer is ports.Tracer: each span is a string in the context, so a test can see which
+// span a model call, a tool or a log line ran inside.
+type fakeTracer struct {
+	mu    sync.Mutex
+	turns []*tracedTurn
+	tools []*tracedTool
+}
+
+func (f *fakeTracer) Turn(ctx context.Context, threadID, turnID string) (context.Context, func(ports.TurnTrace)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	tt := &tracedTurn{threadID: threadID, turnID: turnID}
+	f.turns = append(f.turns, tt)
+	return context.WithValue(ctx, spanKey{}, "turn:"+turnID), func(end ports.TurnTrace) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		tt.end = &end
+	}
+}
+
+func (f *fakeTracer) Tool(ctx context.Context, callID, tool string) (context.Context, func(ports.ToolTrace)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	tt := &tracedTool{callID: callID, tool: tool, parent: spanOf(ctx)}
+	f.tools = append(f.tools, tt)
+	return context.WithValue(ctx, spanKey{}, "tool:"+callID), func(end ports.ToolTrace) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		tt.end = &end
+	}
+}
+
+// spanLogs is a slog handler that keeps the span each line was logged inside.
+type spanLogs struct {
+	mu    sync.Mutex
+	lines map[string]string // message → span
+}
+
+func (h *spanLogs) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *spanLogs) Handle(ctx context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.lines == nil {
+		h.lines = map[string]string{}
+	}
+	h.lines[r.Message] = spanOf(ctx)
+	return nil
+}
+
+func (h *spanLogs) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *spanLogs) WithGroup(string) slog.Handler      { return h }
+
 type rig struct {
 	rt      *Runtime
 	store   *memStore
@@ -576,6 +653,8 @@ type rig struct {
 	tools   *fakeTools
 	bus     *checkingBus
 	metrics *fakeMetrics
+	tracer  *fakeTracer
+	logs    *spanLogs
 }
 
 var ids atomic.Int64
@@ -598,9 +677,11 @@ func newRig(t *testing.T, scripts ...[]llm.Event) *rig {
 		"broken_env": {risk: secdomain.RiskWriteFS, actionErr: toolsdomain.ErrInvalidEnv},
 	}}
 	metrics := &fakeMetrics{}
+	tracer := &fakeTracer{}
+	logs := &spanLogs{}
 	rt, err := New(t.Context(), Config{
-		Store: store, Models: models, Tools: tools, Bus: b, NewID: newID, Metrics: metrics,
-		IsRepo: func(string) bool { return false },
+		Store: store, Models: models, Tools: tools, Bus: b, NewID: newID, Metrics: metrics, Tracer: tracer,
+		IsRepo: func(string) bool { return false }, Logger: slog.New(logs),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -611,7 +692,7 @@ func newRig(t *testing.T, scripts ...[]llm.Event) *rig {
 			t.Error(f)
 		}
 	})
-	return &rig{rt: rt, store: store, models: models, tools: tools, bus: b, metrics: metrics}
+	return &rig{rt: rt, store: store, models: models, tools: tools, bus: b, metrics: metrics, tracer: tracer, logs: logs}
 }
 
 func (r *rig) thread(t *testing.T, p domain.CreateParams) domain.Thread {

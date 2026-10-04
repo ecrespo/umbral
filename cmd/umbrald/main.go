@@ -83,7 +83,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+	// Every line logged inside a turn carries its trace id (Art. 7, Tech §7.1).
+	logger := slog.New(obs.LogHandler(slog.NewJSONHandler(stderr, nil)))
 
 	socket, err := resolveSocketPath(*socketPath)
 	if err != nil {
@@ -340,7 +341,29 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		logger.Error("cannot build the usage log", slog.Any("error", err))
 		return exitCantCreate
 	}
-	models, err := newGateway(ctx, logger, modelStore, egress, usage)
+	// Traces and metrics (T-F1-18). Spans are made whether or not they are exported: their
+	// trace ids join a turn's log lines. Export needs `[otel] endpoint`, which is local.
+	metrics := obs.NewMetrics()
+	gauges := &liveGauges{}
+	telemetry, err := obs.NewTelemetry(ctx, obs.TelemetryConfig{
+		Endpoint: settings.OTelEndpoint, Version: buildVersion(), Logger: logger, Metrics: metrics,
+		WaitsActive: gauges.waitsActive, FramesRefused: gauges.framesRefused,
+	})
+	if err != nil {
+		logger.Error("cannot build the telemetry", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer func() {
+		// What is pending goes to the collector before the daemon exits, within a bound: a
+		// collector that is down must not hold the shutdown.
+		flush, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := telemetry.Shutdown(flush); err != nil {
+			logger.Warn("telemetry did not flush", slog.Any("error", err))
+		}
+	}()
+
+	models, err := newGateway(ctx, logger, modelStore, egress, usage, modelTracer{telemetry})
 	if err != nil {
 		logger.Error("cannot build the model gateway", slog.Any("error", err))
 		return exitCantCreate
@@ -351,7 +374,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// for each to record how it ended.
 	runtime, tools, err := newRuntime(ctx, agentDeps{
 		logger: logger, db: db, bus: eventBus, gateway: models, egress: egress,
-		terminal: sessionService, blocks: blockReader, metrics: obs.NewMetrics(),
+		terminal: sessionService, blocks: blockReader, metrics: metrics, tracer: agentTracer{telemetry},
 	})
 	if err != nil {
 		logger.Error("cannot build the agent runtime", slog.Any("error", err))
@@ -374,6 +397,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		logger.Error("cannot build the wait engine", slog.Any("error", err))
 		return exitCantCreate
 	}
+	gauges.waits.Store(waitEngine)
 
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
@@ -399,6 +423,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		logger.Error("cannot open the socket", slog.Any("error", err))
 		return exitCantCreate
 	}
+	gauges.server.Store(server)
 	defer func() {
 		if err := server.Close(); err != nil {
 			logger.Error("cannot close the socket", slog.Any("error", err))

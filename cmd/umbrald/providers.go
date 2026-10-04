@@ -28,6 +28,10 @@ type providerConfig struct {
 	keyring      secports.Keyring
 	lookupEnv    func(string) (string, bool)
 
+	// otelEndpoint is the `[otel] endpoint` the daemon started with, the one it exports to:
+	// the key needs a restart, so a reload never changes what config.get reports.
+	otelEndpoint string
+
 	mu       sync.RWMutex
 	settings config.Settings
 	models   config.Models
@@ -60,7 +64,7 @@ func loadProviders(ctx context.Context, logger *slog.Logger, settingsPath, model
 	}
 	p := &providerConfig{
 		logger: logger, settingsPath: settingsPath, modelsPath: modelsPath,
-		keyring: keyring, lookupEnv: os.LookupEnv,
+		keyring: keyring, lookupEnv: os.LookupEnv, otelEndpoint: settings.OTelEndpoint,
 	}
 	p.apply(settings, models, p.resolve(ctx, settings, models))
 	return p, nil
@@ -203,6 +207,7 @@ func (p *providerConfig) viewLocked() api.ConfigView {
 			PaneHistory:     p.settings.PaneHistory,
 			MaxMessageBytes: int64(p.settings.MaxMessageBytes),
 			AllowEnv:        p.settings.AllowEnvSecrets,
+			OTelEndpoint:    p.otelEndpoint,
 		},
 		Providers: make([]api.ConfigProvider, 0, len(p.models.Providers)),
 		Rejected:  make([]api.ConfigRejection, 0, len(p.models.Rejected)),

@@ -129,11 +129,41 @@ func status(code int) error {
 	return &domain.ProviderError{Provider: "p", Status: code, Err: errors.New("refused")}
 }
 
+// traceKey marks a context, so a test can see which one a model call was traced in.
+type traceKey struct{}
+
+// tracedCall is a model call as the tracer saw it.
+type tracedCall struct {
+	rec        domain.UsageRecord
+	start, end time.Time
+	parent     string
+}
+
+// memTracer is ports.Tracer: it keeps every model call it is given.
+type memTracer struct {
+	mu    sync.Mutex
+	calls []tracedCall
+}
+
+func (m *memTracer) ModelCall(ctx context.Context, rec domain.UsageRecord, start, end time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	parent, _ := ctx.Value(traceKey{}).(string)
+	m.calls = append(m.calls, tracedCall{rec: rec, start: start, end: end, parent: parent})
+}
+
+func (m *memTracer) all() []tracedCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]tracedCall(nil), m.calls...)
+}
+
 // rig is a catalog with the given providers and models, and a router over it.
 type rig struct {
 	catalog *Catalog
 	router  *Router
 	usage   *memUsage
+	tracer  *memTracer
 }
 
 func newRig(t *testing.T, offline bool, classes map[string][]string, providers []*streamProvider, models []domain.Model) rig {
@@ -156,8 +186,9 @@ func newRig(t *testing.T, offline bool, classes map[string][]string, providers [
 	}
 	c.Configure(offline, entries)
 	usage := &memUsage{}
+	tracer := &memTracer{}
 	r, err := NewRouter(c, RouterConfig{
-		Classes: classes, Usage: usage, Logger: quiet(),
+		Classes: classes, Usage: usage, Tracer: tracer, Logger: quiet(),
 		Redact:           func(s string) string { return strings.ReplaceAll(s, "sk-live-secret", "[REDACTED:openai_key]") },
 		FirstTokenRemote: 150 * time.Millisecond,
 		FirstTokenLocal:  300 * time.Millisecond,
@@ -165,7 +196,7 @@ func newRig(t *testing.T, offline bool, classes map[string][]string, providers [
 	if err != nil {
 		t.Fatal(err)
 	}
-	return rig{catalog: c, router: r, usage: usage}
+	return rig{catalog: c, router: r, usage: usage, tracer: tracer}
 }
 
 func model(provider, name string) domain.Model {
@@ -598,11 +629,14 @@ func TestAnUnknownClassIsRefused(t *testing.T) {
 	if _, err := r.router.Stream(context.Background(), hello("code")); !errors.Is(err, domain.ErrUnknownClass) {
 		t.Errorf("err = %v, want ErrUnknownClass", err)
 	}
-	if _, err := NewRouter(r.catalog, RouterConfig{Usage: &memUsage{}}); err == nil {
+	if _, err := NewRouter(r.catalog, RouterConfig{Usage: &memUsage{}, Tracer: &memTracer{}}); err == nil {
 		t.Error("a router without a redactor was built")
 	}
-	if _, err := NewRouter(r.catalog, RouterConfig{Redact: func(s string) string { return s }}); err == nil {
+	if _, err := NewRouter(r.catalog, RouterConfig{Redact: func(s string) string { return s }, Tracer: &memTracer{}}); err == nil {
 		t.Error("a router without a usage log was built")
+	}
+	if _, err := NewRouter(r.catalog, RouterConfig{Redact: func(s string) string { return s }, Usage: &memUsage{}}); err == nil {
+		t.Error("a router without a tracer was built")
 	}
 	r.router.Configure(map[string][]string{"code": {}})
 	if _, err := r.router.Stream(context.Background(), hello("code")); !errors.Is(err, domain.ErrNoCandidate) {
@@ -702,5 +736,57 @@ func TestAvailableSaysWhetherAnyCandidateCanServe_REQ_LLM_003(t *testing.T) {
 		if got := r.router.Available(t.Context(), c.class, c.model); got != c.want {
 			t.Errorf("%s/%s: %v, want %v", c.class, c.model, got, c.want)
 		}
+	}
+}
+
+// TestEveryModelCallIsTraced_REQ_OBS_001: each call made to a model — each usage row, a
+// fallback's failures included — is one traced call, in the context the caller streamed with
+// (the turn's span), timed from before the request to the call's end. A candidate the
+// adapter refused to carry was not a call, and is not traced.
+func TestEveryModelCallIsTraced_REQ_OBS_001(t *testing.T) {
+	t.Parallel()
+
+	remote := &streamProvider{id: "or", scripts: map[string]script{
+		"limited": {startErr: status(429)},
+		"nope":    {startErr: fmt.Errorf("%w: reasoning", domain.ErrUnsupported)},
+	}}
+	local := &streamProvider{id: "ollama", local: true, scripts: map[string]script{"good": {events: answer}}}
+	r := newRig(t, false,
+		map[string][]string{"code": {"or/limited", "or/nope", "ollama/good"}},
+		[]*streamProvider{remote, local},
+		[]domain.Model{model("or", "limited"), model("or", "nope"), model("ollama", "good")})
+
+	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), traceKey{}, "turn"), 10*time.Second)
+	defer cancel()
+	before := time.Now()
+	stream, err := r.router.Stream(ctx, hello("code"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, err := range stream {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	after := time.Now()
+
+	calls := r.tracer.all()
+	usage := r.usage.all()
+	if len(calls) != 2 || len(usage) != 2 {
+		t.Fatalf("%d traced calls and %d usage rows, want one per call made: %+v", len(calls), len(usage), calls)
+	}
+	for i, c := range calls {
+		if c.rec.ModelID != usage[i].ModelID || c.rec.Status != usage[i].Status {
+			t.Errorf("traced call %d is %s:%s, its usage row %s:%s", i, c.rec.ModelID, c.rec.Status, usage[i].ModelID, usage[i].Status)
+		}
+		if c.parent != "turn" {
+			t.Errorf("call %d was traced outside the caller's context", i)
+		}
+		if c.start.Before(before) || c.end.After(after) || c.end.Before(c.start) {
+			t.Errorf("call %d ran %v → %v, outside the stream %v → %v", i, c.start, c.end, before, after)
+		}
+	}
+	if ok := calls[1]; ok.rec.InTokens != 1500 || ok.rec.OutTokens != 500 || ok.rec.Provider != "ollama" {
+		t.Errorf("the answered call was traced as %+v", ok.rec)
 	}
 }

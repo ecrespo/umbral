@@ -144,6 +144,22 @@ wait:
 // daemon's process only.
 func agentDaemon(t *testing.T, url string, extraEnv ...string) (*client.Stream, context.Context) {
 	t.Helper()
+	stream, ctx, _ := startAgentDaemon(t, url, daemonOpts{extraEnv: extraEnv})
+	return stream, ctx
+}
+
+// daemonOpts is what startAgentDaemon can change about the daemon it starts: a config.toml,
+// where its log goes, and its environment.
+type daemonOpts struct {
+	settings string
+	logs     io.Writer
+	extraEnv []string
+}
+
+// startAgentDaemon is agentDaemon with options, returning the function that stops the
+// daemon — for a test that has to read what it did on its way out.
+func startAgentDaemon(t *testing.T, url string, o daemonOpts) (*client.Stream, context.Context, func(os.Signal)) {
+	t.Helper()
 	bin := buildDaemon(t)
 	rt, daemonDir := isolatedRuntime(t)
 	configDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "umbral")
@@ -160,7 +176,13 @@ id = "ollama"
 type = "ollama"
 base_url = %q
 `, url))
-	startDaemon(t, bin, rt, extraEnv...)
+	if o.settings != "" {
+		writeFile(t, filepath.Join(configDir, "config.toml"), o.settings)
+	}
+	if o.logs == nil {
+		o.logs = os.Stderr
+	}
+	stop := startDaemonLoggingTo(t, bin, rt, o.logs, o.extraEnv...)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	t.Cleanup(cancel)
@@ -189,7 +211,7 @@ base_url = %q
 		}
 	}
 
-	return stream, ctx
+	return stream, ctx, stop
 }
 
 // TestAnApprovalRoundTripsThroughARealDaemon_REQ_AGT_004: in normal mode write_file asks; the

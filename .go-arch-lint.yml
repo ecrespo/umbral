@@ -456,11 +456,12 @@ deps:
       - store
       - bus
 
-  # A leaf over the standard library until T-F1-18 brings OpenTelemetry. The allowance is
+  # OpenTelemetry since T-F1-18, and no other module: the modules trace and count through
+  # ports of their own, which cmd/umbrald gives obs's implementation. The `bus` allowance is
   # unused, as workspaces-domain's is: go-arch-lint requires one, and `bus` is the narrowest
   # a sink can be given — the one Tech Design §5.2 gives `notify`.
   obs:
-    anyVendorDeps: false
+    anyVendorDeps: true
     mayDependOn:
       - bus
 

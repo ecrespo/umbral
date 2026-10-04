@@ -31,6 +31,9 @@ type setLimitsResult struct {
 // under a reader that has already sized its buffer is how the T-F0-27 class of bug starts.
 const appliesToNewConnections = "new_connections"
 
+// Frames is the run's frame counters (REQ-OBS-005), for the metrics exporter.
+func (s *Server) Frames() Frames { return s.framesNow() }
+
 // framesNow is the counters with the limit a new connection would get.
 func (s *Server) framesNow() Frames {
 	return s.frames.snapshot(s.maxMessageBytes.Load())
