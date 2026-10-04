@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.10 |
+| **Version** | 1.11 |
 | **Date** | 2026-09-26 |
 | **PRD** | `specs/prd/umbral-mvp.md` |
 | **Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -168,11 +168,11 @@ The six exit criteria, and what closed each:
 | T-F1-15 | Repair of invalid arguments + metric | 1d | T-F1-13 | ✅ 2026-10-01 |
 | T-F1-16 | Cancellation < 500 ms | 1d | T-F1-13 | ✅ 2026-10-01 |
 | T-F1-17 | MCP client | 3d | T-F1-09 | ✅ 2026-10-01 |
-| T-F1-18 | OTel observability | 1.5d | T-F1-13 | ☐ |
-| T-F1-19 | `umb ai` with stdin | 1d | T-F1-13 | ☐ |
-| T-F1-20 | TUI: agent panel, mode toggle, approvals, attach block | 4d | T-F1-14 | ☐ |
-| T-F1-21 | Live US-003 E2E (20 runs) and report | 1.5d | T-F1-20 | ☐ |
-| T-F1-23 | Wait engine (`thread.wait`, `send --wait`, `block.wait_output`) | 2.5d | T-F1-13 | ☐ |
+| T-F1-18 | OTel observability | 1.5d | T-F1-13 | ✅ 2026-10-03 |
+| T-F1-19 | `umb ai` with stdin | 1d | T-F1-13 | ✅ 2026-10-04 |
+| T-F1-20 | TUI: agent panel, mode toggle, approvals, attach block | 4d | T-F1-14 | merged 2026-10-03; QA walk pending |
+| T-F1-21 | Live US-003 E2E (20 runs) and report | 1.5d | T-F1-20 | ✅ 2026-10-04 — 16/20 offline, 0 egress |
+| T-F1-23 | Wait engine (`thread.wait`, `send --wait`, `block.wait_output`) | 2.5d | T-F1-13 | ✅ 2026-10-03 |
 | T-F1-24 | Attention state (`done`/seen) and thread resume after restart | 1.5d | T-F1-13 | ☐ |
 | T-F1-25 | Integration surface: env, `report_state`, authority | 2d | T-F1-13 | ☐ |
 | T-F1-26 | Display metadata and tokens | 1d | T-F1-25 | ☐ |
@@ -230,7 +230,7 @@ Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), 
 |---|---|---|
 | Q-01 negative (no VT snapshot) | Fallback: replay the last N lines of the raw buffer | result of spike T-F0-04 |
 | Building libghostty with Zig in CI | CI image with pinned Zig; artifact cache | T-F0-01 failure |
-| Local models below 70 % on US-003 | Try Qwen3-Coder; tune system prompts; revisit the threshold through a Delta | T-F1-21 report |
+| Local models below 70 % on US-003 | Try Qwen3-Coder; tune system prompts; revisit the threshold through a Delta | T-F1-21 report — not triggered: 16/20 on 2026-10-04 |
 
 ## Constitution check
 
@@ -253,3 +253,4 @@ Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), 
 | 1.8 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-25` (REQ-TERM-013, delta `2026-09-pane-term`) and `T-F0-26` added: the GitHub CI of `develop` had been red on both OSes for eight runs |
 | 1.9 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-26` closed on the runners and `T-F0-27` added (delta `2026-09-oversized-message`); **F0 closed**, with the checkpoint `docs/checkpoints/2026-09-26-f0-closed.md` |
 | 1.10 | 2026-09-26 | E. Crespo (assisted draft) | Four F1 deltas ratified: `T-F1-32` and `T-F1-33` go before `T-F1-01`; `T-F1-34` to `T-F1-37` add skills and `umb mcp`. F1 grows from 31 tasks and 57 days to 37 and 68 |
+| 1.11 | 2026-10-04 | E. Crespo (assisted draft) | Progress synced: T-F1-18, T-F1-19, T-F1-21 and T-F1-23 done, T-F1-20 merged with its QA walk pending; the US-003 risk did not trigger (16/20, delta `2026-10-us003-e2e`) |

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.17 |
+| **Version** | 1.18 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-09-27 |
@@ -80,6 +80,11 @@ unified memory. The Go ecosystem already provides the building blocks:
 | Terminal usable daily | VT conformance suite (Technical Design §8) | 100 % of MUST cases green | end of F0 |
 | Tool reliability | Rate of invalid tool calls after repair, per supported local model | < 5 % | end of F1 |
 | Verifiable privacy | Remote requests without an `egress_log` entry | 0 | continuous |
+
+"After repair" in the tool-reliability goal counts the invalid calls the one repair of
+REQ-AGT-006 did not fix — each turn it ends `tool_error` holds one — over every tool call, per
+local model (delta `2026-10-us003-e2e`). The rate before repair, over the same calls, and the
+share of repairs that failed are reported beside it; neither is the target.
 
 ### 4.2 User Goals
 
@@ -487,6 +492,7 @@ TUI as text:
 | 1.15 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies the four deltas of T-F1-11…T-F1-14 (`2026-09-context-assembly`, `2026-09-context-budget`, `2026-09-agent-runtime`, `2026-09-approvals`) and folds their optional sharpenings: REQ-AGT-011 stops the turn with `storage_error` when a write fails (closes Analyze C-01); REQ-CTX-003 is bounded and runs no command the repository's configuration names. |
 | 1.16 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-tool-call-repair` (T-F1-15): REQ-AGT-006 says what an invalid call is and that the retry is one per invalid call |
 | 1.17 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-mcp-client` (T-F1-17): REQ-MCP-003 states the backoff and what resets it |
+| 1.18 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-us003-e2e` (T-F1-21): §4.1 says how "the rate of invalid tool calls after repair" is counted — the calls the one repair did not fix, over every tool call, per model |
 
 ## Approvals
 

@@ -6,6 +6,6 @@
   `docs/reports/us003-2026-10-04.md` (decision 8).
 - **REQ:** REQ-AGT-001, REQ-LLM-004, REQ-SEC-002, REQ-AGT-006
 
-### [ ] Ratification
+### [x] 2026-10-04 Ratification
 - The Tech Lead ratifies decisions 1–9. The delta is folded into the F1 tasks file, the Tech
   Design and the plan, then moved to `changes/_archive/`.
