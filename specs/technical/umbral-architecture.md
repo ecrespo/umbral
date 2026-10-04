@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.38 |
+| **Version** | 1.39 |
 | **Date** | 2026-10-03 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -542,6 +542,11 @@ rewritten through its target so the link survives.
 
 `[secrets] allow_env` (off by default) lets `env:<VAR>` stand in for a keyring the machine does
 not have (REQ-SEC-012).
+
+`[retention]` sets Data Model §4's windows in whole days, 1 to 3650: `raw_output_days` (30),
+`plain_output_days` (180), `closed_structure_days` (30) and `audit_days` (365). A value out of
+range stops the daemon naming the key. Not live: a change needs a restart (delta
+`2026-10-retention`).
 
 `[otel] endpoint` (unset by default) exports traces and metrics over OTLP/HTTP (REQ-OBS-003).
 - **Local only.** It must be an `http://` or `https://` base URL, with no path, query,
@@ -1310,3 +1315,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.36 | 2026-10-03 | E. Crespo (assisted draft) | Ratifies delta `2026-10-otel` (T-F1-18): §5.1 adds `[otel] endpoint`, local only; §7.1 says which lines carry a trace id; §7.2 adds the four REQ-OBS-004 metrics, the labels, and what "exposed" means; §7.3 says who makes each span, what it carries and how it is exported |
 | 1.37 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-umb-ai` (T-F1-19): §5.3c builds the `stdin` attachment inline and says what a client's truncation tells the model; §9.4 adds `umb ai` — stdin, the frame-limit fit, the thread, the wait's targets, streaming and exit codes — and `--json` is not among its flags |
 | 1.38 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-us003-e2e` (T-F1-21): §3.3 item 2 says the repair message carries the validator's text; §8 describes the live US-003 run — approvals, success, offline evidence and the report |
+| 1.39 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-retention` (T-F1-22): §5.1 adds `[retention]` and its four keys |

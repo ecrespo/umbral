@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.16 |
+| **Version** | 1.17 |
 | **Date** | 2026-10-01 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -585,18 +585,41 @@ CREATE TABLE mcp_servers (
 
 | Data | Default retention | Configurable |
 |---|---|---|
-| `block_chunks` | 30 days | `retention.raw_output_days` |
-| `blocks.output_plain` | 180 days | `retention.plain_output_days` |
+| `block_chunks` | 30 days after the block closed | `retention.raw_output_days` |
+| `blocks.output_plain` | 180 days after the block closed | `retention.plain_output_days` |
 | Non-ephemeral threads | indefinite | manual deletion |
 | Ephemeral threads (`umb ai`) | 24 h | — |
 | `pane_history` | until the pane closes; cleared when the setting is disabled | `[experimental] pane_history` |
 | `pane_metadata` | per-key TTL, at most 24 h | per report |
-| Closed workspaces, tabs and panes | 30 days | yes |
+| Closed workspaces, tabs and panes | 30 days | `retention.closed_structure_days` |
 | `pane_aliases` | deleted with their pane (cascade); an alias never outlives its terminal | no |
 | `egress_log`, `usage` | 365 days | `retention.audit_days` |
 
 A daily maintenance job applies retention and runs `PRAGMA optimize` and
-`INSERT INTO blocks_fts(blocks_fts) VALUES('optimize')`.
+`INSERT INTO blocks_fts(blocks_fts) VALUES('optimize')` (`store.ApplyRetention`, T-F1-22, delta
+`2026-10-retention`):
+
+- **When.** Once when the daemon starts, beside it rather than before it serves, then every 24 h.
+  A failed run is logged and the next one tries again; a stopping daemon cancels it.
+- **Batches.** At most 500 rows per transaction — raw chunks counted as rows — so a turn
+  persisting meanwhile never waits long. The FTS optimize and the age scans over `blocks` are
+  bounded by the history's size, not by what is purged.
+- **Blocks.** Only `finished` and `abandoned` blocks lose output, aged from `ended_at`, else
+  `started_at`. The row and its `output_bytes` stay; clearing `output_plain` takes it out of
+  `blocks_fts` through the update trigger, and the command stays searchable.
+- **Ephemeral threads.** Purged 24 h after `updated_at` when not `running` nor
+  `awaiting_approval`, owning no `alive` session and no open block — checked again inside the
+  thread's own transaction. In that transaction: its approvals, its tool calls, its closed agent
+  blocks (REQ-TERM-005's exception), `owner_thread_id = NULL` on its exited sessions, then the
+  thread, which cascades its messages and rules. `usage` rows keep their audit with a NULL
+  thread. A thread that cannot be deleted is skipped and the job goes on.
+- **Closed structure.** Workspaces, then tabs, then panes past the window; what they hold
+  cascades. A purged number may be reissued (REQ-WS-002); a moved pane's alias never is, since
+  the pane allocator counts `pane_aliases` (REQ-WS-007).
+- **Pane metadata** past its `expires_at`, or 24 h after `updated_at`.
+- **Audit.** `egress_log` and `usage` past `retention.audit_days`, by `created_at`.
+- Running blocks and threads with a turn are never touched. Non-ephemeral threads have no
+  deletion method yet.
 
 ## 5. Migrations
 
@@ -680,3 +703,4 @@ earlier drafts named.
 | 1.14 | 2026-09-27 | §2.4e: `trust_keys` is seeded from the binary by fingerprint, removal is revocation, a re-add clears it, revocation discards the bundles a key verified, and `builtin` is version 0. No DDL change. Delta `2026-09-rule-signing-custody`. |
 | 1.15 | 2026-10-01 | §6 step 3 also sets `attention_state = idle` on the threads it stops (delta `2026-10-thread-cancel`, T-F1-16) |
 | 1.16 | 2026-10-01 | §2.12 `egress_log.provider` also takes `mcp:<name>`; §2.13 notes that the application narrows `name` to `[a-z0-9]{1,32}` (delta `2026-10-mcp-client`, T-F1-17); the CHECK is unchanged, migrations being forward-only |
+| 1.17 | 2026-10-04 | §4: the retention keys as `config.toml` names them (`closed_structure_days` added), and how the daily job runs, batches and purges (delta `2026-10-retention`, T-F1-22) |

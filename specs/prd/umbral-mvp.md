@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.18 |
+| **Version** | 1.19 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-09-27 |
@@ -147,7 +147,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-TERM-002** · MUST · ubiquitous — THE SYSTEM SHALL process PTY output with the VT emulator and pass 100 % of the MUST cases of the conformance suite (alt-screen, truecolor, bracketed paste, resize and reflow).
 - **REQ-TERM-003** · MUST · state — WHILE a session is alive, THE SYSTEM SHALL keep the PTY and screen state even when no client is connected.
 - **REQ-TERM-004** · MUST · event — WHEN a client subscribes to an existing session, THE SYSTEM SHALL send a screen snapshot and up to 10,000 lines of scrollback before the first live chunk.
-- **REQ-TERM-005** · MUST · unwanted — IF the shell process exits, THEN THE SYSTEM SHALL emit `session.exited` with the exit code and keep the session's blocks in the database.
+- **REQ-TERM-005** · MUST · unwanted — IF the shell process exits, THEN THE SYSTEM SHALL emit `session.exited` with the exit code and keep the session's blocks in the database. Retention (Data Model §4) is the one exception: an ephemeral thread's agent blocks are deleted with the thread, since the schema cannot hold an agent block without its thread; the session itself stays (delta `2026-10-retention`).
 - **REQ-TERM-006** · MUST · ubiquitous — THE SYSTEM SHALL forward PTY output to subscribed clients adding under 5 ms p95 of latency, measured inside the daemon.
 - **REQ-TERM-007** · MUST · event — WHEN a client invokes `session.resize`, THE SYSTEM SHALL apply the new size to the PTY and the emulator, and notify `session.resized` to every subscribed client.
 - **REQ-TERM-008** · MUST · unwanted — IF a client sends input to a session whose input lock belongs to the agent, THEN THE SYSTEM SHALL reject it with `INPUT_LOCKED` without writing it to the PTY.
@@ -493,6 +493,7 @@ TUI as text:
 | 1.16 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-tool-call-repair` (T-F1-15): REQ-AGT-006 says what an invalid call is and that the retry is one per invalid call |
 | 1.17 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-mcp-client` (T-F1-17): REQ-MCP-003 states the backoff and what resets it |
 | 1.18 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-us003-e2e` (T-F1-21): §4.1 says how "the rate of invalid tool calls after repair" is counted — the calls the one repair did not fix, over every tool call, per model |
+| 1.19 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-retention` (T-F1-22): REQ-TERM-005 names its one retention exception, an ephemeral thread's agent blocks |
 
 ## Approvals
 

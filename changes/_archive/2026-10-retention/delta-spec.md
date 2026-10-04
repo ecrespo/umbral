@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED` |
+| **Status** | `RATIFIED 2026-10-04` — approved in advance by E. Crespo, to be reviewed afterwards; amended after a spec-guardian review. Folded into PRD 1.19, API 1.30, Data Model 1.17, Tech Design 1.39, Plan 1.12 and the F0 and F1 tasks files |
 | **Date** | 2026-10-04 |
 | **Task** | T-F1-22 |
 | **Raised by** | T-F1-22: Data Model §4, REQ-AGT-011 and Art. 6, which leave these points open |

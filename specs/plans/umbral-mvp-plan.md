@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.11 |
+| **Version** | 1.12 |
 | **Date** | 2026-09-26 |
 | **PRD** | `specs/prd/umbral-mvp.md` |
 | **Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -185,7 +185,7 @@ The six exit criteria, and what closed each:
 | T-F1-35 | `umb skill` | 1d | T-F1-34 | ☐ |
 | T-F1-36 | The agent sees skills, loads them on demand, as untrusted content | 1.5d | T-F1-09, T-F1-11, T-F1-12, T-F1-14, T-F1-34 | ☐ |
 | T-F1-37 | `umb mcp`, and the agent panel's extensions view | 1.5d | T-F1-17, T-F1-20, T-F1-35 | ☐ |
-| T-F1-22 | Hardening: retention job, recovery verification, user docs | 2d | T-F1-21 | ☐ |
+| T-F1-22 | Hardening: retention job, recovery verification, user docs | 2d | T-F1-21 | ✅ 2026-10-04 |
 
 **F1 "Done" criteria:**
 - Every PRD MUST with a green test (matrices in the tasks files).
@@ -254,3 +254,4 @@ Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), 
 | 1.9 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-26` closed on the runners and `T-F0-27` added (delta `2026-09-oversized-message`); **F0 closed**, with the checkpoint `docs/checkpoints/2026-09-26-f0-closed.md` |
 | 1.10 | 2026-09-26 | E. Crespo (assisted draft) | Four F1 deltas ratified: `T-F1-32` and `T-F1-33` go before `T-F1-01`; `T-F1-34` to `T-F1-37` add skills and `umb mcp`. F1 grows from 31 tasks and 57 days to 37 and 68 |
 | 1.11 | 2026-10-04 | E. Crespo (assisted draft) | Progress synced: T-F1-18, T-F1-19, T-F1-21 and T-F1-23 done, T-F1-20 merged with its QA walk pending; the US-003 risk did not trigger (16/20, delta `2026-10-us003-e2e`) |
+| 1.12 | 2026-10-04 | E. Crespo (assisted draft) | T-F1-22 done (delta `2026-10-retention`) |
