@@ -468,3 +468,86 @@ func TestAStdinAttachmentNeedsNoGatherer_REQ_CLI_001(t *testing.T) {
 		t.Fatalf("the model never read stdin: %+v", last)
 	}
 }
+
+// TestACostCapStopsTheTurn_REQ_AGT_008: `router.max_cost_usd_per_thread` (models.toml, in
+// micro-USD) is a budget like the token one. Before each model call the thread's spend plus
+// this turn's is checked, and a turn that has reached the cap stops with `budget` instead of
+// calling the model again (delta `2026-10-cost-cap`).
+func TestACostCapStopsTheTurn_REQ_AGT_008(t *testing.T) {
+	// Two calls of 6 land exactly on a cap of 12: reached, so the third call is not made.
+	r := newRig(t, costly("read_file", `{"path":"a"}`, 6), costly("read_file", `{"path":"b"}`, 6), answer("never"))
+	r.maxCost.Store(12)
+	th := r.thread(t, domain.CreateParams{})
+	_, end := r.send(t, th.ID, "go", "")
+	if end.StopReason != domain.StopBudget {
+		t.Fatalf("stop %s, want budget", end.StopReason)
+	}
+	if n := len(r.models.requests()); n != 2 {
+		t.Fatalf("%d model calls; the third would have spent past the cap", n)
+	}
+	if got, _ := r.rt.Get(t.Context(), th.ID); got.CostMicroUSD != 12 {
+		t.Fatalf("the thread's cost is %d, want the 12 it spent", got.CostMicroUSD)
+	}
+}
+
+// TestASpentCostCapRefusesTheSend_REQ_AGT_008: a thread that has already spent its cap answers
+// thread.send with BUDGET_EXCEEDED and persists nothing. The cap is read live, so lowering it
+// (config.reload) applies to the next send; without one (0, the default) nothing is refused.
+func TestASpentCostCapRefusesTheSend_REQ_AGT_008(t *testing.T) {
+	r := newRig(t, answer("first"), answer("second"))
+	th := r.thread(t, domain.CreateParams{})
+	if _, end := r.send(t, th.ID, "one", ""); end.StopReason != domain.StopEndTurn {
+		t.Fatalf("stop %s", end.StopReason)
+	}
+	// The answer cost 7; a cap of 7 is spent.
+	r.maxCost.Store(7)
+	before := len(r.store.messages)
+	if _, err := r.rt.Send(t.Context(), ports.SendParams{ThreadID: th.ID, Text: "two"}); !errors.Is(err, domain.ErrBudgetExceeded) {
+		t.Fatalf("send on a spent cap = %v, want ErrBudgetExceeded", err)
+	}
+	if len(r.store.messages) != before {
+		t.Fatal("a refused send persisted its message")
+	}
+	r.maxCost.Store(0)
+	if _, end := r.send(t, th.ID, "two", ""); end.StopReason != domain.StopEndTurn {
+		t.Fatalf("with no cap: stop %s", end.StopReason)
+	}
+}
+
+// TestTheCostCapCountsEarlierTurns_REQ_AGT_008: the cap is on the thread, not the turn. A thread
+// that earlier turns left 5 micro-USD into a cap of 10 stops after one call costing 6.
+func TestTheCostCapCountsEarlierTurns_REQ_AGT_008(t *testing.T) {
+	r := newRig(t, costly("read_file", `{"path":"a"}`, 6), answer("never"))
+	r.maxCost.Store(10)
+	th := r.thread(t, domain.CreateParams{})
+	r.store.mu.Lock()
+	spent := r.store.threads[th.ID]
+	spent.CostMicroUSD = 5
+	r.store.threads[th.ID] = spent
+	r.store.mu.Unlock()
+	_, end := r.send(t, th.ID, "go", "")
+	if end.StopReason != domain.StopBudget || len(r.models.requests()) != 1 {
+		t.Fatalf("stop %s after %d calls; want budget after 1 (5 earlier + 6 ≥ 10)", end.StopReason, len(r.models.requests()))
+	}
+}
+
+// TestACompactionThatReachesTheCapStopsTheTurn_REQ_AGT_008: compaction's summary is a priced
+// call too. When it alone reaches the cap, the turn stops with `budget` before the main call.
+func TestACompactionThatReachesTheCapStopsTheTurn_REQ_AGT_008(t *testing.T) {
+	r := newRig(t, answer("a summary of the past"), answer("never"))
+	r.models.window = 2000
+	r.maxCost.Store(7) // answer() costs 7: the summary alone spends the cap
+	th := r.thread(t, domain.CreateParams{})
+	for range 20 {
+		turn := newID("trn")
+		r.store.messages = append(r.store.messages,
+			domain.Message{ID: newID("msg"), ThreadID: th.ID, TurnID: turn, Role: domain.RoleUser, Content: strings.Repeat("q", 400)},
+			domain.Message{ID: newID("msg"), ThreadID: th.ID, TurnID: turn, Role: domain.RoleAssistant, Content: strings.Repeat("a", 400)},
+		)
+	}
+	_, end := r.send(t, th.ID, "fix it", "")
+	reqs := r.models.requests()
+	if end.StopReason != domain.StopBudget || len(reqs) != 1 || reqs[0].Class != "fast" {
+		t.Fatalf("stop %s after %d calls; want budget after the summary alone", end.StopReason, len(reqs))
+	}
+}

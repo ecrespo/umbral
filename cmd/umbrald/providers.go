@@ -164,6 +164,15 @@ func (p *providerConfig) Reload(ctx context.Context) (api.ConfigView, error) {
 	return p.Get(ctx)
 }
 
+// MaxCostMicroUSD is `router.max_cost_usd_per_thread` in micro-USD as the configuration now
+// in force says, 0 when it sets none. The agent runtime reads it at every check, so a reload
+// applies to the next model call (REQ-AGT-008, delta `2026-10-cost-cap`).
+func (p *providerConfig) MaxCostMicroUSD() int64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.models.Router.MaxCostMicroUSDPerThread
+}
+
 // fileInvalid is a file that does not parse: one details entry that names the file, so a
 // client lists every CONFIG_INVALID the same way (API Spec §5.28).
 func fileInvalid(path string, err error) error {

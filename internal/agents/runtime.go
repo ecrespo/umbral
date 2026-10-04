@@ -40,8 +40,12 @@ type Config struct {
 	// IsRepo says whether a directory is a repository root, for the write root; nil looks for
 	// a `.git` entry.
 	IsRepo func(dir string) bool
-	Now    func() time.Time
-	Logger *slog.Logger
+	// MaxCostMicroUSD is `router.max_cost_usd_per_thread` in micro-USD, read at every check so
+	// a reload applies at once; 0, or a nil func, is no cap (REQ-AGT-008, delta
+	// `2026-10-cost-cap`).
+	MaxCostMicroUSD func() int64
+	Now             func() time.Time
+	Logger          *slog.Logger
 }
 
 // Runtime is ports.Threads.
@@ -256,7 +260,7 @@ func (r *Runtime) Send(ctx context.Context, p ports.SendParams) (ports.SendResul
 		ID: r.cfg.NewID(prefixMessage), ThreadID: thread.ID, TurnID: r.cfg.NewID(prefixTurn), Role: domain.RoleUser,
 		Content: content, ClientMsgID: p.ClientMsgID, Attachments: attachments, CreatedAt: r.now(),
 	}
-	stored, running, err := r.cfg.Store.BeginTurn(ctx, msg, r.now())
+	stored, running, err := r.cfg.Store.BeginTurn(ctx, msg, r.maxCost(), r.now())
 	if errors.Is(err, ports.ErrDuplicate) {
 		return ports.SendResult{TurnID: stored.TurnID, MessageID: stored.ID}, nil
 	}
@@ -267,6 +271,14 @@ func (r *Runtime) Send(ctx context.Context, p ports.SendParams) (ports.SendResul
 		return ports.SendResult{}, errors.New("agents: the runtime is closed")
 	}
 	return ports.SendResult{TurnID: msg.TurnID, MessageID: msg.ID}, nil
+}
+
+// maxCost is the thread cost cap now in force, 0 when there is none.
+func (r *Runtime) maxCost() int64 {
+	if r.cfg.MaxCostMicroUSD == nil {
+		return 0
+	}
+	return r.cfg.MaxCostMicroUSD()
 }
 
 // Status reads what a wait pins (DD-011): the thread's state, its attention state and its

@@ -181,6 +181,11 @@ func LoadModels(path string) (Models, error) {
 	}
 	models.Router.Offline = file.Router.Offline
 	models.Router.MaxCostMicroUSDPerThread = int64(math.Round(file.Router.MaxCostUSDPerThread * 1e6))
+	// 0 means no cap, so a cap that rounds to 0 micro-USD would lift the limit it was meant to set.
+	if file.Router.MaxCostUSDPerThread > 0 && models.Router.MaxCostMicroUSDPerThread == 0 {
+		return models, fmt.Errorf("%w: %s: router.max_cost_usd_per_thread is under one micro-USD, which would mean no cap; write 0 for none",
+			ErrSettingsInvalid, path)
+	}
 	for class, chain := range file.Classes {
 		models.Classes[class] = chain
 	}

@@ -28,10 +28,11 @@ type Store interface {
 	// BeginTurn persists the user's message and marks the thread running, in one
 	// transaction. A message whose client id the thread already has returns the original and
 	// ErrDuplicate; a thread with a turn running is domain.ErrConflict; a thread past its
-	// budget is domain.ErrBudgetExceeded; an unknown thread is domain.ErrNotFound. It returns
+	// token budget, or whose cost has reached maxCostMicroUSD when it is above 0, is
+	// domain.ErrBudgetExceeded; an unknown thread is domain.ErrNotFound. It returns
 	// the thread as the transaction read it, which is what the turn runs with: a mode change
 	// that lands after the send's own read cannot leave the turn with a stale mode.
-	BeginTurn(ctx context.Context, msg domain.Message, now int64) (domain.Message, domain.Thread, error)
+	BeginTurn(ctx context.Context, msg domain.Message, maxCostMicroUSD, now int64) (domain.Message, domain.Thread, error)
 	// AppendMessage persists a message of a running turn.
 	AppendMessage(ctx context.Context, msg domain.Message) error
 	// AppendContent adds streamed text to a message already persisted.

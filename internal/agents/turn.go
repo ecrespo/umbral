@@ -115,6 +115,9 @@ func (t *turnRun) run(ctx context.Context) domain.StopReason {
 		if t.thread.TokensUsed+t.usage.InTokens+t.usage.OutTokens >= t.thread.BudgetTokens {
 			return domain.StopBudget
 		}
+		if t.overCostCap() {
+			return domain.StopBudget
+		}
 		calls, err := t.step(ctx)
 		if err != nil {
 			return t.stopFor(ctx, err)
@@ -132,6 +135,18 @@ func (t *turnRun) run(ctx context.Context) domain.StopReason {
 	}
 }
 
+// errBudget is a step that found the cost cap reached between its compaction and its call.
+var errBudget = errors.New("agents: the thread's cost cap is reached")
+
+// overCostCap reports whether the thread's spend — what earlier turns cost plus this one so far,
+// compaction included — has reached the cap now in force (REQ-AGT-008, delta
+// `2026-10-cost-cap`). It is checked before every priced call, so a thread overshoots the cap
+// by one call at most: a stream cannot be priced until it ends.
+func (t *turnRun) overCostCap() bool {
+	limit := t.r.maxCost()
+	return limit > 0 && t.thread.CostMicroUSD+t.usage.CostMicroUSD >= limit
+}
+
 // stopFor maps what ended a turn early to its stop reason.
 func (t *turnRun) stopFor(ctx context.Context, err error) domain.StopReason {
 	switch {
@@ -143,6 +158,8 @@ func (t *turnRun) stopFor(ctx context.Context, err error) domain.StopReason {
 		return domain.StopStorageError
 	case errors.Is(err, ctxdomain.ErrContextOverflow):
 		return domain.StopContextOverflow
+	case errors.Is(err, errBudget):
+		return domain.StopBudget
 	case errors.Is(err, errRepairFailed):
 		t.r.cfg.Logger.WarnContext(ctx, "a turn stopped: a tool call was invalid after its repair", slog.String("thread", t.thread.ID),
 			slog.String("turn", t.turnID), slog.String("model", t.servedModel()))
@@ -245,6 +262,10 @@ func (t *turnRun) step(ctx context.Context) ([]domain.ToolCall, error) {
 	req, err := t.compact(ctx, llm.Request{System: t.system, Messages: t.history, Tools: t.tools})
 	if err != nil {
 		return nil, err
+	}
+	// Compaction is a priced call of its own, so the cap is checked again before the main one.
+	if t.overCostCap() {
+		return nil, errBudget
 	}
 	stream, err := cfg.Models.Stream(ctx, ports.ModelCall{
 		ThreadID: t.thread.ID, TurnID: t.turnID, Class: t.thread.ModelClass, Model: t.thread.Model, Request: req,

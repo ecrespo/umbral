@@ -134,3 +134,28 @@ func TestConfigGetShowsTheEndpointInUse(t *testing.T) {
 		t.Fatalf("after removing it by reload, config.get shows %q (%v), want the one in use", view.Settings.OTelEndpoint, err)
 	}
 }
+
+// TestTheCostCapFollowsModelsToml_REQ_AGT_008: the cap the agent runtime reads is
+// `router.max_cost_usd_per_thread` from models.toml in micro-USD, none when the file sets none,
+// and a config.reload changes it at once (delta `2026-10-cost-cap`).
+func TestTheCostCapFollowsModelsToml_REQ_AGT_008(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	settingsPath := writeConfigFile(t, dir, config.SettingsFileName, "")
+	modelsPath := writeConfigFile(t, dir, config.ModelsFileName, "[router]\nmax_cost_usd_per_thread = 1.5\n")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	p, err := loadProviders(t.Context(), logger, settingsPath, modelsPath, config.Settings{}, &fakeKeyring{up: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.MaxCostMicroUSD(); got != 1_500_000 {
+		t.Fatalf("cap %d, want 1.5 USD as 1500000 micro-USD", got)
+	}
+	writeConfigFile(t, dir, config.ModelsFileName, "[router]\npolicy = \"local-first\"\n")
+	if _, err := p.Reload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.MaxCostMicroUSD(); got != 0 {
+		t.Fatalf("after a reload with no cap: %d, want 0 (none)", got)
+	}
+}

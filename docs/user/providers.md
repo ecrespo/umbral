@@ -35,7 +35,7 @@ Your workspaces come back, with a fresh shell in each pane.
 [router]
 policy = "local-first"          # local-first | cost | quality
 offline = false                 # true: only providers whose base_url is loopback
-max_cost_usd_per_thread = 1.5   # read, not enforced yet (see Cost)
+max_cost_usd_per_thread = 1.5   # what one thread may spend; leave out for no cap
 
 [classes]                       # fast | code | plan | embed — candidates in order
 fast = ["ollama/qwen2.5-coder:1.5b"]
@@ -193,6 +193,16 @@ instance `PROVIDER_UNAVAILABLE` when no candidate of the class is up.
 Each model call is recorded in `usage` with its tokens and its cost in micro-USD. Local models
 cost nothing.
 
-`max_cost_usd_per_thread` is read and validated (at most 1e6), but **nothing enforces it yet**.
-Until something does, a thread's spend on a priced remote model is bounded by the thread's
-token budget and its step limit, not by this setting.
+`max_cost_usd_per_thread` caps what one thread may spend, in USD (at most 1e6).
+- Before each model call, the agent's own context summaries included, the thread's spend so far
+  is checked. A turn that has reached the cap stops with `stop_reason = budget`.
+- A `thread.send` to a thread that has already spent it answers `BUDGET_EXCEEDED`.
+- `umb ai` starts a new thread each time; a turn of it that reaches the cap exits 1 with
+  `budget`.
+- The call that crosses the cap is not cut off mid-answer: it finishes and is paid for, and the
+  turn stops before the next call. A thread can therefore end slightly above the cap.
+- Leave the key out, or set it to 0, for no cap.
+- A `config.reload` applies a new cap to the next model call.
+
+Local models cost nothing, so they never reach the cap. The token budget (`budget_tokens`, 400k
+by default) and the step limit (`max_steps`) apply as well.

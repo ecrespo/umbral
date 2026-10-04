@@ -375,6 +375,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	runtime, tools, err := newRuntime(ctx, agentDeps{
 		logger: logger, db: db, bus: eventBus, gateway: models, egress: egress,
 		terminal: sessionService, blocks: blockReader, metrics: metrics, tracer: agentTracer{telemetry},
+		maxCost: providers.MaxCostMicroUSD,
 	})
 	if err != nil {
 		logger.Error("cannot build the agent runtime", slog.Any("error", err))

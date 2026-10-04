@@ -16,7 +16,7 @@
 [router]
 policy = "local-first"          # local-first | cost | quality
 offline = false                 # true: only providers with a loopback base_url (see OmniRoute below)
-max_cost_usd_per_thread = 1.5
+max_cost_usd_per_thread = 1.5   # a thread stops (stop_reason = budget) once it has spent this; omit for no cap
 
 # Task classes: candidates in order, each `<provider id>/<model>`. The router takes the first
 # that is up and can do what the call needs, and falls back on a retryable failure (429, 5xx,

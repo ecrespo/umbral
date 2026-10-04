@@ -34,6 +34,8 @@ type agentDeps struct {
 	blocks   *sessions.Reader
 	metrics  *obs.Metrics
 	tracer   agentsports.Tracer
+	// maxCost is the thread cost cap now in force, in micro-USD (REQ-AGT-008).
+	maxCost func() int64
 }
 
 // newRuntime wires the agent runtime (T-F1-13) to the modules it reaches through their ports:
@@ -61,6 +63,8 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, *registry.Re
 		Metrics: d.metrics,
 		Tracer:  d.tracer,
 		Logger:  d.logger,
+
+		MaxCostMicroUSD: d.maxCost,
 	})
 	return rt, tools, err
 }
