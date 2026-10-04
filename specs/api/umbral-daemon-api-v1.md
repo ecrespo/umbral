@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.29 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.30 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -321,6 +321,11 @@ method and the ordering that produced it, so one handed to a different method is
 ```
 - `output_truncated`: the **stored** capture was cut at 16 MiB raw or 1 MiB plain (Data Model §2.2).
   Those bytes are gone.
+- **Purged output.** Data Model §4's retention removes a closed block's raw chunks after
+  `retention.raw_output_days` and its transcript after `retention.plain_output_days`. The block
+  stays, with its `output_bytes`; `block.get` then answers an empty `output_raw_b64` or
+  `output_plain`. `output_bytes > 0` with nothing returned is how a client tells purged output
+  from output that never existed, and `output_truncated` does not change.
 - `output_response_truncated_bytes` (optional, `block.get` only): how many bytes of the stored
   output **this response** leaves out to fit the frame limit (§5.17). Absent when nothing was left
   out. Raising the limit (§5.38) brings those bytes back; it cannot bring back what
@@ -1131,3 +1136,4 @@ printf '%s\n' \
 | 1.27 | 2026-10-03 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-wait-engine` as written, decisions 3, 3a, 7 and 8 with their proposed options: §2 says `thread.wait` and `block.wait_output` are advertised under `waits` |
 | 1.28 | 2026-10-03 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-otel` (T-F1-18): §5.28's `settings` gains `otel_endpoint?`; §1 says an `INTERNAL_ERROR` carries the `connection_id` when the failing work ran outside a turn, which today is every case |
 | 1.29 | 2026-10-04 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-umb-ai` (T-F1-19): §5.20 serves the inline `stdin` attachment — `data_b64`, `truncated?`, one per message, 1 MiB — and its `VALIDATION_ERROR` reasons; §4's Message records it as `ref: "stdin"`; §8 lists the limit |
+| 1.30 | 2026-10-04 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-retention` (T-F1-22): §4's Block says what retention leaves of a purged output — an empty `output_raw_b64`/`output_plain` with `output_bytes` kept |

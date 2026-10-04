@@ -6,6 +6,6 @@
   `docs/user/providers.md` and `docs/user/data-retention.md`.
 - **REQ:** REQ-AGT-011, Art. 6
 
-### [ ] Ratification
+### [x] 2026-10-04 Ratification
 - The Tech Lead ratifies decisions 1–14. The delta is folded into the Data Model, the Tech
   Design, the F1 tasks file and the plan, then moved to `changes/_archive/`.

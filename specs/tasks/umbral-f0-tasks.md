@@ -731,7 +731,7 @@
 | REQ-BLK-003 | T-F0-09, T-F0-21, T-F0-22 | TestIntegrationNoneAfter5s_REQ_BLK_003, TestACommandPaneGetsNoShellIntegration_REQ_BLK_003, TestAnExitInsideTheWindowStillSettlesIntegration_REQ_BLK_003, TestRecoverySettlesAPendingIntegration_REQ_BLK_003 |
 | REQ-BLK-004 | T-F0-09 | TestAltScreenMarksInteractive_REQ_BLK_004 |
 | REQ-BLK-005 | T-F0-08 | TestBootstrapEmitsOSC133_REQ_BLK_005 |
-| REQ-BLK-006 | T-F0-10 | BenchmarkBlockSearch100k_REQ_BLK_006 |
+| REQ-BLK-006 | T-F0-10 | BenchmarkBlockSearch100k_REQ_BLK_006; also TestRetentionClearsOldTranscripts_REQ_BLK_006 (T-F1-22: a purged transcript leaves search) |
 | REQ-BLK-007 | T-F0-02, T-F0-09 | TestPlainOutputHasNoEscapes_REQ_BLK_007 |
 | REQ-SEC-003 | T-F0-03, T-F0-27 | TestHelloRejectsBadToken_REQ_SEC_003, TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003 |
 | REQ-SEC-007 | T-F0-03 | TestSocketPermissions0600_REQ_SEC_007 |
@@ -747,7 +747,7 @@
 | REQ-WS-004 | T-F0-15 | TestLayoutExportApplyRoundTrip_REQ_WS_004 |
 | REQ-WS-005 | T-F0-15 | TestApplyWarnsNoProcesses_REQ_WS_005 |
 | REQ-WS-006 | T-F0-14 | TestRollupPrefersBlocked_REQ_WS_006 |
-| REQ-WS-007 | T-F0-14 | TestMovedPaneKeepsAlias_REQ_WS_007 |
+| REQ-WS-007 | T-F0-14 | TestMovedPaneKeepsAlias_REQ_WS_007; also TestAPurgedWorkspaceNumberNeverReissuesAnAlias_REQ_WS_007 (T-F1-22) |
 | REQ-API-001 | T-F0-16 | TestSnapshotCarriesSeq_REQ_API_001 |
 | REQ-API-002 | T-F0-16 | TestNoGapBetweenSnapshotAndStream_REQ_API_002 |
 | REQ-API-003 | T-F0-17 | TestUnknownMethodKeepsConnection_REQ_API_003 |
