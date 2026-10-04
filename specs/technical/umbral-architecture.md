@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.35 |
+| **Version** | 1.36 |
 | **Date** | 2026-10-03 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -540,6 +540,15 @@ rewritten through its target so the link survives.
 `[secrets] allow_env` (off by default) lets `env:<VAR>` stand in for a keyring the machine does
 not have (REQ-SEC-012).
 
+`[otel] endpoint` (unset by default) exports traces and metrics over OTLP/HTTP (REQ-OBS-003).
+- **Local only.** It must be an `http://` or `https://` base URL, with no path, query,
+  fragment or credentials, whose host is `localhost` or a loopback address. Anything else stops
+  the daemon.
+- **Why.** A remote collector would make every export an egress Art. 4 requires to be redacted
+  and recorded; a local collector forwards wherever the user sends it.
+- **Not live.** It needs a restart, and `config.get` reports the endpoint in use.
+- §7 says what is exported.
+
 `[update] rules_check` (off by default) turns on signed rule updates (REQ-SEC-011, DD-016).
 `[update] rules_url` is where they come from. Its default is the project's latest release asset,
 `https://github.com/ecrespo/umbral/releases/latest/download/rules.json`, and the signature is at
@@ -931,23 +940,79 @@ var (
 
 ### 7.1 Logging
 
-`slog` JSON: `{time, level, msg, trace_id, span_id, module, thread_id?, session_id?, duration_ms?}`.
+`slog` JSON: `{time, level, msg, trace_id?, span_id?, module, thread_id?, session_id?, duration_ms?}`.
 Never prompt contents or output (only sizes and hashes).
+- **Which lines have a trace.** `obs.LogHandler` adds `trace_id` and `span_id` to every line
+  logged with a turn's context: the runtime's lines about a turn, and the router's when a
+  `usage` write fails.
+- A line logged outside any turn has neither, because there is no trace for it to name.
 
 ### 7.2 Metrics
 
 | Metric | Type | Description |
 |---|---|---|
-| `umbral_session_output_latency_seconds` | Histogram | PTY read → notification queued (REQ-TERM-006) |
-| `umbral_llm_first_token_seconds` | Histogram per provider/model | time to first token |
-| `umbral_llm_tokens_total` | Counter per direction/model | input and output tokens |
-| `umbral_tool_calls_invalid_total` | Counter per model | REQ-OBS-002. Labelled by the model the router reports in the step's usage, else the thread's `model`, else `unknown`. Counted in memory in `internal/obs`; exported when OTel lands (T-F1-18) |
-| `umbral_approvals_total` | Counter per decision/reason | approvals |
-| `umbral_frames_refused_total` | Counter per `direction` (`in`/`out`) | frames over the frame limit (REQ-OBS-005): inbound ones that closed their connection, outbound ones replaced by `RESULT_TOO_LARGE` or `limits.notification_dropped`. Exported when OTel lands (T-F1-18); until then `system.status` and `limits.get` carry the same counts under `frames` |
+| `umbral_session_output_latency_seconds` | Histogram | PTY read → notification queued (REQ-TERM-006). **Not exported yet**: no REQ asks for it and no task owns it |
+| `umbral_llm_first_token_seconds` | Histogram per `provider`/`model` | time to a model call's first event |
+| `umbral_llm_tokens_total` | Counter per `direction` (`input`/`output`)/`model` | tokens of each model call |
+| `umbral_tool_calls_invalid_total` | Counter per `model` | REQ-OBS-002. Labelled by the model the router reports in the step's usage, else the thread's `model`, else `unknown` |
+| `umbral_approvals_total` | Counter per decision/reason | approvals. **Not exported yet**, for the same reason as the latency |
+| `umbral_frames_refused_total` | Counter per `direction` (`in`/`out`) | frames over the frame limit (REQ-OBS-005): inbound ones that closed their connection, outbound ones replaced by `RESULT_TOO_LARGE` or `limits.notification_dropped`; `system.status` and `limits.get` carry the same counts under `frames` |
+| `umbral_waits_active` | Gauge | REQ-OBS-004: the waits open now, read from the wait engine |
+| `umbral_waits_stalled_total` | Counter | REQ-OBS-004: turns marked stalled (REQ-AUT-008); counted from T-F1-31 |
+| `umbral_reports_rate_limited_total` | Counter | REQ-OBS-004: reports discarded for their source's rate (REQ-AUT-005); counted from T-F1-31 |
+| `umbral_rule_updates_rejected_total` | Counter per `reason` | REQ-OBS-004: rule bundles discarded (REQ-SEC-013); counted from T-F1-30 |
+
+**How metrics are exposed.**
+- The modules count into `obs.Metrics` through ports of their own; `internal/obs` registers
+  the instruments.
+- "Exposed" (REQ-OBS-002, REQ-OBS-004) means exported to the `[otel] endpoint` collector every
+  30 s, and at shutdown.
+- With no endpoint they are not visible anywhere. There is no scrape endpoint and no API
+  method for them.
 
 ### 7.3 Traces
-One root span `agent.turn` per turn, with children `llm.call` (attributes `gen_ai.request.model`,
-`gen_ai.system`, `gen_ai.usage.*`) and `tool.<name>` (REQ-OBS-001).
+One root span `agent.turn` per turn, with children `llm.call` and `tool.<name>` (REQ-OBS-001).
+
+- **Who makes them.**
+  - The agent runtime and the router trace through ports of their own: `agents/ports.Tracer`
+    (`Turn`, `Tool`) and `llmgw/ports.Tracer` (`ModelCall`). Both are required.
+  - `cmd/umbrald` adapts them to `internal/obs`, the only package that imports OpenTelemetry.
+  - The span lives in the context each method returns. That context is how a turn's model
+    calls, tools and log lines join its trace.
+- **`agent.turn`.** Every turn starts a new trace.
+  - Attributes:
+    - `gen_ai.operation.name = invoke_agent`;
+    - `gen_ai.conversation.id`, the thread;
+    - `umbral.turn.id` and `umbral.turn.stop_reason`;
+    - the turn's tokens and cost;
+    - `umbral.model`.
+  - The stop reasons `provider_error`, `tool_error`, `storage_error` and `context_overflow` are
+    errors.
+- **`llm.call`.** One for each call the router records in `usage`: a fallback's failed
+  attempts count, a candidate the adapter refused to carry does not.
+  - It is timed from the call's own start and end.
+  - Attributes:
+    - `gen_ai.operation.name = chat`;
+    - `gen_ai.system`, the provider entry;
+    - `gen_ai.request.model`;
+    - `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens`;
+    - `umbral.usage.status`, cost and first-token time.
+  - **Never the error's text**, which can echo what was sent.
+- **`tool.<name>`.**
+  - Attributes:
+    - `gen_ai.operation.name = execute_tool`;
+    - `gen_ai.tool.name` and `gen_ai.tool.call.id`;
+    - `umbral.tool.status` and `umbral.tool.risk`.
+  - A tool the registry does not have is `tool.unknown`, so model text never becomes a span
+    name.
+  - A call that stops before recording a status ends as `error`.
+- **Export.**
+  - Spans are made whether or not they are exported.
+  - With `[otel] endpoint` (§5.1) they go out over OTLP/HTTP, batched, and are flushed at
+    shutdown within 5 s.
+  - The daemon sets every exporter option itself, so no `OTEL_EXPORTER_OTLP_*` variable can
+    redirect the export or add to it.
+  - There is no proxy, and an export failure is a `warn` line.
 
 ## 8. Testing Strategy
 
@@ -1189,3 +1254,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.33 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-mcp-client` (T-F1-17): §3.3 item 5 (losing an MCP server), §5.2 the `mcp` row, §5.3 MCP tools are `Network`, §6.1 the MCP threat row |
 | 1.34 | 2026-10-03 | E. Crespo (assisted draft) | Ratifies delta `2026-10-wait-engine` (T-F1-23): DD-011 says how waits hold — subscribe before pinning, out-of-order answers, the store backstop, a replaced turn answering with its own end or `unknown`; §5.2's `waits` row names the domains it uses |
 | 1.35 | 2026-10-03 | E. Crespo (assisted draft) | Ratifies delta `2026-10-agent-panel`, amended after review (T-F1-20): §5.3e records the agent panel's keys, its approvals of every thread and how they are answered and dropped, the thread's directory, what is sent and how model text is drawn; §3.2's `tui` row names the panel |
+| 1.36 | 2026-10-03 | E. Crespo (assisted draft) | Ratifies delta `2026-10-otel` (T-F1-18): §5.1 adds `[otel] endpoint`, local only; §7.1 says which lines carry a trace id; §7.2 adds the four REQ-OBS-004 metrics, the labels, and what "exposed" means; §7.3 says who makes each span, what it carries and how it is exported |

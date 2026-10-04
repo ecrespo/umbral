@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED` |
+| **Status** | `RATIFIED 2026-10-03` — approved by E. Crespo as written, decisions 4 and 6 with their proposed options. Folded into Tech Design 1.36, API 1.28 and the F1 tasks file |
 | **Date** | 2026-10-03 |
 | **Task** | T-F1-18 |
 | **Raised by** | T-F1-18: REQ-OBS-001…004, Art. 4 and Art. 7, and Tech §7, which leave these points open |
