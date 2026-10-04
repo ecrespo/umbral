@@ -165,6 +165,8 @@ func agentDaemon(t *testing.T, url string, extraEnv ...string) (*client.Stream, 
 // where its log goes, and its environment.
 type daemonOpts struct {
 	settings string
+	// router, when set, is models.toml's [router] table body.
+	router   string
 	logs     io.Writer
 	extraEnv []string
 }
@@ -180,6 +182,9 @@ func startAgentDaemon(t *testing.T, url string, o daemonOpts) (*client.Stream, c
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(configDir, "models.toml"), fmt.Sprintf(`
+[router]
+%s
+
 [classes]
 code = ["ollama/m"]
 fast = ["ollama/m"]
@@ -188,7 +193,7 @@ fast = ["ollama/m"]
 id = "ollama"
 type = "ollama"
 base_url = %q
-`, url))
+`, o.router, url))
 	if o.settings != "" {
 		writeFile(t, filepath.Join(configDir, "config.toml"), o.settings)
 	}

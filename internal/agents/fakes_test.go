@@ -107,7 +107,7 @@ func (s *memStore) UpdateThread(_ context.Context, id string, p domain.UpdatePar
 	return t, nil
 }
 
-func (s *memStore) BeginTurn(_ context.Context, msg domain.Message, now int64) (domain.Message, domain.Thread, error) {
+func (s *memStore) BeginTurn(_ context.Context, msg domain.Message, maxCost, now int64) (domain.Message, domain.Thread, error) {
 	if s.beforeBegin != nil {
 		s.beforeBegin()
 	}
@@ -131,7 +131,7 @@ func (s *memStore) BeginTurn(_ context.Context, msg domain.Message, now int64) (
 		return domain.Message{}, domain.Thread{}, domain.ErrNotFound
 	case t.State == domain.StateRunning || t.State == domain.StateAwaitingApproval:
 		return domain.Message{}, domain.Thread{}, domain.ErrConflict
-	case t.TokensUsed >= t.BudgetTokens:
+	case t.TokensUsed >= t.BudgetTokens, maxCost > 0 && t.CostMicroUSD >= maxCost:
 		return domain.Message{}, domain.Thread{}, domain.ErrBudgetExceeded
 	}
 	if err := s.write(); err != nil {
@@ -349,6 +349,13 @@ func answer(text string) []llm.Event {
 		{Kind: llm.EventUsage, Usage: llm.Usage{InputTokens: 100, OutputTokens: 20, CostMicroUSD: 7}},
 		{Kind: llm.EventDone, FinishReason: "stop"},
 	}
+}
+
+// costly is a script that asks for one tool and costs cost micro-USD.
+func costly(name, input string, cost int64) []llm.Event {
+	events := callTool(name, input)
+	events[1].Usage.CostMicroUSD = cost
+	return events
 }
 
 // callTool is a script that asks for one tool.
@@ -655,6 +662,8 @@ type rig struct {
 	metrics *fakeMetrics
 	tracer  *fakeTracer
 	logs    *spanLogs
+	// maxCost is the cost cap the runtime reads, in micro-USD; 0 is none.
+	maxCost *atomic.Int64
 }
 
 var ids atomic.Int64
@@ -679,9 +688,11 @@ func newRig(t *testing.T, scripts ...[]llm.Event) *rig {
 	metrics := &fakeMetrics{}
 	tracer := &fakeTracer{}
 	logs := &spanLogs{}
+	maxCost := &atomic.Int64{}
 	rt, err := New(t.Context(), Config{
 		Store: store, Models: models, Tools: tools, Bus: b, NewID: newID, Metrics: metrics, Tracer: tracer,
 		IsRepo: func(string) bool { return false }, Logger: slog.New(logs),
+		MaxCostMicroUSD: maxCost.Load,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -692,7 +703,7 @@ func newRig(t *testing.T, scripts ...[]llm.Event) *rig {
 			t.Error(f)
 		}
 	})
-	return &rig{rt: rt, store: store, models: models, tools: tools, bus: b, metrics: metrics, tracer: tracer, logs: logs}
+	return &rig{rt: rt, store: store, models: models, tools: tools, bus: b, metrics: metrics, tracer: tracer, logs: logs, maxCost: maxCost}
 }
 
 func (r *rig) thread(t *testing.T, p domain.CreateParams) domain.Thread {

@@ -137,8 +137,9 @@ var (
 	ErrValidation = errors.New("invalid parameters")
 	// ErrConflict is a thread.send while a turn runs, or a mode change during one.
 	ErrConflict = errors.New("a turn is running")
-	// ErrBudgetExceeded is a thread.send on a thread that has spent its token budget.
-	ErrBudgetExceeded = errors.New("the thread's token budget is spent")
+	// ErrBudgetExceeded is a thread.send on a thread that has spent its token budget or its
+	// cost cap.
+	ErrBudgetExceeded = errors.New("the thread's budget is spent")
 	// ErrProviderUnavailable is a thread.send whose thread has no model that can serve it:
 	// none of its candidates is known and not down (API §5.20).
 	ErrProviderUnavailable = errors.New("no model can serve the thread")

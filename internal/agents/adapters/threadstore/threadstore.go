@@ -122,7 +122,7 @@ func (s *Store) UpdateThread(ctx context.Context, id string, p domain.UpdatePara
 
 // BeginTurn persists the user's message and marks the thread running (ports.Store). The
 // database's transactions are IMMEDIATE (store.Open), so no other writer runs in between.
-func (s *Store) BeginTurn(ctx context.Context, msg domain.Message, now int64) (domain.Message, domain.Thread, error) {
+func (s *Store) BeginTurn(ctx context.Context, msg domain.Message, maxCostMicroUSD, now int64) (domain.Message, domain.Thread, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Message{}, domain.Thread{}, fmt.Errorf("threadstore: begin turn: %w", err)
@@ -150,6 +150,8 @@ func (s *Store) BeginTurn(ctx context.Context, msg domain.Message, now int64) (d
 		return domain.Message{}, domain.Thread{}, fmt.Errorf("%w: thread %s", domain.ErrConflict, msg.ThreadID)
 	case t.TokensUsed >= t.BudgetTokens:
 		return domain.Message{}, domain.Thread{}, fmt.Errorf("%w: %d of %d tokens used", domain.ErrBudgetExceeded, t.TokensUsed, t.BudgetTokens)
+	case maxCostMicroUSD > 0 && t.CostMicroUSD >= maxCostMicroUSD:
+		return domain.Message{}, domain.Thread{}, fmt.Errorf("%w: %d of %d micro-USD spent", domain.ErrBudgetExceeded, t.CostMicroUSD, maxCostMicroUSD)
 	}
 	if err := insertMessage(ctx, tx, msg); err != nil {
 		return domain.Message{}, domain.Thread{}, err

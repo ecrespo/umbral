@@ -171,7 +171,9 @@ func TestMalformedModelsFileIsInvalid(t *testing.T) {
 		"a misspelt key":        "[[providers]]\nid = \"x\"\ntype = \"ollama\"\nbase_url = \"http://x\"\napi_kee = \"keyring:a/b\"\n",
 		"an unknown policy":     "[router]\npolicy = \"cheapest\"\n",
 		"a cost cap past 1e6":   "[router]\nmax_cost_usd_per_thread = 2e6\n",
-		"an unknown class":      "[classes]\nturbo = [\"ollama/x\"]\n",
+		// Rounded to micro-USD it would be 0, which means no cap: the opposite of what was asked.
+		"a cost cap under a micro-USD": "[router]\nmax_cost_usd_per_thread = 0.0000004\n",
+		"an unknown class":             "[classes]\nturbo = [\"ollama/x\"]\n",
 		"two providers, one id": "[[providers]]\nid = \"x\"\ntype = \"ollama\"\nbase_url = \"http://a\"\n" +
 			"[[providers]]\nid = \"x\"\ntype = \"ollama\"\nbase_url = \"http://b\"\n",
 		"an empty keyring path": "[[providers]]\nid = \"x\"\ntype = \"openai-compat\"\nbase_url = \"http://a\"\napi_key = \"keyring:\"\n",
