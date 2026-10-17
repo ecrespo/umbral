@@ -274,18 +274,46 @@ func (s *Store) SaveToolCall(ctx context.Context, c domain.ToolCall) error {
 	return nil
 }
 
-// FinishTurn adds the turn's usage to the thread and sets its state.
-func (s *Store) FinishTurn(ctx context.Context, threadID string, state domain.State, usage domain.Usage, now int64) error {
-	attention := domain.AttentionAfter(state)
+// FinishTurn adds the turn's usage to the thread and sets its state and attention state; a
+// thread a client views is seen at now as well (REQ-AGT-016).
+func (s *Store) FinishTurn(ctx context.Context, threadID string, state domain.State, viewed bool, usage domain.Usage, now int64) error {
+	attention := domain.AttentionAfter(state, viewed)
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE threads SET state = ?, attention_state = ?, tokens_used = tokens_used + ?,
-			cost_micro_usd = cost_micro_usd + ?, updated_at = ?
+			cost_micro_usd = cost_micro_usd + ?, updated_at = ?,
+			seen_at = CASE WHEN ? THEN ? ELSE seen_at END
 		WHERE id = ?`,
-		string(state), attention, usage.InTokens+usage.OutTokens, usage.CostMicroUSD, now, threadID)
+		string(state), attention, usage.InTokens+usage.OutTokens, usage.CostMicroUSD, now, viewed, now, threadID)
 	if err != nil {
 		return fmt.Errorf("threadstore: finish turn: %w", err)
 	}
 	return nil
+}
+
+// MarkSeen records that a client focused the thread at now and moves `done` to `idle`. It
+// leaves updated_at alone: viewing a thread does not reorder thread.list. The runtime calls it
+// under the thread's attention lock, so no turn's end falls between its two statements.
+func (s *Store) MarkSeen(ctx context.Context, threadID string, now int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE threads SET attention_state = 'idle', seen_at = ? WHERE id = ? AND attention_state = 'done'`,
+		now, threadID)
+	if err != nil {
+		return false, fmt.Errorf("threadstore: mark seen: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return false, fmt.Errorf("threadstore: mark seen: %w", err)
+	} else if n == 1 {
+		return true, nil
+	}
+	res, err = s.db.ExecContext(ctx, `UPDATE threads SET seen_at = ? WHERE id = ?`, now, threadID)
+	if err != nil {
+		return false, fmt.Errorf("threadstore: mark seen: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return false, fmt.Errorf("threadstore: mark seen: %w", err)
+	} else if n == 0 {
+		return false, fmt.Errorf("%w: thread %s", domain.ErrNotFound, threadID)
+	}
+	return false, nil
 }
 
 // TurnStatus reads the thread's state, attention state and latest turn — the turn of its

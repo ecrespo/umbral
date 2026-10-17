@@ -77,6 +77,9 @@ type Daemon interface {
 	// Cancel stops a thread's running turn (`thread.cancel`). stopped is false when there
 	// was no turn to stop: the daemon answered `stopped_at: null`.
 	Cancel(ctx context.Context, threadID string) (stopped bool, err error)
+	// Focus tells the daemon this client views threadID, or no thread when it is ""
+	// (`thread.focus`, REQ-AGT-016).
+	Focus(ctx context.Context, threadID string) error
 	// Approvals lists the approvals still pending, of every thread, oldest first
 	// (`approval.list`).
 	Approvals(ctx context.Context) ([]Approval, error)

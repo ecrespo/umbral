@@ -39,10 +39,12 @@ type memStore struct {
 	beforeFinish func()
 	// failFinish makes every FinishTurn fail.
 	failFinish bool
+	// seen is each thread's seen_at.
+	seen map[string]int64
 }
 
 func newMemStore() *memStore {
-	return &memStore{threads: map[string]domain.Thread{}, calls: map[string]domain.ToolCall{}}
+	return &memStore{threads: map[string]domain.Thread{}, calls: map[string]domain.ToolCall{}, seen: map[string]int64{}}
 }
 
 func (s *memStore) write() error {
@@ -138,7 +140,7 @@ func (s *memStore) BeginTurn(_ context.Context, msg domain.Message, maxCost, now
 		return domain.Message{}, domain.Thread{}, err
 	}
 	s.messages = append(s.messages, msg)
-	t.State, t.UpdatedAt = domain.StateRunning, now
+	t.State, t.AttentionState, t.UpdatedAt = domain.StateRunning, "working", now
 	s.threads[t.ID] = t
 	return msg, t, nil
 }
@@ -181,7 +183,7 @@ func (s *memStore) SaveToolCall(_ context.Context, c domain.ToolCall) error {
 	return nil
 }
 
-func (s *memStore) FinishTurn(_ context.Context, id string, state domain.State, u domain.Usage, now int64) error {
+func (s *memStore) FinishTurn(_ context.Context, id string, state domain.State, viewed bool, u domain.Usage, now int64) error {
 	if s.beforeFinish != nil {
 		s.beforeFinish()
 	}
@@ -191,11 +193,43 @@ func (s *memStore) FinishTurn(_ context.Context, id string, state domain.State, 
 		return errors.New("disk full")
 	}
 	t := s.threads[id]
-	t.State, t.UpdatedAt, t.AttentionState = state, now, domain.AttentionAfter(state)
+	t.State, t.UpdatedAt, t.AttentionState = state, now, domain.AttentionAfter(state, viewed)
+	if viewed {
+		s.seen[id] = now
+	}
 	t.TokensUsed += u.InTokens + u.OutTokens
 	t.CostMicroUSD += u.CostMicroUSD
 	s.threads[id] = t
 	return nil
+}
+
+func (s *memStore) MarkSeen(_ context.Context, id string, now int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.threads[id]
+	if !ok {
+		return false, fmt.Errorf("%w: %s", domain.ErrNotFound, id)
+	}
+	if err := s.write(); err != nil {
+		return false, err
+	}
+	s.seen[id] = now
+	if t.AttentionState != "done" {
+		return false, nil
+	}
+	t.AttentionState = "idle"
+	s.threads[id] = t
+	return true, nil
+}
+
+func (s *memStore) seenAt(id string) *int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	at, ok := s.seen[id]
+	if !ok {
+		return nil
+	}
+	return &at
 }
 
 func (s *memStore) TurnStatus(_ context.Context, id string) (ports.Status, error) {
@@ -271,7 +305,7 @@ func (s *memStore) RequestApproval(_ context.Context, a domain.Approval) error {
 	}
 	s.approvals = append(s.approvals, a)
 	t := s.threads[a.ThreadID]
-	t.State = domain.StateAwaitingApproval
+	t.State, t.AttentionState = domain.StateAwaitingApproval, "blocked"
 	s.threads[a.ThreadID] = t
 	return nil
 }
@@ -319,7 +353,7 @@ func (s *memStore) DecideApproval(_ context.Context, id string, state domain.App
 		}
 		t := s.threads[a.ThreadID]
 		if t.State == domain.StateAwaitingApproval {
-			t.State = domain.StateRunning
+			t.State, t.AttentionState = domain.StateRunning, "working"
 			s.threads[a.ThreadID] = t
 		}
 		return a, nil
@@ -520,6 +554,13 @@ func (b *checkingBus) Publish(ev bus.Event) {
 				b.approvals <- e.Approval
 			}
 		}()
+	case ports.ThreadAttentionChanged:
+		b.store.mu.Lock()
+		stored := b.store.threads[e.ThreadID].AttentionState
+		b.store.mu.Unlock()
+		if stored != e.AttentionState {
+			b.fail = append(b.fail, fmt.Sprintf("attention_changed %q published while the store holds %q", e.AttentionState, stored))
+		}
 	case ports.TurnFinished:
 		b.store.mu.Lock()
 		state := b.store.threads[e.ThreadID].State

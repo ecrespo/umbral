@@ -544,3 +544,36 @@ func TestActiveCountsTheOpenWaits_REQ_OBS_004(t *testing.T) {
 		t.Fatalf("Active = %d after closing both", n)
 	}
 }
+
+// TestAFocusSettlesAWaitForIdle_REQ_AGT_016: a wait for `idle` on a turn that ended `done`
+// settles when a client focuses the thread, from thread.attention_changed rather than the
+// backstop's next read.
+func TestAFocusSettlesAWaitForIdle_REQ_AGT_016(t *testing.T) {
+	threads := &fakeThreads{}
+	threads.set("idle", "done", "trn_a")
+	b := bus.New()
+	t.Cleanup(b.Close)
+	s, err := New(Config{Bus: b, Threads: threads, Backstop: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := s.Thread(t.Context(), "thr_1", []string{"idle"}, 60000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.PinCurrent(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	got := await(t, w)
+
+	threads.set("idle", "idle", "trn_a")
+	b.Publish(agentsports.ThreadAttentionChanged{ThreadID: "thr_1", AttentionState: "idle"})
+	select {
+	case r := <-got:
+		if r.err != nil || r.res.State != domain.StateIdle || r.res.TurnID != "trn_a" {
+			t.Fatalf("Wait = %+v %v", r.res, r.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a focus did not settle the wait for idle")
+	}
+}

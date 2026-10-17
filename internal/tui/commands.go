@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"sync"
+
 	tea "charm.land/bubbletea/v2"
 
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
@@ -153,6 +155,40 @@ func (m *Model) createThreadCmd(cwd string) tea.Cmd {
 			return threadFailedMsg{err: err}
 		}
 		return threadCreatedMsg{threadID: id}
+	}
+}
+
+// focusOrder keeps thread.focus calls in the order the panel made them. Bubble Tea runs
+// commands concurrently, so a focus made before an unfocus could otherwise reach the daemon
+// after it and leave a view the panel no longer has.
+type focusOrder struct {
+	mu sync.Mutex
+	// made numbers the calls as they are made; sent is the newest one sent.
+	made, sent uint64
+}
+
+// focusCmd tells the daemon which thread this client views, "" for none. The calls are sent
+// one at a time, and one that finds a newer call already sent sends nothing. A failure is not
+// reported: a failed focus leaves the thread `done`, which an unviewed thread shows anyway,
+// and a failed unfocus leaves the view until the next one or until the TUI disconnects.
+func (m *Model) focusCmd(threadID string) tea.Cmd {
+	daemon, order := m.daemon, m.focus
+	order.mu.Lock()
+	order.made++
+	n := order.made
+	order.mu.Unlock()
+	return func() tea.Msg {
+		order.mu.Lock()
+		defer order.mu.Unlock()
+		if n < order.sent {
+			return nil
+		}
+		order.sent = n
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		_ = daemon.Focus(ctx, threadID)
+		return nil
 	}
 }
 

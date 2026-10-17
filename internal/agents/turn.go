@@ -76,19 +76,13 @@ func (r *Runtime) runTurn(ctx context.Context, thread domain.Thread, turnID stri
 	}
 	// The end is written even when the turn was cancelled: that is what lets the thread take
 	// the next message.
-	// Retried once: a thread left `running` takes no message until the daemon restarts.
-	ended := r.now()
-	err := r.cfg.Store.FinishTurn(context.WithoutCancel(ctx), thread.ID, state, t.usage, ended)
-	if err != nil {
-		ended = r.now()
-		err = r.cfg.Store.FinishTurn(context.WithoutCancel(ctx), thread.ID, state, t.usage, ended)
-	}
+	ended, viewed, err := r.finishTurn(context.WithoutCancel(ctx), thread.ID, state, t.usage)
 	if err != nil {
 		r.cfg.Logger.ErrorContext(ctx, "a turn's end could not be written", slog.String("thread", thread.ID),
 			slog.String("turn", turnID), slog.Any("error", err))
 		stop, ended = domain.StopStorageError, 0
 	}
-	endState := domain.AttentionAfter(state)
+	endState := domain.AttentionAfter(state, viewed)
 	switch {
 	case ended == 0:
 		// Nothing was written: the store still says running, so the end is not known.

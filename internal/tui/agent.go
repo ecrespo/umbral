@@ -50,6 +50,9 @@ type agentPanel struct {
 	mode bool
 
 	threadID string
+	// viewing is the thread the daemon was last told this client views: the panel's own
+	// while the panel is on screen, none otherwise (REQ-AGT-016).
+	viewing  string
 	creating bool
 	// queued is a message typed before the thread existed, sent once it does.
 	queued *outgoing
@@ -122,7 +125,7 @@ func (m *Model) toggleMode() tea.Cmd {
 	m.agent.mode = !m.agent.mode
 	if m.agent.mode && !m.agent.open {
 		m.agent.open = true
-		return m.resize(m.width, m.height)
+		return tea.Batch(m.resize(m.width, m.height), m.syncView())
 	}
 	return nil
 }
@@ -130,7 +133,22 @@ func (m *Model) toggleMode() tea.Cmd {
 // closePanel hides the panel and gives the keyboard back to the shell.
 func (m *Model) closePanel() tea.Cmd {
 	m.agent.open, m.agent.mode = false, false
-	return m.resize(m.width, m.height)
+	return tea.Batch(m.resize(m.width, m.height), m.syncView())
+}
+
+// syncView tells the daemon which thread this client views, when that changed: a thread the
+// panel shows is seen, so its finished turns are not left `done` (REQ-AGT-016).
+func (m *Model) syncView() tea.Cmd {
+	a := &m.agent
+	want := ""
+	if a.open {
+		want = a.threadID
+	}
+	if want == a.viewing {
+		return nil
+	}
+	a.viewing = want
+	return m.focusCmd(want)
 }
 
 // attachBlock is "attach to agent" on the selected block (REQ-TUI-003): the panel opens in
@@ -145,7 +163,7 @@ func (m *Model) attachBlock() tea.Cmd {
 	m.agent.mode = true
 	if !m.agent.open {
 		m.agent.open = true
-		return m.resize(m.width, m.height)
+		return tea.Batch(m.resize(m.width, m.height), m.syncView())
 	}
 	return nil
 }
@@ -247,12 +265,13 @@ func (m *Model) sendInput() tea.Cmd {
 func (m *Model) threadCreated(msg threadCreatedMsg) tea.Cmd {
 	a := &m.agent
 	a.threadID, a.creating = msg.threadID, false
+	view := m.syncView()
 	if a.queued == nil {
-		return nil
+		return view
 	}
 	out := *a.queued
 	a.queued = nil
-	return m.sendCmd(a.threadID, out)
+	return tea.Batch(view, m.sendCmd(a.threadID, out))
 }
 
 func (m *Model) agentFailed(err error) {

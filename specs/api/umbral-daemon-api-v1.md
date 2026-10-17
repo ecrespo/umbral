@@ -443,6 +443,12 @@ All three members of `focused` are nullable, and all three are null on a daemon 
 focused yet — the state every client meets on a fresh daemon, before the first `workspace.create`.
 Null means "nothing is focused", never "unknown".
 
+`focused.thread_id` is the thread a connection that still views one focused most recently with
+`thread.focus` (§5.23), and null while no connection views a thread. It lives for the daemon's
+run: a view ends with its connection, so a restart starts with none. `threads` holds what
+`thread.list` returns — the threads that are not ephemeral — each with its `attention_state`, which
+is the base `thread.attention_changed` updates (REQ-AGT-016).
+
 The `seq` is the envelope counter of §6, read **before** the tree: the daemon persists before it
 notifies (DD-007), so an event whose `seq` has been assigned is already stored, and reading the
 counter first guarantees that everything at or below the reported number is in this result. The
@@ -656,7 +662,7 @@ appended, which is what the model read (REQ-AGT-011).
 - A `model` change applies from the next turn.
 - **Errors:** `CONFLICT` when changing `mode` during a turn.
 
-### 5.23 `thread.list` / `get`
+### 5.23 `thread.list` / `get` / `focus`
 
 `list` params: `{}`. **Result:** `{items: Thread[]}`, the threads that are not ephemeral, most
 recently updated first.
@@ -666,6 +672,23 @@ with `include_messages` a page of its `messages` (`limit` 1-1000, default 100), 
 `next_cursor` is the last message id of the page when more follow, and passing it as `cursor`
 returns the next page. An unknown thread is `NOT_FOUND`; a `cursor` that names no message of the
 thread is `VALIDATION_ERROR`.
+
+`focus` params: `{thread_id: string | null}`. **Result:** `{}`. The connection now views the
+thread, or no thread for `null` (REQ-AGT-016, delta `2026-10-attention-focus`):
+
+- Viewing is per connection, one thread at a time; a later `focus` replaces the connection's view,
+  and the view ends when the connection closes. A thread is **viewed** while at least one
+  connection views it.
+- Focusing a thread records `seen_at`, and moves a `done` thread to `idle` with
+  `thread.attention_changed`. A thread in any other attention state keeps it, and nothing is
+  announced.
+- A turn that ends while its thread is viewed ends `idle` instead of `done`, and records `seen_at`
+  (§7). Reading a thread — `thread.get`, `thread.list`, `session.snapshot` — is not viewing it, so
+  a script never clears the `done` a person has not seen.
+- `thread_id` is required, `null` included: a missing member is `VALIDATION_ERROR`, so a client
+  that forgot it is not read as unfocusing. An unknown thread is `NOT_FOUND`, and the
+  connection's view is left as it was.
+- Interactive clients only (§2): `umb` drives threads but views none.
 
 ### 5.24 `approval.list` → `{items: Approval[]}` (only `pending` by default)
 **Params:** `{thread_id?, all?}`. `all` includes decided and expired approvals; `thread_id`
@@ -774,8 +797,9 @@ The daemon pins the turn in progress when the wait starts: a later turn does not
   that ended before the daemon started or one whose end could not be written, it answers
   `unknown`, and a timeout reached first reports `unknown` as its `data.last_state`. A later turn's state never answers
   for the pinned one.
-- Nothing moves `done` to `idle` until a client views the thread (REQ-AGT-016, T-F1-24), so
-  until then a wait for `idle` alone after a turn ends runs to its deadline.
+- Nothing moves `done` to `idle` until a client views the thread with `thread.focus` (§5.23,
+  REQ-AGT-016), so until then a wait for `idle` alone after a turn ends runs to its deadline. A
+  turn that ends while its thread is viewed ends `idle` directly.
 - `blocked` is reported when the pinned turn asks for an approval, even if the approval is
   answered before the daemon reads the thread again.
 - The answer comes when the wait settles; the connection keeps serving meanwhile (§1). A wait
@@ -960,7 +984,7 @@ Every client kind may call both (§2). The `limits` capability announces them.
 | `pane.moved` | `{pane, previous_pane_id, previous_workspace_id, layout}` | REQ-WS-007 |
 | `pane.state_changed` | `{pane_id, attention_state, state_source}` | REQ-INT-002 |
 | `layout.updated` | `Layout` | REQ-WS-004 |
-| `thread.attention_changed` | `{thread_id, attention_state}` | REQ-AGT-016 |
+| `thread.attention_changed` | `{thread_id, attention_state}` — after every change written: a turn starts (`working`), asks for an approval (`blocked`), is answered (`working`), ends (`done`, or `idle` when viewed or cancelled), or a `done` thread is focused (`idle`). Not sent for the changes Data Model §6 makes at start, before any client connects | REQ-AGT-016 |
 | `thread.stalled` | `{thread_id, turn_id, idle_ms, last_event}` | REQ-AUT-008 |
 | `rules.update_rejected` | `{reason, version, source}` | REQ-SEC-013 |
 | `limits.notification_dropped` | `{method, size_bytes, limit_bytes}` — in place of a notification over the frame limit, under that notification's `seq` (§1) | REQ-API-005 |
@@ -1029,6 +1053,9 @@ stateDiagram-v2
   working --> done: turn finished, not yet viewed
   done --> idle: a client focuses it
   working --> idle: turn finished while being viewed
+  done --> working: turn starts
+  working --> idle: turn cancelled
+  blocked --> idle: turn cancelled
 ```
 
 ```mermaid

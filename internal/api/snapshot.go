@@ -57,17 +57,30 @@ func handleSessionSnapshot(ctx context.Context, c *conn, _ json.RawMessage) (any
 		layouts = append(layouts, toWireLayout(layout))
 	}
 
+	focus := toWireFocus(snapshot.Focus)
+	// Threads are not part of the tree: the agent runtime lists them and knows which one a
+	// client views (REQ-AGT-016). Without a runtime the member is present and empty, so a
+	// client iterating the result does not branch on which build it is talking to.
+	threadList := []Thread{}
+	if svc := c.server.cfg.Threads; svc != nil {
+		list, err := svc.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range list {
+			threadList = append(threadList, toWireThread(t))
+		}
+		focus.ThreadID = emptyAsNull(svc.Focused())
+	}
+
 	return snapshotResult{
 		Seq:        seq,
-		Focused:    toWireFocus(snapshot.Focus),
+		Focused:    focus,
 		Workspaces: workspaces,
 		Tabs:       tabs,
 		Panes:      panes,
 		Layouts:    layouts,
-		// Threads arrive with F1. The member is present and empty rather than absent,
-		// because §5.3 lists it and a client iterating the result should not have to
-		// branch on which build of the daemon it is talking to.
-		Threads: []any{},
+		Threads:    threadList,
 	}, nil
 }
 

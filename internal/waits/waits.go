@@ -97,7 +97,8 @@ func (s *Service) Thread(_ context.Context, threadID string, until []string, tim
 	}
 	w := &threadWait{
 		s: s, threadID: threadID, targets: targets, timeout: timeout, start: s.cfg.Now(),
-		sub: s.cfg.Bus.Subscribe(agentsports.KindThreadTurnFinished, agentsports.KindApprovalRequested),
+		sub: s.cfg.Bus.Subscribe(agentsports.KindThreadTurnFinished, agentsports.KindApprovalRequested,
+			agentsports.KindAttentionChanged),
 	}
 	w.close = s.opened(w.sub)
 	return w, nil
@@ -255,6 +256,13 @@ func (w *threadWait) Wait(ctx context.Context) (ports.ThreadResult, error) {
 func (w *threadWait) event(ev bus.Event, read func() (domain.Observed, error)) (domain.Observed, bool, error) {
 	switch e := ev.(type) {
 	case agentsports.TurnFinished:
+		if e.ThreadID != w.threadID {
+			return domain.Observed{}, false, nil
+		}
+		o, err := read()
+		return o, err == nil, err
+	case agentsports.ThreadAttentionChanged:
+		// A client focusing a `done` thread is the one change that needs no turn (§5.29).
 		if e.ThreadID != w.threadID {
 			return domain.Observed{}, false, nil
 		}

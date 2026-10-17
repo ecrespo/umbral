@@ -21,6 +21,9 @@ import (
 // paramSessionID is the parameter name every session-scoped method takes (API Spec §5).
 const paramSessionID = "session_id"
 
+// paramThreadID names the thread every thread method but create takes.
+const paramThreadID = "thread_id"
+
 // snapshotFormat is the only format this client can replay (API Spec §5.11).
 const snapshotFormat = "vt"
 
@@ -196,7 +199,7 @@ func (d *Daemon) CreateThread(ctx context.Context, cwd string) (string, error) {
 
 // Send sends a message with a fresh client_msg_id (API Spec §5.20, REQ-AGT-015).
 func (d *Daemon) Send(ctx context.Context, threadID, text string, attachments []ports.Attachment) (string, error) {
-	params := map[string]any{"thread_id": threadID, "text": text, "client_msg_id": newClientMsgID()}
+	params := map[string]any{paramThreadID: threadID, "text": text, "client_msg_id": newClientMsgID()}
 	if len(attachments) > 0 {
 		list := make([]map[string]string, 0, len(attachments))
 		for _, a := range attachments {
@@ -230,10 +233,19 @@ func (d *Daemon) Cancel(ctx context.Context, threadID string) (bool, error) {
 	var out struct {
 		StoppedAt *int64 `json:"stopped_at"`
 	}
-	if err := d.stream.Call(ctx, "thread.cancel", map[string]any{"thread_id": threadID}, &out); err != nil {
+	if err := d.stream.Call(ctx, "thread.cancel", map[string]any{paramThreadID: threadID}, &out); err != nil {
 		return false, err
 	}
 	return out.StoppedAt != nil, nil
+}
+
+// Focus tells the daemon which thread this client views, none for "" (API Spec §5.23).
+func (d *Daemon) Focus(ctx context.Context, threadID string) error {
+	var id any
+	if threadID != "" {
+		id = threadID
+	}
+	return d.stream.Call(ctx, "thread.focus", map[string]any{paramThreadID: id}, nil)
 }
 
 // Approvals lists the pending approvals of every thread (API Spec §5.24).

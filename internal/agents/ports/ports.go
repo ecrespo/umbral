@@ -39,8 +39,13 @@ type Store interface {
 	AppendContent(ctx context.Context, messageID, text string) error
 	// SaveToolCall inserts a tool call or updates its status and result.
 	SaveToolCall(ctx context.Context, call domain.ToolCall) error
-	// FinishTurn adds the turn's usage to the thread and sets its state.
-	FinishTurn(ctx context.Context, threadID string, state domain.State, usage domain.Usage, now int64) error
+	// FinishTurn adds the turn's usage to the thread and sets its state, with the attention
+	// state domain.AttentionAfter gives; a thread a client views is seen at now as well.
+	FinishTurn(ctx context.Context, threadID string, state domain.State, viewed bool, usage domain.Usage, now int64) error
+	// MarkSeen records that a client focused the thread at now, and moves its attention from
+	// `done` to `idle` (REQ-AGT-016). changed reports that move; an unknown thread is
+	// domain.ErrNotFound.
+	MarkSeen(ctx context.Context, threadID string, now int64) (changed bool, err error)
 	// TurnStatus reads the thread's state, attention state and latest turn in one query.
 	TurnStatus(ctx context.Context, threadID string) (Status, error)
 
@@ -110,6 +115,15 @@ type Threads interface {
 	// Respond is approval.respond (API §5.25): it records the decision, and the rule a
 	// `thread` or `always` scope remembers, then resumes the paused turn.
 	Respond(ctx context.Context, r domain.Response) (domain.Approval, error)
+	// Focus is thread.focus (API §5.23): viewer — a connection — now views threadID, or no
+	// thread when it is "". Viewing a `done` thread makes it `idle`, and a turn that ends while
+	// any viewer views its thread ends `idle` (REQ-AGT-016).
+	Focus(ctx context.Context, viewer, threadID string) error
+	// Unfocus forgets a viewer, as when its connection closes.
+	Unfocus(viewer string)
+	// Focused is the thread focused most recently by a viewer that still views one; "" when
+	// no viewer views a thread.
+	Focused() string
 }
 
 // MaxStdinBytes is REQ-CLI-001's limit on what `umb ai` sends from stdin: the decoded size
