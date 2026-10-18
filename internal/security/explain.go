@@ -20,6 +20,10 @@ type ExplainConfig struct {
 	// IsRepo says whether a directory is a repository root, for the write root; it must be
 	// the agent runtime's own, or the two could disagree about a write.
 	IsRepo func(dir string) bool
+	// Policy is the engine over the destructive patterns in force — the agent runtime's own,
+	// so the two cannot disagree (delta `2026-10-policy-explain`, decision 9); nil is the
+	// built-in list.
+	Policy func() domain.Policy
 }
 
 // Explainer implements ports.Explainer.
@@ -38,6 +42,9 @@ func NewExplainer(cfg ExplainConfig) (*Explainer, error) {
 		return nil, errors.New("security: a ToolCatalog is required")
 	case cfg.IsRepo == nil:
 		return nil, errors.New("security: IsRepo is required")
+	}
+	if cfg.Policy == nil {
+		cfg.Policy = domain.BuiltinRules().Policy
 	}
 	return &Explainer{cfg: cfg}, nil
 }
@@ -81,5 +88,5 @@ func (e *Explainer) Explain(ctx context.Context, req domain.ExplainRequest) (dom
 	if pathTool && (cwd != "" || filepath.IsAbs(req.Target)) {
 		action.Target = e.cfg.Tools.PolicyPath(cwd, req.Target)
 	}
-	return domain.Decide(action, mode, rules, req.Tainted), nil
+	return e.cfg.Policy().Decide(action, mode, rules, req.Tainted), nil
 }

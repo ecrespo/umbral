@@ -24,7 +24,7 @@ import (
 // recording remote requests in egress_log, the keyring for env_refs, and the catalog that
 // puts each server's tools in the registry. It starts connecting the stored servers.
 func newMCP(ctx context.Context, logger *slog.Logger, db *store.Store, events *bus.Bus,
-	egress llmports.EgressLog, tools *registry.Registry, providers *providerConfig,
+	egress llmports.EgressLog, tools *registry.Registry, providers *providerConfig, redact func(string) string,
 ) (*mcp.Manager, error) {
 	st, err := serverstore.New(db)
 	if err != nil {

@@ -18,7 +18,7 @@ import (
 // gateway is the model catalog and its router as the daemon runs them: rebuilt from
 // models.toml and the resolved credentials whenever they change, refreshed in the background,
 // and served as model.list (API Spec §5.26). The router is what the agent runtime calls models
-// through (T-F1-07): it redacts with the built-in rules (REQ-SEC-001) and records every call
+// through (T-F1-07): it redacts with the rules in force (REQ-SEC-001, REQ-SEC-010) and records every call
 // in usage (REQ-LLM-005).
 type gateway struct {
 	ctx     context.Context
@@ -28,7 +28,7 @@ type gateway struct {
 	egress  llmports.EgressLog
 }
 
-func newGateway(ctx context.Context, logger *slog.Logger, store llmports.ModelStore, egress llmports.EgressLog, usage llmports.UsageLog, tracer llmports.Tracer) (*gateway, error) {
+func newGateway(ctx context.Context, logger *slog.Logger, store llmports.ModelStore, egress llmports.EgressLog, usage llmports.UsageLog, tracer llmports.Tracer, redact func(string) string) (*gateway, error) {
 	catalog := llmgw.NewCatalog(store, logger)
 	router, err := llmgw.NewRouter(catalog, llmgw.RouterConfig{Redact: redact, Usage: usage, Tracer: tracer, Logger: logger})
 	if err != nil {
@@ -36,10 +36,6 @@ func newGateway(ctx context.Context, logger *slog.Logger, store llmports.ModelSt
 	}
 	return &gateway{ctx: ctx, logger: logger, catalog: catalog, router: router, egress: egress}, nil
 }
-
-// redact applies the redaction rules built into the binary; the override directory of
-// REQ-SEC-010 replaces them when T-F1-30 lands.
-func redact(s string) string { return secdomain.Redact(s).Text }
 
 // configure rebuilds the providers and discovers their models in the background
 // (REQ-LLM-002: at start, and again after a reload changed them). The daemon never waits on

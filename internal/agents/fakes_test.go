@@ -716,6 +716,12 @@ func newID(prefix string) string {
 
 func newRig(t *testing.T, scripts ...[]llm.Event) *rig {
 	t.Helper()
+	return newRigWith(t, nil, scripts...)
+}
+
+// newRigWith lets a test change the runtime's Config before New reads it.
+func newRigWith(t *testing.T, configure func(*Config), scripts ...[]llm.Event) *rig {
+	t.Helper()
 	store := newMemStore()
 	b := &checkingBus{t: t, store: store, ended: make(chan ports.TurnFinished, 16), approvals: make(chan domain.Approval, 16)}
 	models := &scripted{scripts: scripts}
@@ -730,11 +736,15 @@ func newRig(t *testing.T, scripts ...[]llm.Event) *rig {
 	tracer := &fakeTracer{}
 	logs := &spanLogs{}
 	maxCost := &atomic.Int64{}
-	rt, err := New(t.Context(), Config{
+	cfg := Config{
 		Store: store, Models: models, Tools: tools, Bus: b, NewID: newID, Metrics: metrics, Tracer: tracer,
 		IsRepo: func(string) bool { return false }, Logger: slog.New(logs),
 		MaxCostMicroUSD: maxCost.Load,
-	})
+	}
+	if configure != nil {
+		configure(&cfg)
+	}
+	rt, err := New(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

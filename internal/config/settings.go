@@ -42,7 +42,16 @@ type Settings struct {
 	// NotificationsEnabled is `[notifications] enabled`: on unless the file says false, in
 	// which case every notification answers `disabled` (REQ-NTF-001). Read at start.
 	NotificationsEnabled bool
+	// RulesCheck is `[update] rules_check`: whether the daemon fetches signed rule bundles
+	// (REQ-SEC-011, DD-016). Off by default, and off means no request leaves the machine.
+	RulesCheck bool
+	// RulesURL is `[update] rules_url`, where bundles come from; the signature is the same
+	// URL plus `.sig`. DefaultRulesURL unless the file says otherwise.
+	RulesURL string
 }
+
+// DefaultRulesURL is Tech Design §4's default: the project's latest release asset.
+const DefaultRulesURL = "https://github.com/ecrespo/umbral/releases/latest/download/rules.json"
 
 // Retention is Data Model §4's configurable retention windows, in days.
 type Retention struct {
@@ -105,7 +114,10 @@ func SettingsPath() (string, error) {
 //
 // An unknown key is a warning, so a file written for a later version still starts this one.
 func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
-	settings := Settings{MaxMessageBytes: DefaultMaxMessageBytes, Retention: DefaultRetention(), NotificationsEnabled: true}
+	settings := Settings{
+		MaxMessageBytes: DefaultMaxMessageBytes, Retention: DefaultRetention(), NotificationsEnabled: true,
+		RulesURL: DefaultRulesURL,
+	}
 
 	raw, err := os.ReadFile(path) // #nosec G304 -- the path is the daemon's own config location
 	if errors.Is(err, os.ErrNotExist) {
@@ -144,6 +156,19 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 					ErrSettingsInvalid, path, value)
 			}
 			settings.NotificationsEnabled = on
+		case "update.rules_check":
+			on, err := strconv.ParseBool(value)
+			if err != nil {
+				return Settings{}, fmt.Errorf("%w: %s: update.rules_check is %q, want true or false",
+					ErrSettingsInvalid, path, value)
+			}
+			settings.RulesCheck = on
+		case "update.rules_url":
+			u, err := parseRulesURL(value)
+			if err != nil {
+				return Settings{}, fmt.Errorf("%w: %s: update.rules_url: %w", ErrSettingsInvalid, path, err)
+			}
+			settings.RulesURL = u
 		case "otel.endpoint":
 			endpoint, err := parseOTelEndpoint(value)
 			if err != nil {
@@ -182,6 +207,20 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 		}
 	}
 	return settings, nil
+}
+
+// parseRulesURL checks `[update] rules_url`: an https URL with a host and no credentials. The
+// signature makes a bundle trustworthy, not the transport; https keeps what is fetched from
+// being read on the way. The error never repeats the value, which may hold a credential.
+func parseRulesURL(value string) (string, error) {
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return "", errors.New("want an https:// URL such as " + DefaultRulesURL)
+	}
+	if u.User != nil {
+		return "", errors.New("want a URL with no credentials in it")
+	}
+	return u.String(), nil
 }
 
 // parseOTelEndpoint checks `[otel] endpoint`: an http or https base URL — no path, query,

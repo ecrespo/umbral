@@ -208,3 +208,29 @@ func TestNotificationsAreOnUnlessTurnedOff_REQ_NTF_001(t *testing.T) {
 		t.Fatalf("a malformed value = %v, want ErrSettingsInvalid", err)
 	}
 }
+
+// TestRuleUpdatesAreOffUnlessAsked_REQ_SEC_011: `[update] rules_check` is off by default, so
+// nothing leaves the machine for rules (Art. 4); `rules_url` defaults to the project's latest
+// release and, when given, must be an https URL with no credentials.
+func TestRuleUpdatesAreOffUnlessAsked_REQ_SEC_011(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, filepath.Join(t.TempDir(), "config.toml"))
+	if err != nil || settings.RulesCheck || settings.RulesURL != DefaultRulesURL {
+		t.Fatalf("no settings file: check=%v url=%q err=%v, want off and the default URL", settings.RulesCheck, settings.RulesURL, err)
+	}
+	settings, err = LoadSettings(nil, write(t, "[update]\nrules_check = true\nrules_url = \"https://rules.example.org/rules.json\"\n"))
+	if err != nil || !settings.RulesCheck || settings.RulesURL != "https://rules.example.org/rules.json" {
+		t.Fatalf("turned on: check=%v url=%q err=%v", settings.RulesCheck, settings.RulesURL, err)
+	}
+	for name, body := range map[string]string{
+		"a malformed switch": "[update]\nrules_check = maybe\n",
+		"plain http":         "[update]\nrules_url = \"http://rules.example.org/rules.json\"\n",
+		"credentials":        "[update]\nrules_url = \"https://u:p@rules.example.org/rules.json\"\n",
+		"not a URL":          "[update]\nrules_url = \"rules.json\"\n",
+	} {
+		if _, err := LoadSettings(nil, write(t, body)); !errors.Is(err, ErrSettingsInvalid) {
+			t.Errorf("%s: %v, want ErrSettingsInvalid", name, err)
+		}
+	}
+}

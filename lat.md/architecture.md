@@ -47,3 +47,13 @@ A hook raises one with `umb notify` ([[cmd/umb/notify.go#cmdNotify]]), which exi
 [[internal/security/explain.go#Explainer#Explain]] answers `policy.explain` by calling the same `Decide` a turn calls, with the thread's mode, rules and write root (delta `2026-10-policy-explain`).
 
 A second implementation could drift from the real policy and explain decisions the daemon never makes. For the same reason the explainer refuses a risk the registered tool does not declare, shapes a file target with the built-ins' own [[internal/tools/adapters/builtin/builtin.go#PolicyPath]], and shares one [[cmd/umbrald/policy.go#isRepo]] with the runtime.
+
+## One rule set for every decision and redaction
+
+[[cmd/umbrald/rules.go#loadRules]] builds the rules in force once at start: the built-in ones with the files of `rules/` beside `config.toml` on top (delta `2026-10-rule-overrides`).
+
+Layers stack by name in [[internal/security/domain/ruleset.go#Layer]]: a same-named entry replaces the base's and a new one adds to it, so an override can replace a rule but never remove one. The base is the built-in set, or a verified bundle that replaces it whole. An invalid file is skipped whole with a warning naming it.
+
+The agent runtime and `policy.explain` read the policy from the same [[internal/security/adapters/rules/active.go#Active]], and every redaction reads its redactor, so an explanation cannot describe a policy the daemon does not apply. [[internal/security/adapters/rules/active.go#Active#SetBase]] swaps that base and keeps the local layer on top.
+
+The opt-in fetch in [[internal/security/adapters/rules/fetch.go#Fetcher]] writes every request, and every redirect hop, to `egress_log` before sending it, refuses a configured URL the redactor would change, and never applies what it fetched: until signatures can be verified, a bundle is logged and discarded.

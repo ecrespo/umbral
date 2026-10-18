@@ -15,6 +15,7 @@ import (
 	llmdomain "github.com/ecrespo/umbral/internal/llmgw/domain"
 	llmports "github.com/ecrespo/umbral/internal/llmgw/ports"
 	"github.com/ecrespo/umbral/internal/obs"
+	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 	"github.com/ecrespo/umbral/internal/sessions"
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
@@ -36,6 +37,9 @@ type agentDeps struct {
 	tracer   agentsports.Tracer
 	// maxCost is the thread cost cap now in force, in micro-USD (REQ-AGT-008).
 	maxCost func() int64
+	// redact and policy are the rules in force (REQ-SEC-010).
+	redact func(string) string
+	policy func() secdomain.Policy
 }
 
 // newRuntime wires the agent runtime (T-F1-13) to the modules it reaches through their ports:
@@ -47,7 +51,7 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, *registry.Re
 		return nil, nil, err
 	}
 	tools, err := registry.New(builtin.All(builtin.Config{
-		Fetch:    builtin.FetchConfig{Egress: d.egress, Redact: redact},
+		Fetch:    builtin.FetchConfig{Egress: d.egress, Redact: d.redact},
 		Terminal: d.terminal,
 	})...)
 	if err != nil {
@@ -64,6 +68,7 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, *registry.Re
 		Tracer:  d.tracer,
 		Logger:  d.logger,
 		IsRepo:  isRepo,
+		Policy:  d.policy,
 
 		MaxCostMicroUSD: d.maxCost,
 	})

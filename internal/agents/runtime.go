@@ -20,6 +20,7 @@ import (
 	"github.com/ecrespo/umbral/internal/bus"
 	ctxdomain "github.com/ecrespo/umbral/internal/context/domain"
 	ctxports "github.com/ecrespo/umbral/internal/context/ports"
+	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 	toolsports "github.com/ecrespo/umbral/internal/tools/ports"
 )
 
@@ -40,6 +41,9 @@ type Config struct {
 	// IsRepo says whether a directory is a repository root, for the write root; nil looks for
 	// a `.git` entry.
 	IsRepo func(dir string) bool
+	// Policy is the engine over the destructive patterns in force, read at every decision so
+	// a change of rules applies at once (REQ-SEC-010); nil is the built-in list.
+	Policy func() secdomain.Policy
 	// MaxCostMicroUSD is `router.max_cost_usd_per_thread` in micro-USD, read at every check so
 	// a reload applies at once; 0, or a nil func, is no cap (REQ-AGT-008, delta
 	// `2026-10-cost-cap`).
@@ -136,6 +140,9 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 		return nil, errors.New("agents: Metrics are required")
 	case cfg.Tracer == nil:
 		return nil, errors.New("agents: a Tracer is required")
+	}
+	if cfg.Policy == nil {
+		cfg.Policy = secdomain.BuiltinRules().Policy
 	}
 	if cfg.IsRepo == nil {
 		cfg.IsRepo = func(dir string) bool {

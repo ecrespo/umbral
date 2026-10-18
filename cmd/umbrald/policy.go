@@ -26,13 +26,13 @@ func isRepo(dir string) bool {
 
 // newExplainer wires policy.explain (T-F1-28) to the thread store the runtime decides with
 // and the registry its tools are declared in.
-func newExplainer(db *store.Store, tools *registry.Registry) (*security.Explainer, error) {
+func newExplainer(db *store.Store, tools *registry.Registry, policy func() secdomain.Policy) (*security.Explainer, error) {
 	st, err := threadstore.New(db)
 	if err != nil {
 		return nil, err
 	}
 	return security.NewExplainer(security.ExplainConfig{
-		Source: explainSource{threads: st}, Tools: toolCatalog{tools: tools}, IsRepo: isRepo,
+		Source: explainSource{threads: st}, Tools: toolCatalog{tools: tools}, IsRepo: isRepo, Policy: policy,
 	})
 }
 
