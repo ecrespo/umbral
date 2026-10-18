@@ -263,6 +263,56 @@ func (d *Daemon) Approvals(ctx context.Context) ([]ports.Approval, error) {
 	return list, nil
 }
 
+// McpServers lists the configured MCP servers (API Spec §5.27).
+func (d *Daemon) McpServers(ctx context.Context) ([]ports.McpServer, error) {
+	var out struct {
+		Items []struct {
+			Name      string  `json:"name"`
+			State     string  `json:"state"`
+			LastError *string `json:"last_error"`
+		} `json:"items"`
+	}
+	if err := d.stream.Call(ctx, "mcp.server.list", map[string]any{}, &out); err != nil {
+		return nil, notImplementedIsEmpty(err)
+	}
+	list := make([]ports.McpServer, 0, len(out.Items))
+	for _, s := range out.Items {
+		srv := ports.McpServer{Name: s.Name, State: s.State}
+		if s.LastError != nil {
+			srv.LastError = *s.LastError
+		}
+		list = append(list, srv)
+	}
+	return list, nil
+}
+
+// Skills lists the installed skills (API Spec §5.37).
+func (d *Daemon) Skills(ctx context.Context) ([]ports.Skill, error) {
+	var out struct {
+		Items []struct {
+			Name    string `json:"name"`
+			Enabled bool   `json:"enabled"`
+		} `json:"items"`
+	}
+	if err := d.stream.Call(ctx, "skill.list", map[string]any{}, &out); err != nil {
+		return nil, notImplementedIsEmpty(err)
+	}
+	list := make([]ports.Skill, 0, len(out.Items))
+	for _, s := range out.Items {
+		list = append(list, ports.Skill{Name: s.Name, Enabled: s.Enabled})
+	}
+	return list, nil
+}
+
+// notImplementedIsEmpty turns NOT_IMPLEMENTED, a daemon run without that module, into an
+// empty list rather than an error to show (API Spec §8).
+func notImplementedIsEmpty(err error) error {
+	if client.DomainCode(err) == "NOT_IMPLEMENTED" {
+		return nil
+	}
+	return err
+}
+
 // wireApproval is API §4's Approval, as `approval.list` and `approval.requested` carry it.
 type wireApproval struct {
 	ID       string  `json:"id"`
@@ -395,11 +445,18 @@ func toEvent(n client.Notification) (ports.Event, bool) {
 			ThreadID string `json:"thread_id"`
 			Tool     string `json:"tool"`
 			Status   string `json:"status"`
+			Args     struct {
+				Name string `json:"name"`
+			} `json:"args"`
 		}
 		if err := n.Decode(&p); err != nil {
 			return ports.Event{}, false
 		}
-		return ports.Event{Kind: ports.EventToolCall, ThreadID: p.ThreadID, ToolCallID: p.ID, Tool: p.Tool, Status: p.Status}, true
+		ev := ports.Event{Kind: ports.EventToolCall, ThreadID: p.ThreadID, ToolCallID: p.ID, Tool: p.Tool, Status: p.Status}
+		if p.Tool == "skill_load" {
+			ev.Skill = p.Args.Name
+		}
+		return ev, true
 
 	case "approval.requested":
 		var p wireApproval
@@ -417,6 +474,12 @@ func toEvent(n client.Notification) (ports.Event, bool) {
 			return ports.Event{}, false
 		}
 		return ports.Event{Kind: ports.EventTurnFinished, ThreadID: p.ThreadID, StopReason: p.StopReason}, true
+
+	case "mcp.server_state":
+		return ports.Event{Kind: ports.EventMcpServerState}, true
+
+	case "skill.changed":
+		return ports.Event{Kind: ports.EventSkillChanged}, true
 
 	case "notification.posted":
 		// The daemon has already normalized the text (REQ-NTF-001): no control characters.

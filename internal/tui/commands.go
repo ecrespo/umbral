@@ -244,3 +244,30 @@ func (m *Model) loadApprovalsCmd() tea.Cmd {
 		return approvalsLoadedMsg{approvals: list, err: err}
 	}
 }
+
+// loadExtensionsCmd lists both of the extensions view's lists, which every opening of the
+// panel does: removing a server publishes nothing (Tech §5.3e).
+func (m *Model) loadExtensionsCmd() tea.Cmd { return tea.Batch(m.loadServersCmd(), m.loadSkillsCmd()) }
+
+// loadServersCmd and loadSkillsCmd list the extensions view's MCP servers and skills.
+func (m *Model) loadServersCmd() tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		list, err := daemon.McpServers(ctx)
+		return serversLoadedMsg{servers: list, err: err}
+	}
+}
+
+func (m *Model) loadSkillsCmd() tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		list, err := daemon.Skills(ctx)
+		return skillsLoadedMsg{skills: list, err: err}
+	}
+}

@@ -36,6 +36,11 @@ type fakeDaemon struct {
 	respondErr error
 	// focuses are the panel's thread.focus calls, "" for none.
 	focuses []string
+	// servers and skills are what mcp.server.list and skill.list answer; listed counts
+	// both calls.
+	servers []ports.McpServer
+	skills  []ports.Skill
+	listed  int
 }
 
 func newFakeDaemon() *fakeDaemon {

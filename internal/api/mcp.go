@@ -48,12 +48,13 @@ func mcpServers(c *conn) (mcpports.Servers, error) {
 
 func hasMCP(cfg Config) bool { return cfg.MCP != nil }
 
-// mcpMethods is §5.27. §2's cli row does not name them; T-F1-37 adds them with `umb mcp`.
+// mcpMethods is §5.27. §2 gives them to every client kind that may edit the tree, `umb mcp`
+// included (REQ-CLI-008).
 func mcpMethods() map[string]method {
 	return map[string]method{
-		"mcp.server.list":   {handle: handleMcpList, kinds: interactiveClients, params: emptyResult{}, result: mcpListResult{}},
-		"mcp.server.add":    {handle: handleMcpAdd, kinds: interactiveClients, params: mcpAddParams{}, result: McpServer{}},
-		"mcp.server.remove": {handle: handleMcpRemove, kinds: interactiveClients, params: mcpRemoveParams{}, result: emptyResult{}},
+		"mcp.server.list":   {handle: handleMcpList, kinds: treeClients, params: emptyResult{}, result: mcpListResult{}},
+		"mcp.server.add":    {handle: handleMcpAdd, kinds: treeClients, params: mcpAddParams{}, result: McpServer{}},
+		"mcp.server.remove": {handle: handleMcpRemove, kinds: treeClients, params: mcpRemoveParams{}, result: emptyResult{}},
 	}
 }
 
@@ -99,6 +100,11 @@ func handleMcpAdd(ctx context.Context, c *conn, raw json.RawMessage) (any, error
 	var p mcpAddParams
 	if err := decode(raw, &p, "mcp.server.add"); err != nil {
 		return nil, err
+	}
+	// A server added from the CLI is always untrusted (REQ-CLI-008). The daemon holds that,
+	// so a script speaking JSON-RPC as a cli client cannot add a trusted one.
+	if c.clientKind == ClientCLI && p.Trust != "" && p.Trust != string(mcpdomain.TrustUntrusted) {
+		return nil, fmt.Errorf("%w: a server added by a cli client is untrusted", mcpdomain.ErrValidation)
 	}
 	s, err := svc.Add(ctx, mcpdomain.AddParams{
 		Name: p.Name, Transport: mcpdomain.Transport(p.Transport), Command: p.Command, Args: p.Args, URL: p.URL,

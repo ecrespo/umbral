@@ -1,0 +1,6 @@
+# Test fixtures, not secrets: cmd/umb/mcp_test.go asserts that `umb mcp add` refuses a
+# plaintext --env value and never echoes it. The first version used a token-shaped dummy
+# (commit 72df968); later commits use a value no rule matches. These fingerprints keep that
+# commit, which is already pushed, from failing the history scan.
+72df968b8303ee38810c8f19704e8cc77d528402:cmd/umb/mcp_test.go:generic-api-key:82
+72df968b8303ee38810c8f19704e8cc77d528402:cmd/umb/mcp_test.go:generic-api-key:84

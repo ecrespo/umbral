@@ -191,3 +191,42 @@ func TestToEventMapsAPostedNotification_REQ_NTF_001(t *testing.T) {
 		t.Fatalf("notification.posted = %+v %v", ev, ok)
 	}
 }
+
+// TestToEventMapsTheExtensionsNotifications_REQ_TUI_004: the extensions view lists again on
+// `mcp.server_state` and `skill.changed`, and a turn's skills come from a `skill_load`
+// call's own args; another tool's `name` argument is not a skill.
+func TestToEventMapsTheExtensionsNotifications_REQ_TUI_004(t *testing.T) {
+	t.Parallel()
+	ev, ok := toEvent(client.Notification{Method: "mcp.server_state", Params: json.RawMessage(
+		`{"name":"gitlab","state":"unavailable","last_error":"connection refused"}`)})
+	if !ok || ev.Kind != ports.EventMcpServerState {
+		t.Fatalf("mcp.server_state = %+v %v", ev, ok)
+	}
+	ev, ok = toEvent(client.Notification{Method: "skill.changed", Params: json.RawMessage(`{"name":"release-check","change":"disabled"}`)})
+	if !ok || ev.Kind != ports.EventSkillChanged {
+		t.Fatalf("skill.changed = %+v %v", ev, ok)
+	}
+	ev, ok = toEvent(client.Notification{Method: "thread.tool_call", Params: json.RawMessage(
+		`{"id":"tc_x","thread_id":"thr_x","tool":"skill_load","risk":"ReadOnly","args":{"name":"release-check","file":"notes.md"},"status":"ok"}`)})
+	if !ok || ev.Kind != ports.EventToolCall || ev.Skill != "release-check" {
+		t.Fatalf("skill_load's tool_call = %+v %v", ev, ok)
+	}
+	ev, ok = toEvent(client.Notification{Method: "thread.tool_call", Params: json.RawMessage(
+		`{"id":"tc_y","thread_id":"thr_x","tool":"mcp_gitlab_search","risk":"Network","args":{"name":"release-check"},"status":"ok"}`)})
+	if !ok || ev.Skill != "" || ev.Tool != "mcp_gitlab_search" {
+		t.Fatalf("an MCP tool's tool_call = %+v %v", ev, ok)
+	}
+}
+
+// TestADaemonWithoutTheModuleListsNothing: NOT_IMPLEMENTED is a daemon run without its MCP
+// client or skill store, which the panel shows as none rather than as an error; any other
+// error is still one.
+func TestADaemonWithoutTheModuleListsNothing(t *testing.T) {
+	t.Parallel()
+	if err := notImplementedIsEmpty(&client.Error{DomainCode: "NOT_IMPLEMENTED"}); err != nil {
+		t.Errorf("NOT_IMPLEMENTED = %v, want none", err)
+	}
+	if err := notImplementedIsEmpty(&client.Error{DomainCode: "INTERNAL_ERROR"}); err == nil {
+		t.Error("INTERNAL_ERROR was swallowed")
+	}
+}

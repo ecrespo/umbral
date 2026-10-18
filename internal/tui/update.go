@@ -297,9 +297,16 @@ func (m *Model) applyEvent(msg daemonEventMsg) tea.Cmd {
 		wasOpen := m.agent.open
 		m.applyAgentEvent(ev)
 		if m.agent.open && !wasOpen {
-			// An approval opened the panel: the panes just got narrower.
-			return tea.Batch(m.resize(m.width, m.height), m.waitForEvent())
+			// An approval opened the panel: the panes just got narrower, and the extensions
+			// view is listed as at every opening.
+			return tea.Batch(m.resize(m.width, m.height), m.loadExtensionsCmd(), m.waitForEvent())
 		}
+
+	case ports.EventMcpServerState:
+		return tea.Batch(m.loadServersCmd(), m.waitForEvent())
+
+	case ports.EventSkillChanged:
+		return tea.Batch(m.loadSkillsCmd(), m.waitForEvent())
 
 	case ports.EventNotification:
 		m.status = ev.Title

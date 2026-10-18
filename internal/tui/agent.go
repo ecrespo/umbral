@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -11,9 +12,10 @@ import (
 	"github.com/ecrespo/umbral/internal/tui/ports"
 )
 
-// The agent panel (REQ-TUI-001's agent half, REQ-TUI-002, REQ-TUI-003): a column beside the
-// panes that shows one thread's turn as it streams, the approvals pending on every thread,
-// and the line the user is typing to it. ctrl+space moves input between the shell and the
+// The agent panel (REQ-TUI-001's agent half, REQ-TUI-002, REQ-TUI-003, REQ-TUI-004): a column
+// beside the panes that shows what the agent can reach beyond its built-in tools, one
+// thread's turn as it streams, the approvals pending on every thread, and the line the user
+// is typing to it. ctrl+space moves input between the shell and the
 // panel.
 
 // keyEsc is the escape key's name, which the panel and the shell both route.
@@ -67,6 +69,15 @@ type agentPanel struct {
 	approvals []ports.Approval
 	answered  map[string]bool
 	showDiff  bool
+
+	// servers and skills are the extensions view (REQ-TUI-004), listed at start, whenever
+	// the panel opens and on every mcp.server_state or skill.changed.
+	servers []ports.McpServer
+	skills  []ports.Skill
+	// turnTools and turnSkills are the MCP tools the running turn called and the skills it
+	// loaded, each once, in the order first used.
+	turnTools  []string
+	turnSkills []string
 }
 
 type outgoing struct {
@@ -91,6 +102,14 @@ type (
 	respondFailedMsg struct {
 		approval ports.Approval
 		err      error
+	}
+	serversLoadedMsg struct {
+		servers []ports.McpServer
+		err     error
+	}
+	skillsLoadedMsg struct {
+		skills []ports.Skill
+		err    error
 	}
 )
 
@@ -125,7 +144,7 @@ func (m *Model) toggleMode() tea.Cmd {
 	m.agent.mode = !m.agent.mode
 	if m.agent.mode && !m.agent.open {
 		m.agent.open = true
-		return tea.Batch(m.resize(m.width, m.height), m.syncView())
+		return tea.Batch(m.resize(m.width, m.height), m.syncView(), m.loadExtensionsCmd())
 	}
 	return nil
 }
@@ -163,7 +182,7 @@ func (m *Model) attachBlock() tea.Cmd {
 	m.agent.mode = true
 	if !m.agent.open {
 		m.agent.open = true
-		return tea.Batch(m.resize(m.width, m.height), m.syncView())
+		return tea.Batch(m.resize(m.width, m.height), m.syncView(), m.loadExtensionsCmd())
 	}
 	return nil
 }
@@ -397,9 +416,27 @@ func (m *Model) approvalsLoaded(msg approvalsLoadedMsg) tea.Cmd {
 		m.addApproval(apr)
 	}
 	if m.agent.open && !wasOpen {
-		return m.resize(m.width, m.height)
+		return tea.Batch(m.resize(m.width, m.height), m.loadExtensionsCmd())
 	}
 	return nil
+}
+
+// serversLoaded and skillsLoaded replace the extensions view's lists. A failed listing
+// keeps the last one and says so: the daemon is answering, only not this.
+func (m *Model) serversLoaded(msg serversLoadedMsg) {
+	if msg.err != nil {
+		m.status = "mcp servers: " + msg.err.Error()
+		return
+	}
+	m.agent.servers = msg.servers
+}
+
+func (m *Model) skillsLoaded(msg skillsLoadedMsg) {
+	if msg.err != nil {
+		m.status = "skills: " + msg.err.Error()
+		return
+	}
+	m.agent.skills = msg.skills
 }
 
 // applyAgentEvent folds one of the agent's notifications into the panel. Approvals are
@@ -436,6 +473,15 @@ func (m *Model) applyAgentEvent(ev ports.Event) {
 
 	case ports.EventToolCall:
 		a.thinking = false
+		// An MCP tool was called when its call reached the server, whatever it answered; a
+		// skill was loaded only when skill_load succeeded. A call refused or malformed did
+		// neither, and a failed skill_load may name a skill that does not exist.
+		switch {
+		case strings.HasPrefix(ev.Tool, "mcp_") && (ev.Status == statusOK || ev.Status == "error"):
+			a.turnTools = appendOnce(a.turnTools, ev.Tool)
+		case ev.Tool == "skill_load" && ev.Status == statusOK && ev.Skill != "":
+			a.turnSkills = appendOnce(a.turnSkills, oneLine(ev.Skill))
+		}
 		line := ev.Tool + ": " + ev.Status
 		// A call's status changes in place, on its own row, rather than adding a row per
 		// change.
@@ -449,8 +495,113 @@ func (m *Model) applyAgentEvent(ev ports.Event) {
 
 	case ports.EventTurnFinished:
 		a.running, a.thinking = false, false
+		if len(a.turnTools) > 0 || len(a.turnSkills) > 0 {
+			a.entries = append(a.entries, entry{kind: entryNote, text: "mcp tools: " + listOrNone(a.turnTools) + " · skills loaded: " + listOrNone(a.turnSkills)})
+		}
+		a.turnTools, a.turnSkills = nil, nil
 		a.entries = append(a.entries, entry{kind: entryNote, text: "turn ended: " + ev.StopReason})
 	}
+}
+
+func appendOnce(list []string, s string) []string {
+	if slices.Contains(list, s) {
+		return list
+	}
+	return append(list, s)
+}
+
+func listOrNone(list []string) string {
+	if len(list) == 0 {
+		return "none"
+	}
+	return strings.Join(list, ", ")
+}
+
+// statusOK is API §4's ToolCall status of a call that succeeded.
+const statusOK = "ok"
+
+// extensionRows bounds each of the extensions view's lists, so 64 skills cannot push the
+// transcript off the panel; what does not fit is counted as `… n more`.
+const extensionRows = 2
+
+// extensionLines is the extensions view (REQ-TUI-004): every MCP server with its state,
+// and its last error when it has one, and every skill, on or off.
+func (m *Model) extensionLines(width int) []string {
+	a := &m.agent
+	servers := make([]string, 0, len(a.servers))
+	for _, s := range a.servers {
+		line := oneLine(s.Name) + " " + oneLine(s.State)
+		if s.LastError != "" {
+			line += " (" + truncate(oneLine(s.LastError), 40) + ")"
+		}
+		servers = append(servers, line)
+	}
+	skills := make([]string, 0, len(a.skills))
+	for _, s := range a.skills {
+		state := "off"
+		if s.Enabled {
+			state = "on"
+		}
+		skills = append(skills, oneLine(s.Name)+" "+state)
+	}
+	return append(wrapItems("mcp: ", servers, width), wrapItems("skills: ", skills, width)...)
+}
+
+// oneLine is text a remote side or the model chose, made safe for one row: sanitized, then
+// every run of whitespace, newlines included, one space.
+func oneLine(s string) string { return strings.Join(strings.Fields(sanitize(s)), " ") }
+
+// itemRow is one row of wrapItems: a prefix and the items on it.
+type itemRow struct {
+	prefix string
+	items  []string
+}
+
+func (r itemRow) String() string { return r.prefix + strings.Join(r.items, " · ") }
+
+func (r itemRow) with(item string) itemRow {
+	return itemRow{prefix: r.prefix, items: append(slices.Clone(r.items), item)}
+}
+
+// wrapItems lays items out after label, separated by " · ", breaking rows between items so
+// that a name is never split from its state, in at most extensionRows rows.
+func wrapItems(label string, items []string, width int) []string {
+	if len(items) == 0 {
+		items = []string{"none"}
+	}
+	runes := func(s string) int { return len([]rune(s)) }
+	rows := []itemRow{{prefix: label}}
+	for _, item := range items {
+		item = truncate(item, max(width-runes(label), 1))
+		last := &rows[len(rows)-1]
+		if next := last.with(item); len(last.items) == 0 || runes(next.String()) <= width {
+			*last = next
+			continue
+		}
+		rows = append(rows, itemRow{prefix: "  ", items: []string{item}})
+	}
+	if len(rows) > extensionRows {
+		shown := 0
+		for _, r := range rows[:extensionRows] {
+			shown += len(r.items)
+		}
+		rows = rows[:extensionRows]
+		last := &rows[extensionRows-1]
+		for {
+			next := last.with(fmt.Sprintf("… %d more", len(items)-shown))
+			if len(last.items) == 0 || runes(next.String()) <= width {
+				*last = next
+				break
+			}
+			last.items = last.items[:len(last.items)-1]
+			shown--
+		}
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, truncate(r.String(), width))
+	}
+	return out
 }
 
 // attachmentPrefixes are the input's tokens for thread.send's attachment kinds:
@@ -553,12 +704,13 @@ func (m *Model) renderAgentPanel(height int) []string {
 			body = append(body, wrap(line, width)...)
 		}
 	}
-	room = max(height-1-len(bottom), 0)
+	top := append([]string{truncate(header, width)}, m.extensionLines(width)...)
+	room = max(height-len(top)-len(bottom), 0)
 	if len(body) > room {
 		body = body[len(body)-room:]
 	}
 
-	rows := append([]string{truncate(header, width)}, body...)
+	rows := append(top, body...)
 	for len(rows) < height-len(bottom) {
 		rows = append(rows, "")
 	}
