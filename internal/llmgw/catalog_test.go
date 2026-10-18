@@ -211,6 +211,34 @@ func TestModelsOfADownProviderAreDown_REQ_SEC_008(t *testing.T) {
 	}
 }
 
+// TestACancelledRefreshIsNotAProviderFailure: a refresh stopped by its own context — the
+// daemon shutting down, or a configure racing a cancelled one — says nothing about the
+// provider, so it is still offered and its models are not marked down.
+func TestACancelledRefreshIsNotAProviderFailure(t *testing.T) {
+	t.Parallel()
+
+	p := &fakeProvider{id: "lms", local: true, models: []string{"m1"}}
+	store := newMemStore()
+	c := newCatalog(store)
+	c.Configure(false, []Entry{{ID: "lms", Provider: p, Health: domain.HealthUnknown}})
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p.err = ctx.Err()
+	if err := c.Refresh(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("a cancelled refresh returned %v, want context.Canceled", err)
+	}
+	if _, ok := c.Provider("lms"); !ok {
+		t.Error("a cancelled refresh marked the provider failed")
+	}
+	if m := byID(mustList(t, c))["lms/m1"]; m.Health != domain.HealthOK {
+		t.Errorf("lms/m1 = %+v after a cancelled refresh, want ok", m)
+	}
+}
+
 // TestAProviderThatDoesNotAnswerKeepsItsModelsDown: a failed discovery does not erase what the
 // provider listed before; those models are down with `discovery_failed`, and the next answer
 // brings them back. Other providers are unaffected, and the refresh reports the failure.

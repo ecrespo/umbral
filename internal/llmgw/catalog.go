@@ -117,6 +117,11 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 			continue
 		}
 		models, err := e.Provider.Models(ctx)
+		if err != nil && ctx.Err() != nil {
+			// Stopped by its own context, not by the provider: nothing is learned about it, so it
+			// is neither marked failed nor its models down, and the rest of the refresh is moot.
+			return errors.Join(append(errs, ctx.Err())...)
+		}
 		if err != nil {
 			c.setFailed(e.ID, true)
 			c.logger.Warn("a provider did not list its models; they are marked down",
