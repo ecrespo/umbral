@@ -78,9 +78,9 @@ type UpdateState struct {
 	// HighestVersion is the highest version ever applied: with the active row's, the floor a
 	// new bundle must exceed, so a reset does not reopen older signed bundles. Only a
 	// revocation lowers it (DD-016).
-	HighestVersion      int64
-	LastRejection       RejectReason
-	LastRejectionAt     int64
+	HighestVersion  int64
+	LastRejection   RejectReason
+	LastRejectionAt int64
 }
 
 // KeyEvent is one `trust_key_events` row.
