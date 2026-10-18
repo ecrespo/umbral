@@ -116,6 +116,9 @@ type conn struct {
 	authenticated bool
 	clientKind    ClientKind
 	connectionID  string
+	// viewing says this connection called thread.focus, so its view is forgotten when it
+	// closes (REQ-AGT-016). It stays on the read goroutine.
+	viewing bool
 
 	// subsMu guards subs, which the read goroutine writes and the dispatch goroutine
 	// reads on every output chunk.
@@ -263,6 +266,11 @@ func (c *conn) splitLine(data []byte, atEOF bool) (int, []byte, error) {
 func (c *conn) serve(ctx context.Context) {
 	defer c.pending.Wait()
 	defer func() { _ = c.close() }()
+	defer func() {
+		if c.viewing && c.server.cfg.Threads != nil {
+			c.server.cfg.Threads.Unfocus(c.connectionID)
+		}
+	}()
 
 	// REQ-SEC-017: the handshake has a deadline from accept. It is a read deadline on the
 	// socket rather than a timer beside the loop because the loop is where the handshake

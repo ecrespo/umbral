@@ -57,15 +57,18 @@ type Runtime struct {
 	// sendMu serialises thread.send per thread: the duplicate check and the conflict check
 	// must see each other's writes (REQ-AGT-015).
 	sendMu sync.Map // thread id → *sync.Mutex
+	// attnMu holds each thread's attention lock (attention.go).
+	attnMu sync.Map // thread id → *sync.Mutex
 
 	mu     sync.Mutex
 	closed bool
 	turns  map[string]*turn // thread id → running turn
 	// waiting are the turns paused on an approval, by approval id.
 	waiting map[string]chan domain.Approval
-	// ends is guarded by mu.
-	ends turnEnds
-	wg   sync.WaitGroup
+	// ends and views are guarded by mu.
+	ends  turnEnds
+	views viewers
+	wg    sync.WaitGroup
 }
 
 var _ ports.Threads = (*Runtime)(nil)
@@ -260,7 +263,7 @@ func (r *Runtime) Send(ctx context.Context, p ports.SendParams) (ports.SendResul
 		ID: r.cfg.NewID(prefixMessage), ThreadID: thread.ID, TurnID: r.cfg.NewID(prefixTurn), Role: domain.RoleUser,
 		Content: content, ClientMsgID: p.ClientMsgID, Attachments: attachments, CreatedAt: r.now(),
 	}
-	stored, running, err := r.cfg.Store.BeginTurn(ctx, msg, r.maxCost(), r.now())
+	stored, running, err := r.beginTurn(ctx, msg)
 	if errors.Is(err, ports.ErrDuplicate) {
 		return ports.SendResult{TurnID: stored.TurnID, MessageID: stored.ID}, nil
 	}
@@ -271,6 +274,19 @@ func (r *Runtime) Send(ctx context.Context, p ports.SendParams) (ports.SendResul
 		return ports.SendResult{}, errors.New("agents: the runtime is closed")
 	}
 	return ports.SendResult{TurnID: msg.TurnID, MessageID: msg.ID}, nil
+}
+
+// beginTurn persists the user's message and marks the thread running and `working`, then
+// announces the attention state, under the thread's attention lock.
+func (r *Runtime) beginTurn(ctx context.Context, msg domain.Message) (domain.Message, domain.Thread, error) {
+	lock := r.attentionLock(msg.ThreadID)
+	lock.Lock()
+	defer lock.Unlock()
+	stored, running, err := r.cfg.Store.BeginTurn(ctx, msg, r.maxCost(), r.now())
+	if err == nil {
+		r.publish(ports.ThreadAttentionChanged{ThreadID: msg.ThreadID, AttentionState: running.AttentionState})
+	}
+	return stored, running, err
 }
 
 // maxCost is the thread cost cap now in force, 0 when there is none.

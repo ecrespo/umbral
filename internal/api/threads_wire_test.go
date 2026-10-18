@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	agentsdomain "github.com/ecrespo/umbral/internal/agents/domain"
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
@@ -24,6 +26,38 @@ type fakeThreads struct {
 	respondErr error
 	cancelled  []string
 	stoppedAt  *int64
+
+	focusMu sync.Mutex
+	// focuses are the thread.focus calls, "viewer → thread", and unfocused the viewers
+	// forgotten.
+	focuses   []string
+	unfocused chan string
+	focused   string
+	focusErr  error
+}
+
+func (f *fakeThreads) Focus(_ context.Context, viewer, threadID string) error {
+	if threadID != "" && threadID != f.thread.ID {
+		return fmt.Errorf("%w: %s", agentsdomain.ErrNotFound, threadID)
+	}
+	f.focusMu.Lock()
+	defer f.focusMu.Unlock()
+	f.focuses = append(f.focuses, viewer+" → "+threadID)
+	return f.focusErr
+}
+
+func (f *fakeThreads) Unfocus(viewer string) {
+	if f.unfocused != nil {
+		f.unfocused <- viewer
+	}
+}
+
+func (f *fakeThreads) Focused() string { return f.focused }
+
+func (f *fakeThreads) focusCalls() []string {
+	f.focusMu.Lock()
+	defer f.focusMu.Unlock()
+	return append([]string(nil), f.focuses...)
 }
 
 func (f *fakeThreads) Cancel(_ context.Context, id string) (*int64, error) {
@@ -419,5 +453,103 @@ func TestThreadSendTakesStdinInline_REQ_CLI_001(t *testing.T) {
 		"thread_id": "thr_1", "text": "x", "attachments": []map[string]any{{"kind": "stdin", "data_b64": exact}},
 	}); resp.Error != nil {
 		t.Fatalf("1 MiB of stdin = %+v", resp.Error)
+	}
+}
+
+// TestThreadFocusReachesTheWire_REQ_AGT_016: thread.focus names the connection as the viewer,
+// takes null for "no thread", maps an unknown thread to NOT_FOUND, is an interactive client's
+// only, and a closed connection stops viewing (API §5.23). thread.attention_changed reaches
+// the wire as §6's `{thread_id, attention_state}`.
+func TestThreadFocusReachesTheWire_REQ_AGT_016(t *testing.T) {
+	t.Parallel()
+	svc := &fakeThreads{thread: agentsdomain.Thread{ID: "thr_1", Mode: "normal", ModelClass: "code", Cwd: "/w"}, unfocused: make(chan string, 1)}
+	b := bus.New()
+	s := testServerWithConfig(t, Config{Threads: svc, Bus: b})
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	go s.Notify(ctx)
+	c := dial(t, s)
+	hello := c.hello(s.Token(), ClientTUI)
+	var h struct {
+		ConnectionID string `json:"connection_id"`
+	}
+	decodeResult(t, hello, &h)
+
+	if resp := c.call(2, "thread.focus", map[string]any{"thread_id": "thr_1"}); resp.Error != nil {
+		t.Fatalf("thread.focus = %+v", resp.Error)
+	}
+	if resp := c.call(3, "thread.focus", map[string]any{"thread_id": nil}); resp.Error != nil {
+		t.Fatalf("thread.focus null = %+v", resp.Error)
+	}
+	if resp := c.call(4, "thread.focus", map[string]any{"thread_id": "thr_x"}); resp.Error == nil || resp.Error.Code != codeNotFound {
+		t.Fatalf("thread.focus on an unknown thread = %+v, want NOT_FOUND", resp.Error)
+	}
+	if resp := c.call(5, "thread.focus", map[string]any{}); resp.Error == nil || resp.Error.Code != codeValidationError {
+		t.Fatalf("thread.focus without thread_id = %+v, want VALIDATION_ERROR", resp.Error)
+	}
+	if got := svc.focusCalls(); len(got) != 2 || got[0] != h.ConnectionID+" → thr_1" || got[1] != h.ConnectionID+" → " {
+		t.Fatalf("the runtime got %q", got)
+	}
+
+	b.Publish(agentsports.ThreadAttentionChanged{ThreadID: "thr_1", AttentionState: "idle"})
+	method, _, params := c.readNotification(t)
+	if method != "thread.attention_changed" || string(params) != `{"thread_id":"thr_1","attention_state":"idle"}` {
+		t.Fatalf("got %s %s", method, params)
+	}
+
+	umb := dial(t, s)
+	if resp := umb.hello(s.Token(), ClientCLI); resp.Error != nil {
+		t.Fatal(resp.Error)
+	}
+	if resp := umb.call(2, "thread.focus", map[string]any{"thread_id": "thr_1"}); resp.Error == nil || resp.Error.Code != codeMethodNotFound {
+		t.Fatalf("thread.focus from umb = %+v, want METHOD_NOT_FOUND", resp.Error)
+	}
+
+	_ = c.conn.Close()
+	select {
+	case viewer := <-svc.unfocused:
+		if viewer != h.ConnectionID {
+			t.Fatalf("unfocused %q, want the closed connection %s", viewer, h.ConnectionID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a closed connection still views its thread")
+	}
+}
+
+// TestSnapshotCarriesTheThreads_REQ_AGT_016: with the runtime wired, session.snapshot lists
+// the threads with their attention state and names the focused thread (API §5.3).
+func TestSnapshotCarriesTheThreads_REQ_AGT_016(t *testing.T) {
+	t.Parallel()
+	svc := &fakeThreads{thread: agentsdomain.Thread{ID: "thr_1", Mode: "normal", ModelClass: "code", Cwd: "/w", AttentionState: "done"}, focused: "thr_1"}
+	s := testServerWithConfig(t, Config{Threads: svc, Workspaces: &fakeTree{tree: sampleTree()}, Bus: bus.New()})
+	c := dialTree(t, s)
+	got := resultOf(t, c.call(2, "session.snapshot", nil))
+	if !strings.Contains(string(got["threads"]), `"id":"thr_1"`) || !strings.Contains(string(got["threads"]), `"attention_state":"done"`) {
+		t.Fatalf("threads = %s", got["threads"])
+	}
+	if focused := field(t, got, "focused"); string(focused["thread_id"]) != `"thr_1"` {
+		t.Fatalf("focused.thread_id = %s, want thr_1", focused["thread_id"])
+	}
+}
+
+// TestAFailedFocusIsStillForgottenOnClose_REQ_AGT_016: the runtime records a view before it
+// marks the thread seen, so a focus that fails may still have left one. The connection's close
+// forgets it all the same.
+func TestAFailedFocusIsStillForgottenOnClose_REQ_AGT_016(t *testing.T) {
+	t.Parallel()
+	svc := &fakeThreads{thread: agentsdomain.Thread{ID: "thr_1"}, unfocused: make(chan string, 1), focusErr: fmt.Errorf("disk full")}
+	s := testServerWithConfig(t, Config{Threads: svc, Bus: bus.New()})
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatal(resp.Error)
+	}
+	if resp := c.call(2, "thread.focus", map[string]any{"thread_id": "thr_1"}); resp.Error == nil {
+		t.Fatal("a failing focus answered no error")
+	}
+	_ = c.conn.Close()
+	select {
+	case <-svc.unfocused:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a connection whose focus failed was never unfocused")
 	}
 }

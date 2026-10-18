@@ -149,9 +149,10 @@ var (
 )
 
 // AttentionAfter is the attention state a turn's end leaves (API §7): `idle` after a cancel
-// left the thread stopped, `done` — finished, not yet viewed — after any other end.
-func AttentionAfter(state State) string {
-	if state == StateStopped {
+// left the thread stopped or when a client views the thread as the turn ends, and `done` —
+// finished, not yet viewed — after any other end (REQ-AGT-016).
+func AttentionAfter(state State, viewed bool) string {
+	if state == StateStopped || viewed {
 		return "idle"
 	}
 	return "done"

@@ -37,6 +37,8 @@ const (
 type Model struct {
 	daemon  ports.Daemon
 	screens ports.ScreenFactory
+	// focus orders the panel's thread.focus calls (commands.go).
+	focus *focusOrder
 
 	tabs    []*tab
 	current int
@@ -104,6 +106,7 @@ func New(daemon ports.Daemon, screens ports.ScreenFactory) *Model {
 	return &Model{
 		daemon:  daemon,
 		screens: screens,
+		focus:   &focusOrder{},
 		// A sensible size until the terminal reports its own, so the first session is
 		// created with something valid rather than 0x0.
 		width:  80,

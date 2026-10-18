@@ -34,6 +34,8 @@ type fakeDaemon struct {
 	idle       bool
 	holdCreate chan struct{}
 	respondErr error
+	// focuses are the panel's thread.focus calls, "" for none.
+	focuses []string
 }
 
 func newFakeDaemon() *fakeDaemon {

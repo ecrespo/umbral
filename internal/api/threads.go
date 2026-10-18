@@ -120,6 +120,11 @@ type turnFinishedPayload struct {
 	Usage      turnUsage `json:"usage"`
 }
 
+type attentionChangedPayload struct {
+	ThreadID       string `json:"thread_id"`
+	AttentionState string `json:"attention_state"`
+}
+
 type contextCompactedPayload struct {
 	ThreadID     string `json:"thread_id"`
 	BeforeTokens int64  `json:"before_tokens"`
@@ -150,6 +155,7 @@ func threadMethods() map[string]method {
 		"thread.get":    {handle: handleThreadGet, kinds: interactiveClients, params: getThreadParams{}, result: threadResult{}},
 		"thread.list":   {handle: handleThreadList, kinds: interactiveClients, params: emptyResult{}, result: threadListResult{}},
 		"thread.update": {handle: handleThreadUpdate, kinds: interactiveClients, params: updateThreadParams{}, result: Thread{}},
+		"thread.focus":  {handle: handleThreadFocus, kinds: interactiveClients, params: focusThreadParams{}, result: emptyResult{}},
 	}
 }
 
@@ -446,6 +452,46 @@ func handleThreadUpdate(ctx context.Context, c *conn, raw json.RawMessage) (any,
 		return nil, err
 	}
 	return toWireThread(t), nil
+}
+
+// focusThreadParams is the schema's view of thread.focus: a pointer for its null, and
+// required because a missing member is not a request to unfocus.
+type focusThreadParams struct {
+	ThreadID *string `json:"thread_id" api:"required"`
+}
+
+// handleThreadFocus is §5.23's thread.focus (REQ-AGT-016): the connection now views the
+// thread, or none for null. The member is required, null included, so a client that forgot
+// it is told rather than read as unfocusing.
+func handleThreadFocus(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
+	svc, err := threads(c)
+	if err != nil {
+		return nil, err
+	}
+	var p struct {
+		ThreadID json.RawMessage `json:"thread_id"`
+	}
+	if err := decode(raw, &p, "thread.focus"); err != nil {
+		return nil, err
+	}
+	if len(p.ThreadID) == 0 {
+		return nil, ValidationError("thread_id is required; null focuses no thread", ErrorField{Field: fieldThreadID, Issue: requiredTag})
+	}
+	var id *string
+	if err := json.Unmarshal(p.ThreadID, &id); err != nil {
+		return nil, ValidationError("thread_id must be a string or null", ErrorField{Field: fieldThreadID, Issue: "type"})
+	}
+	threadID := ""
+	if id != nil {
+		threadID = *id
+	}
+	// Set first: the runtime may record the view and then fail to mark the thread seen, and
+	// a view whose connection never forgets it would make every later turn end `idle`.
+	c.viewing = true
+	if err := svc.Focus(ctx, c.connectionID, threadID); err != nil {
+		return nil, err
+	}
+	return emptyResult{}, nil
 }
 
 type cancelThreadParams struct {

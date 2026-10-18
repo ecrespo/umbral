@@ -68,7 +68,7 @@ func TestBeginTurnPersistsAndGuards_REQ_AGT_015(t *testing.T) {
 	if _, _, err := s.BeginTurn(ctx, userMessage(th, ""), 0, 4); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("while running: %v", err)
 	}
-	if err := s.FinishTurn(ctx, th.ID, domain.StateIdle, domain.Usage{InTokens: 900, OutTokens: 100, CostMicroUSD: 42}, 5); err != nil {
+	if err := s.FinishTurn(ctx, th.ID, domain.StateIdle, false, domain.Usage{InTokens: 900, OutTokens: 100, CostMicroUSD: 42}, 5); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.Thread(ctx, th.ID)
@@ -85,7 +85,7 @@ func TestBeginTurnPersistsAndGuards_REQ_AGT_015(t *testing.T) {
 	if _, _, err := s.BeginTurn(ctx, userMessage(fresh, ""), 0, 7); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.FinishTurn(ctx, fresh.ID, domain.StateIdle, domain.Usage{InTokens: 1, CostMicroUSD: 42}, 7); err != nil {
+	if err := s.FinishTurn(ctx, fresh.ID, domain.StateIdle, false, domain.Usage{InTokens: 1, CostMicroUSD: 42}, 7); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.BeginTurn(ctx, userMessage(fresh, ""), 42, 8); !errors.Is(err, domain.ErrBudgetExceeded) {
@@ -281,7 +281,7 @@ func TestTurnStatusReadsTheThreadAndItsLatestTurn(t *testing.T) {
 	if _, _, err := s.BeginTurn(ctx, first, 0, 3); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.FinishTurn(ctx, th.ID, domain.StateIdle, domain.Usage{}, 4); err != nil {
+	if err := s.FinishTurn(ctx, th.ID, domain.StateIdle, false, domain.Usage{}, 4); err != nil {
 		t.Fatal(err)
 	}
 	second := userMessage(th, "")
@@ -295,5 +295,81 @@ func TestTurnStatusReadsTheThreadAndItsLatestTurn(t *testing.T) {
 	}
 	if _, err := s.TurnStatus(ctx, "thr_nope"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("unknown thread: %v", err)
+	}
+}
+
+// TestSeenAndViewedEnds_REQ_AGT_016: a turn's end writes `done` unless a client views the
+// thread, when it writes `idle` and seen_at; MarkSeen moves `done` to `idle` and records
+// seen_at, and changes nothing else.
+func TestSeenAndViewedEnds_REQ_AGT_016(t *testing.T) {
+	s := open(t)
+	th := thread(t, s, 1000)
+	ctx := t.Context()
+	seenAt := func() *int64 {
+		t.Helper()
+		var at *int64
+		if err := s.db.QueryRowContext(ctx, `SELECT seen_at FROM threads WHERE id = ?`, th.ID).Scan(&at); err != nil {
+			t.Fatal(err)
+		}
+		return at
+	}
+	attention := func() string {
+		t.Helper()
+		got, err := s.Thread(ctx, th.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.AttentionState
+	}
+
+	if changed, err := s.MarkSeen(ctx, th.ID, 5); err != nil || changed {
+		t.Fatalf("MarkSeen on an idle thread: changed %v, %v", changed, err)
+	}
+	if at := seenAt(); at == nil || *at != 5 {
+		t.Fatalf("seen_at = %v, want 5", at)
+	}
+
+	if _, _, err := s.BeginTurn(ctx, userMessage(th, ""), 0, 6); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishTurn(ctx, th.ID, domain.StateIdle, false, domain.Usage{}, 7); err != nil {
+		t.Fatal(err)
+	}
+	if got := attention(); got != "done" {
+		t.Fatalf("an end nobody views: %q, want done", got)
+	}
+	if at := seenAt(); *at != 5 {
+		t.Fatalf("an end nobody views moved seen_at to %d", *at)
+	}
+	if changed, err := s.MarkSeen(ctx, th.ID, 8); err != nil || !changed {
+		t.Fatalf("MarkSeen on a done thread: changed %v, %v", changed, err)
+	}
+	if got := attention(); got != "idle" {
+		t.Fatalf("after MarkSeen: %q, want idle", got)
+	}
+
+	msg := userMessage(th, "")
+	msg.TurnID = "trn_2"
+	if _, _, err := s.BeginTurn(ctx, msg, 0, 9); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := s.MarkSeen(ctx, th.ID, 10); err != nil || changed {
+		t.Fatalf("MarkSeen on a working thread: changed %v, %v", changed, err)
+	}
+	if got := attention(); got != "working" {
+		t.Fatalf("MarkSeen moved a working thread to %q", got)
+	}
+	if err := s.FinishTurn(ctx, th.ID, domain.StateIdle, true, domain.Usage{}, 11); err != nil {
+		t.Fatal(err)
+	}
+	if got := attention(); got != "idle" {
+		t.Fatalf("an end a client views: %q, want idle", got)
+	}
+	if at := seenAt(); *at != 11 {
+		t.Fatalf("an end a client views left seen_at %d, want 11", *at)
+	}
+
+	if _, err := s.MarkSeen(ctx, "thr_nope", 12); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("MarkSeen on an unknown thread: %v", err)
 	}
 }

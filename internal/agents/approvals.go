@@ -31,7 +31,7 @@ func (t *turnRun) awaitApproval(ctx context.Context, c domain.ToolCall, action s
 		r.mu.Unlock()
 	}()
 
-	if err := r.cfg.Store.RequestApproval(ctx, a); err != nil {
+	if err := t.requestApproval(ctx, a); err != nil {
 		return false, storageErr(err)
 	}
 	r.publish(ports.ApprovalRequested{Approval: a})
@@ -42,6 +42,12 @@ func (t *turnRun) awaitApproval(ctx context.Context, c domain.ToolCall, action s
 			// Answered and cancelled at once: the cancel wins, and the tool does not run.
 			return false, ctx.Err()
 		}
+		// approval.respond wrote `working` with the decision; the turn announces it as it
+		// resumes, so it cannot follow the end of a turn that ran on at once.
+		lock := r.attentionLock(t.thread.ID)
+		lock.Lock()
+		r.publish(ports.ThreadAttentionChanged{ThreadID: t.thread.ID, AttentionState: "working"})
+		lock.Unlock()
 		if decided.Scope != domain.ScopeOnce {
 			// A remembered decision, allow or deny, applies to the rest of this turn too.
 			rules, err := r.cfg.Store.Rules(ctx, t.thread.ID)
@@ -58,6 +64,19 @@ func (t *turnRun) awaitApproval(ctx context.Context, c domain.ToolCall, action s
 		}
 		return false, ctx.Err()
 	}
+}
+
+// requestApproval persists the approval and marks the thread awaiting_approval and
+// `blocked`, then announces the attention state, under the thread's attention lock.
+func (t *turnRun) requestApproval(ctx context.Context, a domain.Approval) error {
+	lock := t.r.attentionLock(t.thread.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	if err := t.r.cfg.Store.RequestApproval(ctx, a); err != nil {
+		return err
+	}
+	t.r.publish(ports.ThreadAttentionChanged{ThreadID: t.thread.ID, AttentionState: "blocked"})
+	return nil
 }
 
 // Approvals is approval.list: the pending approvals, or all of them.

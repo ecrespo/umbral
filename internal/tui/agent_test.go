@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -52,6 +53,19 @@ func (f *fakeDaemon) Cancel(_ context.Context, threadID string) (bool, error) {
 	defer f.mu.Unlock()
 	f.cancels = append(f.cancels, threadID)
 	return !f.idle, nil
+}
+
+func (f *fakeDaemon) Focus(_ context.Context, threadID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.focuses = append(f.focuses, threadID)
+	return nil
+}
+
+func (f *fakeDaemon) focusCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.focuses...)
 }
 
 func (f *fakeDaemon) Approvals(context.Context) ([]ports.Approval, error) {
@@ -632,5 +646,56 @@ func TestACancelThatStoppedNothingDropsItsApprovals(t *testing.T) {
 	}
 	if got := h.m.PendingApprovals(); len(got) != 0 {
 		t.Fatalf("the stale approval stayed: %+v", got)
+	}
+}
+
+// TestThePanelViewsItsThread_REQ_AGT_016: the panel focuses its thread while it shows it —
+// once the thread exists, and again when the panel reopens — and focuses none when it
+// closes, so a turn that ends with the panel open is not left `done`.
+func TestThePanelViewsItsThread_REQ_AGT_016(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.openSession()
+
+	h.step(ctrlSpace())
+	if got := h.daemon.focusCalls(); len(got) != 0 {
+		t.Fatalf("the panel focused %q before it had a thread", got)
+	}
+	h.typeText("hi")
+	h.step(keyPress(t, "enter"))
+	if got := h.daemon.focusCalls(); !slices.Equal(got, []string{"thr_fake"}) {
+		t.Fatalf("after the thread was created: %q, want [thr_fake]", got)
+	}
+	// Leaving agent mode keeps the panel on screen, and so the view.
+	h.step(ctrlSpace())
+	if got := h.daemon.focusCalls(); len(got) != 1 {
+		t.Fatalf("leaving agent mode changed the view: %q", got)
+	}
+	h.step(ctrlSpace())
+	h.step(keyPress(t, "esc"))
+	if h.m.AgentPanelOpen() {
+		t.Fatal("esc did not close the panel")
+	}
+	if got := h.daemon.focusCalls(); !slices.Equal(got, []string{"thr_fake", ""}) {
+		t.Fatalf("after the panel closed: %q, want it to end with no thread", got)
+	}
+	h.step(ctrlSpace())
+	if got := h.daemon.focusCalls(); !slices.Equal(got, []string{"thr_fake", "", "thr_fake"}) {
+		t.Fatalf("after the panel reopened: %q", got)
+	}
+}
+
+// TestFocusCallsKeepTheirOrder_REQ_AGT_016: Bubble Tea runs commands concurrently, so a
+// focus issued before an unfocus can reach the daemon after it. A command that finds a newer
+// one already sent sends nothing, and the daemon is left with the panel's latest view.
+func TestFocusCallsKeepTheirOrder_REQ_AGT_016(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	older := h.m.focusCmd("thr_fake")
+	newer := h.m.focusCmd("")
+	newer()
+	older()
+	if got := h.daemon.focusCalls(); !slices.Equal(got, []string{""}) {
+		t.Fatalf("the daemon got %q, want only the newer view", got)
 	}
 }

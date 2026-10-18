@@ -12,7 +12,18 @@ const (
 	KindThreadTurnFinished bus.Kind = "thread.turn_finished"
 	KindContextCompacted   bus.Kind = "context.compacted"
 	KindApprovalRequested  bus.Kind = "approval.requested"
+	KindAttentionChanged   bus.Kind = "thread.attention_changed"
 )
+
+// ThreadAttentionChanged is a thread's attention state after a change (REQ-AGT-016),
+// published after the write.
+type ThreadAttentionChanged struct {
+	ThreadID       string
+	AttentionState string
+}
+
+// EventKind implements bus.Event.
+func (ThreadAttentionChanged) EventKind() bus.Kind { return KindAttentionChanged }
 
 // ApprovalRequested is a turn paused on a decision (REQ-AGT-004).
 type ApprovalRequested struct {

@@ -223,12 +223,13 @@ var notificationShapes = map[string]any{
 	"pane.moved":        paneMovedPayload{},
 	"layout.updated":    Layout{},
 
-	"thread.delta":         threadDeltaPayload{},
-	"thread.tool_call":     ToolCall{},
-	"thread.turn_finished": turnFinishedPayload{},
-	"context.compacted":    contextCompactedPayload{},
-	"approval.requested":   Approval{},
-	"mcp.server_state":     mcpServerStatePayload{},
+	"thread.delta":             threadDeltaPayload{},
+	"thread.tool_call":         ToolCall{},
+	"thread.turn_finished":     turnFinishedPayload{},
+	"context.compacted":        contextCompactedPayload{},
+	"thread.attention_changed": attentionChangedPayload{},
+	"approval.requested":       Approval{},
+	"mcp.server_state":         mcpServerStatePayload{},
 }
 
 func schemaNotifications() []SchemaNotification {
