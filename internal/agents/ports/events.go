@@ -13,6 +13,7 @@ const (
 	KindContextCompacted   bus.Kind = "context.compacted"
 	KindApprovalRequested  bus.Kind = "approval.requested"
 	KindAttentionChanged   bus.Kind = "thread.attention_changed"
+	KindThreadStalled      bus.Kind = "thread.stalled"
 )
 
 // ThreadAttentionChanged is a thread's attention state after a change (REQ-AGT-016),
@@ -32,6 +33,19 @@ type ApprovalRequested struct {
 
 // EventKind implements bus.Event.
 func (ApprovalRequested) EventKind() bus.Kind { return KindApprovalRequested }
+
+// ThreadStalled is a running turn that produced nothing for its stall window (REQ-AUT-008).
+// It is announced once per stall; the turn keeps running. LastEvent is the last activity
+// seen: turn_started, text, reasoning, tool_call, tool_result, output or approval.
+type ThreadStalled struct {
+	ThreadID  string
+	TurnID    string
+	IdleMS    int64
+	LastEvent string
+}
+
+// EventKind implements bus.Event.
+func (ThreadStalled) EventKind() bus.Kind { return KindThreadStalled }
 
 // ThreadDelta is a chunk of the model's answer (REQ-AGT-001). Kind is "text" or "reasoning".
 type ThreadDelta struct {

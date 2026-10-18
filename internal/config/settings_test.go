@@ -190,6 +190,35 @@ func TestRetentionWindowsAreConfigurable(t *testing.T) {
 	}
 }
 
+// TestStallWindowsAreConfigurable_REQ_AUT_008: `[waits]` sets the stall windows in whole
+// seconds from 5 to 3600, 120 for a local model and 30 for a remote one by default; a value
+// outside the range stops the daemon naming the key.
+func TestStallWindowsAreConfigurable_REQ_AUT_008(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, write(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Stall{LocalS: 120, RemoteS: 30}); settings.Stall != want {
+		t.Fatalf("defaults %+v, want %+v", settings.Stall, want)
+	}
+	settings, err = LoadSettings(nil, write(t, "[waits]\nstall_local_s = 3600\nstall_remote_s = 5\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Stall{LocalS: 3600, RemoteS: 5}); settings.Stall != want {
+		t.Fatalf("stall %+v, want %+v", settings.Stall, want)
+	}
+	for _, bad := range []string{"stall_local_s = 4", "stall_remote_s = 3601", "stall_local_s = 1.5", "stall_remote_s = 30s"} {
+		_, err := LoadSettings(nil, write(t, "[waits]\n"+bad+"\n"))
+		key := "waits." + strings.Fields(bad)[0]
+		if !errors.Is(err, ErrSettingsInvalid) || !strings.Contains(err.Error(), key) {
+			t.Errorf("%q: %v, want ErrSettingsInvalid naming %s", bad, err, key)
+		}
+	}
+}
+
 // TestNotificationsAreOnUnlessTurnedOff_REQ_NTF_001: `[notifications] enabled` defaults to
 // true, so REQ-NTF-001's `disabled` reason is something a user asks for; false turns them off,
 // and anything else stops the daemon like every other malformed boolean.

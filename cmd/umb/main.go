@@ -92,6 +92,8 @@ func runIO(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return finish(cmdPolicy(ctx, args[1:], out, errOut), out, stderr)
 	case "rules":
 		return finish(cmdRules(ctx, args[1:], out, errOut), out, stderr)
+	case "wait":
+		return finish(cmdWait(ctx, args[1:], out, errOut), out, stderr)
 	case famWorkspace, famTab, famPane, famLayout:
 		return finish(cmdTree(ctx, args[0], args[1:], out, errOut), out, stderr)
 	case "version", "--version", "-version":
@@ -130,6 +132,9 @@ Usage:
   umb rules key list|add|remove|rotate
                                  signed rule bundles and their trust store (REQ-SEC-014);
                                  add and rotate need --confirm with the key's fingerprint
+  umb wait ls [--json]           every open wait: target, age, whether its thread stalled
+  umb wait cancel WAIT_ID        end one wait; the turn or command it watched goes on
+                                 (REQ-AUT-006, REQ-AUT-007)
   umb workspace create|list|focus|rename|close
   umb tab create|list|focus|rename|close
   umb pane split|list|get|focus|rename|close

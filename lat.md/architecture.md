@@ -73,3 +73,15 @@ Updates fail closed after three consecutive rejections, or when the trust store 
 The operator reaches the manager through `rules.*` in [[internal/api/rules.go]] and `umb rules` in [[cmd/umb/rules.go#cmdRules]]. Adding or rotating a key needs `--confirm` with the key's fingerprint typed back; without it the CLI prints the fingerprint and calls nothing, which is REQ-SEC-014's explicit confirmation. [[tools/rulesign/main.go]] signs and verifies bundles with the same domain function the daemon uses, so a bundle the tool accepts is one the daemon accepts.
 
 Storage goes through the `RuleStore` port, implemented over migration 0006 by [[internal/security/adapters/rules/store.go#Store]], which keeps `cmd/umbrald` the only place that wires SQLite to the manager.
+
+## Waits are inventoried and stalls only inform
+
+Every wait is registered before it subscribes, so a leaking script hits the 32-per-connection limit as an error, never a dropped connection; a stall is announced, never acted on (DD-017).
+
+[[internal/waits/waits.go#Service]] admits a wait under its connection's count and a `wt_` id from [[internal/store/ids.go#PrefixWait]] before it costs a bus subscription, and [[internal/waits/waits.go#Service#Cancel]] ends only the waiter: the turn, command or pane it watched goes on.
+
+Stall detection sits in the agent runtime because it already sees every event of its turns. [[internal/agents/stall.go#Runtime#observe]] runs inside `publish`, before the lossy bus, so backpressure cannot erase activity. [[internal/agents/stall.go#Runtime#watchStalls]] marks a turn idle past its window once and never cancels it, because a local model may take minutes; a turn awaiting approval is waiting for the user and never stalls, whatever its pane writes meanwhile. The window is the local one whenever [[internal/llmgw/router.go#Router#Local]] finds a local candidate.
+
+`sessions` and `agents` cannot import each other, so [[cmd/umbrald/stall.go#followThreadOutput]] turns the output of a thread's own session into [[internal/agents/stall.go#Runtime#NoteOutput]].
+
+External reporters are limited in [[internal/integrations/rate.go#Service#overRate]]: 10 kept reports per source per sliding second, state and metadata together, checked after validation and the pane's resolution so an unknown or agent-owned pane still answers its error. The excess answers like a kept report so a hook never fails for being chatty, and only written reports use up the window ([[internal/integrations/rate.go#Service#kept]]), so a flooding source is heard again as soon as it slows down.

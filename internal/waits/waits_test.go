@@ -3,6 +3,8 @@ package waits
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,6 +25,14 @@ type fakeThreads struct {
 	reads  int
 	// ends is the runtime's memory of how turns ended.
 	ends map[string]string
+	// stalled is the runtime's stall mark (REQ-AUT-008).
+	stalled bool
+}
+
+func (f *fakeThreads) Stalled(string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stalled
 }
 
 func (f *fakeThreads) TurnEnd(_ context.Context, _, turnID string) (string, bool, error) {
@@ -93,6 +103,9 @@ func (f *fakeTerminal) LatestBlock(_ context.Context, _ string) (sessdomain.Bloc
 	return b, ok, nil
 }
 
+// testConn is the connection the tests open their waits on.
+const testConn = "con_test"
+
 func newService(t *testing.T, threads *fakeThreads, term *fakeTerminal) (*Service, *bus.Bus) {
 	t.Helper()
 	b := bus.New()
@@ -128,7 +141,7 @@ func TestAWaitOnAThreadAlreadyInATargetReturnsAtOnce_REQ_AUT_001(t *testing.T) {
 	threads := &fakeThreads{}
 	threads.set("idle", "done", "trn_a")
 	s, _ := newService(t, threads, nil)
-	w, err := s.Thread(t.Context(), "thr_1", []string{"done"}, 5000)
+	w, err := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 5000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +160,7 @@ func TestTheTurnEndingSettlesTheWait_REQ_AUT_001(t *testing.T) {
 	threads := &fakeThreads{}
 	threads.set("running", "working", "trn_a")
 	s, b := newService(t, threads, nil)
-	w, err := s.Thread(t.Context(), "thr_1", []string{"done", "stopped"}, 5000)
+	w, err := s.Thread(t.Context(), testConn, "thr_1", []string{"done", "stopped"}, 5000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +183,7 @@ func TestAReplacementTurnDoesNotSatisfyThePinnedWait_REQ_AUT_001(t *testing.T) {
 	threads := &fakeThreads{}
 	threads.set("running", "working", "trn_a")
 	s, b := newService(t, threads, nil)
-	w, err := s.Thread(t.Context(), "thr_1", []string{"blocked"}, 5000)
+	w, err := s.Thread(t.Context(), testConn, "thr_1", []string{"blocked"}, 5000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +206,7 @@ func TestAnApprovalOfThePinnedTurnIsBlocked_REQ_AUT_001(t *testing.T) {
 	threads := &fakeThreads{}
 	threads.set("running", "working", "trn_a")
 	s, b := newService(t, threads, nil)
-	w, err := s.Thread(t.Context(), "thr_1", []string{"blocked"}, 5000)
+	w, err := s.Thread(t.Context(), testConn, "thr_1", []string{"blocked"}, 5000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +226,7 @@ func TestALostEventIsCaughtByTheBackstop(t *testing.T) {
 	threads := &fakeThreads{}
 	threads.set("running", "working", "trn_a")
 	s, _ := newService(t, threads, nil)
-	w, err := s.Thread(t.Context(), "thr_1", []string{"done"}, 5000)
+	w, err := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 5000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +249,7 @@ func TestATimeoutCarriesTheLastState_REQ_AUT_004(t *testing.T) {
 	threads := &fakeThreads{}
 	threads.set("running", "working", "trn_a")
 	s, _ := newService(t, threads, nil)
-	w, err := s.Thread(t.Context(), "thr_1", []string{"done"}, 1000)
+	w, err := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +269,7 @@ func TestAWaitEndsWithItsContext(t *testing.T) {
 	threads := &fakeThreads{}
 	threads.set("running", "working", "trn_a")
 	s, _ := newService(t, threads, nil)
-	w, err := s.Thread(t.Context(), "thr_1", []string{"done"}, 60000)
+	w, err := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 60000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,13 +284,13 @@ func TestAWaitEndsWithItsContext(t *testing.T) {
 func TestThreadWaitValidates(t *testing.T) {
 	threads := &fakeThreads{}
 	s, _ := newService(t, threads, nil)
-	if _, err := s.Thread(t.Context(), "thr_1", []string{"working"}, 5000); !errors.Is(err, domain.ErrValidation) {
+	if _, err := s.Thread(t.Context(), testConn, "thr_1", []string{"working"}, 5000); !errors.Is(err, domain.ErrValidation) {
 		t.Errorf("until working: %v", err)
 	}
-	if _, err := s.Thread(t.Context(), "thr_1", []string{"done"}, 10); !errors.Is(err, domain.ErrValidation) {
+	if _, err := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 10); !errors.Is(err, domain.ErrValidation) {
 		t.Errorf("timeout 10 ms: %v", err)
 	}
-	w, err := s.Thread(t.Context(), "thr_nope", []string{"done"}, 5000)
+	w, err := s.Thread(t.Context(), testConn, "thr_nope", []string{"done"}, 5000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +305,7 @@ func awaitOutput(t *testing.T, s *Service, p domain.OutputParams) <-chan struct 
 	err error
 } {
 	t.Helper()
-	w, err := s.Output(t.Context(), p)
+	w, err := s.Output(t.Context(), testConn, p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,10 +439,10 @@ func TestAClosedBlockIsReadFromItsOutput_REQ_AUT_003(t *testing.T) {
 
 func TestOutputWaitValidates(t *testing.T) {
 	s, _ := newService(t, &fakeThreads{}, &fakeTerminal{})
-	if _, err := s.Output(t.Context(), domain.OutputParams{SessionID: "ses_1", Regex: "(", TimeoutMS: 1000}); !errors.Is(err, domain.ErrValidation) {
+	if _, err := s.Output(t.Context(), testConn, domain.OutputParams{SessionID: "ses_1", Regex: "(", TimeoutMS: 1000}); !errors.Is(err, domain.ErrValidation) {
 		t.Errorf("bad regex: %v", err)
 	}
-	if _, err := s.Output(t.Context(), domain.OutputParams{SessionID: "ses_nope", Regex: "x", TimeoutMS: 1000}); !errors.Is(err, sessdomain.ErrNotFound) {
+	if _, err := s.Output(t.Context(), testConn, domain.OutputParams{SessionID: "ses_nope", Regex: "x", TimeoutMS: 1000}); !errors.Is(err, sessdomain.ErrNotFound) {
 		t.Errorf("unknown session: %v", err)
 	}
 }
@@ -442,7 +455,7 @@ func TestAReplacedTurnAnswersWithItsOwnEnd_REQ_AUT_001(t *testing.T) {
 		threads := &fakeThreads{}
 		threads.set("running", "working", "trn_b")
 		s, b := newService(t, threads, nil)
-		w, _ := s.Thread(t.Context(), "thr_1", []string{"done"}, 5000)
+		w, _ := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 5000)
 		w.Pin("trn_a")
 		got := await(t, w)
 		time.Sleep(20 * time.Millisecond)
@@ -455,7 +468,7 @@ func TestAReplacedTurnAnswersWithItsOwnEnd_REQ_AUT_001(t *testing.T) {
 		threads := &fakeThreads{ends: map[string]string{"trn_a": "stopped"}}
 		threads.set("idle", "done", "trn_b")
 		s, _ := newService(t, threads, nil)
-		w, _ := s.Thread(t.Context(), "thr_1", []string{"done"}, 5000)
+		w, _ := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 5000)
 		w.Pin("trn_a")
 		if r := <-await(t, w); r.err != nil || r.res.State != domain.StateStopped {
 			t.Fatalf("Wait = %+v %v", r.res, r.err)
@@ -465,7 +478,7 @@ func TestAReplacedTurnAnswersWithItsOwnEnd_REQ_AUT_001(t *testing.T) {
 		threads := &fakeThreads{}
 		threads.set("idle", "done", "trn_b")
 		s, _ := newService(t, threads, nil)
-		w, _ := s.Thread(t.Context(), "thr_1", []string{"done"}, 5000)
+		w, _ := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 5000)
 		w.Pin("trn_a")
 		if r := <-await(t, w); r.err != nil || r.res.State != domain.StateUnknown || r.res.TurnID != "trn_a" {
 			t.Fatalf("Wait = %+v %v", r.res, r.err)
@@ -484,7 +497,7 @@ func TestAShortWaitOnAReplacedTurnTimesOutUnknown_REQ_AUT_004(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, _ := s.Thread(t.Context(), "thr_1", []string{"done"}, 1000)
+	w, _ := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 1000)
 	w.Pin("trn_a")
 	_, err = w.Wait(t.Context())
 	var te *domain.TimeoutError
@@ -520,15 +533,15 @@ func TestActiveCountsTheOpenWaits_REQ_OBS_004(t *testing.T) {
 	if n := s.Active(); n != 0 {
 		t.Fatalf("Active = %d before any wait", n)
 	}
-	tw, err := s.Thread(t.Context(), "thr_1", []string{"done"}, 5000)
+	tw, err := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 5000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ow, err := s.Output(t.Context(), domain.OutputParams{SessionID: "ses_1", Regex: "x", TimeoutMS: 5000})
+	ow, err := s.Output(t.Context(), testConn, domain.OutputParams{SessionID: "ses_1", Regex: "x", TimeoutMS: 5000})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Output(t.Context(), domain.OutputParams{SessionID: "ses_1", Regex: "(", TimeoutMS: 5000}); err == nil {
+	if _, err := s.Output(t.Context(), testConn, domain.OutputParams{SessionID: "ses_1", Regex: "(", TimeoutMS: 5000}); err == nil {
 		t.Fatal("an invalid regex started a wait")
 	}
 	if n := s.Active(); n != 2 {
@@ -557,7 +570,7 @@ func TestAFocusSettlesAWaitForIdle_REQ_AGT_016(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := s.Thread(t.Context(), "thr_1", []string{"idle"}, 60000)
+	w, err := s.Thread(t.Context(), testConn, "thr_1", []string{"idle"}, 60000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,5 +588,144 @@ func TestAFocusSettlesAWaitForIdle_REQ_AGT_016(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("a focus did not settle the wait for idle")
+	}
+}
+
+// TestLimitsDegradeWithoutDisconnect_REQ_AUT_005: a connection holding 32 waits gets
+// VALIDATION_ERROR naming the limit for the 33rd, whatever its kind, before anything is
+// subscribed; another connection is not affected, and a wait ending frees a place (delta
+// `2026-10-wait-monitoring`, decision 2).
+func TestLimitsDegradeWithoutDisconnect_REQ_AUT_005(t *testing.T) {
+	threads := &fakeThreads{}
+	threads.set("running", "working", "trn_a")
+	s, _ := newService(t, threads, &fakeTerminal{screen: "$ ", seq: 1})
+	open := make([]ports.ThreadWait, 0, domain.MaxPerConnection)
+	for range domain.MaxPerConnection {
+		w, err := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 5000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		open = append(open, w)
+	}
+	active := s.Active()
+	_, err := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 5000)
+	if !errors.Is(err, domain.ErrValidation) || !strings.Contains(err.Error(), "32") {
+		t.Fatalf("the 33rd thread wait: %v", err)
+	}
+	if _, err := s.Output(t.Context(), testConn, domain.OutputParams{SessionID: "ses_1", Regex: "x", TimeoutMS: 5000}); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("the 33rd wait, an output one: %v", err)
+	}
+	if s.Active() != active {
+		t.Error("a refused wait was opened")
+	}
+	other, err := s.Thread(t.Context(), "con_other", "thr_1", []string{"done"}, 5000)
+	if err != nil {
+		t.Fatalf("another connection was limited: %v", err)
+	}
+	other.Close()
+	open[0].Close()
+	again, err := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 5000)
+	if err != nil {
+		t.Fatalf("a place freed by a closed wait: %v", err)
+	}
+	again.Close()
+	for _, w := range open[1:] {
+		w.Close()
+	}
+}
+
+// TestWaitListReportsAgeAndStalled_REQ_AUT_006: wait.list returns every open wait, oldest
+// first, with its id, connection, target, until, age and the target thread's stall mark.
+func TestWaitListReportsAgeAndStalled_REQ_AUT_006(t *testing.T) {
+	threads := &fakeThreads{stalled: true}
+	threads.set("running", "working", "trn_a")
+	s, _ := newService(t, threads, &fakeTerminal{screen: "$ ", seq: 1})
+	tw, err := s.Thread(t.Context(), testConn, "thr_1", []string{"done", "blocked"}, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tw.Close()
+	time.Sleep(20 * time.Millisecond)
+	ow, err := s.Output(t.Context(), "con_other", domain.OutputParams{SessionID: "ses_1", Regex: "ok$", TimeoutMS: 5000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := s.List()
+	if len(items) != 2 {
+		t.Fatalf("wait.list = %+v", items)
+	}
+	th, out := items[0], items[1]
+	if !strings.HasPrefix(th.ID, "wt_") || th.ConnectionID != testConn || th.ThreadID != "thr_1" ||
+		!slices.Equal(th.Until, []string{"done", "blocked"}) || th.AgeMS < 20 || !th.Stalled {
+		t.Errorf("the thread wait: %+v", th)
+	}
+	if out.ID == th.ID || out.ConnectionID != "con_other" || out.SessionID != "ses_1" || out.BlockID != "" ||
+		out.Regex != "ok$" || len(out.Until) != 0 || out.Stalled {
+		t.Errorf("the output wait: %+v", out)
+	}
+	ow.Close()
+	if items := s.List(); len(items) != 1 || items[0].ID != th.ID {
+		t.Errorf("a closed wait is still listed: %+v", items)
+	}
+}
+
+// TestCancelLeavesTurnRunning_REQ_AUT_007: wait.cancel ends the wait with CANCELLED for
+// whoever waits on it and reads or writes nothing of the turn; an unknown id is NOT_FOUND.
+func TestCancelLeavesTurnRunning_REQ_AUT_007(t *testing.T) {
+	threads := &fakeThreads{}
+	threads.set("running", "working", "trn_a")
+	term := &fakeTerminal{screen: "$ ", seq: 1}
+	s, _ := newService(t, threads, term)
+	tw, err := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 60000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.PinCurrent(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	got := await(t, tw)
+	ow, err := s.Output(t.Context(), testConn, domain.OutputParams{SessionID: "ses_1", Regex: "never", TimeoutMS: 60000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outDone := make(chan error, 1)
+	go func() { _, err := ow.Wait(context.Background()); outDone <- err }()
+
+	for _, w := range s.List() {
+		if err := s.Cancel(w.ID); err != nil {
+			t.Fatalf("cancel %s: %v", w.ID, err)
+		}
+		// Cancelled is gone at once, before the waiter has answered.
+		if err := s.Cancel(w.ID); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("a second cancel of %s: %v, want not found", w.ID, err)
+		}
+	}
+	if left := s.List(); len(left) != 0 {
+		t.Errorf("cancelled waits still listed: %+v", left)
+	}
+	select {
+	case r := <-got:
+		if !errors.Is(r.err, domain.ErrCancelled) {
+			t.Errorf("the cancelled thread wait answered %+v %v", r.res, r.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a cancelled thread wait kept waiting")
+	}
+	select {
+	case err := <-outDone:
+		if !errors.Is(err, domain.ErrCancelled) {
+			t.Errorf("the cancelled output wait answered %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a cancelled output wait kept waiting")
+	}
+	if st, _ := threads.Status(t.Context(), "thr_1"); st.State != "running" || st.TurnID != "trn_a" {
+		t.Errorf("the turn was touched: %+v", st)
+	}
+	if err := s.Cancel("wt_nope"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("cancelling an unknown wait: %v", err)
+	}
+	if s.Active() != 0 {
+		t.Errorf("Active = %d after both waits were cancelled", s.Active())
 	}
 }

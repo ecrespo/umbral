@@ -22,6 +22,7 @@ const (
 	domainBudgetExceeded      = "BUDGET_EXCEEDED"
 	domainProviderUnavailable = "PROVIDER_UNAVAILABLE"
 	domainInputLocked         = "INPUT_LOCKED"
+	domainCancelled           = "CANCELLED"
 )
 
 // Domain error codes from API Spec §3. The JSON-RPC numbers are part of the contract,
@@ -77,7 +78,7 @@ var errorCodes = map[string]int{
 	domainThreadBlocked:            codeThreadBlocked,
 	domainTimeout:                  codeTimeout,
 	"NOT_IMPLEMENTED":              codeNotImplemented,
-	"CANCELLED":                    codeCancelled,
+	domainCancelled:                codeCancelled,
 	domainResultTooLarge:           codeResultTooLarge,
 }
 
@@ -212,7 +213,7 @@ func toWire(err error, traceID string) *wireError {
 	case errors.Is(err, ErrTimeout):
 		code, domainCode = codeTimeout, domainTimeout
 	case errors.Is(err, ErrCancelled):
-		code, domainCode = codeCancelled, "CANCELLED"
+		code, domainCode = codeCancelled, domainCancelled
 	case errors.Is(err, ErrUnsupportedProtocol):
 		code, domainCode = codeUnsupportedProtocolVersion, "UNSUPPORTED_PROTOCOL_VERSION"
 	case errors.Is(err, ErrNotFound):
@@ -243,6 +244,12 @@ func finishWire(err error, code int, domainCode, traceID string) *wireError {
 	if errors.As(err, &detailed) {
 		data.Details = detailed.details
 		data.Supported = detailed.supported
+	}
+	// The wait limit names the field a client tunes and the limit itself (delta
+	// `2026-10-wait-monitoring`, decision 2), without the engine's own prefix.
+	if errors.Is(err, waitsdomain.ErrLimit) {
+		data.Details = []ErrorField{{Field: "timeout_ms", Issue: fmt.Sprintf("the connection already holds %d waits", waitsdomain.MaxPerConnection)}}
+		return &wireError{Code: code, Message: waitsdomain.LimitMessage, Data: data}
 	}
 	var timedOut *waitsdomain.TimeoutError
 	if code == codeTimeout && errors.As(err, &timedOut) {

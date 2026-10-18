@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"log/slog"
+	"time"
 
 	"github.com/ecrespo/umbral/internal/agents"
 	"github.com/ecrespo/umbral/internal/agents/adapters/threadstore"
@@ -40,6 +41,9 @@ type agentDeps struct {
 	// redact and policy are the rules in force (REQ-SEC-010).
 	redact func(string) string
 	policy func() secdomain.Policy
+	// stallLocal and stallRemote are `[waits]`'s stall windows (REQ-AUT-008); zero takes
+	// the runtime's defaults.
+	stallLocal, stallRemote time.Duration
 }
 
 // newRuntime wires the agent runtime (T-F1-13) to the modules it reaches through their ports:
@@ -71,6 +75,8 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, *registry.Re
 		Policy:  d.policy,
 
 		MaxCostMicroUSD: d.maxCost,
+		StallLocal:      d.stallLocal,
+		StallRemote:     d.stallRemote,
 	})
 	return rt, tools, err
 }
@@ -105,4 +111,8 @@ func (b blockText) BlockText(ctx context.Context, id string) (ctxdomain.BlockTex
 
 func (m routerModels) Available(ctx context.Context, class, model string) bool {
 	return m.router.Available(ctx, class, model)
+}
+
+func (m routerModels) Local(ctx context.Context, class, model string) bool {
+	return m.router.Local(ctx, class, model)
 }

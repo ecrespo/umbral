@@ -48,8 +48,11 @@ type Config struct {
 	// a reload applies at once; 0, or a nil func, is no cap (REQ-AGT-008, delta
 	// `2026-10-cost-cap`).
 	MaxCostMicroUSD func() int64
-	Now             func() time.Time
-	Logger          *slog.Logger
+	// StallLocal and StallRemote are REQ-AUT-008's windows, `[waits] stall_local_s` and
+	// `stall_remote_s`; StallTick is how often running turns are checked. Zero is the default.
+	StallLocal, StallRemote, StallTick time.Duration
+	Now                                func() time.Time
+	Logger                             *slog.Logger
 }
 
 // Runtime is ports.Threads.
@@ -113,6 +116,8 @@ type turn struct {
 	// stop and ended are how the turn ended, set before done is closed.
 	stop  domain.StopReason
 	ended int64
+	// live is the turn's activity clock, guarded by Runtime.mu (REQ-AUT-008).
+	live liveness
 }
 
 // ID prefixes (Art. 6; API §3).
@@ -156,8 +161,20 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
+	if cfg.StallLocal <= 0 {
+		cfg.StallLocal = DefaultStallLocal
+	}
+	if cfg.StallRemote <= 0 {
+		cfg.StallRemote = DefaultStallRemote
+	}
+	if cfg.StallTick <= 0 {
+		cfg.StallTick = DefaultStallTick
+	}
 	base, stop := context.WithCancel(context.WithoutCancel(ctx))
-	return &Runtime{cfg: cfg, base: base, stop: stop, turns: map[string]*turn{}, waiting: map[string]chan domain.Approval{}}, nil
+	r := &Runtime{cfg: cfg, base: base, stop: stop, turns: map[string]*turn{}, waiting: map[string]chan domain.Approval{}}
+	r.wg.Add(1)
+	go r.watchStalls()
+	return r, nil
 }
 
 // Close cancels every running turn and waits for them to record how they ended.
@@ -191,12 +208,17 @@ func (r *Runtime) Create(ctx context.Context, p domain.CreateParams) (domain.Thr
 
 // Get reads a thread.
 func (r *Runtime) Get(ctx context.Context, id string) (domain.Thread, error) {
-	return r.cfg.Store.Thread(ctx, id)
+	t, err := r.cfg.Store.Thread(ctx, id)
+	return r.withStall(t), err
 }
 
 // List lists the threads that are not ephemeral.
 func (r *Runtime) List(ctx context.Context) ([]domain.Thread, error) {
-	return r.cfg.Store.Threads(ctx)
+	threads, err := r.cfg.Store.Threads(ctx)
+	for i := range threads {
+		threads[i] = r.withStall(threads[i])
+	}
+	return threads, err
 }
 
 // Messages is a thread's history.
@@ -368,7 +390,9 @@ func (r *Runtime) attach(ctx context.Context, cwd string, ref ports.AttachmentRe
 // nothing.
 func (r *Runtime) start(thread domain.Thread, msg domain.Message) bool {
 	ctx, cancel := context.WithCancel(r.base)
-	t := &turn{id: msg.TurnID, cancel: cancel, done: make(chan struct{})}
+	t := &turn{id: msg.TurnID, cancel: cancel, done: make(chan struct{}), live: liveness{
+		window: r.stallWindow(ctx, thread), lastAt: r.cfg.Now(), lastEvent: activityTurnStarted,
+	}}
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -393,7 +417,10 @@ func (r *Runtime) start(thread domain.Thread, msg domain.Message) bool {
 }
 
 // publish puts an event on the bus. It is called only after the write it reports.
-func (r *Runtime) publish(e bus.Event) { r.cfg.Bus.Publish(e) }
+func (r *Runtime) publish(e bus.Event) {
+	r.observe(e)
+	r.cfg.Bus.Publish(e)
+}
 
 // isULID reports whether s is a ULID: 26 characters of Crockford's base32.
 func isULID(s string) bool {

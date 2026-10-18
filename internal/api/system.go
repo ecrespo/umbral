@@ -103,7 +103,9 @@ func (s *Server) registry() map[string]method {
 		table[name] = m
 	}
 	for name, m := range waitMethods() {
-		m.capability = capabilityWaits
+		if m.capability == "" { // wait.list and wait.cancel are `wait_admin`
+			m.capability = capabilityWaits
+		}
 		table[name] = m
 	}
 	for name, m := range notificationMethods() {

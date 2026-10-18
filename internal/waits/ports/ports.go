@@ -34,6 +34,8 @@ type Threads interface {
 	// TurnEnd is how a turn of this daemon run ended — `stopped`, or the attention state its
 	// end wrote — and false when the runtime does not remember it.
 	TurnEnd(ctx context.Context, threadID, turnID string) (string, bool, error)
+	// Stalled reports whether the thread's running turn is marked stalled (REQ-AUT-008).
+	Stalled(threadID string) bool
 }
 
 // Terminal is what an output wait reads; the sessions module implements it.
@@ -87,9 +89,16 @@ type OutputWait interface {
 
 // Waits is the module's service as the API sees it.
 type Waits interface {
-	// Thread starts a wait on threadID for the states in until, bounded by timeoutMS. It
-	// validates and subscribes; the caller pins.
-	Thread(ctx context.Context, threadID string, until []string, timeoutMS int64) (ThreadWait, error)
-	// Output starts block.wait_output: it validates, subscribes and reads the screen.
-	Output(ctx context.Context, p domain.OutputParams) (OutputWait, error)
+	// Thread starts a wait on threadID for the states in until, bounded by timeoutMS, held by
+	// the connection connID. It validates, counts it against the connection's limit and
+	// subscribes; the caller pins.
+	Thread(ctx context.Context, connID, threadID string, until []string, timeoutMS int64) (ThreadWait, error)
+	// Output starts block.wait_output for connID: it validates, counts, subscribes and reads
+	// the screen.
+	Output(ctx context.Context, connID string, p domain.OutputParams) (OutputWait, error)
+	// List is every open wait, oldest first (wait.list).
+	List() []domain.Info
+	// Cancel ends a wait with domain.ErrCancelled for whoever waits on it (wait.cancel); an
+	// id that names no open wait is domain.ErrNotFound.
+	Cancel(waitID string) error
 }

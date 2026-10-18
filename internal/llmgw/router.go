@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -123,6 +124,29 @@ func (r *Router) Available(ctx context.Context, class, model string) bool {
 					return true
 				}
 			}
+		}
+	}
+	return false
+}
+
+// Local reports whether any candidate a call of this class, or naming this model, may go to is
+// served by a local provider: the agent gives such a turn the longer stall window
+// (REQ-AUT-008, delta `2026-10-wait-monitoring`).
+func (r *Router) Local(ctx context.Context, class, model string) bool {
+	ids, err := r.candidateIDs(class, model)
+	if err != nil {
+		return false
+	}
+	listed, err := r.catalog.List(ctx, false)
+	if err != nil {
+		return false
+	}
+	for _, m := range listed {
+		if !slices.Contains(ids, m.ID) {
+			continue
+		}
+		if p, ok := r.catalog.Provider(m.Provider); ok && p.Local() {
+			return true
 		}
 	}
 	return false

@@ -20,7 +20,38 @@ var (
 	// ErrTimeout is a wait that reached its deadline (REQ-AUT-004). It is always wrapped
 	// in a *TimeoutError, which carries what was last observed.
 	ErrTimeout = errors.New("the wait timed out")
+	// ErrCancelled is a wait ended by wait.cancel (REQ-AUT-007).
+	ErrCancelled = errors.New("the wait was cancelled")
+	// ErrNotFound is a wait_id that names no open wait.
+	ErrNotFound = errors.New("no such wait")
 )
+
+// MaxPerConnection is how many waits one connection may hold open at once (API §8,
+// REQ-AUT-005). Every kind counts: thread.wait, thread.send's wait and block.wait_output.
+const MaxPerConnection = 32
+
+// ErrLimit is a wait refused for MaxPerConnection; it is a validation error, and the
+// connection stays open.
+var ErrLimit = fmt.Errorf("%w: %s", ErrValidation, LimitMessage)
+
+// LimitMessage is what a client is told when ErrLimit refuses its wait.
+var LimitMessage = fmt.Sprintf("too many concurrent waits: the limit is %d per connection", MaxPerConnection)
+
+// Info is one open wait as wait.list reports it (API §5.33, REQ-AUT-006). Exactly one of
+// ThreadID, BlockID and SessionID is set; Until is a thread wait's target states and Regex an
+// output wait's pattern.
+type Info struct {
+	ID           string
+	ConnectionID string
+	ThreadID     string
+	BlockID      string
+	SessionID    string
+	Until        []string
+	Regex        string
+	StartedAt    time.Time
+	AgeMS        int64
+	Stalled      bool
+}
 
 // TimeoutError is a wait that reached its deadline, with the last state it observed: a
 // thread's state for thread.wait, the last line evaluated for block.wait_output. Nothing is

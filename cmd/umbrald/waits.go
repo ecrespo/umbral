@@ -7,6 +7,7 @@ import (
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/sessions"
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
+	"github.com/ecrespo/umbral/internal/store"
 	"github.com/ecrespo/umbral/internal/waits"
 	waitsports "github.com/ecrespo/umbral/internal/waits/ports"
 )
@@ -18,6 +19,7 @@ func newWaits(b *bus.Bus, runtime *agents.Runtime, terminal *sessions.Service, b
 		Bus:      b,
 		Threads:  threadStatus{runtime: runtime},
 		Terminal: screen{sessions: terminal, blocks: blocks},
+		NewID:    func() string { return store.NewID(store.PrefixWait) },
 	})
 }
 
@@ -33,6 +35,8 @@ func (t threadStatus) Status(ctx context.Context, threadID string) (waitsports.T
 	}
 	return waitsports.ThreadStatus{State: string(st.State), Attention: st.Attention, TurnID: st.TurnID}, nil
 }
+
+func (t threadStatus) Stalled(threadID string) bool { return t.runtime.Stalled(threadID) }
 
 func (t threadStatus) TurnEnd(_ context.Context, threadID, turnID string) (string, bool, error) {
 	end, ok := t.runtime.TurnEnd(threadID, turnID)

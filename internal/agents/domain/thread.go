@@ -66,6 +66,9 @@ type Thread struct {
 	CostMicroUSD   int64
 	CreatedAt      int64
 	UpdatedAt      int64
+	// Stalled is true while the thread's running turn is marked stalled (REQ-AUT-008). It is
+	// the runtime's, never stored: it describes a turn of this daemon run.
+	Stalled bool
 }
 
 // CreateParams is thread.create's input (API §5.19).

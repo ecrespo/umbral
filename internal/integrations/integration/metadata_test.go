@@ -193,14 +193,16 @@ func TestMetadataNeverChangesWaits_REQ_INT_004(t *testing.T) {
 
 	t.Run("an expired key is not read", func(t *testing.T) {
 		if err := h.ReportMetadata(t.Context(), domain.MetadataFields{
-			PaneID: paneID, Source: "short", Tokens: map[string]*string{"eta": str("2s")}, TTLMillis: ttl(150),
+			// A TTL wide enough that a slow runner under -race still reads the token live:
+			// 150 ms expired between the write and the read on macOS CI.
+			PaneID: paneID, Source: "short", Tokens: map[string]*string{"eta": str("2s")}, TTLMillis: ttl(1500),
 		}); err != nil {
 			t.Fatalf("ReportMetadata with a TTL: %v", err)
 		}
 		if m := h.pane(t, paneID).Metadata; m.Tokens["eta"] != "2s" {
 			t.Fatalf("a live token is not read: %+v", m)
 		}
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(8 * time.Second)
 		for h.pane(t, paneID).Metadata.Tokens["eta"] != "" {
 			if time.Now().After(deadline) {
 				t.Fatal("the token outlived its TTL by seconds")
