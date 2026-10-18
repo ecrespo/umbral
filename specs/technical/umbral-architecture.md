@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.49 |
+| **Version** | 1.50 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -19,7 +19,7 @@
 > to be updated:
 > - §3.2 gains the catalog and `skill_load` (T-F1-36); the skill store is written (T-F1-34);
 > - §5.3 gains the destructive patterns `umb skill …` and `umb mcp add` (T-F1-36);
-> - §9.4 gains `umb skill` and `umb mcp` (T-F1-35, T-F1-37).
+> - §9.4 gains `umb mcp` (T-F1-37); `umb skill` is written (T-F1-35).
 >
 > Written by T-F1-33: §5.1's live keys and `[api]` table, §7.2's `umbral_frames_refused_total` and
 > §9.4's `umb limits`.
@@ -1225,7 +1225,7 @@ enforces both rules, with `mustCases` pinned to the 20 MUST rows above.
 
 ### 9.4 The `umb` surface
 
-Commands: `umb status`, `umb block last`, `umb ai`, `umb api schema`, `umb limits`, `umb notify` (API Spec §5.35), `umb policy explain` (API Spec §5.36), `umb rules` (API Spec §5.34: `status`, `key list|add|remove|rotate`, `rollback`, `reset`), `umb wait ls` and `umb wait cancel WAIT_ID` (API Spec §5.33), `umb version`,
+Commands: `umb status`, `umb block last`, `umb ai`, `umb api schema`, `umb limits`, `umb notify` (API Spec §5.35), `umb policy explain` (API Spec §5.36), `umb rules` (API Spec §5.34: `status`, `key list|add|remove|rotate`, `rollback`, `reset`), `umb wait ls` and `umb wait cancel WAIT_ID` (API Spec §5.33), `umb skill` (API Spec §5.37, below), `umb version`,
 `umb help`, and the workspace tree below. Flags shared by every command: `--socket PATH` (default: the runtime
 directory of API Spec §2), `--daemon-path PATH` (default: `PATH`, then the directory holding
 `umb`), `--no-autostart`, and `--json`, which every command but `umb ai` takes.
@@ -1281,6 +1281,36 @@ is exit 1 before anything is read or sent. There is no `--json`: the output is t
   ```
 
   Past the 64 MiB ceiling there is nothing to raise it to, and the second line says so instead.
+
+**`umb skill`** (REQ-SKL-001, REQ-SKL-003; deltas `2026-09-skills-cli` and `2026-10-umb-skill`).
+`umb skill install PATH [--yes] [--replace]`, `list`, `show NAME [--body]`, `enable NAME`,
+`disable NAME` and `remove NAME`, each one `skill.*` method of API Spec §5.37.
+
+- **The path.** A local `PATH` is made absolute against `umb`'s working directory, because the
+  daemon's means nothing to the user. A remote one (`://`, `git@`, `user@host:path`) is sent as
+  typed, so the daemon's classification is the one that refuses it (REQ-SKL-006).
+- **Install** calls `skill.inspect`, prints the manifest — name, version, description, every
+  file with its size, the total and the digest — and then calls `skill.install` with that
+  manifest's `sha256` as `expected_sha256`, and `replace: true` with `--replace`. Between the
+  two it needs a confirmation: `--yes`, or, when stdin is a terminal, a `y` or `yes` typed after
+  a prompt on stderr. Anything else, end of input included, installs nothing and exits 1. With
+  no terminal and no `--yes` it exits 1 after the manifest, saying to run again with `--yes`;
+  `skill.install` is never called.
+- **`--json`** prints the method's result verbatim: the `Skill` for install, enable and disable,
+  `{items}` for list, `{skill, body}` for show and `{}` for remove. Install's manifest then goes
+  to stderr, so stdout holds one JSON document.
+- **`show --body`** sends `include: "body"` and prints SKILL.md's body after the fields;
+  without it `include` is not sent. A skill an install stored disabled, because 64 were
+  enabled, is said to be so.
+- **Untrusted text.** A skill's name, version, description, file paths, source and body come
+  from a bundle the user has not yet trusted, and the manifest is what they confirm. Every rune
+  a terminal would act on rather than show — C0 and C1 controls, DEL, newlines, bidi and other
+  format characters — is printed as its Go escape (`\x1b`, `\n`, `\u202e`), so a path cannot
+  hide a file or draw a fake line. `show --body` keeps the body's newlines and tabs. `--json`
+  output is JSON-escaped already.
+- **Deadlines.** Each call has its own 10 s deadline, and install's starts after the
+  confirmation, so the time spent reading the manifest never counts against it.
+- **Exit codes** are REQ-CLI-004's: a daemon error is 1, with its message and domain code.
 
 **The workspace tree** (REQ-CLI-005, REQ-CLI-006; deltas `2026-09-cli-workspace-surface` and
 `2026-09-cli-allowlist`). Every command is one call to the method named `<family>.<subcommand>`
@@ -1446,3 +1476,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.47 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-signed-rule-bundles` (T-F1-30): DD-016 states how a bundle is verified, applied, rejected and never retried, the fail-closed latch, rollback and reset, the trust-key history and `tools/rulesign`; §5.2's `security` row gains the `Rules` manager and its imports; §9.4 lists `umb rules`. The floor is the higher of the active and the highest applied version, so a reset reopens no older bundle; a rejection also notifies the user under `umbral:rules` |
 | 1.48 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-wait-monitoring` (T-F1-31): DD-017 says where the wait inventory, the limit, stall detection, the output bridge and the report rate live; §5.1 adds `[waits]`; §9.4 lists `umb wait` |
 | 1.49 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-skill-store` (T-F1-34): §3.2's `context` row names the skill store; §5.2 gains a `context` row whose ports name `skill.changed`; the pending note keeps the catalog, `skill_load`, the destructive patterns and §9.4 |
+| 1.50 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-umb-skill` (T-F1-35): §9.4 writes `umb skill` — install's inspect, manifest, confirmation and digest; the path resolved by `umb` unless remote; `--json` keeping stdout for the result; bundle text printed escaped; one deadline per call |
