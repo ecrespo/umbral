@@ -104,10 +104,6 @@ func (r *Rules) Start(ctx context.Context) error {
 			}
 			byFP[fp] = k
 		}
-		state, err := tx.State()
-		if err != nil {
-			return err
-		}
 		wasValid := hasValid(byFP)
 		for fp, k := range byFP {
 			if k.Valid() && r.cfg.Seed.Revokes(fp) {
@@ -120,6 +116,12 @@ func (r *Rules) Start(ctx context.Context) error {
 					return err
 				}
 			}
+		}
+		// Read after the revocations: revoke writes the state too (the floor it lowers), and a
+		// copy read before them would put the old floor back.
+		state, err := tx.State()
+		if err != nil {
+			return err
 		}
 		if hasValid(byFP) {
 			state.EverHadValidKey = true

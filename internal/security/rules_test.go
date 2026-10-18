@@ -444,6 +444,30 @@ func TestAResetKeepsTheVersionFloor_REQ_SEC_016(t *testing.T) {
 	}
 }
 
+// TestASeedRevocationLowersTheFloor_REQ_SEC_014: a key the seed revokes at start loses its
+// bundles and the floor they set, like any revocation; a later state write in Start must not
+// put the old floor back, or a stolen key's huge version would lock legitimate bundles out.
+func TestASeedRevocationLowersTheFloor_REQ_SEC_014(t *testing.T) {
+	t.Parallel()
+	project, other := newSigner(t), newSigner(t)
+	rig := newRulesRig(t, seedOf(project))
+	ctx := t.Context()
+	if _, err := rig.r.AddKey(ctx, other.b64(), other.fp()); err != nil {
+		t.Fatal(err)
+	}
+	rig.r.Offer(ctx, bundleOf(9), project.sign(t, bundleOf(9)))
+	if rig.status(t).Active.Version != 9 {
+		t.Fatal("version 9 was not applied")
+	}
+	compromised := seedOf(project)
+	compromised.Revoked = []string{project.fp()}
+	rig = rig.restart(t, compromised)
+	rig.r.Offer(ctx, bundleOf(2), other.sign(t, bundleOf(2)))
+	if st := rig.status(t); st.Active.Version != 2 {
+		t.Errorf("after the seed revoked the key that signed version 9, version 2 of another key: active %+v, last rejection %q", st.Active, st.LastRejection)
+	}
+}
+
 // TestAStoredBundleIsCheckedAtStart_REQ_SEC_011: at start the active bundle's bytes must match
 // its digest; a row that does not is not trusted and the built-in rules apply.
 func TestAStoredBundleIsCheckedAtStart_REQ_SEC_011(t *testing.T) {
