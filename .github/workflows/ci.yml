@@ -89,7 +89,10 @@ jobs:
       - name: golangci-lint (with gosec)
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.13.2
+          # Built with the job's Go: a prebuilt binary from an older Go cannot read Go 1.27.2's
+          # export data ("export data version 5 is greater than maximum supported version 4").
+          version: v2.15.0
+          install-mode: goinstall
       - name: govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
