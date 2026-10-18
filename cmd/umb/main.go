@@ -57,8 +57,8 @@ func main() {
 	os.Exit(runIO(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-// run is runIO with nothing on stdin. Only `umb ai` reads the stdin it is given;
-// `umb layout apply --from -` reads the process's own.
+// run is runIO with nothing on stdin. Only `umb ai` and `umb skill install`'s confirmation
+// read the stdin they are given; `umb layout apply --from -` reads the process's own.
 func run(args []string, stdout, stderr io.Writer) int {
 	return runIO(args, strings.NewReader(""), stdout, stderr)
 }
@@ -92,6 +92,8 @@ func runIO(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return finish(cmdPolicy(ctx, args[1:], out, errOut), out, stderr)
 	case "rules":
 		return finish(cmdRules(ctx, args[1:], out, errOut), out, stderr)
+	case "skill":
+		return finish(cmdSkill(ctx, args[1:], stdin, out, errOut), out, stderr)
 	case "wait":
 		return finish(cmdWait(ctx, args[1:], out, errOut), out, stderr)
 	case famWorkspace, famTab, famPane, famLayout:
@@ -132,6 +134,11 @@ Usage:
   umb rules key list|add|remove|rotate
                                  signed rule bundles and their trust store (REQ-SEC-014);
                                  add and rotate need --confirm with the key's fingerprint
+  umb skill install PATH [--yes] [--replace]
+                                 show a skill's manifest and digest, confirm, install that
+                                 digest (REQ-SKL-001); --yes when there is no terminal
+  umb skill list|show NAME [--body]|enable NAME|disable NAME|remove NAME
+                                 the installed skills for Umbral's agent (REQ-SKL-003)
   umb wait ls [--json]           every open wait: target, age, whether its thread stalled
   umb wait cancel WAIT_ID        end one wait; the turn or command it watched goes on
                                  (REQ-AUT-006, REQ-AUT-007)
