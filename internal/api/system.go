@@ -111,6 +111,11 @@ func (s *Server) registry() map[string]method {
 		m.capability = capabilityNotifications
 		table[name] = m
 	}
+	for name, m := range policyMethods() {
+		m.available = hasPolicyExplain
+		m.capability = capabilityPolicyExplain
+		table[name] = m
+	}
 	for name, m := range integrationMethods() {
 		m.available = hasIntegrations
 		m.capability = capabilityIntegrations

@@ -387,6 +387,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	defer runtime.Close()
 
+	// policy.explain (T-F1-28) reads the same threads and rules a turn decides with.
+	explainer, err := newExplainer(db, tools)
+	if err != nil {
+		logger.Error("cannot build policy.explain", slog.Any("error", err))
+		return exitCantCreate
+	}
+
 	// The MCP client (T-F1-17): every configured server is connected in the background and
 	// its tools join the registry the runtime offers from.
 	mcpClient, err := newMCP(ctx, logger, db, eventBus, egress, tools, providers)
@@ -434,6 +441,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Workspaces:    workspaceService,
 		Integrations:  paneStates,
 		Notifications: notifications,
+		PolicyExplain: explainer,
 		Bus:           eventBus,
 		Logger:        logger,
 		// The first live setting: `limits.set` rewrites it in this file and applies it to

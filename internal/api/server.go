@@ -16,6 +16,7 @@ import (
 
 	intports "github.com/ecrespo/umbral/internal/integrations/ports"
 	ntfports "github.com/ecrespo/umbral/internal/notify/ports"
+	secports "github.com/ecrespo/umbral/internal/security/ports"
 
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	mcpports "github.com/ecrespo/umbral/internal/mcp/ports"
@@ -166,6 +167,9 @@ type Config struct {
 	// Notifications is the notification sink, served as notification.show. A nil value
 	// leaves it answering NOT_IMPLEMENTED.
 	Notifications ntfports.Notifier
+	// PolicyExplain is policy.explain (REQ-SEC-009). A nil value leaves it answering
+	// NOT_IMPLEMENTED.
+	PolicyExplain secports.Explainer
 	Bus           *bus.Bus
 	Logger        *slog.Logger
 
