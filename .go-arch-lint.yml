@@ -621,8 +621,8 @@ deps:
   # `integrations` -> ports of `workspaces` and `store`, plus `bus`; never `agents` or `api`.
   # It reads a pane's effective state through the tree, which resolves DD-012's precedence,
   # and learns of the changes its own reports did not make through events `cmd` subscribes
-  # it to. The domain's allowance is unused — a report's rules are arithmetic over strings —
-  # and names the one the rule grants, because go-arch-lint requires one.
+  # it to. The domain uses its allowance for the display metadata keys (T-F1-26), which the
+  # tree reads back and so are declared once, in workspaces-domain.
   integrations-domain:
     anyVendorDeps: false
     mayDependOn:

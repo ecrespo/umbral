@@ -301,6 +301,7 @@ method and the ordering that produced it, so one handed to a different method is
 
   A change of either field is announced as `pane.state_changed` (§6).
 - `thread_id`: the thread whose PTY the pane's live session is, `null` for any other pane
+- `metadata`: display only (§5.32, REQ-INT-004): `{title?, display_name?, state_labels?: {state: label}, tokens?: {name: value}}`, each member present only when some source set it and its TTL has not passed; `{}` when none has. When two sources set one member, the later write wins. It never feeds `attention_state`, `state_source`, the rollup or a wait
 - `command_pending`: the pane has a `command` that Umbral has not run. Set by `layout.apply` and
   by a restart, never by `pane.split` — a client asking for a command now is asking for it to run,
   while a layout and a restart replay an intention from another time, and REQ-TERM-011 forbids
@@ -873,6 +874,14 @@ Both answer `{}`. Every client kind may call them (§2: `umb` has `pane.*` but `
 
 Display only: it never alters waits, rollups or notifications. Normalization: control characters removed, whitespace collapsed, 80-character cap per value. Limits: at most 16 token keys per report and 32 live keys per pane; a `null` value clears the key.
 
+- **Members.** `title` and `display_name` are strings; `state_labels` maps one of `idle`, `working`, `blocked`, `done`, `unknown` to a label; `tokens` maps a name of 1-26 characters of `[A-Za-z0-9._-]` to a value. A report needs at least one of the four. A member absent from the report stays as it was; a `null` member, or a value that normalizes to nothing, clears it. `state_labels: null` clears every label the source set and `tokens: null` every token, and either alone is a report. Each source owns its own keys: one source's `null` never clears another's, and where two sources set the same member the later write is shown.
+- **Normalization** removes control and format characters (an escape sequence loses its `ESC` and shows as text), collapses every run of whitespace to one space (a tab or a newline counts as whitespace, not as a control character), trims, and cuts at 80 characters.
+- **`ttl_ms`** applies to every key the report sets, which is no longer read once it passes; without it they live 24 hours from their last write, the most any key lives (Data Model §4), unless cleared first or the daemon restarts (Data Model §6 step 8). An expiry is not announced: a client sees it on its next read or the pane's next `pane.updated`.
+- **Limits** refuse the whole report with `VALIDATION_ERROR` and write nothing: more than 16 `tokens` in one report, or more than 32 live keys on the pane counting every source's.
+- **`seq`** follows §5.31's rule, kept per pane and source apart from the state reports' numbers.
+- **Who.** `source` follows §5.31, the reserved `umbral:` prefix included. A pane hosting a thread of Umbral's own agent accepts metadata (REQ-INT-006). An alias reaches a moved pane, whose metadata moves with it; a closed or unknown pane is `NOT_FOUND`.
+- **Result** `{}`. A written report is announced as `pane.updated` with the `Pane`, its `metadata` included — never `pane.state_changed` or `workspace.updated`.
+
 ### 5.33 `wait.list` / `wait.cancel` — REQ-AUT-005, REQ-AUT-006, REQ-AUT-007
 `wait.list` result: `{items:[{wait_id, connection_id, target:{thread_id|block_id}, until:[…], age_ms, stalled:bool}]}`.
 
@@ -999,7 +1008,7 @@ Every client kind may call both (§2). The `limits` capability announces them.
 | `mcp.server_state` | `{name, state, last_error}` | REQ-MCP-003 |
 | `workspace.created` / `.updated` / `.closed` / `.focused` | `Workspace` | REQ-WS-001, REQ-WS-006 |
 | `tab.created` / `.closed` / `.focused` | `Tab` | REQ-WS-001 |
-| `pane.created` / `.updated` / `.closed` / `.focused` | `Pane` | REQ-WS-003 |
+| `pane.created` / `.updated` / `.closed` / `.focused` | `Pane` — `.updated` also after a written `pane.report_metadata` (§5.32) | REQ-WS-003, REQ-INT-004 |
 | `pane.moved` | `{pane, previous_pane_id, previous_workspace_id, layout}` | REQ-WS-007 |
 | `pane.state_changed` | `{pane_id, attention_state, state_source}` — after a pane's effective state or its source changes (§4), once what decided it is written: a report or release, a block starting or ending, a session's integration verdict or exit, a thread's attention. A workspace whose rollup moved with it gets `workspace.updated` | REQ-INT-002 |
 | `layout.updated` | `Layout` | REQ-WS-004 |

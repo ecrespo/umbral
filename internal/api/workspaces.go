@@ -149,7 +149,7 @@ func toWirePane(p wsdomain.Pane) Pane {
 		SessionID: emptyAsNull(p.SessionID), ThreadID: emptyAsNull(p.ThreadID),
 		Label: p.Label, CWD: p.CWD, Command: p.Command, CommandPending: p.CommandPending, Env: p.Env,
 		Aliases: aliases, AttentionState: string(p.AttentionState),
-		StateSource: emptyAsNull(p.StateSource), Metadata: map[string]any{},
+		StateSource: emptyAsNull(p.StateSource), Metadata: toWireMetadata(p.Metadata),
 		CreatedAt: p.CreatedAt.UnixMilli(), ClosedAt: millisPtr(p.ClosedAt),
 	}
 }

@@ -35,7 +35,7 @@ func newIntegrations(ctx context.Context, db *store.Store, b *bus.Bus, panes int
 		return nil, err
 	}
 	service, err := integrations.New(integrations.Config{
-		Store: reports, Panes: panes, Bus: b, Logger: logger,
+		Store: reports, Metadata: reports, Panes: panes, Bus: b, Logger: logger,
 	})
 	if err != nil {
 		return nil, err

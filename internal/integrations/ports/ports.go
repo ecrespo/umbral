@@ -20,6 +20,20 @@ type Integrations interface {
 	// ReleaseState drops a source's authority over a pane (REQ-INT-005). Releasing a pane the
 	// source never reported for changes nothing and is not an error.
 	ReleaseState(ctx context.Context, paneID, source string) error
+	// ReportMetadata records a source's display metadata for a pane (REQ-INT-004, API Spec
+	// §5.32). It is accepted on an own-agent pane too (REQ-INT-006: "that pane accepts display
+	// metadata only"), and it never changes the pane's state, its rollup or a wait.
+	ReportMetadata(ctx context.Context, fields domain.MetadataFields) error
+}
+
+// MetadataStore is where display metadata lives: `pane_metadata`, cleared at start like the
+// reports (Data Model §6 step 8).
+type MetadataStore interface {
+	// WriteMetadata applies a report in one transaction unless its seq is stale, and reports
+	// whether it was written. It deletes the pane's expired rows first, and refuses with
+	// domain.ErrValidation, writing nothing, a report that would leave the pane more than
+	// domain.MaxLiveKeysPerPane live keys.
+	WriteMetadata(ctx context.Context, report domain.MetadataReport, nowMillis int64) (bool, error)
 }
 
 // Store is where reports live: `pane_state_reports`, which Data Model §6 step 8 clears at

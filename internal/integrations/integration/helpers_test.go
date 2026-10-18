@@ -52,6 +52,16 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	// A clock that never moves: every report lands in the same millisecond, which is what
+	// two hooks firing together look like, and the order must still be the order received.
+	frozen := time.UnixMilli(1757592000000)
+	return newHarnessAt(t, func() time.Time { return frozen })
+}
+
+// newHarnessAt runs the service on a given clock. Metadata expiry is read against SQLite's
+// own clock, so a test of a TTL uses the real one.
+func newHarnessAt(t *testing.T, now func() time.Time) *harness {
+	t.Helper()
 	db, err := store.Open(t.Context(), store.Options{Path: filepath.Join(t.TempDir(), "umbral.db")})
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
@@ -60,7 +70,7 @@ func newHarness(t *testing.T) *harness {
 
 	eventBus := bus.New()
 	t.Cleanup(eventBus.Close)
-	events := eventBus.SubscribeBuffered(256, ports.KindPaneStateChanged, wsports.KindWorkspaceUpdated)
+	events := eventBus.SubscribeBuffered(256, ports.KindPaneStateChanged, wsports.KindWorkspaceUpdated, wsports.KindPaneUpdated)
 	t.Cleanup(events.Close)
 
 	treeStore, err := treestore.New(db)
@@ -80,11 +90,8 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatalf("reportstore.New: %v", err)
 	}
-	// A clock that never moves: every report lands in the same millisecond, which is what
-	// two hooks firing together look like, and the order must still be the order received.
-	frozen := time.UnixMilli(1757592000000)
 	service, err := integrations.New(integrations.Config{
-		Store: reports, Panes: tree, Bus: eventBus, Now: func() time.Time { return frozen },
+		Store: reports, Metadata: reports, Panes: tree, Bus: eventBus, Now: now,
 	})
 	if err != nil {
 		t.Fatalf("integrations.New: %v", err)

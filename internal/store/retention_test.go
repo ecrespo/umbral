@@ -282,6 +282,9 @@ func TestRetentionPurgesAuditAndExpiredMetadata(t *testing.T) {
 	meta("live", &future, daysAgo(0.1))
 	meta("stale", nil, daysAgo(1.1))
 	meta("fresh", nil, daysAgo(0.5))
+	// A source's metadata seq is not displayed and has no TTL: it must outlive the 24 h, or a
+	// replayed old report would be accepted again the next day.
+	meta("#seq", nil, daysAgo(1.1))
 
 	report, err := s.ApplyRetention(t.Context(), retentionNow, DefaultRetention())
 	if err != nil {
@@ -309,8 +312,8 @@ func TestRetentionPurgesAuditAndExpiredMetadata(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(keys) != 2 || keys[0] != "fresh" || keys[1] != "live" {
-		t.Errorf("pane metadata left: %v, want [fresh live]", keys)
+	if len(keys) != 3 || keys[0] != "#seq" || keys[1] != "fresh" || keys[2] != "live" {
+		t.Errorf("pane metadata left: %v, want [#seq fresh live]", keys)
 	}
 }
 

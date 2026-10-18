@@ -15,6 +15,16 @@ import (
 type fakeIntegrations struct {
 	reports  []intdomain.Report
 	released [][2]string
+	metadata []intdomain.MetadataReport
+}
+
+func (f *fakeIntegrations) ReportMetadata(_ context.Context, fields intdomain.MetadataFields) error {
+	r, err := fields.Build()
+	if err != nil {
+		return err
+	}
+	f.metadata = append(f.metadata, r)
+	return nil
 }
 
 func (f *fakeIntegrations) ReportState(_ context.Context, r intdomain.Report) error {
@@ -130,4 +140,67 @@ func capabilitiesOf(t *testing.T, result any) []string {
 		t.Fatal(err)
 	}
 	return hello.Capabilities
+}
+
+// TestPaneMetadataReachesTheWire_REQ_INT_004: pane.report_metadata answers `{}`, tells a
+// `null` (clear) from an absent member (keep), maps validation onto §3, is open to `umb`, and
+// a pane's metadata is API §4's `metadata` object.
+func TestPaneMetadataReachesTheWire_REQ_INT_004(t *testing.T) {
+	t.Parallel()
+	svc := &fakeIntegrations{}
+	s := testServerWithConfig(t, Config{Integrations: svc, Bus: bus.New()})
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientCLI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+	resp := c.call(2, "pane.report_metadata", map[string]any{
+		"pane_id": "w1:p1", "source": "claude-code", "title": "go test", "display_name": nil,
+		"state_labels": map[string]any{"blocked": "needs you"}, "tokens": map[string]any{"summary": "unit", "old": nil},
+		"ttl_ms": 5000, "seq": 3,
+	})
+	if resp.Error != nil || string(ordered[emptyResult](t, resp.Result)) != `{}` {
+		t.Fatalf("report_metadata = %+v %+v", resp.Result, resp.Error)
+	}
+	if len(svc.metadata) != 1 {
+		t.Fatalf("the module got %+v", svc.metadata)
+	}
+	r := svc.metadata[0]
+	if r.Set["title"] != "go test" || r.Set["label:blocked"] != "needs you" || r.Set["token:summary"] != "unit" ||
+		r.TTLMillis != 5000 || r.Seq == nil || *r.Seq != 3 || !slices.Contains(r.Clear, "display_name") || !slices.Contains(r.Clear, "token:old") {
+		t.Errorf("the module got %+v", r)
+	}
+	if resp := c.call(3, "pane.report_metadata", map[string]any{"pane_id": "w1:p1", "source": "x", "title": "t"}); resp.Error != nil {
+		t.Fatalf("a title alone = %+v", resp.Error)
+	}
+	if got := svc.metadata[1]; slices.Contains(got.Clear, "display_name") {
+		t.Errorf("an absent display_name was cleared: %+v", got)
+	}
+	if resp := c.call(5, "pane.report_metadata", map[string]any{
+		"pane_id": "w1:p1", "source": "x", "tokens": nil, "state_labels": nil,
+	}); resp.Error != nil {
+		t.Fatalf("null objects = %+v", resp.Error)
+	}
+	if got := svc.metadata[2]; !slices.Contains(got.ClearPrefixes, "token:") || !slices.Contains(got.ClearPrefixes, "label:") {
+		t.Errorf("null tokens and state_labels did not clear: %+v", got)
+	}
+	if got := svc.metadata[1]; len(got.ClearPrefixes) != 0 {
+		t.Errorf("absent objects cleared: %+v", got)
+	}
+	for _, params := range []map[string]any{
+		{"pane_id": "w1:p1", "source": "x"},
+		{"pane_id": "w1:p1", "source": "x", "title": "t", "ttl_ms": 0},
+		{"pane_id": "w1:p1", "source": "x", "state_labels": map[string]any{"thinking": "x"}},
+	} {
+		if resp := c.call(4, "pane.report_metadata", params); resp.Error == nil || resp.Error.Code != codeValidationError {
+			t.Errorf("report_metadata %v = %+v, want VALIDATION_ERROR", params, resp.Error)
+		}
+	}
+
+	wire := toWireMetadata(wsdomain.Metadata{Title: "go test", Tokens: map[string]string{"summary": "unit"}})
+	if raw, _ := json.Marshal(wire); string(raw) != `{"title":"go test","tokens":{"summary":"unit"}}` {
+		t.Errorf("metadata on the wire = %s", raw)
+	}
+	if raw, _ := json.Marshal(toWireMetadata(wsdomain.Metadata{})); string(raw) != `{}` {
+		t.Errorf("no metadata on the wire = %s", raw)
+	}
 }
