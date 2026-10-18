@@ -301,6 +301,12 @@ func (m *Model) applyEvent(msg daemonEventMsg) tea.Cmd {
 			return tea.Batch(m.resize(m.width, m.height), m.waitForEvent())
 		}
 
+	case ports.EventNotification:
+		m.status = ev.Title
+		if ev.Text != "" {
+			m.status += " — " + ev.Text
+		}
+
 	case ports.EventDisconnected:
 		m.disconnected = true
 		if ev.Err != nil {

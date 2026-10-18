@@ -31,6 +31,7 @@ import (
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/egresslog"
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/modelstore"
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/usagelog"
+	"github.com/ecrespo/umbral/internal/notify"
 	"github.com/ecrespo/umbral/internal/obs"
 	"github.com/ecrespo/umbral/internal/security/adapters/keyring"
 	"github.com/ecrespo/umbral/internal/sessions"
@@ -403,8 +404,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	gauges.waits.Store(waitEngine)
 
+	// The notification sink (T-F1-27). Its deliverer is the API server, built below.
+	notifications, err := notify.New(notify.Config{Enabled: settings.NotificationsEnabled})
+	if err != nil {
+		logger.Error("cannot build the notification sink", slog.Any("error", err))
+		return exitCantCreate
+	}
+
 	// The integration surface (T-F1-25): external state reports and `pane.state_changed`.
-	paneStates, err := newIntegrations(ctx, db, eventBus, workspaceService, logger)
+	paneStates, err := newIntegrations(ctx, db, eventBus, workspaceService,
+		blockedNotifier{sink: notifications, logger: logger}, logger)
 	if err != nil {
 		logger.Error("cannot build the integration surface", slog.Any("error", err))
 		return exitCantCreate
@@ -424,6 +433,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Blocks:        blockReader,
 		Workspaces:    workspaceService,
 		Integrations:  paneStates,
+		Notifications: notifications,
 		Bus:           eventBus,
 		Logger:        logger,
 		// The first live setting: `limits.set` rewrites it in this file and applies it to
@@ -436,6 +446,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitCantCreate
 	}
 	gauges.server.Store(server)
+	notifications.SetDeliverer(server)
 	defer func() {
 		if err := server.Close(); err != nil {
 			logger.Error("cannot close the socket", slog.Any("error", err))

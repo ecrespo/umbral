@@ -417,6 +417,18 @@ func toEvent(n client.Notification) (ports.Event, bool) {
 			return ports.Event{}, false
 		}
 		return ports.Event{Kind: ports.EventTurnFinished, ThreadID: p.ThreadID, StopReason: p.StopReason}, true
+
+	case "notification.posted":
+		// The daemon has already normalized the text (REQ-NTF-001): no control characters.
+		var p struct {
+			Title string `json:"title"`
+			Body  string `json:"body"`
+			Sound string `json:"sound"`
+		}
+		if err := n.Decode(&p); err != nil {
+			return ports.Event{}, false
+		}
+		return ports.Event{Kind: ports.EventNotification, Title: p.Title, Text: p.Body, Sound: p.Sound}, true
 	}
 	return ports.Event{}, false
 }

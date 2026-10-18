@@ -45,9 +45,37 @@ func (f *fakeTerminals) Close(context.Context, string) error { return nil }
 
 type harness struct {
 	*integrations.Service
-	tree   *workspaces.Service
-	store  *store.Store
-	events *bus.Subscription
+	tree     *workspaces.Service
+	store    *store.Store
+	events   *bus.Subscription
+	notifier *recordingNotifier
+}
+
+// recordingNotifier keeps every blocked notification the service raised.
+type recordingNotifier struct {
+	mu   sync.Mutex
+	sent []ports.BlockedNotice
+	// onNotify, when set, runs on every notice outside the recorder's lock: a test uses it
+	// to call back into the service as a slow sink would be waited on.
+	onNotify func()
+}
+
+func (r *recordingNotifier) NotifyBlocked(_ context.Context, n ports.BlockedNotice) {
+	r.mu.Lock()
+	hook := r.onNotify
+	r.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sent = append(r.sent, n)
+}
+
+func (r *recordingNotifier) all() []ports.BlockedNotice {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]ports.BlockedNotice(nil), r.sent...)
 }
 
 func newHarness(t *testing.T) *harness {
@@ -90,13 +118,14 @@ func newHarnessAt(t *testing.T, now func() time.Time) *harness {
 	if err != nil {
 		t.Fatalf("reportstore.New: %v", err)
 	}
+	notifier := &recordingNotifier{}
 	service, err := integrations.New(integrations.Config{
-		Store: reports, Metadata: reports, Panes: tree, Bus: eventBus, Now: now,
+		Store: reports, Metadata: reports, Panes: tree, Bus: eventBus, Now: now, Notifier: notifier,
 	})
 	if err != nil {
 		t.Fatalf("integrations.New: %v", err)
 	}
-	return &harness{Service: service, tree: tree, store: db, events: events}
+	return &harness{Service: service, tree: tree, store: db, events: events, notifier: notifier}
 }
 
 // newPane creates a workspace whose root pane runs a shell that spoke OSC 133, so Umbral's

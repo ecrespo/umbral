@@ -141,6 +141,9 @@ const (
 	EventApprovalRequested
 	// EventTurnFinished is a turn's end (`thread.turn_finished`).
 	EventTurnFinished
+	// EventNotification is a notification for the user (`notification.posted`, API Spec
+	// §5.35): Title, Text as its body, and Sound.
+	EventNotification
 )
 
 // Event is one thing that happened, flattened so the model does not decode JSON.
@@ -172,4 +175,7 @@ type Event struct {
 	Approval Approval
 	// StopReason is how the turn ended, for EventTurnFinished.
 	StopReason string
+	// Title and Sound are a notification's, for EventNotification; its body is in Text.
+	Title string
+	Sound string
 }

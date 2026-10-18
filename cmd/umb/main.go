@@ -86,6 +86,8 @@ func runIO(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return finish(cmdAI(ctx, args[1:], stdin, out, errOut), out, stderr)
 	case "limits":
 		return finish(cmdLimits(ctx, args[1:], out, errOut), out, stderr)
+	case "notify":
+		return finish(cmdNotify(ctx, args[1:], out, errOut), out, stderr)
 	case famWorkspace, famTab, famPane, famLayout:
 		return finish(cmdTree(ctx, args[0], args[1:], out, errOut), out, stderr)
 	case "version", "--version", "-version":
@@ -114,6 +116,8 @@ Usage:
   umb limits [--json]            the frame limit and how close traffic comes to it
   umb limits set --max-message SIZE
                                  raise or lower it for new connections, e.g. 8MiB
+  umb notify TITLE --source S [--body B] [--sound none|done|request]
+                                 show the user a notification (REQ-NTF-001)
   umb workspace create|list|focus|rename|close
   umb tab create|list|focus|rename|close
   umb pane split|list|get|focus|rename|close

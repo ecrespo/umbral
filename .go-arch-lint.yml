@@ -59,6 +59,9 @@ components:
   # The integration surface (T-F1-25): external state reports and `pane.state_changed`.
   integrations-service: { in: internal/integrations }
 
+  # The notification sink (T-F1-27): normalization, rate limit, typed reasons.
+  notify-service: { in: internal/notify }
+
   # The tree's integration tests wire the real store to the service, which is the job
   # Art. 3 reserves for a composition root — the same exception sessions-integration has.
   workspaces-integration: { in: internal/workspaces/integration }
@@ -123,6 +126,8 @@ components:
   integrations-domain:   { in: internal/integrations/domain }
   integrations-ports:    { in: internal/integrations/ports }
   integrations-adapters: { in: internal/integrations/adapters/** }
+  notify-domain:         { in: internal/notify/domain }
+  notify-ports:          { in: internal/notify/ports }
 deps:
   # --- domain: the standard library and other domains, nothing else -----------
   sessions-domain:
@@ -404,6 +409,8 @@ deps:
       - waits-domain
       - integrations-ports
       - integrations-domain
+      - notify-ports
+      - notify-domain
   client:
     anyVendorDeps: true
     mayDependOn:
@@ -503,6 +510,7 @@ deps:
       - mcp-service
       - waits-service
       - integrations-service
+      - notify-service
       - shellscripts
       - sessions-ports
       - sessions-adapters
@@ -515,6 +523,8 @@ deps:
       - waits-ports
       - integrations-ports
       - integrations-adapters
+      - notify-ports
+      - notify-domain
       - tools-ports
       - tools-adapters
       - context-ports
@@ -665,4 +675,25 @@ deps:
       - workspaces-adapters
       - sessions-domain
       - store
+      - bus
+
+  # --- the notification sink (Tech Design §5.2, T-F1-27) ------------------------
+  # `notify` -> `bus` and the standard library only; it is a sink and imports no other module.
+  # Its deliverer is the API server and its callers reach it through cmd, so nothing here
+  # names another module. The `bus` allowance is unused, as obs's is.
+  notify-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - bus
+
+  notify-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - notify-domain
+
+  notify-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - notify-ports
+      - notify-domain
       - bus

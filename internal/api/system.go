@@ -106,6 +106,11 @@ func (s *Server) registry() map[string]method {
 		m.capability = capabilityWaits
 		table[name] = m
 	}
+	for name, m := range notificationMethods() {
+		m.available = hasNotifications
+		m.capability = capabilityNotifications
+		table[name] = m
+	}
 	for name, m := range integrationMethods() {
 		m.available = hasIntegrations
 		m.capability = capabilityIntegrations
@@ -203,6 +208,10 @@ func handleHello(_ context.Context, c *conn, raw json.RawMessage) (any, error) {
 	c.limit.Store(limit)
 	c.authenticated = true
 	c.clientKind = kind
+	c.interactive.Store(isInteractive(kind))
+	if isInteractive(kind) {
+		go c.writePosted()
+	}
 	c.connectionID = store.NewID(store.PrefixConnection)
 
 	return helloResult{

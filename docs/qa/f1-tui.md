@@ -47,6 +47,7 @@ walked through.
 | 10 | Press esc in agent mode with an empty input | The panel closes, the pane widens again, and keys go to the shell. | |
 | 11 | Resize the window with the panel open | Panes and panel follow; the shell's `tput cols` agrees, and no row of the panel wraps or loses its last character. | |
 | 12 | Ask for a write, and with the approval pending quit the TUI (ctrl+q); start it again | The approval is still listed and the panel opens on it; ctrl+x answers it. | |
+| 13 | From another terminal run `umb notify "build done" --source qa --body "all green"`, then press a key in the TUI and run `umb pane report_state blocked --source qa-hook --agent claude --message "approve?"` against one of its panes | `umb` prints `shown` both times, and the status line shows `build done — all green`, then `claude needs you — approve?`. Run the first command six times within a minute: the sixth prints `not shown: rate_limited`. (delta `2026-10-notifications`) | |
 
 ## Known limits of this panel
 

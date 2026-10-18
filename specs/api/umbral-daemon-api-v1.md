@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.34 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.35 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -134,7 +134,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list`, `notification.show` |
 
 ### Handshake
 
@@ -160,8 +160,8 @@ before the daemon starts.
   when at least one of its methods is served by this build, and SHALL NOT advertise one whose
   methods are all unserved: a client that branches on the advertisement must not be sent down a path
   that cannot work. `approval.*` belongs to the agent, so it is advertised under `threads`. `thread.wait` and
-  `block.wait_output` are advertised under `waits`, and `pane.report_state` and
-  `pane.release_state` under `integrations`, which their prefixes would not give them: a
+  `block.wait_output` are advertised under `waits`, `pane.report_state` and
+  `pane.release_state` under `integrations`, and `notification.show` under `notifications`, which their prefixes would not give them: a
   method may name its own namespace.
 - **Registered is not the same as served.** Every method of the protocol stays in the table whether
   or not this build has the module behind it, which is what lets an unserved one answer
@@ -918,6 +918,25 @@ discarded. Neither closes the connection.
 **Params:** `{title, body?, source, sound?: "none"|"done"|"request"}`.
 **Result:** `{shown: bool, reason: "shown"|"disabled"|"rate_limited"|"no_client"}`.
 
+Delta `2026-10-notifications` (T-F1-27):
+
+- **Normalization.** Control and Unicode format characters are removed, whitespace runs collapse to one space, the ends are trimmed, and the title is cut at 80 characters and the body at 240, never refused.
+- **Validation.** These answer `VALIDATION_ERROR`, and nothing is counted against the source:
+  - a title that normalizes to nothing;
+  - a `source` outside §5.31's rule (1–80 characters of `[A-Za-z0-9:._-]`);
+  - a source with the reserved `umbral:` prefix;
+  - an unknown `sound`.
+  An absent `sound` is `none`. The daemon plays nothing; the sound is a hint for the client.
+- **Order of the checks.** `disabled` when `[notifications] enabled = false`, then `rate_limited`, then `no_client`, then `shown`. A request that reaches the rate check counts against its source whether or not a client receives it, since the limit is on what a source asks for. The window slides: at most 5 requests per source in any 60 s. A discarded request is never delivered later, and other sources are unaffected.
+- **The foreground client** is the authenticated interactive connection (`tui` or `desktop`) that last sent a request, whatever the request and whether or not it succeeded. Only it receives `notification.posted` (§6), so a user with two windows open is told once. A `cli` connection is never the foreground client. With no interactive connection the answer is `no_client`.
+- **Delivery never waits on the client.** Each interactive connection queues up to 16 notifications for its own writer. A foreground client whose queue is full has stopped reading and counts as absent: the answer is `no_client`. `shown` therefore means handed to the foreground connection, not seen by the user.
+- **Callers.** Every client kind may call it, under the `notifications` capability. A hook calls it as `umb notify TITLE --source S [--body B] [--sound …]`, which prints `shown` or `not shown: <reason>` and exits 0 either way. The daemon's own components use the same path, so the same normalization and limit apply to them.
+- **External `blocked` (decision 15 of `2026-10-integration-surface`).** A `pane.report_state` that makes a pane `blocked` raises a notification under the reporter's own `source`:
+  - title `<agent or source> needs you`;
+  - body the report's `message`, or `pane <id> is waiting for you`;
+  - sound `request`.
+  A report that leaves the pane as it was, or a stale one, raises none, and neither do `done`, `working` or `idle`. A pane already `blocked` that another source's newer `blocked` report now decides is a new request, and raises one under that source.
+
 ### 5.36 `policy.explain` — REQ-SEC-009
 **Params:** `{thread_id?, mode?, tool, risk, target, tainted?: false}`.
 **Result:**
@@ -1010,6 +1029,7 @@ Every client kind may call both (§2). The `limits` capability announces them.
 | `tab.created` / `.closed` / `.focused` | `Tab` | REQ-WS-001 |
 | `pane.created` / `.updated` / `.closed` / `.focused` | `Pane` — `.updated` also after a written `pane.report_metadata` (§5.32) | REQ-WS-003, REQ-INT-004 |
 | `pane.moved` | `{pane, previous_pane_id, previous_workspace_id, layout}` | REQ-WS-007 |
+| `notification.posted` | `{title, body, source, sound}` — the normalized notification, sent to the foreground client only, never broadcast (§5.35) | REQ-NTF-001 |
 | `pane.state_changed` | `{pane_id, attention_state, state_source}` — after a pane's effective state or its source changes (§4), once what decided it is written: a report or release, a block starting or ending, a session's integration verdict or exit, a thread's attention. A workspace whose rollup moved with it gets `workspace.updated` | REQ-INT-002 |
 | `layout.updated` | `Layout` | REQ-WS-004 |
 | `thread.attention_changed` | `{thread_id, attention_state}` — after every change written: a turn starts (`working`), asks for an approval (`blocked`), is answered (`working`), ends (`done`, or `idle` when viewed or cancelled), or a `done` thread is focused (`idle`). Not sent for the changes Data Model §6 makes at start, before any client connects | REQ-AGT-016 |
@@ -1199,3 +1219,4 @@ printf '%s\n' \
 | 1.32 | 2026-10-17 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-attention-focus` (T-F1-24): §5.23 adds `thread.focus` — views per connection, a viewed turn ends `idle`, reading is not viewing, interactive clients only; §5.3's `threads` and `focused.thread_id` are filled; §5.29 names `thread.focus`; §6 says when `thread.attention_changed` is sent; §7's attention diagram gains `done → working` and the cancel edges |
 | 1.33 | 2026-10-17 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-integration-surface` (T-F1-25): §4 `Pane` says who decides `attention_state` in DD-012's order and maps `umbral:shell` from the block lifecycle, and `thread_id` names the thread whose PTY the pane is; §5.31 gives the bounds, the reserved `umbral:` prefix, the `seq` rule with and without numbers, several sources, aliases, lifetime and the `{}` answer; §6 says when `pane.state_changed` is sent; §2 advertises both methods under `integrations` |
 | 1.34 | 2026-10-18 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-display-metadata` (T-F1-26): §5.32 gives `pane.report_metadata`'s key shapes, absent versus `null`, normalization, limits that refuse a report whole, the 24 h default expiry, the metadata `seq` and who may report; §4 `Pane` says what `metadata` holds; §6 sends `pane.updated` after a written metadata report |
+| 1.35 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-notifications` (T-F1-27): §5.35 gives `notification.show`'s normalization, validation, the order of its checks, the sliding per-source window, the foreground client and decision 15's `blocked` notification; §6 adds `notification.posted`, sent to the foreground client only; §2 advertises the method under `notifications` and adds it to the `cli` row |

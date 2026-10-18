@@ -116,6 +116,15 @@ type conn struct {
 	authenticated bool
 	clientKind    ClientKind
 	connectionID  string
+	// interactive and lastRequest choose the foreground client of `notification.show`
+	// (API Spec §5.35): an interactive connection's latest request takes a number from
+	// Server.activity. Both are atomic because the notify module reads them from whichever
+	// goroutine asked for the notification.
+	interactive atomic.Bool
+	lastRequest atomic.Uint64
+	// posted queues `notification.posted` for this connection's own writer, so a client
+	// that stops reading holds up neither the sink nor the source that asked.
+	posted chan postedNotification
 	// viewing says this connection called thread.focus, so its view is forgotten when it
 	// closes (REQ-AGT-016). It stays on the read goroutine.
 	viewing bool
@@ -226,6 +235,7 @@ func (s *Server) newConn(netConn net.Conn) *conn {
 		server:  s,
 		subs:    make(map[string]*subscription),
 		closed:  make(chan struct{}),
+		posted:  make(chan postedNotification, postedQueue),
 		netConn: netConn,
 		logger:  s.cfg.Logger,
 	}
@@ -383,6 +393,11 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 	if !c.authenticated && (!known || !m.beforeHello) {
 		return c.refuseBeforeHello(invalidRequestID(req.ID))
 	}
+	// Every request an interactive client sends after its handshake makes it the foreground
+	// client of `notification.show`, whether or not the method exists (API Spec §5.35).
+	if c.authenticated && c.interactive.Load() {
+		c.lastRequest.Store(c.server.activity.Add(1))
+	}
 	if !known || (c.authenticated && !m.allows(c.clientKind)) {
 		c.reply(req, nil, fmt.Errorf("%w: %s", ErrMethodNotFound, req.Method))
 		return false
@@ -398,6 +413,9 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 	}
 
 	result, err := m.handle(ctx, c, req.Params)
+	if c.interactive.Load() && req.Method == "system.hello" {
+		c.lastRequest.Store(c.server.activity.Add(1))
+	}
 	if later, ok := result.(deferred); ok && err == nil {
 		// A deferred handler schedules nothing for after its reply: the reply comes later.
 		c.afterReply = nil

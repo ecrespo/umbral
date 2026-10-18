@@ -29,6 +29,8 @@ type Config struct {
 	// Metadata is where display metadata goes (REQ-INT-004).
 	Metadata ports.MetadataStore
 	Panes    ports.Panes
+	// Notifier is told when an external report makes a pane `blocked`. Nil raises nothing.
+	Notifier ports.Notifier
 	Bus      *bus.Bus
 	Logger   *slog.Logger
 	Now      func() time.Time
@@ -82,15 +84,27 @@ func (s *Service) ReportState(ctx context.Context, report domain.Report) error {
 	if err := report.Validate(); err != nil {
 		return err
 	}
+	notice, err := s.reportState(ctx, report)
+	// The sink is called once the lock is released: a slow notification must not stall
+	// another hook's report (REQ-NTF-002).
+	if notice != nil {
+		s.cfg.Notifier.NotifyBlocked(ctx, *notice)
+	}
+	return err
+}
+
+// reportState writes and announces a report under the lock, and returns the notification it
+// raises, if any.
+func (s *Service) reportState(ctx context.Context, report domain.Report) (*ports.BlockedNotice, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	pane, err := s.cfg.Panes.GetPane(ctx, report.PaneID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if pane.ThreadID != "" {
-		return fmt.Errorf("%w: pane %s hosts thread %s of Umbral's own agent, which owns its state",
+		return nil, fmt.Errorf("%w: pane %s hosts thread %s of Umbral's own agent, which owns its state",
 			domain.ErrPermissionDenied, pane.ID, pane.ThreadID)
 	}
 	// An alias names the pane it was moved into (REQ-WS-007): a hook started before the move
@@ -98,10 +112,28 @@ func (s *Service) ReportState(ctx context.Context, report domain.Report) error {
 	report.PaneID = pane.ID
 	written, err := s.cfg.Store.Upsert(ctx, report, s.cfg.Now().UnixMilli())
 	if err != nil || !written {
-		return err
+		return nil, err
 	}
+	before := s.panes[pane.ID]
 	s.announce(ctx)
-	return nil
+	return s.blockedNotice(report, before), nil
+}
+
+// blockedNotice is decision 15's notification when this report is what made the pane
+// `blocked`: the pane's announced state or deciding source moved, and it now reads blocked
+// under this source. A report that left the pane as it was, or that another source's newer
+// report outranks, raises nothing.
+func (s *Service) blockedNotice(report domain.Report, before published) *ports.BlockedNotice {
+	if s.cfg.Notifier == nil || report.State != domain.StateBlocked {
+		return nil
+	}
+	after := s.panes[report.PaneID]
+	if after == before || after.state != wsdomain.AttentionBlocked || after.source != report.Source {
+		return nil
+	}
+	return &ports.BlockedNotice{
+		PaneID: report.PaneID, Source: report.Source, Agent: report.Agent, Message: report.Message,
+	}
 }
 
 // ReleaseState implements ports.Integrations.
