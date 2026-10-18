@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.21 |
+| **Version** | 1.22 |
 | **Date** | 2026-10-18 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -322,7 +322,7 @@ CREATE TABLE pane_history (
 Rows are written only while `[experimental] pane_history = true`. Turning the setting off deletes
 the table's contents at the next start.
 
-### 2.4e `rule_bundles` and `trust_keys` (migration 0005)
+### 2.4e `rule_bundles` and `trust_keys` (migration 0005), and the update state (migration 0006)
 
 **Purpose:** provenance of the redaction rules and destructive patterns, and the trust store used to
 verify them (REQ-SEC-011 to REQ-SEC-016). Private keys never live here: the store holds public keys
@@ -369,7 +369,60 @@ The trust store and the bundle history change in these ways (delta `2026-09-rule
   - The active row stays active if it survives. Otherwise the newest remaining `remote` row, or
     `builtin`, becomes active. A `local` row is never chosen.
   - The next newest remaining `remote` row is the previous bundle.
-  - The active row's `version` is the floor a new bundle must exceed.
+  - The floor a new bundle must exceed is the higher of the active row's `version` and
+    `rule_update_state.highest_version` (migration 0006), so a `rules.reset` does not reopen older
+    signed bundles. A revocation lowers `highest_version` to the highest surviving row's.
+
+Migration `0006_rule_state` adds what T-F1-30 needs to apply, reject and roll back bundles offline
+(delta `2026-10-signed-rule-bundles`). 0005 is applied and forward-only, so the bundle's bytes
+arrive by `ALTER TABLE`:
+
+```sql
+ALTER TABLE rule_bundles ADD COLUMN content BLOB;  -- the bundle's exact bytes; NULL only for builtin
+
+CREATE TABLE rule_rejections (
+  sha256  TEXT PRIMARY KEY CHECK (length(sha256) = 64),
+  reason  TEXT NOT NULL CHECK (reason IN ('unsigned','unknown_key','invalid_signature','invalid_bundle','downgrade','rolled_back','reset')),
+  version INTEGER,
+  at      INTEGER NOT NULL
+);
+
+CREATE TABLE rule_update_state (
+  id                    INTEGER PRIMARY KEY CHECK (id = 1),
+  consecutive_failures  INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+  fail_closed           INTEGER NOT NULL DEFAULT 0 CHECK (fail_closed IN (0,1)),
+  ever_had_valid_key    INTEGER NOT NULL DEFAULT 0 CHECK (ever_had_valid_key IN (0,1)),
+  highest_version       INTEGER NOT NULL DEFAULT 0 CHECK (highest_version >= 0),
+  last_rejection_reason TEXT,
+  last_rejection_at     INTEGER
+);
+INSERT INTO rule_update_state (id) VALUES (1);
+
+CREATE TABLE trust_key_events (
+  id          INTEGER PRIMARY KEY,
+  key_id      TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  action      TEXT NOT NULL CHECK (action IN ('seeded','seed_revoked','added','readded','unchanged','revoked')),
+  at          INTEGER NOT NULL
+);
+CREATE INDEX idx_trust_key_events_at ON trust_key_events(at);
+```
+
+- **`content`** is required for every `remote` row; a stored bundle is checked against its
+  `sha256` at start and a mismatch falls back to the built-in rules. The `builtin` row's `sha256`
+  is the digest of the built-in rules' canonical JSON, rewritten when they change.
+- **`rule_rejections`** holds a bundle never to retry: one rejected under REQ-SEC-013's reasons,
+  one `rules.rollback` left (`rolled_back`) or one `rules.reset` left (`reset`). `version` is the bundle's own only when its signature verified, and NULL otherwise: unverified bytes are never parsed. A rollback onto a
+  digest clears its row; revoking a key deletes the `downgrade` rows so a bundle refused only for
+  its version may be offered again.
+- **`rule_update_state`** counts consecutive rejections; the third sets `fail_closed`, a bundle
+  applied resets the count, and only a `rules.key.add` clears the latch (REQ-SEC-015). The trust
+  store ending up without a valid key sets it too, but only once `ever_had_valid_key` is 1, so a
+  fresh install with no key takes the first key a seed brings. `highest_version` is the highest
+  version ever applied; only a revocation lowers it.
+- **`trust_key_events`** records every trust-store change with its timestamp (REQ-SEC-014): a
+  seeded key, a seed revocation, an add, a re-add of a revoked key, an add of a key already valid
+  (`unchanged`) and a revocation. A rotation is `added` then `revoked`.
 - **Built-in rules:** the `builtin` row has version 0 and is rewritten when a binary carries
   different rules. Remote versions start at 1. A `remote` bundle without `verified_with` cannot exist: the DDL allows it, and the
 `store` layer rejects it.
@@ -572,7 +625,10 @@ of a model call, or the tool `fetch_url` for its requests (Art. 4; delta
 MCP server off this machine, whose payload is the request body, or its URL when it has none
 (delta `2026-10-mcp-client`), or `umbral-rules` for a rule-update request — the configured URL,
 its `.sig` and every redirect hop — whose payload is the request URL (delta
-`2026-10-rule-overrides`).
+`2026-10-rule-overrides`). A bundle rejected under REQ-SEC-013 writes one more row, `provider =
+'umbral-rules:rejected:<reason>'` with the URL's host, the bundle's size as `bytes` and its
+digest as `payload_sha256`, in the same transaction as its `rule_rejections` row (delta
+`2026-10-signed-rule-bundles`).
 
 ### 2.13 `mcp_servers`
 
@@ -674,6 +730,7 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 | `0003_structure.sql` | F0 | `workspaces`, `tabs`, `panes`, `pane_aliases` and their indexes (§2.4b) |
 | `0004_restore.sql` | F0 | `pane_history` (§2.4d), `panes.command_pending` and `workspaces.focused_tab_id`/`focused_at` (§2.4b) — everything a restart needs and nothing else (T-F0-18) |
 | `0005_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers`, `pane_state_reports`, `pane_metadata`, `trust_keys`, `rule_bundles`, `skills` and their indexes (§2.4c-2.4f, §2.6-2.13), plus the two `ALTER TABLE threads` statements of §2.5 |
+| `0006_rule_state.sql` | F1 | `rule_bundles.content`, `rule_rejections`, `rule_update_state` and its one row, `trust_key_events` and `idx_trust_key_events_at` (§2.4e) — the state signed rule bundles need (T-F1-30) |
 
 `threads` belongs to 0001 even though the agent arrives in F1: `sessions.owner_thread_id` and
 `blocks.thread_id` point at it, and with `foreign_keys=ON` SQLite rejects every insert into those
@@ -745,3 +802,4 @@ earlier drafts named.
 | 1.19 | 2026-10-17 | §2.4c: how `pane_state_reports` is written — `seq = -1` for unnumbered, strictly increasing `updated_at` per pane, rows renamed with a moved pane (delta `2026-10-integration-surface`, T-F1-25). No DDL change |
 | 1.20 | 2026-10-18 | §2.4c: how `pane_metadata` is written — the key names, the reserved `#seq` row, strictly increasing `updated_at`, expiry read and defaulted to 24 h, how the 32 is counted; §4: the age purge keeps `#seq` rows (delta `2026-10-display-metadata`, T-F1-26). No DDL change |
 | 1.21 | 2026-10-18 | §2.12: `umbral-rules` rows, one per rule-update request and redirect hop, whose payload is the request URL (delta `2026-10-rule-overrides`, T-F1-29). No DDL change |
+| 1.22 | 2026-10-18 | §2.4e: migration `0006_rule_state` — `rule_bundles.content`, `rule_rejections`, `rule_update_state` (with `highest_version`, the floor a reset keeps), `trust_key_events`; §2.12: the `umbral-rules:rejected:<reason>` row; §5: the 0006 row (delta `2026-10-signed-rule-bundles`, T-F1-30) |

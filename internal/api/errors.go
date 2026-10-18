@@ -163,6 +163,7 @@ var moduleErrors = []func(error) (int, string, bool){
 	integrationsDomainError,
 	notifyDomainError,
 	policyDomainError,
+	rulesDomainError,
 }
 
 // workspaceDomainError maps the workspace tree's sentinels onto the §5.4 table.

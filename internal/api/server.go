@@ -170,8 +170,11 @@ type Config struct {
 	// PolicyExplain is policy.explain (REQ-SEC-009). A nil value leaves it answering
 	// NOT_IMPLEMENTED.
 	PolicyExplain secports.Explainer
-	Bus           *bus.Bus
-	Logger        *slog.Logger
+	// Rules is rules.* (REQ-SEC-011, REQ-SEC-013 to REQ-SEC-016). A nil value leaves them
+	// answering NOT_IMPLEMENTED.
+	Rules  secports.RulesService
+	Bus    *bus.Bus
+	Logger *slog.Logger
 
 	// MaxMessageBytes is the frame limit a connection gets once it completes the handshake
 	// (`[api] max_message_bytes`, API Spec §1). Zero means config.DefaultMaxMessageBytes.

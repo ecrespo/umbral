@@ -231,6 +231,7 @@ var notificationShapes = map[string]any{
 	"approval.requested":       Approval{},
 	"mcp.server_state":         mcpServerStatePayload{},
 	"pane.state_changed":       paneStateChangedPayload{},
+	"rules.update_rejected":    ruleUpdateRejectedPayload{},
 	// Sent to the foreground client only, not broadcast (§5.35).
 	"notification.posted": notificationPostedPayload{},
 }

@@ -60,3 +60,19 @@ func TestRequestBuild_REQ_NTF_001(t *testing.T) {
 		}
 	}
 }
+
+// TestOwnSourcesNeedTheReservedPrefix_REQ_NTF_001: the daemon's own components notify under
+// `umbral:` and nothing else, while a client may never claim it (delta
+// `2026-10-signed-rule-bundles`).
+func TestOwnSourcesNeedTheReservedPrefix_REQ_NTF_001(t *testing.T) {
+	t.Parallel()
+	if _, err := (Request{Title: "t", Source: "umbral:rules"}).BuildOwn(); err != nil {
+		t.Errorf("an own source refused: %v", err)
+	}
+	if _, err := (Request{Title: "t", Source: "hook"}).BuildOwn(); err == nil {
+		t.Error("an own notification without the reserved prefix was built")
+	}
+	if _, err := (Request{Title: "t", Source: "umbral:rules"}).Build(); err == nil {
+		t.Error("a client claimed the reserved prefix")
+	}
+}

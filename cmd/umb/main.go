@@ -90,6 +90,8 @@ func runIO(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return finish(cmdNotify(ctx, args[1:], out, errOut), out, stderr)
 	case "policy":
 		return finish(cmdPolicy(ctx, args[1:], out, errOut), out, stderr)
+	case "rules":
+		return finish(cmdRules(ctx, args[1:], out, errOut), out, stderr)
 	case famWorkspace, famTab, famPane, famLayout:
 		return finish(cmdTree(ctx, args[0], args[1:], out, errOut), out, stderr)
 	case "version", "--version", "-version":
@@ -124,6 +126,10 @@ Usage:
                                  what the policy decides for an action, and why
                                  (REQ-SEC-009), e.g. --tool run_command --risk Exec -- rm -rf x;
                                  quote a command that needs shell quoting as one argument
+  umb rules status|rollback|reset
+  umb rules key list|add|remove|rotate
+                                 signed rule bundles and their trust store (REQ-SEC-014);
+                                 add and rotate need --confirm with the key's fingerprint
   umb workspace create|list|focus|rename|close
   umb tab create|list|focus|rename|close
   umb pane split|list|get|focus|rename|close

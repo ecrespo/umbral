@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
+	"github.com/ecrespo/umbral/internal/bus"
 	intports "github.com/ecrespo/umbral/internal/integrations/ports"
 	ntfdomain "github.com/ecrespo/umbral/internal/notify/domain"
 	ntfports "github.com/ecrespo/umbral/internal/notify/ports"
+	secports "github.com/ecrespo/umbral/internal/security/ports"
 )
 
 // blockedNotifier turns an external `blocked` into a user notification (delta
@@ -36,4 +39,38 @@ func (b blockedNotifier) NotifyBlocked(ctx context.Context, n intports.BlockedNo
 	}
 	b.logger.DebugContext(ctx, "blocked pane notified",
 		slog.String("pane_id", n.PaneID), slog.String("reason", string(res.Reason)))
+}
+
+// ownNotifier is the sink as the daemon's own components reach it.
+type ownNotifier interface {
+	ShowOwn(ctx context.Context, req ntfdomain.Request) (ntfdomain.Result, error)
+}
+
+// notifyRuleRejections turns each `rules.update_rejected` into a user notification under the
+// daemon's `umbral:rules` source (REQ-SEC-013's "notify the user"; delta
+// `2026-10-signed-rule-bundles`). The subscription is taken before the rule manager starts, so
+// a rejection at the first check is not lost while the sink is being built.
+func notifyRuleRejections(ctx context.Context, sub *bus.Subscription, sink ownNotifier, logger *slog.Logger) {
+	defer sub.Close()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev := <-sub.C():
+			e, ok := ev.(secports.RuleUpdateRejected)
+			if !ok {
+				continue
+			}
+			res, err := sink.ShowOwn(ctx, ntfdomain.Request{
+				Title:  "Rule update rejected",
+				Body:   fmt.Sprintf("A signed rule bundle was discarded (%s); the rules in force stay. See umb rules status.", e.Reason),
+				Source: "umbral:rules", Sound: ntfdomain.SoundRequest,
+			})
+			if err != nil {
+				logger.WarnContext(ctx, "a rule rejection could not be notified", slog.Any("error", err))
+				continue
+			}
+			logger.DebugContext(ctx, "rule rejection notified", slog.String("reason", string(res.Reason)))
+		}
+	}
 }
