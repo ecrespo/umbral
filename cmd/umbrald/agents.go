@@ -63,6 +63,7 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, *registry.Re
 		Metrics: d.metrics,
 		Tracer:  d.tracer,
 		Logger:  d.logger,
+		IsRepo:  isRepo,
 
 		MaxCostMicroUSD: d.maxCost,
 	})

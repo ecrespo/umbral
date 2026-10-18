@@ -41,3 +41,9 @@ An external `pane.report_state` raises a notification only when it makes the pan
 Delivery never waits on a client: the sink and `integrations` call out only after releasing their locks, and each interactive connection drains a small queue with its own writer ([[internal/api/notifications.go#conn#writePosted]]). A TUI that stops reading costs a `no_client` answer instead of stalling every other source.
 
 A hook raises one with `umb notify` ([[cmd/umb/notify.go#cmdNotify]]), which exits 0 even when the notification was not shown: `rate_limited` or `no_client` is an answer about the user, not a failure of the hook.
+
+## Explaining a decision uses the turn's engine
+
+[[internal/security/explain.go#Explainer#Explain]] answers `policy.explain` by calling the same `Decide` a turn calls, with the thread's mode, rules and write root (delta `2026-10-policy-explain`).
+
+A second implementation could drift from the real policy and explain decisions the daemon never makes. For the same reason the explainer refuses a risk the registered tool does not declare, shapes a file target with the built-ins' own [[internal/tools/adapters/builtin/builtin.go#PolicyPath]], and shares one [[cmd/umbrald/policy.go#isRepo]] with the runtime.

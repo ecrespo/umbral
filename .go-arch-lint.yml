@@ -62,6 +62,10 @@ components:
   # The notification sink (T-F1-27): normalization, rate limit, typed reasons.
   notify-service: { in: internal/notify }
 
+  # policy.explain (T-F1-28): it gathers a thread's mode, write root and rules through a
+  # port of its own and asks the pure engine, so it belongs in neither domain nor adapters.
+  security-service: { in: internal/security }
+
   # The tree's integration tests wire the real store to the service, which is the job
   # Art. 3 reserves for a composition root — the same exception sessions-integration has.
   workspaces-integration: { in: internal/workspaces/integration }
@@ -409,6 +413,8 @@ deps:
       - waits-domain
       - integrations-ports
       - integrations-domain
+      # policy.explain (T-F1-28).
+      - security-ports
       - notify-ports
       - notify-domain
   client:
@@ -511,6 +517,7 @@ deps:
       - waits-service
       - integrations-service
       - notify-service
+      - security-service
       - shellscripts
       - sessions-ports
       - sessions-adapters
@@ -697,3 +704,8 @@ deps:
       - notify-ports
       - notify-domain
       - bus
+  security-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - security-ports
+      - security-domain

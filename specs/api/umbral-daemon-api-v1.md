@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.35 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.36 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -134,7 +134,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list`, `notification.show` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list`, `notification.show`, `policy.explain` |
 
 ### Handshake
 
@@ -943,14 +943,43 @@ Delta `2026-10-notifications` (T-F1-27):
 ```json
 {"decision":"ask",
  "deciding_rule":"destructive_pattern",
- "trace":[{"step":"destructive_pattern","matched":true,"detail":"rm -rf"},
-          {"step":"deny_rules","matched":false},
-          {"step":"taint","matched":false},
-          {"step":"mode","mode":"auto-edit","matched":false},
-          {"step":"allow_rules","matched":false,"note":"an allow rule exists but is overridden"},
-          {"step":"mode_default","decision":"ask"}]}
+ "reason":"destructive",
+ "allow_always":false,
+ "trace":[{"step":"exposure","matched":false,"decided":false},
+          {"step":"destructive_pattern","matched":true,"decided":true,"detail":"rm_recursive"},
+          {"step":"deny_rules","matched":false,"decided":false},
+          {"step":"taint","matched":false,"decided":false},
+          {"step":"mode","matched":false,"decided":false,"detail":"normal"},
+          {"step":"allow_rules","matched":true,"decided":false,"detail":"run_command rm *","note":"overridden by destructive_pattern"},
+          {"step":"mode_default","matched":true,"decided":false,"detail":"normal"}]}
 ```
-It is a read-only evaluation: it neither runs the tool nor creates approvals.
+It is a read-only evaluation: it neither runs the tool nor creates approvals, and it writes nothing.
+
+Delta `2026-10-policy-explain` (T-F1-28):
+
+- **What it evaluates with.** The engine a turn decides with, and the same destructive patterns.
+  - A `thread_id` lends the thread's mode, the write root found from its directory, and its own rules with the global ones.
+  - A `mode` overrides the thread's, to ask "what if".
+  - Without a thread only the global rules apply and there is no write root, so `auto-edit` cannot allow a write.
+- **What it refuses.** These are `VALIDATION_ERROR`:
+  - a request with neither `thread_id` nor `mode`;
+  - a `mode` other than `ask`, `normal` and `auto-edit`;
+  - a `risk` other than `ReadOnly`, `WriteFS`, `Exec` and `Network`;
+  - a `tool` that is empty or longer than 128 characters;
+  - a `risk` other than the one a registered tool declares, since no turn could form that action.
+
+  An unknown thread is `NOT_FOUND`. A tool that is not registered, such as one of an MCP server not connected yet, is evaluated with the `risk` given. `target` may be empty.
+- **The target is shaped as a turn shapes it.**
+  - For `ReadOnly` and `WriteFS`, the file tools' risks, the target is a path. It is made absolute against the thread's directory and its symlinks are resolved, as the built-in tools do, so a rule on the real path matches a relative target.
+  - Without a thread, a relative path stays as given.
+  - For `Exec` and `Network` the target is the command line or the URL, as given.
+  - `tainted` is the caller's: the thread's current taint belongs to a running turn, not to the thread.
+- **The trace.**
+  - It has seven entries in DD-006's order, preceded by `exposure` (delta `2026-09-policy-precedence`). Every entry is evaluated, and exactly one is `decided`.
+  - `detail` names what matched: the destructive pattern, the rule as `tool pattern`, or the mode.
+  - A step that matched and did not decide carries `note: "overridden by <step>"`. `mode_default` always matches.
+  - `reason` is absent for an allow. `allow_always: false` means an approval of this action is never remembered as `always`, which is the case for a destructive command.
+- **Callers.** Every client kind may call it, under `policy_explain`. On the CLI it is `umb policy explain --tool T --risk R (--mode M | --thread ID) [--tainted] [--] TARGET…`. The positionals are joined into the target with single spaces, and after `--` they may look like flags. A command that relies on shell quoting is passed as one quoted argument.
 
 ### 5.37 `api.schema` — REQ-API-004
 **Params:** `{}`. **Result:** `{schema}` — the protocol document built into the binary. Exposed on
@@ -1220,3 +1249,4 @@ printf '%s\n' \
 | 1.33 | 2026-10-17 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-integration-surface` (T-F1-25): §4 `Pane` says who decides `attention_state` in DD-012's order and maps `umbral:shell` from the block lifecycle, and `thread_id` names the thread whose PTY the pane is; §5.31 gives the bounds, the reserved `umbral:` prefix, the `seq` rule with and without numbers, several sources, aliases, lifetime and the `{}` answer; §6 says when `pane.state_changed` is sent; §2 advertises both methods under `integrations` |
 | 1.34 | 2026-10-18 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-display-metadata` (T-F1-26): §5.32 gives `pane.report_metadata`'s key shapes, absent versus `null`, normalization, limits that refuse a report whole, the 24 h default expiry, the metadata `seq` and who may report; §4 `Pane` says what `metadata` holds; §6 sends `pane.updated` after a written metadata report |
 | 1.35 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-notifications` (T-F1-27): §5.35 gives `notification.show`'s normalization, validation, the order of its checks, the sliding per-source window, the foreground client and decision 15's `blocked` notification; §6 adds `notification.posted`, sent to the foreground client only; §2 advertises the method under `notifications` and adds it to the `cli` row |
+| 1.36 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-policy-explain` (T-F1-28): §5.36's example matches the trace the daemon returns (`decided`, `detail`, `note`, `reason`, `allow_always`, the `exposure` step), and the section says what a thread lends, what is refused (a risk the registered tool does not declare among it), how the target is shaped as a turn shapes it, and who may call; §2's `cli` row gains `policy.explain` |

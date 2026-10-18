@@ -68,6 +68,10 @@ func realPath(p string) string {
 // target is a call's path as the policy sees it: absolute and with its links resolved.
 func target(env domain.Env, p string) string { return realPath(resolve(env, p)) }
 
+// PolicyPath is target for a directory rather than a call, so policy.explain hands the rules
+// the path a turn would (delta `2026-10-policy-explain`).
+func PolicyPath(cwd, p string) string { return target(domain.Env{Cwd: cwd}, p) }
+
 // decode reads a tool's input into its struct. The registry has already checked it against
 // the schema, so an error here is a bug, reported as invalid input all the same.
 func decode(input json.RawMessage, into any) error {
