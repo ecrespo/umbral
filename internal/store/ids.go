@@ -21,6 +21,7 @@ const (
 	PrefixConnection = "con"
 	PrefixTrustKey   = "key"
 	PrefixWait       = "wt"
+	PrefixSkill      = "skl"
 )
 
 // NewID returns a type-prefixed ULID such as "blk_01J9Z3K8T2QH6W4V5X7Y8Z9A0B".

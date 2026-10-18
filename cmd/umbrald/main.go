@@ -450,6 +450,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitCantCreate
 	}
 
+	// The skill store (T-F1-34), its leftovers settled before anyone can install.
+	skillStore, err := newSkills(ctx, db, eventBus, logger)
+	if err != nil {
+		logger.Error("cannot build the skill store", slog.Any("error", err))
+		return exitCantCreate
+	}
+
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
 		TokenPath:     tokenPath,
@@ -467,6 +474,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Notifications: notifications,
 		PolicyExplain: explainer,
 		Rules:         ruleManager,
+		Skills:        skillStore,
 		Bus:           eventBus,
 		Logger:        logger,
 		// The first live setting: `limits.set` rewrites it in this file and applies it to
