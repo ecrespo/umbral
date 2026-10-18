@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -49,6 +50,8 @@ type harness struct {
 	store    *store.Store
 	events   *bus.Subscription
 	notifier *recordingNotifier
+	// limited counts the reports discarded for their source's rate.
+	limited *atomic.Int64
 }
 
 // recordingNotifier keeps every blocked notification the service raised.
@@ -119,13 +122,15 @@ func newHarnessAt(t *testing.T, now func() time.Time) *harness {
 		t.Fatalf("reportstore.New: %v", err)
 	}
 	notifier := &recordingNotifier{}
+	limited := &atomic.Int64{}
 	service, err := integrations.New(integrations.Config{
 		Store: reports, Metadata: reports, Panes: tree, Bus: eventBus, Now: now, Notifier: notifier,
+		RateLimited: func() { limited.Add(1) },
 	})
 	if err != nil {
 		t.Fatalf("integrations.New: %v", err)
 	}
-	return &harness{Service: service, tree: tree, store: db, events: events, notifier: notifier}
+	return &harness{Service: service, tree: tree, store: db, events: events, notifier: notifier, limited: limited}
 }
 
 // newPane creates a workspace whose root pane runs a shell that spoke OSC 133, so Umbral's

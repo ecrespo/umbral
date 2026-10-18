@@ -48,7 +48,25 @@ type Settings struct {
 	// RulesURL is `[update] rules_url`, where bundles come from; the signature is the same
 	// URL plus `.sig`. DefaultRulesURL unless the file says otherwise.
 	RulesURL string
+	// Stall is `[waits]`: how long a running turn may go without activity before it is
+	// marked stalled (REQ-AUT-008). Read at start.
+	Stall Stall
 }
+
+// Stall is the stall windows, in seconds (delta `2026-10-wait-monitoring`, decision 8).
+type Stall struct {
+	LocalS  int // `stall_local_s`: a turn whose model has a local candidate
+	RemoteS int // `stall_remote_s`: every other turn
+}
+
+// DefaultStall is Tech Design §4's defaults.
+func DefaultStall() Stall { return Stall{LocalS: 120, RemoteS: 30} }
+
+// The bounds of a stall window, in seconds.
+const (
+	MinStallSeconds = 5
+	MaxStallSeconds = 3600
+)
 
 // DefaultRulesURL is Tech Design §4's default: the project's latest release asset.
 const DefaultRulesURL = "https://github.com/ecrespo/umbral/releases/latest/download/rules.json"
@@ -116,7 +134,7 @@ func SettingsPath() (string, error) {
 func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 	settings := Settings{
 		MaxMessageBytes: DefaultMaxMessageBytes, Retention: DefaultRetention(), NotificationsEnabled: true,
-		RulesURL: DefaultRulesURL,
+		RulesURL: DefaultRulesURL, Stall: DefaultStall(),
 	}
 
 	raw, err := os.ReadFile(path) // #nosec G304 -- the path is the daemon's own config location
@@ -191,6 +209,17 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 				settings.Retention.ClosedStructureDays = days
 			default:
 				settings.Retention.AuditDays = days
+			}
+		case "waits.stall_local_s", "waits.stall_remote_s":
+			secs, err := strconv.Atoi(value)
+			if err != nil || secs < MinStallSeconds || secs > MaxStallSeconds {
+				return Settings{}, fmt.Errorf("%w: %s: %s is %q, want whole seconds from %d to %d",
+					ErrSettingsInvalid, path, key, value, MinStallSeconds, MaxStallSeconds)
+			}
+			if key == "waits.stall_local_s" {
+				settings.Stall.LocalS = secs
+			} else {
+				settings.Stall.RemoteS = secs
 			}
 		case apiSection + "." + maxMessageKey:
 			n, err := parseMaxMessageBytes(value)

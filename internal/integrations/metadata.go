@@ -27,10 +27,14 @@ func (s *Service) ReportMetadata(ctx context.Context, fields domain.MetadataFiel
 	}
 	// No own-agent check: REQ-INT-006 leaves an agent's pane open to display metadata.
 	report.PaneID = pane.ID
+	if s.overRate(report.Source) {
+		return nil
+	}
 	written, err := s.cfg.Metadata.WriteMetadata(ctx, report, s.cfg.Now().UnixMilli())
 	if err != nil || !written {
 		return err
 	}
+	s.kept(report.Source)
 	// Written, so the answer is `{}` whatever happens next; the next read shows it.
 	updated, err := s.cfg.Panes.GetPane(ctx, pane.ID)
 	if err != nil {

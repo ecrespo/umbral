@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,7 +40,9 @@ type Config struct {
 	Terminal ports.Terminal
 	// Backstop overrides DefaultBackstop; tests shorten it.
 	Backstop time.Duration
-	Now      func() time.Time
+	// NewID makes a wait's id (`wt_` + ULID); nil numbers them.
+	NewID func() string
+	Now   func() time.Time
 }
 
 // Service is the wait engine.
@@ -47,19 +50,106 @@ type Service struct {
 	cfg Config
 	// active counts the waits open now: umbral_waits_active (REQ-OBS-004).
 	active atomic.Int64
+
+	// mu guards the registry: every open wait by id, and how many each connection holds
+	// (REQ-AUT-005, REQ-AUT-006).
+	mu     sync.Mutex
+	open   map[string]*entry
+	perCon map[string]int
+	seq    int64
+}
+
+// entry is one registered wait. cancelled is closed by wait.cancel.
+type entry struct {
+	info      domain.Info
+	cancelled chan struct{}
+	once      sync.Once
+}
+
+// admit registers a wait for connID unless the connection already holds MaxPerConnection,
+// before anything is subscribed or read (delta `2026-10-wait-monitoring`, decision 2).
+func (s *Service) admit(connID string, info domain.Info) (*entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.perCon[connID] >= domain.MaxPerConnection {
+		return nil, domain.ErrLimit
+	}
+	if s.cfg.NewID != nil {
+		info.ID = s.cfg.NewID()
+	} else {
+		s.seq++
+		info.ID = fmt.Sprintf("wt_%026d", s.seq)
+	}
+	info.ConnectionID, info.StartedAt = connID, s.cfg.Now()
+	e := &entry{info: info, cancelled: make(chan struct{})}
+	s.open[info.ID] = e
+	s.perCon[connID]++
+	return e, nil
+}
+
+func (s *Service) release(e *entry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.open[e.info.ID]; !ok {
+		return
+	}
+	delete(s.open, e.info.ID)
+	if s.perCon[e.info.ConnectionID]--; s.perCon[e.info.ConnectionID] <= 0 {
+		delete(s.perCon, e.info.ConnectionID)
+	}
+}
+
+// List implements ports.Waits.
+func (s *Service) List() []domain.Info {
+	s.mu.Lock()
+	items := make([]domain.Info, 0, len(s.open))
+	for _, e := range s.open {
+		items = append(items, e.info)
+	}
+	s.mu.Unlock()
+	now := s.cfg.Now()
+	slices.SortFunc(items, func(a, b domain.Info) int {
+		if c := a.StartedAt.Compare(b.StartedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	for i := range items {
+		items[i].AgeMS = now.Sub(items[i].StartedAt).Milliseconds()
+		if items[i].ThreadID != "" && s.cfg.Threads != nil {
+			items[i].Stalled = s.cfg.Threads.Stalled(items[i].ThreadID)
+		}
+	}
+	return items
+}
+
+// Cancel implements ports.Waits. It touches nothing the wait observes (REQ-AUT-007).
+func (s *Service) Cancel(waitID string) error {
+	s.mu.Lock()
+	e, ok := s.open[waitID]
+	s.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("%w: %s", domain.ErrNotFound, waitID)
+	}
+	// Out of the registry at once: a second cancel, or a list, no longer sees a wait that
+	// is only waiting to answer CANCELLED. release then finds nothing to remove.
+	s.release(e)
+	e.once.Do(func() { close(e.cancelled) })
+	return nil
 }
 
 // Active is how many waits are open now (REQ-OBS-004).
 func (s *Service) Active() int64 { return s.active.Load() }
 
-// opened counts a wait from its subscription on, and returns its Close: the subscription's
-// and the count's, once however often it is called.
-func (s *Service) opened(sub *bus.Subscription) func() {
+// opened counts a wait from its subscription on, and returns its Close: the subscription's,
+// the count's and the registry's, once however often it is called.
+func (s *Service) opened(sub *bus.Subscription, e *entry) func() {
 	s.active.Add(1)
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			sub.Close()
+			s.release(e)
 			s.active.Add(-1)
 		})
 	}
@@ -76,14 +166,14 @@ func New(cfg Config) (*Service, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Service{cfg: cfg}, nil
+	return &Service{cfg: cfg, open: map[string]*entry{}, perCon: map[string]int{}}, nil
 }
 
 var _ ports.Waits = (*Service)(nil)
 
 // Thread starts a thread wait: it validates, then subscribes before anything is read, so an
 // event published between the caller's pin and its wait is not lost.
-func (s *Service) Thread(_ context.Context, threadID string, until []string, timeoutMS int64) (ports.ThreadWait, error) {
+func (s *Service) Thread(_ context.Context, connID, threadID string, until []string, timeoutMS int64) (ports.ThreadWait, error) {
 	targets, err := domain.ParseTargets(until)
 	if err != nil {
 		return nil, err
@@ -95,12 +185,16 @@ func (s *Service) Thread(_ context.Context, threadID string, until []string, tim
 	if s.cfg.Threads == nil {
 		return nil, errors.New("waits: the agent runtime is not wired in")
 	}
+	e, err := s.admit(connID, domain.Info{ThreadID: threadID, Until: slices.Clone(until)})
+	if err != nil {
+		return nil, err
+	}
 	w := &threadWait{
-		s: s, threadID: threadID, targets: targets, timeout: timeout, start: s.cfg.Now(),
+		s: s, threadID: threadID, targets: targets, timeout: timeout, start: s.cfg.Now(), cancelled: e.cancelled,
 		sub: s.cfg.Bus.Subscribe(agentsports.KindThreadTurnFinished, agentsports.KindApprovalRequested,
 			agentsports.KindAttentionChanged),
 	}
-	w.close = s.opened(w.sub)
+	w.close = s.opened(w.sub, e)
 	return w, nil
 }
 
@@ -113,6 +207,8 @@ type threadWait struct {
 	start    time.Time
 	sub      *bus.Subscription
 	tracker  *domain.Tracker
+	// cancelled is closed by wait.cancel.
+	cancelled <-chan struct{}
 	// first is the reading PinCurrent took, evaluated first by Wait.
 	first *domain.Observed
 }
@@ -197,6 +293,8 @@ func (w *threadWait) Wait(ctx context.Context) (ports.ThreadResult, error) {
 		select {
 		case <-ctx.Done():
 			return ports.ThreadResult{}, ctx.Err()
+		case <-w.cancelled:
+			return ports.ThreadResult{}, domain.ErrCancelled
 		case <-deadline.C:
 			last := w.tracker.Last()
 			if last == "" && w.tracker.Replaced() {
@@ -287,7 +385,7 @@ func (w *threadWait) event(ev bus.Event, read func() (domain.Observed, error)) (
 // Output starts block.wait_output. It subscribes before it reads the screen, and the screen
 // comes with the sequence number it is current as of, so the output after it is followed
 // without a gap and without reading anything twice.
-func (s *Service) Output(ctx context.Context, p domain.OutputParams) (ports.OutputWait, error) {
+func (s *Service) Output(ctx context.Context, connID string, p domain.OutputParams) (ports.OutputWait, error) {
 	p, err := p.Validate()
 	if err != nil {
 		return nil, err
@@ -300,19 +398,24 @@ func (s *Service) Output(ctx context.Context, p domain.OutputParams) (ports.Outp
 		return nil, errors.New("waits: the sessions module is not wired in")
 	}
 	timeout, _ := domain.ParseTimeout(p.TimeoutMS)
-	w := &outputWait{s: s, matcher: matcher, timeout: timeout, start: s.cfg.Now(), sessionID: p.SessionID}
+	e, err := s.admit(connID, domain.Info{BlockID: p.BlockID, SessionID: p.SessionID, Regex: p.Regex, Until: []string{}})
+	if err != nil {
+		return nil, err
+	}
+	w := &outputWait{s: s, matcher: matcher, timeout: timeout, start: s.cfg.Now(), sessionID: p.SessionID, cancelled: e.cancelled}
 
 	var block sessdomain.Block
 	if p.BlockID != "" {
 		block, err = s.cfg.Terminal.Block(ctx, p.BlockID)
 		if err != nil {
+			s.release(e)
 			return nil, err
 		}
 		w.sessionID, w.blockID, w.pinnedBlock = block.SessionID, block.ID, true
 	}
 	w.sub = s.cfg.Bus.SubscribeBuffered(outputBuffer,
 		sessports.KindSessionOutput, sessports.KindBlockStarted, sessports.KindBlockClosed, sessports.KindSessionExited)
-	w.close = s.opened(w.sub)
+	w.close = s.opened(w.sub, e)
 
 	if w.pinnedBlock && !block.Open() {
 		// A closed block is its own output; nothing more will be written to it.
@@ -362,6 +465,8 @@ type outputWait struct {
 	lines       int
 	following   bool
 	feed        domain.Feed
+	// cancelled is closed by wait.cancel.
+	cancelled <-chan struct{}
 }
 
 func (w *outputWait) Close() { w.close() }
@@ -402,6 +507,8 @@ func (w *outputWait) Wait(ctx context.Context) (ports.OutputResult, error) {
 		select {
 		case <-ctx.Done():
 			return ports.OutputResult{}, ctx.Err()
+		case <-w.cancelled:
+			return ports.OutputResult{}, domain.ErrCancelled
 		case <-deadline.C:
 			return ports.OutputResult{}, &domain.TimeoutError{LastState: w.matcher.Last(), Waited: w.s.cfg.Now().Sub(w.start)}
 		case ev := <-w.sub.C():

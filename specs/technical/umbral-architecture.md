@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.47 |
+| **Version** | 1.48 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -524,6 +524,28 @@ people leave running for days.
   provider that stops answering. Exceeding a limit degrades that operation, never the connection.
 - **Consequence:** `stalled` is informational. Umbral notifies and offers the choice; it never kills
   a turn on its own, because a local model can legitimately take minutes.
+- **How (delta `2026-10-wait-monitoring`, T-F1-31):**
+  - **The inventory.** `internal/waits` registers every wait — `thread.wait`, `thread.send`'s
+    `wait` and `block.wait_output` — under a `wt_` id and the connection holding it, before it
+    subscribes. The 32-per-connection limit is checked there, over every kind, so a leak is
+    refused with `VALIDATION_ERROR` before it costs a subscription, and the connection stays.
+    `wait.cancel` ends the wait with `CANCELLED` and touches nothing it observed.
+  - **Stall detection lives in the agent runtime,** which already sees every event of its turns:
+    `publish` updates a running turn's activity clock before the event reaches the bus, so the
+    bus's backpressure can lose no activity. A ticker marks a turn idle for its window stalled,
+    publishes `thread.stalled` once and counts `umbral_waits_stalled_total`; the next activity
+    clears the mark silently. A turn awaiting an approval waits for the user and never stalls.
+  - **Output counts as activity.** `sessions` and `agents` may not import each other, so
+    `cmd/umbrald` follows `block.started` (a block carrying a `thread_id` ties its session to
+    that thread) and `session.output` on two subscriptions, so an output flood cannot push out
+    the ownership, and calls the runtime's `NoteOutput`.
+  - **The window** is `[waits] stall_local_s` when any candidate of the thread's model or class
+    is a local provider (`Router.Local`), and `stall_remote_s` otherwise.
+  - **The report rate** lives in `integrations`: a sliding one-second window per source, 10
+    kept reports, shared by `pane.report_state` and `pane.report_metadata`, checked after
+    validation and the pane's resolution, and counting only reports that were written. A discarded report answers as a kept one would, writes nothing and counts
+    `umbral_reports_rate_limited_total`; it does not use up the window. `release_state` is not
+    limited.
 
 ## 5. Patterns and Conventions
 
@@ -597,6 +619,11 @@ not have (REQ-SEC-012).
 `plain_output_days` (180), `closed_structure_days` (30) and `audit_days` (365). A value out of
 range stops the daemon naming the key. Not live: a change needs a restart (delta
 `2026-10-retention`).
+
+`[waits]` sets REQ-AUT-008's stall windows in whole seconds, 5 to 3600: `stall_local_s` (120)
+for a turn whose model or class has a local candidate, `stall_remote_s` (30) for every other.
+A value out of range stops the daemon naming the key. Not live: a change needs a restart
+(delta `2026-10-wait-monitoring`).
 
 `[otel] endpoint` (unset by default) exports traces and metrics over OTLP/HTTP (REQ-OBS-003).
 - **Local only.** It must be an `http://` or `https://` base URL, with no path, query,
@@ -1054,8 +1081,8 @@ Never prompt contents or output (only sizes and hashes).
 | `umbral_approvals_total` | Counter per decision/reason | approvals. **Not exported yet**, for the same reason as the latency |
 | `umbral_frames_refused_total` | Counter per `direction` (`in`/`out`) | frames over the frame limit (REQ-OBS-005): inbound ones that closed their connection, outbound ones replaced by `RESULT_TOO_LARGE` or `limits.notification_dropped`; `system.status` and `limits.get` carry the same counts under `frames` |
 | `umbral_waits_active` | Gauge | REQ-OBS-004: the waits open now, read from the wait engine |
-| `umbral_waits_stalled_total` | Counter | REQ-OBS-004: turns marked stalled (REQ-AUT-008); counted from T-F1-31 |
-| `umbral_reports_rate_limited_total` | Counter | REQ-OBS-004: reports discarded for their source's rate (REQ-AUT-005); counted from T-F1-31 |
+| `umbral_waits_stalled_total` | Counter | REQ-OBS-004: turns marked stalled (REQ-AUT-008), once per stall |
+| `umbral_reports_rate_limited_total` | Counter | REQ-OBS-004: reports discarded for their source's rate (REQ-AUT-005), state and metadata together |
 | `umbral_rule_updates_rejected_total` | Counter per `reason` | REQ-OBS-004: rule bundles discarded (REQ-SEC-013); counted from T-F1-30 |
 
 **How metrics are exposed.**
@@ -1197,7 +1224,7 @@ enforces both rules, with `mustCases` pinned to the 20 MUST rows above.
 
 ### 9.4 The `umb` surface
 
-Commands: `umb status`, `umb block last`, `umb ai`, `umb api schema`, `umb limits`, `umb notify` (API Spec §5.35), `umb policy explain` (API Spec §5.36), `umb rules` (API Spec §5.34: `status`, `key list|add|remove|rotate`, `rollback`, `reset`), `umb version`,
+Commands: `umb status`, `umb block last`, `umb ai`, `umb api schema`, `umb limits`, `umb notify` (API Spec §5.35), `umb policy explain` (API Spec §5.36), `umb rules` (API Spec §5.34: `status`, `key list|add|remove|rotate`, `rollback`, `reset`), `umb wait ls` and `umb wait cancel WAIT_ID` (API Spec §5.33), `umb version`,
 `umb help`, and the workspace tree below. Flags shared by every command: `--socket PATH` (default: the runtime
 directory of API Spec §2), `--daemon-path PATH` (default: `PATH`, then the directory holding
 `umb`), `--no-autostart`, and `--json`, which every command but `umb ai` takes.
@@ -1416,3 +1443,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.45 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-policy-explain` (T-F1-28): §5.2 gains a `security` row for policy.explain's root, which reads threads and rules through its own port; §9.4 lists `umb policy explain` |
 | 1.46 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-rule-overrides` (T-F1-29): DD-016 gives the rules' JSON shape, a bundle replacing the built-ins and local files layered by name on top; §4 says when rules are fetched, that each redirect hop is recorded and that a `rules_url` carrying a secret stops the daemon; the trust seed moves under `internal/security/adapters/rules/` |
 | 1.47 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-signed-rule-bundles` (T-F1-30): DD-016 states how a bundle is verified, applied, rejected and never retried, the fail-closed latch, rollback and reset, the trust-key history and `tools/rulesign`; §5.2's `security` row gains the `Rules` manager and its imports; §9.4 lists `umb rules`. The floor is the higher of the active and the highest applied version, so a reset reopens no older bundle; a rejection also notifies the user under `umbral:rules` |
+| 1.48 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-wait-monitoring` (T-F1-31): DD-017 says where the wait inventory, the limit, stall detection, the output bridge and the report rate live; §5.1 adds `[waits]`; §9.4 lists `umb wait` |

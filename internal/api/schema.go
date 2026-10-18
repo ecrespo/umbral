@@ -228,6 +228,7 @@ var notificationShapes = map[string]any{
 	"thread.turn_finished":     turnFinishedPayload{},
 	"context.compacted":        contextCompactedPayload{},
 	"thread.attention_changed": attentionChangedPayload{},
+	"thread.stalled":           threadStalledPayload{},
 	"approval.requested":       Approval{},
 	"mcp.server_state":         mcpServerStatePayload{},
 	"pane.state_changed":       paneStateChangedPayload{},

@@ -20,6 +20,7 @@ const (
 	PrefixMcpServer  = "mcp"
 	PrefixConnection = "con"
 	PrefixTrustKey   = "key"
+	PrefixWait       = "wt"
 )
 
 // NewID returns a type-prefixed ULID such as "blk_01J9Z3K8T2QH6W4V5X7Y8Z9A0B".

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.37 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.38 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -134,7 +134,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list`, `notification.show`, `policy.explain`, `rules.*` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel` |
 
 ### Handshake
 
@@ -180,7 +180,7 @@ before the daemon starts.
 ## 3. General Conventions
 
 ### Identifiers
-- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`, `trn_` for a turn (`turn_id`, T-F1-13), and `key_` for a trust key — fixed by the binary's trust seed for the project's keys, so every install shows the same id, and minted at `rules.key.add` otherwise
+- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`, `trn_` for a turn (`turn_id`, T-F1-13), `wt_` for a wait (`wait_id`, T-F1-31), and `key_` for a trust key — fixed by the binary's trust seed for the project's keys, so every install shows the same id, and minted at `rules.key.add` otherwise
   (Constitution Art. 6). Example: `blk_01J9Z3K8T2QH6W4V5X7Y8Z9A0B`.
 - **Structural identifiers** are the documented exception to that rule (Art. 6, amendment of
   2026-09-20): a workspace is `w<n>`, a tab `w<n>:t<m>` and a pane `w<n>:p<m>`, with `n` and `m`
@@ -362,6 +362,7 @@ method and the ordering that produced it, so one handed to a different method is
 - `mode`: `ask` | `normal` | `auto-edit`
 - `state`: `idle` | `running` | `awaiting_approval` | `stopped`
 - `attention_state`: `blocked` | `working` | `done` | `idle` | `unknown` — what the sidebar rolls up and what waits observe. `done` is a finished turn no client has viewed yet (REQ-AGT-016)
+- `stalled`: `true` while the thread's running turn is marked stalled (REQ-AUT-008, §5.33); the mark is the daemon's and is not stored
 
 ### Message
 ```json
@@ -882,13 +883,25 @@ Display only: it never alters waits, rollups or notifications. Normalization: co
 - **Who.** `source` follows §5.31, the reserved `umbral:` prefix included. A pane hosting a thread of Umbral's own agent accepts metadata (REQ-INT-006). An alias reaches a moved pane, whose metadata moves with it; a closed or unknown pane is `NOT_FOUND`.
 - **Result** `{}`. A written report is announced as `pane.updated` with the `Pane`, its `metadata` included — never `pane.state_changed` or `workspace.updated`.
 
-### 5.33 `wait.list` / `wait.cancel` — REQ-AUT-005, REQ-AUT-006, REQ-AUT-007
-`wait.list` result: `{items:[{wait_id, connection_id, target:{thread_id|block_id}, until:[…], age_ms, stalled:bool}]}`.
+### 5.33 `wait.list` / `wait.cancel` — REQ-AUT-005, REQ-AUT-006, REQ-AUT-007, REQ-AUT-008
 
-`wait.cancel` params: `{wait_id}`. It ends the wait with `CANCELLED` for whoever is waiting and does
-not touch the turn, the process or the pane being observed. Exceeding the concurrent-wait limit
-returns `VALIDATION_ERROR` naming the limit; exceeding the report rate returns `ok` with the report
-discarded. Neither closes the connection.
+`wait.list` params: `{}`. **Result:**
+```json
+{"items":[{"wait_id":"wt_01K5…","connection_id":"con_01K5…","target":{"thread_id":"thr_…"},
+  "until":["done","blocked"],"regex":null,"age_ms":4210,"stalled":false}]}
+```
+
+`wait.cancel` params: `{wait_id}`. **Result:** `{}`.
+
+Delta `2026-10-wait-monitoring` (T-F1-31):
+
+- **Every wait is registered** — `thread.wait`, `thread.send`'s `wait` and `block.wait_output` — from the moment it is validated until it answers, with an id `wt_` + ULID (§3).
+- **`wait.list`** returns every connection's open waits, oldest first. A thread wait's `target` is `{thread_id}` and its `until` the states it waits for. An output wait's `target` is `{block_id}` when it observes a block and `{session_id}` when it watches a session's output; its `until` is `[]` and `regex` is its pattern (`null` for a thread wait). `age_ms` counts from its start. `stalled` is the target thread's stall mark (below); an output wait's is `false`.
+- **`wait.cancel`** ends the wait: the waiting request answers `CANCELLED` (§3), and the turn, the process and the pane it observed are not touched — for `thread.send` the message stays sent. Any connection allowed to call it may cancel any wait. An unknown or already ended `wait_id` is `NOT_FOUND`, and so is a second cancel: a cancelled wait leaves the inventory at once. A cancelled `thread.send` answers `CANCELLED` without `turn_id` or `message_id`; the message is stored, and `thread.get` finds both.
+- **The limit.** A connection holding 32 open waits (§8), of any kind, gets `VALIDATION_ERROR` for the next — `"too many concurrent waits: the limit is 32 per connection"`, with `details: [{field: "timeout_ms", issue: "the connection already holds 32 waits"}]` — before anything is subscribed, sent or read. The connection is not closed, other connections are not affected, and a place frees when a wait ends.
+- **The report rate.** `pane.report_state` and `pane.report_metadata` share one sliding window per `source`: at most 10 kept reports in any second (§8). Validation and the pane's resolution run first, so a malformed report, an unknown pane and an agent's pane answer their errors; a report past the rate then answers its normal result and writes, announces and resolves nothing. A report counts when it is written: a discarded, refused or stale one does not. `pane.release_state` is not limited.
+- **Stalls.** A running turn with no activity — a model event, the start or end of a tool call, an answered approval, output from its own pane — for its window is marked stalled, announced once with `thread.stalled` (§6) and shown by `stalled` in `Thread` (§4) and here. It is never cancelled; the next activity clears the mark silently. A turn awaiting an approval is waiting for the user and does not stall, whatever its pane writes meanwhile. The windows are `[waits] stall_local_s` (120) when any candidate of the thread's model or class is a local provider, and `stall_remote_s` (30) otherwise.
+- **Who.** Both methods are advertised under `wait_admin`, and every client kind may call them (§2), so `umb wait ls` and `umb wait cancel WAIT_ID` work.
 
 ### 5.34 `rules.status` / `rules.key.list` / `rules.key.add` / `rules.key.remove` / `rules.key.rotate` / `rules.rollback` / `rules.reset` — REQ-SEC-011, REQ-SEC-013, REQ-SEC-014, REQ-SEC-015, REQ-SEC-016
 `rules.status` params: `{}`. Result:
@@ -1078,7 +1091,7 @@ Every client kind may call both (§2). The `limits` capability announces them.
 | `pane.state_changed` | `{pane_id, attention_state, state_source}` — after a pane's effective state or its source changes (§4), once what decided it is written: a report or release, a block starting or ending, a session's integration verdict or exit, a thread's attention. A workspace whose rollup moved with it gets `workspace.updated` | REQ-INT-002 |
 | `layout.updated` | `Layout` | REQ-WS-004 |
 | `thread.attention_changed` | `{thread_id, attention_state}` — after every change written: a turn starts (`working`), asks for an approval (`blocked`), is answered (`working`), ends (`done`, or `idle` when viewed or cancelled), or a `done` thread is focused (`idle`). Not sent for the changes Data Model §6 makes at start, before any client connects | REQ-AGT-016 |
-| `thread.stalled` | `{thread_id, turn_id, idle_ms, last_event}` | REQ-AUT-008 |
+| `thread.stalled` | `{thread_id, turn_id, idle_ms, last_event}` — once per stall of a running turn (§5.33); `last_event` is the last activity seen: `turn_started`, `text`, `reasoning`, `tool_call`, `tool_result`, `output` or `approval` | REQ-AUT-008 |
 | `rules.update_rejected` | `{reason, version, source}` — `reason` as §5.34's `last_rejection`, `version` the bundle's own when its signature verified and 0 otherwise — unverified bytes are never parsed — `source` `"remote"`. Sent to every client once per bundle: a bundle already rejected is not announced again. The daemon also raises a user notification for it under its own source `umbral:rules` (§5.35) | REQ-SEC-013 |
 | `limits.notification_dropped` | `{method, size_bytes, limit_bytes}` — in place of a notification over the frame limit, under that notification's `seq` (§1) | REQ-API-005 |
 
@@ -1175,9 +1188,9 @@ stateDiagram-v2
 | Handshake deadline | 5 s from accept; past it, `UNAUTHORIZED` with `id: null` and a close (§2 step 3a) |
 | Frame limit after the handshake | `[api] max_message_bytes`: 1 MiB to 64 MiB, 4 MiB by default, fixed per connection at `system.hello` and announced there; outbound frames over it become `RESULT_TOO_LARGE` or `limits.notification_dropped` (§1) |
 | `session.output` notifications | batched every 4 ms or 32 KiB, whichever comes first |
-| Concurrent waits per connection | 32; beyond that `thread.wait` and `block.wait_output` return `VALIDATION_ERROR` |
+| Concurrent waits per connection | 32 of any kind, `thread.send`'s `wait` included; beyond that the new wait is `VALIDATION_ERROR` naming the limit and the connection stays open (§5.33) |
 | Wait timeout | 1 s to 1 h; there is no wait without a deadline |
-| State/metadata reports | 10 per second per `source`; the excess returns `ok` and is discarded |
+| State/metadata reports | 10 kept per second per `source`, `pane.report_state` and `pane.report_metadata` together; the excess returns the normal result and is discarded (§5.33) |
 | Live metadata keys | 16 per report, 32 per pane |
 | Queue per slow client | 8 MiB; beyond that the daemon drops the subscription, announces it with `session.unsubscribed` (§6), and the client re-subscribes (receiving a new snapshot) |
 
@@ -1267,3 +1280,4 @@ printf '%s\n' \
 | 1.35 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-notifications` (T-F1-27): §5.35 gives `notification.show`'s normalization, validation, the order of its checks, the sliding per-source window, the foreground client and decision 15's `blocked` notification; §6 adds `notification.posted`, sent to the foreground client only; §2 advertises the method under `notifications` and adds it to the `cli` row |
 | 1.36 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-policy-explain` (T-F1-28): §5.36's example matches the trace the daemon returns (`decided`, `detail`, `note`, `reason`, `allow_always`, the `exposure` step), and the section says what a thread lends, what is refused (a risk the registered tool does not declare among it), how the target is shaped as a turn shapes it, and who may call; §2's `cli` row gains `policy.explain` |
 | 1.37 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-signed-rule-bundles` (T-F1-30): §5.34 names each `rules.*` method with its params and result, keys addressed by fingerprint, the rejection reasons, what rollback and reset leave behind, and the CLI; §6's `rules.update_rejected` says what it carries — the version only of a bundle that verified — that a repeat is not announced, and that a user notification under `umbral:rules` accompanies it (§5.35); §2's `cli` row gains `rules.*` |
+| 1.38 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-wait-monitoring` (T-F1-31): §5.33 gives `wait.list`'s result and `wait.cancel`'s, wait ids, output-wait targets, the per-connection limit counting every kind, the report rate's shared window and the stall rules; §4 `Thread` gains `stalled`; §6 `thread.stalled` names `last_event`'s values; §8 sharpens both limits; §2's `cli` row gains `wait.list` and `wait.cancel` |

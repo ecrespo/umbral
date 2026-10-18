@@ -34,6 +34,9 @@ type Config struct {
 	Bus      *bus.Bus
 	Logger   *slog.Logger
 	Now      func() time.Time
+	// RateLimited is called for every report discarded for its source's rate (REQ-AUT-005);
+	// nil counts nothing.
+	RateLimited func()
 }
 
 // Service implements ports.Integrations.
@@ -47,6 +50,8 @@ type Service struct {
 	// was last told `unknown`, the state everything starts in (API Spec §4).
 	panes   map[string]published
 	rollups map[string]wsdomain.AttentionState
+	// rate is each source's kept reports inside the current window, guarded by mu.
+	rate map[string][]time.Time
 }
 
 type published struct {
@@ -74,6 +79,7 @@ func New(cfg Config) (*Service, error) {
 	}
 	return &Service{
 		cfg: cfg, panes: map[string]published{}, rollups: map[string]wsdomain.AttentionState{},
+		rate: map[string][]time.Time{},
 	}, nil
 }
 
@@ -110,10 +116,14 @@ func (s *Service) reportState(ctx context.Context, report domain.Report) (*ports
 	// An alias names the pane it was moved into (REQ-WS-007): a hook started before the move
 	// still holds the old UMBRAL_PANE_ID.
 	report.PaneID = pane.ID
+	if s.overRate(report.Source) {
+		return nil, nil
+	}
 	written, err := s.cfg.Store.Upsert(ctx, report, s.cfg.Now().UnixMilli())
 	if err != nil || !written {
 		return nil, err
 	}
+	s.kept(report.Source)
 	before := s.panes[pane.ID]
 	s.announce(ctx)
 	return s.blockedNotice(report, before), nil

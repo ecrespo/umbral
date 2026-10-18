@@ -398,12 +398,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		logger: logger, db: db, bus: eventBus, gateway: models, egress: egress,
 		terminal: sessionService, blocks: blockReader, metrics: metrics, tracer: agentTracer{telemetry},
 		maxCost: providers.MaxCostMicroUSD, redact: redact, policy: activeRules.Policy,
+		stallLocal:  time.Duration(settings.Stall.LocalS) * time.Second,
+		stallRemote: time.Duration(settings.Stall.RemoteS) * time.Second,
 	})
 	if err != nil {
 		logger.Error("cannot build the agent runtime", slog.Any("error", err))
 		return exitCantCreate
 	}
 	defer runtime.Close()
+	// Output from a thread's own pane keeps its turn from being marked stalled (T-F1-31).
+	go followThreadOutput(ctx, eventBus.Subscribe(sessports.KindBlockStarted), eventBus.Subscribe(sessports.KindSessionOutput), runtime)
 
 	// policy.explain (T-F1-28) reads the same threads and rules a turn decides with.
 	explainer, err := newExplainer(db, tools, activeRules.Policy)
@@ -440,7 +444,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// The integration surface (T-F1-25): external state reports and `pane.state_changed`.
 	paneStates, err := newIntegrations(ctx, db, eventBus, workspaceService,
-		blockedNotifier{sink: notifications, logger: logger}, logger)
+		blockedNotifier{sink: notifications, logger: logger}, metrics.ReportRateLimited, logger)
 	if err != nil {
 		logger.Error("cannot build the integration surface", slog.Any("error", err))
 		return exitCantCreate

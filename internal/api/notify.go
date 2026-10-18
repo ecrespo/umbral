@@ -60,6 +60,7 @@ var dispatchedKinds = []bus.Kind{
 	agentsports.KindContextCompacted,
 	agentsports.KindApprovalRequested,
 	agentsports.KindAttentionChanged,
+	agentsports.KindThreadStalled,
 	mcpports.KindServerState,
 	intports.KindPaneStateChanged,
 	secports.KindRuleUpdateRejected,
@@ -174,6 +175,8 @@ func toNotification(event bus.Event) (string, any) {
 		return "approval.requested", toWireApproval(e.Approval)
 	case agentsports.ThreadAttentionChanged:
 		return "thread.attention_changed", attentionChangedPayload{ThreadID: e.ThreadID, AttentionState: e.AttentionState}
+	case agentsports.ThreadStalled:
+		return "thread.stalled", threadStalledPayload{ThreadID: e.ThreadID, TurnID: e.TurnID, IdleMS: e.IdleMS, LastEvent: e.LastEvent}
 	case agentsports.ContextCompacted:
 		return "context.compacted", contextCompactedPayload{ThreadID: e.ThreadID, BeforeTokens: e.BeforeTokens, AfterTokens: e.AfterTokens}
 	case mcpports.ServerState:

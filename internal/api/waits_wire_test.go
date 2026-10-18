@@ -3,6 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"slices"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,14 +26,72 @@ type fakeWaits struct {
 	until     [][]string
 	err       error
 	output    []waitsdomain.OutputParams
+	// open are the registered waits by id, and perCon how many each connection holds; the
+	// limit is the real engine's.
+	open   map[string]*fakeEntry
+	perCon map[string]int
+	seq    int
+}
+
+type fakeEntry struct {
+	info      waitsdomain.Info
+	cancelled chan struct{}
+}
+
+func (f *fakeWaits) admit(connID string, info waitsdomain.Info) (*fakeEntry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.perCon[connID] >= waitsdomain.MaxPerConnection {
+		return nil, waitsdomain.ErrLimit
+	}
+	f.seq++
+	info.ID, info.ConnectionID = fmt.Sprintf("wt_%d", f.seq), connID
+	e := &fakeEntry{info: info, cancelled: make(chan struct{})}
+	f.open[info.ID] = e
+	f.perCon[connID]++
+	return e, nil
+}
+
+func (f *fakeWaits) done(e *fakeEntry) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.open[e.info.ID]; ok {
+		delete(f.open, e.info.ID)
+		f.perCon[e.info.ConnectionID]--
+	}
+}
+
+func (f *fakeWaits) List() []waitsdomain.Info {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]waitsdomain.Info, 0, len(f.open))
+	for _, e := range f.open {
+		out = append(out, e.info)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func (f *fakeWaits) Cancel(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e, ok := f.open[id]
+	if !ok {
+		return waitsdomain.ErrNotFound
+	}
+	close(e.cancelled)
+	delete(f.open, id)
+	f.perCon[e.info.ConnectionID]--
+	return nil
 }
 
 func newFakeWaits() *fakeWaits {
-	return &fakeWaits{release: make(chan struct{}), cancelled: make(chan struct{}, 4)}
+	return &fakeWaits{release: make(chan struct{}), cancelled: make(chan struct{}, 4), open: map[string]*fakeEntry{}, perCon: map[string]int{}}
 }
 
 type fakeThreadWait struct {
 	f        *fakeWaits
+	e        *fakeEntry
 	threadID string
 	turn     string
 }
@@ -44,8 +106,11 @@ func (w *fakeThreadWait) Pin(turnID string) {
 }
 
 func (w *fakeThreadWait) Wait(ctx context.Context) (waitsports.ThreadResult, error) {
+	defer w.Close()
 	select {
 	case <-w.f.release:
+	case <-w.e.cancelled:
+		return waitsports.ThreadResult{}, waitsdomain.ErrCancelled
 	case <-ctx.Done():
 		w.f.cancelled <- struct{}{}
 		return waitsports.ThreadResult{}, ctx.Err()
@@ -56,19 +121,23 @@ func (w *fakeThreadWait) Wait(ctx context.Context) (waitsports.ThreadResult, err
 	return waitsports.ThreadResult{ThreadID: w.threadID, TurnID: w.turn, State: waitsdomain.StateDone, WaitedMS: 12}, nil
 }
 
-func (w *fakeThreadWait) Close() {}
+func (w *fakeThreadWait) Close() { w.f.done(w.e) }
 
-func (f *fakeWaits) Thread(_ context.Context, threadID string, until []string, timeoutMS int64) (waitsports.ThreadWait, error) {
+func (f *fakeWaits) Thread(_ context.Context, connID, threadID string, until []string, timeoutMS int64) (waitsports.ThreadWait, error) {
 	if _, err := waitsdomain.ParseTargets(until); err != nil {
 		return nil, err
 	}
 	if _, err := waitsdomain.ParseTimeout(timeoutMS); err != nil {
 		return nil, err
 	}
+	e, err := f.admit(connID, waitsdomain.Info{ThreadID: threadID, Until: until})
+	if err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	f.until = append(f.until, until)
 	f.mu.Unlock()
-	return &fakeThreadWait{f: f, threadID: threadID}, nil
+	return &fakeThreadWait{f: f, e: e, threadID: threadID}, nil
 }
 
 type fakeOutputWait struct{ f *fakeWaits }
@@ -87,7 +156,7 @@ func (w fakeOutputWait) Wait(ctx context.Context) (waitsports.OutputResult, erro
 
 func (fakeOutputWait) Close() {}
 
-func (f *fakeWaits) Output(_ context.Context, p waitsdomain.OutputParams) (waitsports.OutputWait, error) {
+func (f *fakeWaits) Output(_ context.Context, _ string, p waitsdomain.OutputParams) (waitsports.OutputWait, error) {
 	if _, err := p.Validate(); err != nil {
 		return nil, err
 	}
@@ -314,5 +383,123 @@ func TestAWaitSentAsANotificationIsNotKept(t *testing.T) {
 	}
 	if resp := c.call(11, "thread.get", map[string]any{"thread_id": "thr_1"}); string(resp.ID) != "11" {
 		t.Fatalf("the next answer is %+v", resp)
+	}
+}
+
+// TestWaitAdminOverTheWire_REQ_AUT_007: `umb` lists every connection's waits under
+// `wait_admin` and cancels one, whose waiting request answers CANCELLED while the connection
+// that held it goes on; an unknown wait_id is NOT_FOUND (API §5.33, delta
+// `2026-10-wait-monitoring`, decisions 3-5).
+func TestWaitAdminOverTheWire_REQ_AUT_007(t *testing.T) {
+	t.Parallel()
+	svc := &fakeThreads{thread: agentsdomain.Thread{ID: "thr_1", Mode: "normal", ModelClass: "code", Cwd: "/w"}}
+	waits := newFakeWaits()
+	s := testServerWithConfig(t, Config{Threads: svc, Waits: waits, Bus: bus.New()})
+	tui := dial(t, s)
+	if resp := tui.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 10, "method": "thread.wait",
+		"params": map[string]any{"thread_id": "thr_1", "until": []string{"done", "blocked"}, "timeout_ms": 60000},
+	})
+	tui.send(append(body, '\n'))
+
+	cli := dial(t, s)
+	hello := cli.hello(s.Token(), ClientCLI)
+	if hello.Error != nil {
+		t.Fatalf("handshake: %+v", hello.Error)
+	}
+	if caps := capabilitiesOf(t, hello.Result); !slices.Contains(caps, "wait_admin") || !slices.Contains(caps, "waits") {
+		t.Errorf("capabilities %v", caps)
+	}
+	var list struct {
+		Items []struct {
+			WaitID       string            `json:"wait_id"`
+			ConnectionID string            `json:"connection_id"`
+			Target       map[string]string `json:"target"`
+			Until        []string          `json:"until"`
+			Regex        *string           `json:"regex"`
+			AgeMS        int64             `json:"age_ms"`
+			Stalled      bool              `json:"stalled"`
+		} `json:"items"`
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(list.Items) == 0 && time.Now().Before(deadline) {
+		resp := cli.call(2, "wait.list", nil)
+		if resp.Error != nil {
+			t.Fatalf("wait.list: %+v", resp.Error)
+		}
+		decodeResult(t, resp, &list)
+	}
+	if len(list.Items) != 1 {
+		t.Fatalf("wait.list = %+v", list)
+	}
+	w := list.Items[0]
+	if !strings.HasPrefix(w.ConnectionID, "con_") || w.Target["thread_id"] != "thr_1" || len(w.Target) != 1 ||
+		!slices.Equal(w.Until, []string{"done", "blocked"}) || w.Regex != nil {
+		t.Errorf("listed wait %+v", w)
+	}
+
+	if resp := cli.call(3, "wait.cancel", map[string]any{"wait_id": w.WaitID}); resp.Error != nil {
+		t.Fatalf("wait.cancel: %+v", resp.Error)
+	}
+	resp := tui.read()
+	if string(resp.ID) != "10" || resp.Error == nil || resp.Error.Code != codeCancelled {
+		t.Fatalf("the cancelled wait answered %+v", resp)
+	}
+	if resp := tui.call(11, "thread.get", map[string]any{"thread_id": "thr_1"}); resp.Error != nil {
+		t.Errorf("the connection after its wait was cancelled: %+v", resp.Error)
+	}
+	if len(svc.cancelled) != 0 {
+		t.Error("cancelling a wait cancelled the turn")
+	}
+	for name, tc := range map[string]struct {
+		params map[string]any
+		code   int
+	}{
+		"an unknown wait": {map[string]any{"wait_id": "wt_nope"}, codeNotFound},
+		"no wait_id":      {map[string]any{}, codeValidationError},
+	} {
+		if resp := cli.call(4, "wait.cancel", tc.params); resp.Error == nil || resp.Error.Code != tc.code {
+			t.Errorf("%s: %+v", name, resp.Error)
+		}
+	}
+}
+
+// TestLeakedWaitsKeepTheConnection_REQ_AUT_005: a script that opens 100 waits on one
+// connection gets 32 of them and VALIDATION_ERROR naming the limit for the rest, and the
+// connection keeps answering.
+func TestLeakedWaitsKeepTheConnection_REQ_AUT_005(t *testing.T) {
+	t.Parallel()
+	_, waits, c := waitRig(t, ClientTUI)
+	for i := range 100 {
+		body, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "id": 100 + i, "method": "thread.wait",
+			"params": map[string]any{"thread_id": "thr_1", "until": []string{"done"}, "timeout_ms": 60000},
+		})
+		c.send(append(body, '\n'))
+	}
+	refused := 0
+	for range 100 - waitsdomain.MaxPerConnection {
+		resp := c.read()
+		if resp.Error == nil || resp.Error.Code != codeValidationError ||
+			resp.Error.Message != "too many concurrent waits: the limit is 32 per connection" ||
+			resp.Error.Data == nil || len(resp.Error.Data.Details) != 1 || resp.Error.Data.Details[0].Field != "timeout_ms" {
+			t.Fatalf("a wait past the limit answered %+v", resp.Error)
+		}
+		refused++
+	}
+	if resp := c.call(1, "thread.get", map[string]any{"thread_id": "thr_1"}); resp.Error != nil {
+		t.Fatalf("the connection after 100 waits: %+v", resp.Error)
+	}
+	if n := len(waits.List()); n != waitsdomain.MaxPerConnection || refused != 68 {
+		t.Errorf("%d waits open, %d refused", n, refused)
+	}
+	close(waits.release)
+	for range waitsdomain.MaxPerConnection {
+		if resp := c.read(); resp.Error != nil {
+			t.Fatalf("an admitted wait answered %+v", resp.Error)
+		}
 	}
 }

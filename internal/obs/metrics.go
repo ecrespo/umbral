@@ -37,7 +37,8 @@ func (m *Metrics) ToolCallsInvalid() map[string]uint64 {
 	return maps.Clone(m.invalid)
 }
 
-// WaitStalled counts a turn marked stalled (REQ-AUT-008, REQ-OBS-004). T-F1-31 calls it.
+// WaitStalled counts a turn marked stalled (REQ-AUT-008, REQ-OBS-004); the agent runtime
+// calls it once per stall.
 func (m *Metrics) WaitStalled() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -45,7 +46,7 @@ func (m *Metrics) WaitStalled() {
 }
 
 // ReportRateLimited counts a report discarded for exceeding its source's rate (REQ-AUT-005,
-// REQ-OBS-004). T-F1-31 calls it.
+// REQ-OBS-004); the integration surface calls it.
 func (m *Metrics) ReportRateLimited() {
 	m.mu.Lock()
 	defer m.mu.Unlock()

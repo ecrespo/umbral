@@ -97,6 +97,9 @@ type Models interface {
 	// Available reports whether any candidate could serve a call of this class, or naming
 	// this model: known to the catalog and not down.
 	Available(ctx context.Context, class, model string) bool
+	// Local reports whether any candidate of this class, or this model, is served on this
+	// machine: such a turn gets the longer stall window (REQ-AUT-008).
+	Local(ctx context.Context, class, model string) bool
 }
 
 // Threads is the module's inbound port, which internal/api serves as thread.*.
@@ -200,4 +203,7 @@ type Metrics interface {
 	// ToolCallInvalid counts one tool call whose tool or arguments did not validate, by the
 	// model that made it: umbral_tool_calls_invalid_total (REQ-OBS-002).
 	ToolCallInvalid(model string)
+	// WaitStalled counts a turn marked stalled: umbral_waits_stalled_total (REQ-AUT-008,
+	// REQ-OBS-004).
+	WaitStalled()
 }

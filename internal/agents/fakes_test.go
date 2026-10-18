@@ -369,6 +369,8 @@ type scripted struct {
 	window  int64
 	// hold, when set, keeps every stream from starting until it is closed.
 	hold chan struct{}
+	// local makes every candidate a local provider (the stall window's choice).
+	local bool
 	// unavailable makes Available report no candidate.
 	unavailable bool
 	// spans is the span each call's context carried.
@@ -433,6 +435,8 @@ func (m *scripted) Stream(ctx context.Context, call ports.ModelCall) (iter.Seq2[
 func (m *scripted) Window(context.Context, string, string) int64 { return m.window }
 
 func (m *scripted) Available(context.Context, string, string) bool { return !m.unavailable }
+
+func (m *scripted) Local(context.Context, string, string) bool { return m.local }
 
 func (m *scripted) requests() []ports.ModelCall {
 	m.mu.Lock()
@@ -604,6 +608,19 @@ func (b *checkingBus) events() []bus.Event {
 type fakeMetrics struct {
 	mu      sync.Mutex
 	invalid map[string]int
+	stalled int
+}
+
+func (m *fakeMetrics) WaitStalled() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stalled++
+}
+
+func (m *fakeMetrics) stalledCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.stalled
 }
 
 func (m *fakeMetrics) ToolCallInvalid(model string) {

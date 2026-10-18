@@ -31,6 +31,8 @@ type Thread struct {
 	CostMicroUSD   int64   `json:"cost_micro_usd"`
 	CreatedAt      int64   `json:"created_at"`
 	UpdatedAt      int64   `json:"updated_at"`
+	// Stalled is true while the running turn is marked stalled (REQ-AUT-008).
+	Stalled bool `json:"stalled"`
 }
 
 func toWireThread(t agentsdomain.Thread) Thread {
@@ -38,7 +40,7 @@ func toWireThread(t agentsdomain.Thread) Thread {
 		ID: t.ID, Title: t.Title, Mode: string(t.Mode), Model: emptyAsNull(t.Model), ModelClass: t.ModelClass,
 		CWD: t.Cwd, State: string(t.State), AttentionState: t.AttentionState, Ephemeral: t.Ephemeral,
 		MaxSteps: t.MaxSteps, BudgetTokens: t.BudgetTokens, TokensUsed: t.TokensUsed, CostMicroUSD: t.CostMicroUSD,
-		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, Stalled: t.Stalled,
 	}
 }
 
@@ -123,6 +125,14 @@ type turnFinishedPayload struct {
 type attentionChangedPayload struct {
 	ThreadID       string `json:"thread_id"`
 	AttentionState string `json:"attention_state"`
+}
+
+// threadStalledPayload is §6's `thread.stalled` (REQ-AUT-008).
+type threadStalledPayload struct {
+	ThreadID  string `json:"thread_id"`
+	TurnID    string `json:"turn_id"`
+	IdleMS    int64  `json:"idle_ms"`
+	LastEvent string `json:"last_event"`
 }
 
 type contextCompactedPayload struct {
@@ -249,7 +259,7 @@ func handleThreadSend(ctx context.Context, c *conn, raw json.RawMessage) (any, e
 		if err := decode(p.Wait, &w, "thread.send's wait"); err != nil {
 			return nil, err
 		}
-		if wait, err = c.server.cfg.Waits.Thread(ctx, p.ThreadID, w.Until, w.TimeoutMS); err != nil {
+		if wait, err = c.server.cfg.Waits.Thread(ctx, c.connectionID, p.ThreadID, w.Until, w.TimeoutMS); err != nil {
 			return nil, err
 		}
 	}
