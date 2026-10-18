@@ -14,6 +14,7 @@ import (
 const (
 	domainNotFound            = "NOT_FOUND"
 	domainValidationError     = "VALIDATION_ERROR"
+	domainPermissionDenied    = "PERMISSION_DENIED"
 	domainConflict            = "CONFLICT"
 	domainThreadBlocked       = "THREAD_BLOCKED"
 	domainTimeout             = "TIMEOUT"
@@ -67,7 +68,7 @@ var errorCodes = map[string]int{
 	"UNAUTHORIZED":                 codeUnauthorized,
 	"NOT_FOUND":                    codeNotFound,
 	"CONFLICT":                     codeConflict,
-	"PERMISSION_DENIED":            codePermissionDenied,
+	domainPermissionDenied:         codePermissionDenied,
 	domainProviderUnavailable:      codeProviderUnavailable,
 	domainBudgetExceeded:           codeBudgetExceeded,
 	"UNSUPPORTED_PROTOCOL_VERSION": codeUnsupportedProtocolVersion,
@@ -159,6 +160,7 @@ var moduleErrors = []func(error) (int, string, bool){
 	agentsDomainError,
 	mcpDomainError,
 	waitsDomainError,
+	integrationsDomainError,
 }
 
 // workspaceDomainError maps the workspace tree's sentinels onto the §5.4 table.
@@ -215,7 +217,7 @@ func toWire(err error, traceID string) *wireError {
 	case errors.Is(err, ErrConflict):
 		code, domainCode = codeConflict, domainConflict
 	case errors.Is(err, ErrPermissionDenied):
-		code, domainCode = codePermissionDenied, "PERMISSION_DENIED"
+		code, domainCode = codePermissionDenied, domainPermissionDenied
 	case errors.Is(err, ErrProviderUnavailable):
 		code, domainCode = codeProviderUnavailable, domainProviderUnavailable
 	case errors.Is(err, ErrBudgetExceeded):

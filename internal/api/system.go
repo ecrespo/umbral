@@ -106,6 +106,11 @@ func (s *Server) registry() map[string]method {
 		m.capability = capabilityWaits
 		table[name] = m
 	}
+	for name, m := range integrationMethods() {
+		m.available = hasIntegrations
+		m.capability = capabilityIntegrations
+		table[name] = m
+	}
 	return table
 }
 

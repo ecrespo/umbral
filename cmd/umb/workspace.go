@@ -76,7 +76,7 @@ func treeFamilies() map[string]map[string]treeCommand {
 		}
 	}
 
-	return map[string]map[string]treeCommand{
+	families := map[string]map[string]treeCommand{
 		famWorkspace: {
 			subCreate: {
 				args:  []string{"cwd?"},
@@ -192,6 +192,10 @@ func treeFamilies() map[string]map[string]treeCommand {
 			},
 		},
 	}
+	for name, command := range paneStateCommands() {
+		families[famPane][name] = command
+	}
+	return families
 }
 
 // fromKey carries --from from the flag set to layoutApplyParams. It is not a parameter of

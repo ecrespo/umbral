@@ -48,6 +48,11 @@ type Config struct {
 	// DefaultShell and DefaultCWD fill in the optional create parameters (API Spec §5.3).
 	DefaultShell string
 	DefaultCWD   string
+	// SocketPath and BinPath are the daemon's socket and the `umb` binary, which every
+	// session is told as UMBRAL_SOCKET_PATH and UMBRAL_BIN_PATH (REQ-INT-001) so an
+	// integration's hook can call back without guessing. An empty one is left out.
+	SocketPath string
+	BinPath    string
 }
 
 // Service implements ports.Sessions.
@@ -168,7 +173,9 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 		return domain.Session{}, err
 	}
 
-	program, args, env, cleanup, err := s.launch(params)
+	// The id is chosen before the launch because the child is told it (REQ-INT-001).
+	id := store.NewID(store.PrefixSession)
+	program, args, env, cleanup, err := s.launch(id, params)
 	if err != nil {
 		return domain.Session{}, err
 	}
@@ -206,7 +213,7 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 	}
 
 	session := domain.Session{
-		ID: store.NewID(store.PrefixSession),
+		ID: id,
 		// The program actually running, which for a pane with a command is that command
 		// and not the shell nobody started. `session.list` is how a client sees it.
 		Shell:       program,
