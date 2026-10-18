@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.18 |
+| **Version** | 1.19 |
 | **Date** | 2026-10-01 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -272,6 +272,19 @@ CREATE INDEX idx_pane_metadata_expiry ON pane_metadata(expires_at) WHERE expires
 
 At most 32 live keys per pane; the `store` layer rejects the excess. Metadata is not restored after
 a restart (REQ-INT-004).
+
+How `pane_state_reports` is written (delta `2026-10-integration-surface`, T-F1-25):
+
+- **`seq`** is the last number the source sent for the pane. `-1` means the source has sent none
+  yet: an unnumbered report stores it, a later unnumbered one keeps whatever is stored, and the
+  first numbered one applies even at `0`. A source never sends a negative `seq`, so `-1` is
+  unambiguous; the column has no `CHECK`, and no migration was needed.
+- **`updated_at`** is strictly increasing per pane: a write gets the current time, or one past the
+  pane's newest report when that is not later. The latest report is therefore never a tie.
+- **A move renames the rows.** `pane.move` changes `panes.id`; the reports and metadata are updated
+  to the new id in the same transaction, with the foreign-key check deferred to the commit
+  (`PRAGMA defer_foreign_keys`). Before T-F1-25 a move of a pane with a report failed.
+- **A closed pane's rows stay** until restart step 8 (§6) clears them, and are never read again.
 
 ### 2.4d `pane_history` (migration 0004, optional content)
 
@@ -706,3 +719,4 @@ earlier drafts named.
 | 1.16 | 2026-10-01 | §2.12 `egress_log.provider` also takes `mcp:<name>`; §2.13 notes that the application narrows `name` to `[a-z0-9]{1,32}` (delta `2026-10-mcp-client`, T-F1-17); the CHECK is unchanged, migrations being forward-only |
 | 1.17 | 2026-10-04 | §4: the retention keys as `config.toml` names them (`closed_structure_days` added), and how the daily job runs, batches and purges (delta `2026-10-retention`, T-F1-22) |
 | 1.18 | 2026-10-17 | §2.5: `seen_at` is also written by a turn that ends while a client views its thread; neither write moves `updated_at` (delta `2026-10-attention-focus`, T-F1-24). No DDL change |
+| 1.19 | 2026-10-17 | §2.4c: how `pane_state_reports` is written — `seq = -1` for unnumbered, strictly increasing `updated_at` per pane, rows renamed with a moved pane (delta `2026-10-integration-surface`, T-F1-25). No DDL change |

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.41 |
+| **Version** | 1.42 |
 | **Date** | 2026-10-03 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -498,7 +498,9 @@ internal/tui/adapters/       # libghostty renderer (DD-001: the client parses fo
 internal/bus/                # typed pub/sub
 internal/workspaces/         # tree, identifiers, layout, restore
 internal/waits/              # pinned waits
-internal/integrations/       # external reports and metadata
+internal/integrations/       # external reports and metadata: domain (a report's rules), ports,
+                             # adapters/reportstore (pane_state_reports), the service that
+                             # announces pane.state_changed (delta `2026-10-integration-surface`)
 shell/                       # bash, zsh, fish bootstrap
 testdata/vt/                 # VT conformance suite
 ```
@@ -659,7 +661,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `tools/adapters` | also `sessions/ports`, for `AgentTerminal` alone: `run_command` runs in the thread's PTY, which the sessions module owns (T-F1-10) |
 | `workspaces` | `ports` of `sessions` and `store`; never `agents`, `api` or `waits` |
 | `waits` | `ports` and `domain` of `agents` and `sessions`, plus `bus`; never `api`. It reads the store only through the agents runtime, and its own domain reuses the sessions domain's escape-sequence stripper (delta `2026-10-wait-engine`) |
-| `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api` |
+| `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api`. The tree resolves a pane's state in DD-012's order (`workspaces/domain.ResolveAttention`); `integrations` writes the external reports and announces every change. It hears the changes it did not make — blocks, integration verdicts, exits, thread attention — through events `cmd/umbrald` subscribes it to, and re-reads the whole tree on each (delta `2026-10-integration-surface`) |
 | `notify` | `bus` and stdlib only; it is a sink and imports no other module |
 | `mcp` | its own `ports` and `domain`, plus `bus`. `tools/adapters` may use `mcp/domain`, for `mcptools`, which offers a server's tools; `api` the `ports` and `domain` of `mcp`; only `cmd/*` wires the manager to the registry (delta `2026-10-mcp-client`) |
 | `obs` | stdlib, and OpenTelemetry from T-F1-18; imported only by `cmd/*`. Modules count through a port of their own, which `cmd/umbrald` gives the `obs` implementation (delta `2026-10-tool-call-repair`) |
@@ -680,6 +682,7 @@ check. T-F0-14, T-F0-15 and T-F0-16 name that file for exactly this reason.
 | `UMBRAL_SESSION_ID` | terminal session attached to the pane |
 | `TERM` | `xterm-256color` (REQ-TERM-013) |
 | `COLORTERM` | `truecolor` (REQ-TERM-013) |
+| `UMBRAL_SESSION` | `1`, the marker sessions carried before REQ-INT-001, kept for compatibility |
 
 Umbral's values win over any caller-supplied value — except `TERM` and `COLORTERM`, which
 replace only the daemon's own inherited values: a pane or layout that declares them in its `env`
@@ -687,6 +690,15 @@ keeps what it declared. The daemon's terminal is never a pane's; under `systemd`
 has none, and a shell with no `TERM` runs readline as a dumb terminal (delta
 `2026-09-pane-term`). An integration reports only when
 `UMBRAL_ENV=1`, so the same hook is inert outside Umbral.
+
+Every inherited or declared `UMBRAL_*` value is dropped before Umbral's are set, not merely
+overridden: a daemon autostarted by `umb` from another daemon's pane inherits that pane's
+`UMBRAL_PANE_ID`, and a session in no pane — a thread's PTY — would otherwise keep it. Such a
+session gets `UMBRAL_ENV`, `UMBRAL_SESSION_ID`, `UMBRAL_SOCKET_PATH` and `UMBRAL_BIN_PATH`, and no
+workspace, tab or pane id. `UMBRAL_BIN_PATH` is the `umb` beside `umbrald`, then the first on
+`PATH`; with neither it is left out and the daemon logs a warning. A moved pane's processes keep
+the ids they started with, which still reach the pane as aliases (REQ-WS-007). Delta
+`2026-10-integration-surface`, decision 11.
 
 ### 5.3 Default policies
 
@@ -1201,6 +1213,14 @@ Positionals may come before or after the flags.
 | `umb pane list <t>` · `get <p>` · `focus <p>` · `rename <p> <label>` · `close <p>` | `tab_id` / `pane_id`, `label` |
 | `umb layout export [t]` | `tab_id`; without one the daemon's focused tab (API Spec §5.7) |
 | `umb layout apply <w> --from FILE\|- [--tab-label L] [--no-focus]` | `workspace_id`, and `root` read from the file or stdin |
+| `umb pane report_state <state> [p] --source S [--agent A] [--message M] [--seq N]` | `pane_id` (default `$UMBRAL_PANE_ID`), `state`, `source`; `agent`, `message` when non-empty; `seq` only when given (API Spec §5.31) |
+| `umb pane release_state [p] --source S` | `pane_id` (default `$UMBRAL_PANE_ID`), `source` |
+
+`report_state` and `release_state` keep the method's underscore, like every tree command, and
+print nothing on success: a hook's answer is its exit code. Outside a pane, with none named, they
+fail before connecting. The socket does **not** default to `$UMBRAL_SOCKET_PATH`; a hook passes
+`--socket "$UMBRAL_SOCKET_PATH"`, so no other `umb` started from a pane — a test run included — is
+redirected to that pane's daemon unasked.
 
 `--no-focus` sends `focus: false`; an omitted flag is an omitted parameter, so the daemon's
 default applies. Only `pane split` takes a command after `--`; any other command given one is
@@ -1334,3 +1354,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.39 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-retention` (T-F1-22): §5.1 adds `[retention]` and its four keys |
 | 1.40 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cost-cap`: §5.1 says what enforces `max_cost_usd_per_thread`, and that a reload applies the `[router]` table |
 | 1.41 | 2026-10-17 | E. Crespo (assisted draft) | Ratifies delta `2026-10-attention-focus` (T-F1-24): §5.3d says how the runtime keeps views, writes and announces attention under a per-thread lock, and wakes the waits |
+| 1.42 | 2026-10-17 | E. Crespo (assisted draft) | Ratifies delta `2026-10-integration-surface` (T-F1-25): §5.1 lays out `internal/integrations`; §5.2's `integrations` row says the tree resolves DD-012 and how the module hears the changes it did not make; §5.2b drops inherited `UMBRAL_*` values, leaves a thread PTY's location out and says how `UMBRAL_BIN_PATH` is found; §9.4 adds `umb pane report_state` and `release_state` |

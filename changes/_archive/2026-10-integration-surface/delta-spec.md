@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-10-17` |
+| **Status** | `RATIFIED 2026-10-17` by E. Crespo, after a spec-guardian review whose findings are folded into decisions 4, 5, 7, 10 and 15; decisions 2, 4, 12, 14 and 15 as recommended. Folded into API 1.33, Tech Design 1.42, Data Model 1.19 and the F1 tasks file |
 | **Date** | 2026-10-17 |
 | **Task** | T-F1-25 (REQ-INT-001, REQ-INT-002, REQ-INT-003, REQ-INT-005, REQ-INT-006) |
 | **Raised by** | API §4 says the `umbral:shell` derivation is "specified nowhere" and defers it to the task that owns REQ-INT-002. §5.31 does not say what several sources on one pane do, what a report without `seq` does, how long a report lives, or what a moved pane's hook reaches. Tech §5.2b does not say what happens to an inherited `UMBRAL_*` value |
