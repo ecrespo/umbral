@@ -101,6 +101,11 @@ func handleMcpAdd(ctx context.Context, c *conn, raw json.RawMessage) (any, error
 	if err := decode(raw, &p, "mcp.server.add"); err != nil {
 		return nil, err
 	}
+	// A server added from the CLI is always untrusted (REQ-CLI-008). The daemon holds that,
+	// so a script speaking JSON-RPC as a cli client cannot add a trusted one.
+	if c.clientKind == ClientCLI && p.Trust != "" && p.Trust != string(mcpdomain.TrustUntrusted) {
+		return nil, fmt.Errorf("%w: a server added by a cli client is untrusted", mcpdomain.ErrValidation)
+	}
 	s, err := svc.Add(ctx, mcpdomain.AddParams{
 		Name: p.Name, Transport: mcpdomain.Transport(p.Transport), Command: p.Command, Args: p.Args, URL: p.URL,
 		EnvRefs: p.EnvRefs, Trust: mcpdomain.Trust(p.Trust),

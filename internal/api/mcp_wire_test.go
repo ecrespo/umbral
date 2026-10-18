@@ -100,6 +100,25 @@ func TestCliMayManageMcpServers_REQ_CLI_008(t *testing.T) {
 			t.Errorf("%s from umb = METHOD_NOT_FOUND", m)
 		}
 	}
+	// REQ-CLI-008's "always untrusted" holds in the daemon, not only in `umb`: a cli
+	// connection asking for a trusted server is refused and nothing is added.
+	svc := &fakeMCP{}
+	s2 := testServerWithConfig(t, Config{MCP: svc, Bus: bus.New()})
+	cli := dial(t, s2)
+	if resp := cli.hello(s2.Token(), ClientCLI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+	add := map[string]any{"name": "gitlab", "transport": "stdio", "command": "npx", "trust": "trusted"}
+	if resp := cli.call(5, "mcp.server.add", add); resp.Error == nil || resp.Error.Data == nil || resp.Error.Data.DomainCode != "VALIDATION_ERROR" {
+		t.Errorf("a trusted add from umb = %+v", resp.Error)
+	}
+	delete(add, "trust")
+	if resp := cli.call(6, "mcp.server.add", add); resp.Error != nil {
+		t.Errorf("an add with trust left out from umb = %+v", resp.Error)
+	}
+	if len(svc.added) != 1 || svc.added[0].Trust != mcpdomain.TrustUntrusted {
+		t.Errorf("added %+v, want one untrusted server", svc.added)
+	}
 	for i, m := range []string{"thread.get", "approval.respond"} {
 		if resp := c.call(10+i, m, map[string]any{}); resp.Error == nil || resp.Error.Code != codeMethodNotFound {
 			t.Errorf("%s from umb = %+v, want METHOD_NOT_FOUND", m, resp.Error)

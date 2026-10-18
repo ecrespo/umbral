@@ -1343,7 +1343,8 @@ is exit 1 before anything is read or sent. There is no `--json`: the output is t
 `list` and `remove NAME`, each one `mcp.server.*` method of API Spec §5.27.
 
 - **Always untrusted.** `add` sends `trust: "untrusted"` explicitly and has no flag to change
-  it: trusting a server is a policy decision, not a line in a copied script.
+  it: trusting a server is a policy decision, not a line in a copied script. The daemon holds
+  the rule too, refusing any other `trust` from a `cli` connection (API §5.27).
 - **`--env`** takes `NAME=keyring:<path>` or `NAME=env:<VAR>`, repeatable, and becomes
   `env_refs`. Anything else, an empty reference included, exits 1 before `umb` connects. It is
   taken out of the arguments before the flag parser sees them, because that parser quotes an
