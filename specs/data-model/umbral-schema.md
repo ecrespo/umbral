@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.19 |
-| **Date** | 2026-10-01 |
+| **Version** | 1.20 |
+| **Date** | 2026-10-18 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
 | **Related Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -285,6 +285,25 @@ How `pane_state_reports` is written (delta `2026-10-integration-surface`, T-F1-2
   to the new id in the same transaction, with the foreign-key check deferred to the commit
   (`PRAGMA defer_foreign_keys`). Before T-F1-25 a move of a pane with a report failed.
 - **A closed pane's rows stay** until restart step 8 (§6) clears them, and are never read again.
+
+How `pane_metadata` is written (delta `2026-10-display-metadata`, T-F1-26):
+
+- **Keys.** `title`, `display_name`, `label:<state>` for each of the five attention states, and
+  `token:<name>` with a name of 1–26 characters of `[A-Za-z0-9._-]`, so every key fits the 32 of
+  the `CHECK`. The tree reads the live rows back into API §4's `metadata`; when two sources set
+  one member, the later write wins.
+- **`#seq`.** A reserved row per pane and source holds the last metadata `seq`, counted apart
+  from `pane_state_reports.seq`, with `-1` for unnumbered. It is never displayed, counts toward
+  no limit, has no `expires_at`, and moves and is cleared with the pane's other rows. It needed
+  no migration.
+- **`updated_at`** is strictly increasing per pane, as for `pane_state_reports`.
+- **Expiry.** Every displayed row has an `expires_at`: the report's `ttl_ms`, or 24 h after the
+  write when the report gives none (§4's cap). An expired row is never read, whether or not it
+  has been deleted yet; each write deletes the pane's expired rows, and nothing announces an
+  expiry.
+- **The 32** counts the pane's live rows across every source after the report, a key two sources
+  both set counting twice, `#seq` rows excluded. A report that would exceed it, or that carries
+  more than 16 tokens, writes nothing.
 
 ### 2.4d `pane_history` (migration 0004, optional content)
 
@@ -630,7 +649,9 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 - **Closed structure.** Workspaces, then tabs, then panes past the window; what they hold
   cascades. A purged number may be reissued (REQ-WS-002); a moved pane's alias never is, since
   the pane allocator counts `pane_aliases` (REQ-WS-007).
-- **Pane metadata** past its `expires_at`, or 24 h after `updated_at`.
+- **Pane metadata** past its `expires_at`, or 24 h after `updated_at`. A source's `#seq` row is
+  exempt from the age purge: forgetting it would let a replayed old report be accepted again
+  (delta `2026-10-display-metadata`).
 - **Audit.** `egress_log` and `usage` past `retention.audit_days`, by `created_at`.
 - Running blocks and threads with a turn are never touched. Non-ephemeral threads have no
   deletion method yet.
@@ -720,3 +741,4 @@ earlier drafts named.
 | 1.17 | 2026-10-04 | §4: the retention keys as `config.toml` names them (`closed_structure_days` added), and how the daily job runs, batches and purges (delta `2026-10-retention`, T-F1-22) |
 | 1.18 | 2026-10-17 | §2.5: `seen_at` is also written by a turn that ends while a client views its thread; neither write moves `updated_at` (delta `2026-10-attention-focus`, T-F1-24). No DDL change |
 | 1.19 | 2026-10-17 | §2.4c: how `pane_state_reports` is written — `seq = -1` for unnumbered, strictly increasing `updated_at` per pane, rows renamed with a moved pane (delta `2026-10-integration-surface`, T-F1-25). No DDL change |
+| 1.20 | 2026-10-18 | §2.4c: how `pane_metadata` is written — the key names, the reserved `#seq` row, strictly increasing `updated_at`, expiry read and defaulted to 24 h, how the 32 is counted; §4: the age purge keeps `#seq` rows (delta `2026-10-display-metadata`, T-F1-26). No DDL change |

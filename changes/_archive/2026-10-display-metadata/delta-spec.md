@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-10-17` |
+| **Status** | `RATIFIED 2026-10-18` by E. Crespo; decisions 5 and 9 as recommended. Folded into API 1.34, Tech Design 1.43, Data Model 1.20 and the F1 tasks file |
 | **Date** | 2026-10-17 |
 | **Task** | T-F1-26 (REQ-INT-004) |
 | **Raised by** | API §5.32 lists the members, the normalization and the limits. It does not say: how `state_labels` and `tokens` are shaped; what an absent member does; where a metadata `seq` is kept (`pane_metadata` has no column for one); whether the limits truncate or refuse; what a client is told; or how `metadata` appears on a `Pane` |
