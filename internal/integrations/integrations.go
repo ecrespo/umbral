@@ -25,11 +25,13 @@ import (
 
 // Config is what the service needs.
 type Config struct {
-	Store  ports.Store
-	Panes  ports.Panes
-	Bus    *bus.Bus
-	Logger *slog.Logger
-	Now    func() time.Time
+	Store ports.Store
+	// Metadata is where display metadata goes (REQ-INT-004).
+	Metadata ports.MetadataStore
+	Panes    ports.Panes
+	Bus      *bus.Bus
+	Logger   *slog.Logger
+	Now      func() time.Time
 }
 
 // Service implements ports.Integrations.
@@ -55,6 +57,8 @@ func New(cfg Config) (*Service, error) {
 	switch {
 	case cfg.Store == nil:
 		return nil, errors.New("integrations: a store is required")
+	case cfg.Metadata == nil:
+		return nil, errors.New("integrations: a metadata store is required")
 	case cfg.Panes == nil:
 		return nil, errors.New("integrations: the workspace tree is required")
 	case cfg.Bus == nil:
@@ -128,7 +132,7 @@ func (s *Service) ReleaseState(ctx context.Context, paneID, source string) error
 // discarded as stale. The next event's refresh catches the announcement up.
 func (s *Service) announce(ctx context.Context) {
 	if err := s.refreshLocked(ctx); err != nil {
-		s.cfg.Logger.Warn("a pane state was written and could not be announced", slog.Any("error", err))
+		s.cfg.Logger.WarnContext(ctx, "a pane state was written and could not be announced", slog.Any("error", err))
 	}
 }
 

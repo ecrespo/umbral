@@ -409,7 +409,15 @@ const paneColumns = `p.id, p.tab_id, t.workspace_id, p.session_id, p.label, p.cw
 	(SELECT s.state = 'alive' FROM sessions s WHERE s.id = p.session_id),
 	(SELECT s.integration FROM sessions s WHERE s.id = p.session_id),
 	(SELECT b.state FROM blocks b WHERE b.session_id = p.session_id
-	  ORDER BY b.started_at DESC, b.rowid DESC LIMIT 1)`
+	  ORDER BY b.started_at DESC, b.rowid DESC LIMIT 1),
+	(SELECT json_group_array(json_array(m.key, m.value) ORDER BY m.updated_at, m.rowid)
+	   FROM pane_metadata m
+	  WHERE m.pane_id = p.id AND m.key <> '` + domain.MetaKeySeq + `'
+	    AND (m.expires_at IS NULL OR m.expires_at > ` + nowMillisSQL + `))`
+
+// nowMillisSQL is SQLite's clock in epoch milliseconds, for the metadata a TTL has expired:
+// such a row is never read, whether or not anything has deleted it yet (API Spec §5.32).
+const nowMillisSQL = `CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)`
 
 func scanPane(row scanner) (domain.Pane, error) {
 	var (
@@ -424,10 +432,11 @@ func scanPane(row scanner) (domain.Pane, error) {
 		owner, ownerState, reportSource, reportState sql.NullString
 		live                                         sql.NullBool
 		integration, blockState                      sql.NullString
+		metadata                                     sql.NullString
 	)
 	if err := row.Scan(&pane.ID, &pane.TabID, &pane.WorkspaceID, &session, &label, &pane.CWD,
 		&command, &pane.CommandPending, &env, &pane.OrderIndex, &created, &closedAt,
-		&owner, &ownerState, &reportSource, &reportState, &live, &integration, &blockState); err != nil {
+		&owner, &ownerState, &reportSource, &reportState, &live, &integration, &blockState, &metadata); err != nil {
 		return domain.Pane{}, fmt.Errorf("treestore: read pane: %w", err)
 	}
 	pane.SessionID = session.String
@@ -444,6 +453,13 @@ func scanPane(row scanner) (domain.Pane, error) {
 	pane.CreatedAt = epoch(created)
 	pane.ClosedAt = epochPtr(closedAt)
 	pane.ThreadID = owner.String
+	if metadata.Valid {
+		var rows [][2]string
+		if err := json.Unmarshal([]byte(metadata.String), &rows); err != nil {
+			return domain.Pane{}, fmt.Errorf("treestore: stored pane metadata is not readable: %w", err)
+		}
+		pane.Metadata = domain.MetadataFromKeys(rows)
+	}
 	pane.AttentionState, pane.StateSource = domain.ResolveAttention(domain.StateInputs{
 		OwnerThreadID:   owner.String,
 		ThreadAttention: domain.AttentionState(ownerState.String),

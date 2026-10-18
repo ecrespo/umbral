@@ -117,8 +117,10 @@ type Pane struct {
 	// ThreadID the own-agent thread whose PTY the live session is, "" for none.
 	AttentionState AttentionState
 	StateSource    string
-	CreatedAt      time.Time
-	ClosedAt       *time.Time
+	// Metadata is display only (REQ-INT-004): nothing above reads it.
+	Metadata  Metadata
+	CreatedAt time.Time
+	ClosedAt  *time.Time
 }
 
 // CreateWorkspaceParams is what `workspace.create` takes (API Spec §5.4).

@@ -30,6 +30,9 @@ func DefaultRetention() Retention {
 const EphemeralThreadTTL = 24 * time.Hour
 
 // PaneMetadataMaxAge is the latest a pane metadata key lives, whatever TTL its report gave.
+// A source's `#seq` row is exempt: it is never displayed, and forgetting it would let a
+// replayed report be accepted again. The literal is workspaces/domain.MetaKeySeq, which store
+// may not import; rename both together.
 const PaneMetadataMaxAge = 24 * time.Hour
 
 // retentionBatch bounds the rows one write transaction of the job touches. Each batch commits
@@ -119,7 +122,8 @@ func (s *Store) ApplyRetention(ctx context.Context, now time.Time, r Retention) 
 		{
 			"purge expired pane metadata",
 			`DELETE FROM pane_metadata WHERE rowid IN (
-				SELECT rowid FROM pane_metadata WHERE expires_at < ? OR updated_at < ? LIMIT ?)`,
+				SELECT rowid FROM pane_metadata
+				 WHERE expires_at < ? OR (updated_at < ? AND key <> '#seq') LIMIT ?)`,
 			[]any{now.UnixMilli(), now.Add(-PaneMetadataMaxAge).UnixMilli()},
 			&report.PaneMetadata,
 		},
