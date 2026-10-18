@@ -453,6 +453,8 @@ type fakeTool struct {
 	optional bool
 	// actionErr, when set, is what Action returns for every call.
 	actionErr error
+	// tainted marks every result as untrusted content, as skill_load's are.
+	tainted bool
 }
 
 // fakeTools is the tool registry: every tool takes {"path": …}.
@@ -497,7 +499,7 @@ func (f *fakeTools) Invoke(_ context.Context, _ toolsdomain.Env, call toolsdomai
 	}
 	t := f.tools[call.Tool]
 	t.ran.Add(1)
-	return toolsdomain.Result{Text: t.out, Summary: "done"}, nil
+	return toolsdomain.Result{Text: t.out, Summary: "done", Tainted: t.tainted}, nil
 }
 
 // checkingBus is the publisher: at the moment an event is published it checks that what the

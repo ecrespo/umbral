@@ -32,6 +32,9 @@ type Config struct {
 	Bus    ports.Publisher
 	// Context reads rules files, git state and attachments; nil sends none of them.
 	Context ctxports.Gatherer
+	// Skills is the catalog of enabled skills each turn's prompt lists (REQ-SKL-004); nil
+	// lists none.
+	Skills ctxports.SkillCatalog
 	// NewID makes a type-prefixed ULID (store.NewID).
 	NewID func(prefix string) string
 	// Metrics counts what the runtime measures.

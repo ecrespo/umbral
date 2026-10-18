@@ -566,3 +566,96 @@ func TestATruncatedStreamIsRefused_REQ_SKL_002(t *testing.T) {
 type countingWriter struct{ n int }
 
 func (c *countingWriter) Write(p []byte) (int, error) { c.n += len(p); return len(p), nil }
+
+// TestPromptCarriesDescriptionsNotBodies_REQ_SKL_004: the catalog lists every enabled skill by
+// name with its description cut to 256 characters, and the system prompt built from it holds
+// no body; a disabled skill is absent. A body or a file is read only through ReadSkill, which
+// serves an enabled skill's SKILL.md or one file of its bundle and nothing outside it.
+func TestPromptCarriesDescriptionsNotBodies_REQ_SKL_004(t *testing.T) {
+	r := newRig(t)
+	long := strings.Repeat("é", 300) // 300 characters, 600 bytes
+	install := func(name, description string, files map[string]string) {
+		t.Helper()
+		md := "---\nname: " + name + "\ndescription: " + description + "\n---\n# " + name + "\n\nBODY OF " + name + "\n"
+		files["SKILL.md"] = md
+		src := bundle(t, files)
+		m, err := r.svc.Inspect(t.Context(), src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.svc.Install(t.Context(), domain.InstallParams{Path: src, ExpectedSHA256: m.SHA256}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	install("release-check", long, map[string]string{"scripts/check.sh": "echo checked\n"})
+	install("hidden", "Disabled one.", map[string]string{})
+	install("other", "Another.", map[string]string{})
+	if _, err := r.svc.SetEnabled(t.Context(), "hidden", false); err != nil {
+		t.Fatal(err)
+	}
+
+	catalog, err := r.svc.Catalog(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog) != 2 || catalog[0].Name != "other" || catalog[1].Name != "release-check" {
+		t.Fatalf("catalog %+v, want other and release-check by name", catalog)
+	}
+	if got := catalog[1].Description; got != strings.Repeat("é", domain.MaxCatalogDescription) {
+		t.Fatalf("the description was cut to %d characters, want %d", len([]rune(got)), domain.MaxCatalogDescription)
+	}
+	system, err := domain.RenderSystem(domain.SystemInput{Cwd: "/w", Mode: "normal", Skills: catalog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"release-check", "other", "skill_load", strings.Repeat("é", domain.MaxCatalogDescription)} {
+		if !strings.Contains(system, want) {
+			t.Errorf("the system prompt lacks %q", want)
+		}
+	}
+	for _, absent := range []string{"BODY OF", "hidden", "echo checked", strings.Repeat("é", domain.MaxCatalogDescription+1)} {
+		if strings.Contains(system, absent) {
+			t.Errorf("the system prompt holds %q", absent)
+		}
+	}
+
+	if body, err := r.svc.ReadSkill(t.Context(), "release-check", ""); err != nil || !strings.Contains(string(body), "BODY OF release-check") {
+		t.Fatalf("SKILL.md: %q %v", body, err)
+	}
+	if script, err := r.svc.ReadSkill(t.Context(), "release-check", "scripts/check.sh"); err != nil || string(script) != "echo checked\n" {
+		t.Fatalf("a named file: %q %v", script, err)
+	}
+	// A link swapped into the stored copy after install is not followed out of it.
+	if err := os.Symlink(filepath.Dir(r.dir), filepath.Join(r.dir, "release-check", "out")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/hostname", filepath.Join(r.dir, "release-check", "host")); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, file string }{
+		{"release-check", "out/umbral.db"},
+		{"release-check", "host"},
+		{"release-check", "../other/SKILL.md"},
+		{"release-check", "/etc/passwd"},
+		{"release-check", "scripts/missing.sh"},
+		{"release-check", "scripts"},
+		{"hidden", ""},
+		{"ghost", ""},
+		{"../release-check", ""},
+	} {
+		data, err := r.svc.ReadSkill(t.Context(), c.name, c.file)
+		if err == nil {
+			t.Errorf("ReadSkill(%q, %q) served %q", c.name, c.file, data)
+			continue
+		}
+		// A file the bundle does not have is VALIDATION_ERROR (`2026-09-skills-cli` decision 5);
+		// a skill that is not installed, or not enabled, is not found.
+		want := domain.ErrSkillValidation
+		if c.file == "" {
+			want = domain.ErrSkillNotFound
+		}
+		if !errors.Is(err, want) {
+			t.Errorf("ReadSkill(%q, %q): %v, want %v", c.name, c.file, err, want)
+		}
+	}
+}

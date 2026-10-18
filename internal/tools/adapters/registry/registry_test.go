@@ -25,15 +25,15 @@ func builtins(t *testing.T) *Registry {
 }
 
 // TestToolSchemasDeclared_REQ_AGT_002: the built-in tools are offered, each with a JSON Schema
-// that compiles and a declared risk class — the file readers and searches ReadOnly, the two
-// writers WriteFS, fetch_url Network, run_command Exec.
+// that compiles and a declared risk class — the file readers, searches and skill_load
+// ReadOnly, the two writers WriteFS, fetch_url Network, run_command Exec.
 func TestToolSchemasDeclared_REQ_AGT_002(t *testing.T) {
 	t.Parallel()
 
 	want := map[string]secdomain.Risk{
 		"edit_file": secdomain.RiskWriteFS, "fetch_url": secdomain.RiskNetwork, "glob": secdomain.RiskReadOnly,
 		"grep": secdomain.RiskReadOnly, "list_dir": secdomain.RiskReadOnly, "read_file": secdomain.RiskReadOnly,
-		"write_file": secdomain.RiskWriteFS, "run_command": secdomain.RiskExec,
+		"write_file": secdomain.RiskWriteFS, "run_command": secdomain.RiskExec, "skill_load": secdomain.RiskReadOnly,
 	}
 	specs := builtins(t).Specs()
 	if len(specs) != len(want) {

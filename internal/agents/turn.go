@@ -166,7 +166,7 @@ func (t *turnRun) stopFor(ctx context.Context, err error) domain.StopReason {
 }
 
 // prepare reads what the turn needs once: the history, the rules, the tools the mode
-// exposes, and the system prompt with the rules files and git state.
+// exposes, and the system prompt with the rules files, the skill catalog and git state.
 func (t *turnRun) prepare(ctx context.Context) error {
 	cfg := t.r.cfg
 	t.writeRoot = secdomain.WriteRoot(t.thread.Cwd, cfg.IsRepo)
@@ -192,6 +192,12 @@ func (t *turnRun) prepare(ctx context.Context) error {
 			return err
 		}
 		if in.Git, err = cfg.Context.Git(ctx, t.thread.Cwd); err != nil {
+			return err
+		}
+	}
+	// Read for every turn, so an install, enable or disable reaches the next one (REQ-SKL-007).
+	if cfg.Skills != nil {
+		if in.Skills, err = cfg.Skills.Catalog(ctx); err != nil {
 			return err
 		}
 	}

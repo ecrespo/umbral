@@ -46,3 +46,9 @@ type Registry interface {
 type EgressLog interface {
 	Record(ctx context.Context, rec llmdomain.EgressRecord) error
 }
+
+// SkillReader is the skill store as skill_load reads it (REQ-SKL-004): an enabled skill's
+// SKILL.md when file is empty, or one file of its stored bundle, never anything outside it.
+type SkillReader interface {
+	ReadSkill(ctx context.Context, name, file string) ([]byte, error)
+}

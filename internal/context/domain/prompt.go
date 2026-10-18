@@ -21,10 +21,12 @@ type SystemInput struct {
 	Rules []RulesFile
 	// Git is nil outside a repository.
 	Git *GitContext
+	// Skills is the catalog of enabled skills (REQ-SKL-004).
+	Skills []CatalogEntry
 }
 
-// RenderSystem assembles the system prompt: the thread's cwd and mode, its rules files and
-// its git state (REQ-CTX-001, REQ-CTX-003).
+// RenderSystem assembles the system prompt: the thread's cwd and mode, its rules files, the
+// skill catalog and its git state (REQ-CTX-001, REQ-CTX-003, REQ-SKL-004).
 func RenderSystem(in SystemInput) (string, error) {
 	var s strings.Builder
 	if err := templates.ExecuteTemplate(&s, "system.tmpl", in); err != nil {

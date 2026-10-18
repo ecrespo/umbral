@@ -56,3 +56,9 @@ type Skills interface {
 	// Remove deletes the record, then the stored copy.
 	Remove(ctx context.Context, name string) error
 }
+
+// SkillCatalog is what each turn's prompt lists of the installed skills (REQ-SKL-004): the
+// enabled ones, read at every turn so a change reaches the next one (REQ-SKL-007).
+type SkillCatalog interface {
+	Catalog(ctx context.Context) ([]domain.CatalogEntry, error)
+}

@@ -11,7 +11,9 @@ import (
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/context/adapters/local"
+	"github.com/ecrespo/umbral/internal/context/adapters/skills"
 	ctxdomain "github.com/ecrespo/umbral/internal/context/domain"
+	ctxports "github.com/ecrespo/umbral/internal/context/ports"
 	"github.com/ecrespo/umbral/internal/llmgw"
 	llmdomain "github.com/ecrespo/umbral/internal/llmgw/domain"
 	llmports "github.com/ecrespo/umbral/internal/llmgw/ports"
@@ -44,6 +46,8 @@ type agentDeps struct {
 	// stallLocal and stallRemote are `[waits]`'s stall windows (REQ-AUT-008); zero takes
 	// the runtime's defaults.
 	stallLocal, stallRemote time.Duration
+	// skills is the skill store: each turn's catalog and skill_load's reader (T-F1-36).
+	skills *skills.Service
 }
 
 // newRuntime wires the agent runtime (T-F1-13) to the modules it reaches through their ports:
@@ -54,10 +58,16 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, *registry.Re
 	if err != nil {
 		return nil, nil, err
 	}
-	tools, err := registry.New(builtin.All(builtin.Config{
+	builtins := builtin.Config{
 		Fetch:    builtin.FetchConfig{Egress: d.egress, Redact: d.redact},
 		Terminal: d.terminal,
-	})...)
+	}
+	// Set only when there is a store: a nil *skills.Service in an interface is not nil.
+	var catalog ctxports.SkillCatalog
+	if d.skills != nil {
+		builtins.Skills, catalog = d.skills, d.skills
+	}
+	tools, err := registry.New(builtin.All(builtins)...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -73,6 +83,7 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, *registry.Re
 		Logger:  d.logger,
 		IsRepo:  isRepo,
 		Policy:  d.policy,
+		Skills:  catalog,
 
 		MaxCostMicroUSD: d.maxCost,
 		StallLocal:      d.stallLocal,

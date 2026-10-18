@@ -1,6 +1,6 @@
 // Package builtin holds the tools Umbral offers the model without an MCP server
-// (REQ-AGT-002): run_command, read_file, write_file, edit_file, grep, glob, list_dir and
-// fetch_url.
+// (REQ-AGT-002): run_command, read_file, write_file, edit_file, grep, glob, list_dir,
+// fetch_url and skill_load.
 package builtin
 
 import (
@@ -19,6 +19,8 @@ type Config struct {
 	Fetch FetchConfig
 	// Terminal runs run_command in a thread's PTY; without it run_command refuses to run.
 	Terminal sessionsports.AgentTerminal
+	// Skills reads the installed skills for skill_load; without it skill_load refuses to run.
+	Skills ports.SkillReader
 }
 
 // All returns every built-in tool.
@@ -32,6 +34,7 @@ func All(cfg Config) []ports.Tool {
 		globTool{},
 		listDir{},
 		newFetchURL(cfg.Fetch),
+		skillLoad{skills: cfg.Skills},
 	}
 }
 
