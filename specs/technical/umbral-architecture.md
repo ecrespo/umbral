@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.40 |
+| **Version** | 1.41 |
 | **Date** | 2026-10-03 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -867,6 +867,16 @@ gatherer — and publishes through a `Publisher`; `cmd/umbrald` wires them. Delt
   target), in one transaction, then resumes the turn; a destructive command, a target holding
   `*` or `?`, or a compound command line is kept `once`. A denial is a `denied_by_user` result the model reads; a turn
   cancelled while it waits leaves the approval `expired`.
+- **Attention** (REQ-AGT-016, T-F1-24; delta `2026-10-attention-focus`): the runtime keeps, in
+  memory, which thread each viewer views — a viewer is an API connection, which `thread.focus`
+  names and its close forgets. A turn's end writes `idle` and `seen_at` while any viewer views its
+  thread, `done` otherwise; a focus moves `done` to `idle`. Every change of attention — turn start,
+  approval asked and answered, turn end, focus — is written, then published as
+  `ThreadAttentionChanged`, under a per-thread attention lock that a focus and a turn's check for
+  viewers share, so a focus never lands between that check and the write. The answered approval's
+  `working` is written by `approval.respond` and published by the resuming turn. The locks live for
+  the daemon's run, one per thread. The wait engine subscribes to the event, so a wait for `idle`
+  settles on a focus.
 
 ### 5.3e The TUI's agent panel (T-F1-20)
 
@@ -1323,3 +1333,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.38 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-us003-e2e` (T-F1-21): §3.3 item 2 says the repair message carries the validator's text; §8 describes the live US-003 run — approvals, success, offline evidence and the report |
 | 1.39 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-retention` (T-F1-22): §5.1 adds `[retention]` and its four keys |
 | 1.40 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cost-cap`: §5.1 says what enforces `max_cost_usd_per_thread`, and that a reload applies the `[router]` table |
+| 1.41 | 2026-10-17 | E. Crespo (assisted draft) | Ratifies delta `2026-10-attention-focus` (T-F1-24): §5.3d says how the runtime keeps views, writes and announces attention under a per-thread lock, and wakes the waits |

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.31 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.32 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -1168,3 +1168,4 @@ printf '%s\n' \
 | 1.29 | 2026-10-04 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-umb-ai` (T-F1-19): §5.20 serves the inline `stdin` attachment — `data_b64`, `truncated?`, one per message, 1 MiB — and its `VALIDATION_ERROR` reasons; §4's Message records it as `ref: "stdin"`; §8 lists the limit |
 | 1.30 | 2026-10-04 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-retention` (T-F1-22): §4's Block says what retention leaves of a purged output — an empty `output_raw_b64`/`output_plain` with `output_bytes` kept |
 | 1.31 | 2026-10-04 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-cost-cap`: §5.20's `BUDGET_EXCEEDED` covers the cost cap too; §5.28's reload applies `models.toml`'s `[router]` table |
+| 1.32 | 2026-10-17 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-attention-focus` (T-F1-24): §5.23 adds `thread.focus` — views per connection, a viewed turn ends `idle`, reading is not viewing, interactive clients only; §5.3's `threads` and `focused.thread_id` are filled; §5.29 names `thread.focus`; §6 says when `thread.attention_changed` is sent; §7's attention diagram gains `done → working` and the cancel edges |
