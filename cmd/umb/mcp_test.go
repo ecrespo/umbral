@@ -79,9 +79,9 @@ func TestMcpCommandsMirrorTheMethods_REQ_CLI_008(t *testing.T) {
 	// no transport, both transports, a stdio server with no command, an http server with a
 	// command or env_refs (§5.27 takes neither), extra arguments.
 	for _, bad := range [][]string{
-		{"add", "gitlab", "--stdio", "--env", "GITLAB_TOKEN=glpat-0123456789abcdef", "--", "npx"},
+		{"add", "gitlab", "--stdio", "--env", "GITLAB_TOKEN=plaintext-typed-in-clear", "--", "npx"},
 		{"add", "gitlab", "--stdio", "--env", "GITLAB_TOKEN", "--", "npx"},
-		{"add", "gitlab", "--stdio", "--env=GITLAB_TOKEN=glpat-0123456789abcdef", "--", "npx"},
+		{"add", "gitlab", "--stdio", "--env=GITLAB_TOKEN=plaintext-typed-in-clear", "--", "npx"},
 		{"add", "jira", "--http", "https://x", "--env"},
 		{"add", "gitlab", "--stdio", "--env", "GITLAB_TOKEN=keyring:", "--", "npx"},
 		{"add", "gitlab", "--stdio", "--trusted", "--", "npx"},
@@ -101,7 +101,7 @@ func TestMcpCommandsMirrorTheMethods_REQ_CLI_008(t *testing.T) {
 		if code != exitFailure || params != nil {
 			t.Errorf("umb mcp %v: exit %d, sent %v", bad, code, params)
 		}
-		if strings.Contains(out+errOut, "glpat-0123456789abcdef") {
+		if strings.Contains(out+errOut, "plaintext-typed-in-clear") {
 			t.Errorf("umb mcp %v echoed the secret: %q %q", bad, out, errOut)
 		}
 	}
