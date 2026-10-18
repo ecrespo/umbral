@@ -2,6 +2,7 @@ package agents
 
 import (
 	"errors"
+	"regexp"
 	"testing"
 	"time"
 
@@ -259,5 +260,21 @@ func TestAnAnswerRacingACancelIsACancel_REQ_AGT_004(t *testing.T) {
 		if n := r.tools.tools["run"].ran.Load(); n != 0 {
 			t.Fatalf("the tool ran %d times after the cancel", n)
 		}
+	}
+}
+
+// TestTheTurnDecidesWithTheActiveRules_REQ_SEC_010: the runtime decides with the policy
+// Config.Policy hands it at each call, so a destructive pattern a local rule file adds makes
+// a command it would otherwise only ask about ask as `destructive`.
+func TestTheTurnDecidesWithTheActiveRules_REQ_SEC_010(t *testing.T) {
+	set := secdomain.BuiltinRules()
+	set.Destructive = append(set.Destructive, secdomain.DestructivePattern{Name: "nuke", Expr: regexp.MustCompile(`^nuke( |$)`)})
+	r := newRigWith(t, func(c *Config) { c.Policy = set.Policy }, callTool("run", `{"path":"nuke build"}`), answer("gone"))
+	th := r.thread(t, domain.CreateParams{Mode: secdomain.ModeAutoEdit})
+	if _, err := r.rt.Send(t.Context(), ports.SendParams{ThreadID: th.ID, Text: "clean"}); err != nil {
+		t.Fatal(err)
+	}
+	if a := r.requested(t); a.Reason != secdomain.ReasonDestructive {
+		t.Fatalf("reason %s, want destructive from the local rule", a.Reason)
 	}
 }

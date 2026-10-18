@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.20 |
+| **Version** | 1.21 |
 | **Date** | 2026-10-18 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -570,7 +570,9 @@ Insert-only table: no `UPDATE` or `DELETE` except for retention. `provider` is t
 of a model call, or the tool `fetch_url` for its requests (Art. 4; delta
 `2026-09-builtin-tools`), whose payload is the request URL, or `mcp:<name>` for a request to an
 MCP server off this machine, whose payload is the request body, or its URL when it has none
-(delta `2026-10-mcp-client`).
+(delta `2026-10-mcp-client`), or `umbral-rules` for a rule-update request — the configured URL,
+its `.sig` and every redirect hop — whose payload is the request URL (delta
+`2026-10-rule-overrides`).
 
 ### 2.13 `mcp_servers`
 
@@ -742,3 +744,4 @@ earlier drafts named.
 | 1.18 | 2026-10-17 | §2.5: `seen_at` is also written by a turn that ends while a client views its thread; neither write moves `updated_at` (delta `2026-10-attention-focus`, T-F1-24). No DDL change |
 | 1.19 | 2026-10-17 | §2.4c: how `pane_state_reports` is written — `seq = -1` for unnumbered, strictly increasing `updated_at` per pane, rows renamed with a moved pane (delta `2026-10-integration-surface`, T-F1-25). No DDL change |
 | 1.20 | 2026-10-18 | §2.4c: how `pane_metadata` is written — the key names, the reserved `#seq` row, strictly increasing `updated_at`, expiry read and defaulted to 24 h, how the 32 is counted; §4: the age purge keeps `#seq` rows (delta `2026-10-display-metadata`, T-F1-26). No DDL change |
+| 1.21 | 2026-10-18 | §2.12: `umbral-rules` rows, one per rule-update request and redirect hop, whose payload is the request URL (delta `2026-10-rule-overrides`, T-F1-29). No DDL change |

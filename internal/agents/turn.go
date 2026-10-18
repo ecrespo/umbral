@@ -457,7 +457,7 @@ func (t *turnRun) callTool(ctx context.Context, c domain.ToolCall) error {
 	}
 	t.r.publish(ports.ThreadToolCall{Call: c})
 
-	decision := secdomain.Decide(action, t.thread.Mode, t.rules, t.tainted)
+	decision := cfg.Policy().Decide(action, t.thread.Mode, t.rules, t.tainted)
 	grant := toolsdomain.Grant{Action: action, Decision: decision}
 	switch decision.Verdict {
 	case secdomain.VerdictDeny:

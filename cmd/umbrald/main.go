@@ -110,6 +110,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitConfig
 	}
 
+	// The rule set in force (REQ-SEC-010): the built-in rules with the override directory on
+	// top. An invalid file is warned about and skipped; it never stops the daemon or empties
+	// the set.
+	activeRules := loadRules(logger, settingsPath)
+	redact := func(s string) string { return activeRules.Redact(s).Text }
+
 	// The providers, with the same rule: a models file the schema refuses stops the daemon.
 	// A plaintext key refuses only its own entry (REQ-SEC-004), and a keyring this machine
 	// cannot reach disables only the providers that need it (REQ-SEC-008).
@@ -367,7 +373,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}()
 
-	models, err := newGateway(ctx, logger, modelStore, egress, usage, modelTracer{telemetry})
+	// Signed rule updates (REQ-SEC-011): off unless `[update] rules_check` says otherwise, and
+	// every request recorded in egress_log.
+	if err := startRuleFetcher(ctx, logger, settings, egress, redact); err != nil {
+		logger.Error("cannot build the rule fetcher", slog.Any("error", err))
+		return exitCantCreate
+	}
+
+	models, err := newGateway(ctx, logger, modelStore, egress, usage, modelTracer{telemetry}, redact)
 	if err != nil {
 		logger.Error("cannot build the model gateway", slog.Any("error", err))
 		return exitCantCreate
@@ -379,7 +392,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	runtime, tools, err := newRuntime(ctx, agentDeps{
 		logger: logger, db: db, bus: eventBus, gateway: models, egress: egress,
 		terminal: sessionService, blocks: blockReader, metrics: metrics, tracer: agentTracer{telemetry},
-		maxCost: providers.MaxCostMicroUSD,
+		maxCost: providers.MaxCostMicroUSD, redact: redact, policy: activeRules.Policy,
 	})
 	if err != nil {
 		logger.Error("cannot build the agent runtime", slog.Any("error", err))
@@ -388,7 +401,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	defer runtime.Close()
 
 	// policy.explain (T-F1-28) reads the same threads and rules a turn decides with.
-	explainer, err := newExplainer(db, tools)
+	explainer, err := newExplainer(db, tools, activeRules.Policy)
 	if err != nil {
 		logger.Error("cannot build policy.explain", slog.Any("error", err))
 		return exitCantCreate
@@ -396,7 +409,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// The MCP client (T-F1-17): every configured server is connected in the background and
 	// its tools join the registry the runtime offers from.
-	mcpClient, err := newMCP(ctx, logger, db, eventBus, egress, tools, providers)
+	mcpClient, err := newMCP(ctx, logger, db, eventBus, egress, tools, providers, redact)
 	if err != nil {
 		logger.Error("cannot build the MCP client", slog.Any("error", err))
 		return exitCantCreate

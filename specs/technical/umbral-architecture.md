@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.45 |
+| **Version** | 1.46 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -446,9 +446,24 @@ people leave running for days.
   - A fetch that fails — network, HTTP error, 404 — is logged and retried at the next check. It is
     not a failed verification: only a bundle that arrived and was rejected counts.
   - Keys are named by fingerprint on the wire. Their ids are `key_` + ULID (Art. 6).
+  - The rules travel as `{"version"?, "redaction"?: [{"name", "pattern", "group"?}],
+    "destructive"?: [{"name", "pattern"}]}`, decoded strictly: names match `^[a-z0-9_]{1,64}$`
+    and are unique per list, patterns are RE2 of at most 4096 bytes, at most 256 entries a list.
+    A local override file has the same shape and its `version` is ignored. A `null` document, an
+    unknown member (a `group` on a destructive entry included) or trailing content is invalid.
+- **Layers (delta `2026-10-rule-overrides`):** the base is the built-in rules, or the active
+  bundle, which replaces them whole. Each file of `$XDG_CONFIG_HOME/umbral/rules/` is layered on
+  the base in lexical order: an entry replaces the entry of the same name and otherwise adds to
+  it, so a local file can replace a rule, even with one that matches nothing, but never remove
+  one. Only regular `*.json` files of at most 1 MiB are read, never through a link, once at
+  start. An invalid file is skipped whole with a warning naming it and the reason.
+  `cmd/umbrald` holds one active set whose policy the agent runtime and `policy.explain` both
+  read, and whose redactor every redaction uses.
+- **Before T-F1-30 nothing fetched is applied:** a fetched bundle is logged and discarded,
+  since this build cannot verify it.
 - **Trust on a fresh install:**
   - The binary embeds the project's public keys, a `retired` list and a `revoked` list
-    (`internal/security/rules/trustseed`), matched by fingerprint. `retired` only keeps a
+    (`internal/security/adapters/rules/trustseed`), matched by fingerprint. `retired` only keeps a
     rotated-out key's `source` as `builtin`.
   - On start the daemon adds each seed key `trust_keys` lacks, and revokes each listed one not
     yet revoked.
@@ -562,7 +577,14 @@ range stops the daemon naming the key. Not live: a change needs a restart (delta
 `[update] rules_check` (off by default) turns on signed rule updates (REQ-SEC-011, DD-016).
 `[update] rules_url` is where they come from. Its default is the project's latest release asset,
 `https://github.com/ecrespo/umbral/releases/latest/download/rules.json`, and the signature is at
-the same URL plus `.sig`. Neither is contacted while `rules_check` is off (Art. 4).
+the same URL plus `.sig`. Neither is contacted while `rules_check` is off (Art. 4). On, they are
+fetched at start and every 24 h, and each request — each redirect hop included, since the default
+URL redirects to another host — is written to `egress_log` before it is sent; a hop off `https` is
+not followed, nor is a sixth redirect. Bodies are capped at 4 MiB and only a 200 is accepted; a
+failure is logged by host, retried at the next check and offers nothing. `rules_url` must be
+`https://` with a host and no credentials, and with `rules_check` on, a URL the active redactor
+would change (with or without `.sig`) stops the daemon (Art. 4). Redirect targets are the
+server's own and are recorded, not redacted, as `fetch_url`'s are.
 
 **Providers: `models.toml`.** Beside `config.toml`, in the same directory. It names the
 providers, the model classes and the routing policy, and never a key: a credential is a
@@ -1359,3 +1381,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.43 | 2026-10-18 | E. Crespo (assisted draft) | Ratifies delta `2026-10-display-metadata` (T-F1-26): §5.2's `integrations` row says display metadata is written by the module, read by the tree and kept off the state path |
 | 1.44 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-notifications` (T-F1-27): §5.2's `notify` row says how the sink reaches a client and how `integrations` reaches the sink without importing it, both outside their locks; §9.4 lists `umb notify` |
 | 1.45 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-policy-explain` (T-F1-28): §5.2 gains a `security` row for policy.explain's root, which reads threads and rules through its own port; §9.4 lists `umb policy explain` |
+| 1.46 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-rule-overrides` (T-F1-29): DD-016 gives the rules' JSON shape, a bundle replacing the built-ins and local files layered by name on top; §4 says when rules are fetched, that each redirect hop is recorded and that a `rules_url` carrying a secret stops the daemon; the trust seed moves under `internal/security/adapters/rules/` |

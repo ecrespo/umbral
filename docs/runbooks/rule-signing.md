@@ -35,7 +35,7 @@ Signing by hand, once per bundle, is the cost DD-016 accepted.
 | Private key, encrypted | `umbral-rules-<label>.key.age` on the primary offline USB drive | Yes. It is useless without the passphrase. |
 | Backup of the private key | The same file on a second drive, in another place | Yes |
 | Passphrase | The Tech Lead's password manager, never beside either drive | Yes |
-| Public key | `umbral-rules-<label>.pub` in `internal/security/rules/trustseed/`, the README and the release notes | No |
+| Public key | `umbral-rules-<label>.pub` in `internal/security/adapters/rules/trustseed/`, the README and the release notes | No |
 | Signed bundle | `rules.json` and `rules.json.sig`, attached to each GitHub release. `[update] rules_url` defaults to the latest one. | No |
 
 The **label** (`2026a`, `2027a`, or `2026b` for an unscheduled replacement) names files and
