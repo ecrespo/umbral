@@ -367,3 +367,31 @@ func TestAFailedFetchLogsTheHostOnly_REQ_SEC_011(t *testing.T) {
 		t.Errorf("the failure log carries the signed URL or nothing:\n%s", logs.String())
 	}
 }
+
+// TestAFailedClosedStoreFetchesNothing_REQ_SEC_015: with remote updates failed closed the
+// fetcher makes no request at all, so nothing leaves the machine until a key is added.
+func TestAFailedClosedStoreFetchesNothing_REQ_SEC_015(t *testing.T) {
+	t.Parallel()
+	var hits atomic.Int64
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hits.Add(1) }))
+	t.Cleanup(srv.Close)
+	var open atomic.Bool
+	egress := &recordingEgress{}
+	f, err := NewFetcher(FetchConfig{
+		Enabled: true, URL: srv.URL + "/rules.json", Client: srv.Client(),
+		Allowed: func(context.Context) bool { return open.Load() },
+		Egress:  egress, Updater: &recordingUpdater{}, Logger: slog.New(slog.DiscardHandler),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Check(t.Context())
+	if hits.Load() != 0 || len(egress.recs) != 0 {
+		t.Fatalf("failed closed: %d requests, %d egress rows", hits.Load(), len(egress.recs))
+	}
+	open.Store(true)
+	f.Check(t.Context())
+	if hits.Load() == 0 {
+		t.Error("reopened, the fetcher still fetches nothing")
+	}
+}

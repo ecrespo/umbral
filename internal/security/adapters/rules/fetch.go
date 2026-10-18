@@ -31,6 +31,9 @@ const (
 type FetchConfig struct {
 	// Enabled is `[update] rules_check`. Off, Check makes no request (Art. 4).
 	Enabled bool
+	// Allowed reports whether remote updates are open; false — failed closed (REQ-SEC-015) —
+	// makes a check request nothing. Nil is always open.
+	Allowed func(context.Context) bool
 	// Redact is the active redactor. A URL it would change carries what looks like a secret
 	// and is refused (Art. 4), as fetch_url refuses one. Nil checks nothing.
 	Redact func(string) string
@@ -115,6 +118,10 @@ func (f *Fetcher) Run(ctx context.Context) {
 // not a rejected bundle (DD-016).
 func (f *Fetcher) Check(ctx context.Context) {
 	if !f.cfg.Enabled {
+		return
+	}
+	if f.cfg.Allowed != nil && !f.cfg.Allowed(ctx) {
+		f.cfg.Logger.DebugContext(ctx, "remote rule updates are failed closed; nothing is fetched")
 		return
 	}
 	bundle, err := f.get(ctx, f.cfg.URL)

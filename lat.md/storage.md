@@ -18,6 +18,8 @@ SQLite rejects every insert into a table whose foreign key names a missing table
 
 An applied migration file is never edited (constitution Art. 6), which is why the agent subdomain is `0005` and not the number older drafts name.
 
+For the same reason the bundle bytes that signed rule updates need arrive in `0006_rule_state` as an `ALTER TABLE` on `rule_bundles`, not as an edit to `0005`.
+
 ## Prefixed identifiers
 
 [[internal/store/ids.go#NewID]] generates type-prefixed ULIDs and lives in `store` because the `CHECK` constraints enforcing the prefixes sit in the migrations next door.

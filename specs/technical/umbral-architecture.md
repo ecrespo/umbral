@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.46 |
+| **Version** | 1.47 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -459,11 +459,44 @@ people leave running for days.
   start. An invalid file is skipped whole with a warning naming it and the reason.
   `cmd/umbrald` holds one active set whose policy the agent runtime and `policy.explain` both
   read, and whose redactor every redaction uses.
-- **Before T-F1-30 nothing fetched is applied:** a fetched bundle is logged and discarded,
-  since this build cannot verify it.
+- **Applying a bundle (delta `2026-10-signed-rule-bundles`, T-F1-30):** `internal/security`'s
+  `Rules` manager owns the decision, over a `RuleStore` port whose SQL adapter writes migration
+  0006's tables (Data Model §2.4e).
+  - Order: an identical digest is up to date; a digest in `rule_rejections` is skipped silently;
+    otherwise the signature (`unsigned`, `unknown_key`, `invalid_signature`), the document
+    (`invalid_bundle`: invalid rules or a `version` not positive) and the floor (`downgrade`):
+    the higher of the active version and the highest version ever applied, so a reset does not
+    let a compromised endpoint replay an older signed bundle. Unverified bytes are never parsed,
+    so a rejection before the signature carries version 0.
+  - A rejection writes its `rule_rejections` row, the failure count and an `egress_log` row
+    `umbral-rules:rejected:<reason>` in one transaction, then counts
+    `umbral_rule_updates_rejected_total`, announces `rules.update_rejected` and — through
+    `cmd/umbrald`, which subscribes before the manager starts — raises a user notification under
+    `umbral:rules`. The rules in force stay. A rejected bundle is never retried; rejections are
+    keyed by the bundle's digest, so an endpoint serving the real next bundle with a bad `.sig`
+    blocks that one bundle, and the project publishes the next version (accepted).
+  - A verified bundle is stored with its exact bytes and `verified_with`, the former active row
+    becomes inactive and rows other than the active, the previous and `builtin` are pruned —
+    persisted before the active set's base changes (DD-007). At start the active row's bytes are
+    checked against its digest; a mismatch falls back to the built-in rules with an error.
+  - **Fail closed:** the third consecutive rejection sets a latch, a bundle applied resets the
+    count, and a failed fetch or a skipped repeat neither counts nor resets. The store ending up
+    without a valid key sets it too, once it has ever held one, so a fresh install takes the first
+    key its seed brings. Only `rules.key.add` (or `rotate`'s add) clears it; with it set the
+    fetcher makes no request.
+  - **Rollback and reset** need no key, no network and no clear latch. `rules.rollback` makes the
+    previous bundle active, deletes the row it left and remembers that digest as `rolled_back`;
+    `rules.reset` makes `builtin` active and remembers the former digest as `reset`, keeping the
+    remote rows for a later rollback. Neither is a rejection.
+  - Every trust-store change is a `trust_key_events` row (REQ-SEC-014). `umb rules key add` and
+    `rotate` take `--confirm FINGERPRINT`; without it they print the fingerprint and call nothing.
+    Removing the last valid key needs `--force`.
+  - `tools/rulesign` (`keygen`, `sign`, `verify`) is the runbook's signing tool; it depends on
+    `security-domain` only, so `verify` runs the daemon's own verification.
 - **Trust on a fresh install:**
   - The binary embeds the project's public keys, a `retired` list and a `revoked` list
-    (`internal/security/adapters/rules/trustseed`), matched by fingerprint. `retired` only keeps a
+    (`internal/security/adapters/rules/trustseed/seed.json`, embedded; it ships empty until the
+    Tech Lead creates the project key offline, runbook §4.1), matched by fingerprint. `retired` only keeps a
     rotated-out key's `source` as `builtin`.
   - On start the daemon adds each seed key `trust_keys` lacks, and revokes each listed one not
     yet revoked.
@@ -478,7 +511,7 @@ people leave running for days.
   - The active bundle stays if it survives. Otherwise the newest remaining `remote` bundle, or
     the built-in rules, becomes active. It is never a `local` row, and the override directory is
     never touched.
-  - That bundle's version becomes REQ-SEC-013's floor.
+  - The highest surviving version becomes REQ-SEC-013's floor (`highest_version`).
   - Without this, a stolen key could sign an enormous version and lock every legitimate bundle
     out.
 
@@ -685,7 +718,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `waits` | `ports` and `domain` of `agents` and `sessions`, plus `bus`; never `api`. It reads the store only through the agents runtime, and its own domain reuses the sessions domain's escape-sequence stripper (delta `2026-10-wait-engine`) |
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api`. The tree resolves a pane's state in DD-012's order (`workspaces/domain.ResolveAttention`); `integrations` writes the external reports and announces every change. It hears the changes it did not make — blocks, integration verdicts, exits, thread attention — through events `cmd/umbrald` subscribes it to, and re-reads the whole tree on each (delta `2026-10-integration-surface`). Display metadata is written by `integrations` and read by the tree into a `Pane`'s `metadata`, never on the state path: `ResolveAttention`, the rollup, waits and notifications do not read it, and a written report is announced as `pane.updated` only (delta `2026-10-display-metadata`) |
 | `notify` | `bus` and stdlib only; it is a sink and imports no other module. `api` implements its `Deliverer` port — the foreground client of API §5.35 — and is handed to it by `cmd/umbrald` once the server exists; `cmd/umbrald` adapts `integrations`' `Notifier` port to it for an external `blocked`. Both modules deliver outside their locks, and `api` through a per-connection queue, so a client that stops reading stalls no source (delta `2026-10-notifications`) |
-| `security` | stdlib, and `go-keyring` in its adapter. Its root holds policy.explain, which reads a thread's mode, directory and rules through its own `ExplainSource` port and asks the same pure `Decide` a turn uses; `cmd/umbrald` adapts the agent thread store to that port and hands both the runtime and the explainer one `isRepo`, so an explanation and a turn agree about the write root (delta `2026-10-policy-explain`) |
+| `security` | stdlib, `go-keyring` in its adapter, `bus` in its ports (to name `rules.update_rejected`) and the root `llmgw/domain` (for the egress record a rejection writes). Its root holds policy.explain, which reads a thread's mode, directory and rules through its own `ExplainSource` port and asks the same pure `Decide` a turn uses; `cmd/umbrald` adapts the agent thread store to that port and hands both the runtime and the explainer one `isRepo`, so an explanation and a turn agree about the write root (delta `2026-10-policy-explain`). Its root also holds the `Rules` manager of signed bundles (DD-016), which reaches storage through its own `RuleStore` port and replaces the active set's base through `RuleBase`. `tools/rulesign` depends on `security/domain` only (delta `2026-10-signed-rule-bundles`) |
 | `mcp` | its own `ports` and `domain`, plus `bus`. `tools/adapters` may use `mcp/domain`, for `mcptools`, which offers a server's tools; `api` the `ports` and `domain` of `mcp`; only `cmd/*` wires the manager to the registry (delta `2026-10-mcp-client`) |
 | `obs` | stdlib, and OpenTelemetry from T-F1-18; imported only by `cmd/*`. Modules count through a port of their own, which `cmd/umbrald` gives the `obs` implementation (delta `2026-10-tool-call-repair`) |
 | `cmd/*` | everything |
@@ -1164,7 +1197,7 @@ enforces both rules, with `mustCases` pinned to the 20 MUST rows above.
 
 ### 9.4 The `umb` surface
 
-Commands: `umb status`, `umb block last`, `umb ai`, `umb api schema`, `umb limits`, `umb notify` (API Spec §5.35), `umb policy explain` (API Spec §5.36), `umb version`,
+Commands: `umb status`, `umb block last`, `umb ai`, `umb api schema`, `umb limits`, `umb notify` (API Spec §5.35), `umb policy explain` (API Spec §5.36), `umb rules` (API Spec §5.34: `status`, `key list|add|remove|rotate`, `rollback`, `reset`), `umb version`,
 `umb help`, and the workspace tree below. Flags shared by every command: `--socket PATH` (default: the runtime
 directory of API Spec §2), `--daemon-path PATH` (default: `PATH`, then the directory holding
 `umb`), `--no-autostart`, and `--json`, which every command but `umb ai` takes.
@@ -1382,3 +1415,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.44 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-notifications` (T-F1-27): §5.2's `notify` row says how the sink reaches a client and how `integrations` reaches the sink without importing it, both outside their locks; §9.4 lists `umb notify` |
 | 1.45 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-policy-explain` (T-F1-28): §5.2 gains a `security` row for policy.explain's root, which reads threads and rules through its own port; §9.4 lists `umb policy explain` |
 | 1.46 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-rule-overrides` (T-F1-29): DD-016 gives the rules' JSON shape, a bundle replacing the built-ins and local files layered by name on top; §4 says when rules are fetched, that each redirect hop is recorded and that a `rules_url` carrying a secret stops the daemon; the trust seed moves under `internal/security/adapters/rules/` |
+| 1.47 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-signed-rule-bundles` (T-F1-30): DD-016 states how a bundle is verified, applied, rejected and never retried, the fail-closed latch, rollback and reset, the trust-key history and `tools/rulesign`; §5.2's `security` row gains the `Rules` manager and its imports; §9.4 lists `umb rules`. The floor is the higher of the active and the highest applied version, so a reset reopens no older bundle; a rejection also notifies the user under `umbral:rules` |

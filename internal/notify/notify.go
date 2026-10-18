@@ -57,6 +57,16 @@ func (s *Service) Show(ctx context.Context, req domain.Request) (domain.Result, 
 	return s.show(n), nil
 }
 
+// ShowOwn is Show for the daemon's own components (a source under domain.ReservedPrefix), which
+// spend their own budget under the same checks.
+func (s *Service) ShowOwn(_ context.Context, req domain.Request) (domain.Result, error) {
+	n, err := req.BuildOwn()
+	if err != nil {
+		return domain.Result{}, err
+	}
+	return s.show(n), nil
+}
+
 // show applies the checks in their order: disabled, then the source's rate, then whether a
 // client is there to receive it. A request that reaches the rate check counts against its
 // source whether or not a client receives it — the limit is on what a source asks for.

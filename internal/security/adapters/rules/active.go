@@ -21,6 +21,12 @@ func NewActive(local domain.RuleSet) *Active {
 	return &Active{local: local, current: domain.Layer(domain.BuiltinRules(), local)}
 }
 
+// HasLocal reports whether the override directory contributed any rule (`rules.status`'s
+// `local_override`).
+func (a *Active) HasLocal() bool {
+	return len(a.local.Redaction)+len(a.local.Destructive) > 0
+}
+
 // SetBase replaces the base — a verified bundle replaces the built-in rules whole, so a name it
 // leaves out is gone — keeping the local overrides on top (DD-016).
 func (a *Active) SetBase(base domain.RuleSet) {

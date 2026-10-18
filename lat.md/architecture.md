@@ -40,6 +40,8 @@ An external `pane.report_state` raises a notification only when it makes the pan
 
 Delivery never waits on a client: the sink and `integrations` call out only after releasing their locks, and each interactive connection drains a small queue with its own writer ([[internal/api/notifications.go#conn#writePosted]]). A TUI that stops reading costs a `no_client` answer instead of stalling every other source.
 
+The daemon's own components notify under the reserved `umbral:` prefix through [[internal/notify/notify.go#Service#ShowOwn]], with the same normalization and per-source limit; a client claiming that prefix is refused, so it cannot spend a daemon component's budget.
+
 A hook raises one with `umb notify` ([[cmd/umb/notify.go#cmdNotify]]), which exits 0 even when the notification was not shown: `rate_limited` or `no_client` is an answer about the user, not a failure of the hook.
 
 ## Explaining a decision uses the turn's engine
@@ -56,4 +58,18 @@ Layers stack by name in [[internal/security/domain/ruleset.go#Layer]]: a same-na
 
 The agent runtime and `policy.explain` read the policy from the same [[internal/security/adapters/rules/active.go#Active]], and every redaction reads its redactor, so an explanation cannot describe a policy the daemon does not apply. [[internal/security/adapters/rules/active.go#Active#SetBase]] swaps that base and keeps the local layer on top.
 
-The opt-in fetch in [[internal/security/adapters/rules/fetch.go#Fetcher]] writes every request, and every redirect hop, to `egress_log` before sending it, refuses a configured URL the redactor would change, and never applies what it fetched: until signatures can be verified, a bundle is logged and discarded.
+The opt-in fetch in [[internal/security/adapters/rules/fetch.go#Fetcher]] writes every request, and every redirect hop, to `egress_log` before sending it, refuses a configured URL the redactor would change, and hands what it fetched to the bundle manager, never applying it itself.
+
+### Signed bundles and recovery
+
+[[internal/security/rules.go#Rules]] decides what a fetched bundle does, and is the only place that changes the active set's base (delta `2026-10-signed-rule-bundles`).
+
+[[internal/security/rules.go#Rules#Offer]] verifies with [[internal/security/domain/bundle.go#VerifyBundle]] against the trust store, refuses a downgrade, and remembers a rejected digest so it is never retried. The rejection, its count and an `umbral-rules:rejected:<reason>` egress row are one transaction, written before the metric and the bus event, as DD-007 asks. A verified bundle is stored with its bytes before the base changes, so a restart reloads exactly what was applied and checks it against its digest. The version floor is the higher of the active version and the highest ever applied, so a reset cannot be undone by replaying an older signed bundle; only a revocation lowers it, because a stolen key's huge version must not lock legitimate bundles out.
+
+A rejection also reaches a person: [[cmd/umbrald/notify.go#notifyRuleRejections]] turns each `rules.update_rejected` into a notification under the daemon's own `umbral:rules` source through [[internal/notify/notify.go#Service#ShowOwn]], subscribed before the manager starts so the first check's verdict is not lost.
+
+Updates fail closed after three consecutive rejections, or when the trust store ends up without a valid key once it has held one; only [[internal/security/rules.go#Rules#AddKey]] reopens them, never the embedded seed, so a compromised build cannot silently restart updates the user stopped. [[internal/security/rules.go#Rules#Rollback]] and [[internal/security/rules.go#Rules#Reset]] need no key and no network, because losing the signing key must degrade the update channel and never the product; each remembers the digest it left so the next check does not undo it.
+
+The operator reaches the manager through `rules.*` in [[internal/api/rules.go]] and `umb rules` in [[cmd/umb/rules.go#cmdRules]]. Adding or rotating a key needs `--confirm` with the key's fingerprint typed back; without it the CLI prints the fingerprint and calls nothing, which is REQ-SEC-014's explicit confirmation. [[tools/rulesign/main.go]] signs and verifies bundles with the same domain function the daemon uses, so a bundle the tool accepts is one the daemon accepts.
+
+Storage goes through the `RuleStore` port, implemented over migration 0006 by [[internal/security/adapters/rules/store.go#Store]], which keeps `cmd/umbrald` the only place that wires SQLite to the manager.

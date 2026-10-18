@@ -34,6 +34,7 @@ import (
 	"github.com/ecrespo/umbral/internal/notify"
 	"github.com/ecrespo/umbral/internal/obs"
 	"github.com/ecrespo/umbral/internal/security/adapters/keyring"
+	secports "github.com/ecrespo/umbral/internal/security/ports"
 	"github.com/ecrespo/umbral/internal/sessions"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/blockstore"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/ghostty"
@@ -375,8 +376,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// Signed rule updates (REQ-SEC-011): off unless `[update] rules_check` says otherwise, and
 	// every request recorded in egress_log.
-	if err := startRuleFetcher(ctx, logger, settings, egress, redact); err != nil {
-		logger.Error("cannot build the rule fetcher", slog.Any("error", err))
+	// Subscribed before the manager starts: a rejection at the first check reaches the user
+	// once the notification sink below exists.
+	ruleRejections := eventBus.Subscribe(secports.KindRuleUpdateRejected)
+	ruleManager, err := startRules(ctx, logger, db, settings, egress, redact, activeRules, eventBus, metrics)
+	if err != nil {
+		logger.Error("cannot start the rule manager", slog.Any("error", err))
 		return exitCantCreate
 	}
 
@@ -431,6 +436,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitCantCreate
 	}
 
+	go notifyRuleRejections(ctx, ruleRejections, notifications, logger)
+
 	// The integration surface (T-F1-25): external state reports and `pane.state_changed`.
 	paneStates, err := newIntegrations(ctx, db, eventBus, workspaceService,
 		blockedNotifier{sink: notifications, logger: logger}, logger)
@@ -455,6 +462,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Integrations:  paneStates,
 		Notifications: notifications,
 		PolicyExplain: explainer,
+		Rules:         ruleManager,
 		Bus:           eventBus,
 		Logger:        logger,
 		// The first live setting: `limits.set` rewrites it in this file and applies it to

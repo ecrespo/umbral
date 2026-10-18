@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.36 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.37 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -134,7 +134,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list`, `notification.show`, `policy.explain` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list`, `notification.show`, `policy.explain`, `rules.*` |
 
 ### Handshake
 
@@ -890,8 +890,8 @@ not touch the turn, the process or the pane being observed. Exceeding the concur
 returns `VALIDATION_ERROR` naming the limit; exceeding the report rate returns `ok` with the report
 discarded. Neither closes the connection.
 
-### 5.34 `rules.status` / `rules.key.add|list|remove|rotate` / `rules.rollback` / `rules.reset` — REQ-SEC-011, REQ-SEC-013, REQ-SEC-014, REQ-SEC-015, REQ-SEC-016
-`rules.status` result:
+### 5.34 `rules.status` / `rules.key.list` / `rules.key.add` / `rules.key.remove` / `rules.key.rotate` / `rules.rollback` / `rules.reset` — REQ-SEC-011, REQ-SEC-013, REQ-SEC-014, REQ-SEC-015, REQ-SEC-016
+`rules.status` params: `{}`. Result:
 ```json
 {"active_bundle":{"version":7,"sha256":"…","source":"remote","verified_with":"key_01K5…"},
  "previous_bundle":{"version":6,"sha256":"…"},
@@ -900,19 +900,34 @@ discarded. Neither closes the connection.
  "trust_keys":[{"id":"key_01K5…","fingerprint":"SHA256:…","source":"builtin","added_at":1758326400000,"revoked_at":null}],
  "last_rejection":{"reason":"unknown_key","at":1758320000000}}
 ```
+- `active_bundle.verified_with` is `null` for the built-in rules (`source: "builtin"`, version 0). `previous_bundle` is the newest stored `remote` bundle that is not active, or `null`; `last_rejection` is `null` until a bundle is rejected. `local_override` says whether the override directory contributed any rule.
 - `remote_updates`: `enabled` | `disabled_by_config` | `disabled_fail_closed` (no valid key, or three consecutive failures — REQ-SEC-015).
+- `last_rejection.reason`: `unsigned` | `unknown_key` | `invalid_signature` | `invalid_bundle` | `downgrade` (delta `2026-10-signed-rule-bundles`, decision 2).
+
+Keys are named by fingerprint. `rules.key.list` params: `{}`; it answers `{trust_keys}`, the entries of `rules.status`.
+
+`rules.key.add` params: `{public_key, confirm_fingerprint}`. It answers `{key}`, one `trust_keys` entry.
 - `rules.key.add` and `rules.key.rotate` require `confirm_fingerprint` matching the key's SHA-256; otherwise `VALIDATION_ERROR`.
 - A key with a `revoked_at` is not valid.
-- `rules.key.add` takes the public key as base64 of its 32 raw bytes.
+- `rules.key.add` takes the public key as base64 of its 32 raw bytes; anything else is `VALIDATION_ERROR`.
   - A fingerprint on the binary's seed `revoked` list is `CONFLICT`, whether or not the store holds it.
   - Adding a fingerprint the store holds as revoked clears the revocation.
   - Adding one it holds as valid, such as a key the seed inserted, changes no row but is still recorded.
   - Any successful add leaves `disabled_fail_closed`, and it is the only thing that does: a newer binary's seed adds keys but does not reopen updates.
 - `trust_keys[].source` is `builtin` for any fingerprint the seed carries as current, retired or revoked, and `user` otherwise.
-- `rules.key.remove` revokes the key: it sets `revoked_at`, so a builtin key stays removed. It also discards the bundles the key verified and forgets downgrade rejections. The active bundle stays if it survives; otherwise the newest remaining `remote` bundle, or the built-in rules (version 0), becomes active. On the last valid key it requires `force: true`; otherwise `CONFLICT`.
-- `rules.key.rotate` adds the new key and revokes the old one, with `remove`'s consequences. It is for a user's own suspected compromise; the project's scheduled key rotation needs nothing from users.
+
+`rules.key.remove` params: `{fingerprint, force?}`. It answers `{key, active_bundle}`: the revoked key and the bundle in force afterwards.
+- It revokes the key: it sets `revoked_at`, so a builtin key stays removed. It also discards the bundles the key verified and forgets downgrade rejections. The active bundle stays if it survives; otherwise the newest remaining `remote` bundle, or the built-in rules (version 0), becomes active. On the last valid key it requires `force: true`; otherwise `CONFLICT`. Removing the last valid key fails remote updates closed. An unknown fingerprint is `NOT_FOUND`; an already revoked one changes nothing.
+
+`rules.key.rotate` params: `{fingerprint, public_key, confirm_fingerprint}`. It answers `{added, revoked, active_bundle}`.
+- It adds the new key and revokes the old one, with `remove`'s consequences, in one step. It is for a user's own suspected compromise; the project's scheduled key rotation needs nothing from users.
+
+`rules.rollback` params: `{}`. `rules.reset` params: `{}`. Both answer `rules.status`'s result.
 - `rules.rollback` with no `previous_bundle` answers `CONFLICT`.
 - `rules.rollback` reinstalls `previous_bundle` and `rules.reset` returns to the rules built into the binary. Both work offline, need no valid key, and never touch the local override directory (REQ-SEC-016).
+- The bundle a rollback leaves is deleted, and the one a reset leaves stays for a later rollback. Neither is reinstalled by the next check: both are remembered as not to retry. Neither is a rejection.
+
+Every client kind may call them, under the `rules` capability. On the CLI they are `umb rules status`, `umb rules key list`, `umb rules key add PUBKEY --confirm FINGERPRINT`, `umb rules key remove FINGERPRINT [--force]`, `umb rules key rotate FINGERPRINT PUBKEY --confirm FINGERPRINT`, `umb rules rollback` and `umb rules reset`. Without `--confirm`, `add` and `rotate` print the key's fingerprint and exit 1 without calling the daemon.
 
 ### 5.35 `notification.show` — REQ-NTF-001, REQ-NTF-002
 **Params:** `{title, body?, source, sound?: "none"|"done"|"request"}`.
@@ -935,6 +950,7 @@ Delta `2026-10-notifications` (T-F1-27):
   - title `<agent or source> needs you`;
   - body the report's `message`, or `pane <id> is waiting for you`;
   - sound `request`.
+- **A rejected rule bundle (delta `2026-10-signed-rule-bundles`)** raises `Rule update rejected` under the daemon's own source `umbral:rules`, its body naming the reason, sound `request`, with the same normalization, limit and foreground client.
   A report that leaves the pane as it was, or a stale one, raises none, and neither do `done`, `working` or `idle`. A pane already `blocked` that another source's newer `blocked` report now decides is a new request, and raises one under that source.
 
 ### 5.36 `policy.explain` — REQ-SEC-009
@@ -1063,7 +1079,7 @@ Every client kind may call both (§2). The `limits` capability announces them.
 | `layout.updated` | `Layout` | REQ-WS-004 |
 | `thread.attention_changed` | `{thread_id, attention_state}` — after every change written: a turn starts (`working`), asks for an approval (`blocked`), is answered (`working`), ends (`done`, or `idle` when viewed or cancelled), or a `done` thread is focused (`idle`). Not sent for the changes Data Model §6 makes at start, before any client connects | REQ-AGT-016 |
 | `thread.stalled` | `{thread_id, turn_id, idle_ms, last_event}` | REQ-AUT-008 |
-| `rules.update_rejected` | `{reason, version, source}` | REQ-SEC-013 |
+| `rules.update_rejected` | `{reason, version, source}` — `reason` as §5.34's `last_rejection`, `version` the bundle's own when its signature verified and 0 otherwise — unverified bytes are never parsed — `source` `"remote"`. Sent to every client once per bundle: a bundle already rejected is not announced again. The daemon also raises a user notification for it under its own source `umbral:rules` (§5.35) | REQ-SEC-013 |
 | `limits.notification_dropped` | `{method, size_bytes, limit_bytes}` — in place of a notification over the frame limit, under that notification's `seq` (§1) | REQ-API-005 |
 
 Every notification carries `seq` in its envelope (§1): a counter that increases by one per **event
@@ -1250,3 +1266,4 @@ printf '%s\n' \
 | 1.34 | 2026-10-18 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-display-metadata` (T-F1-26): §5.32 gives `pane.report_metadata`'s key shapes, absent versus `null`, normalization, limits that refuse a report whole, the 24 h default expiry, the metadata `seq` and who may report; §4 `Pane` says what `metadata` holds; §6 sends `pane.updated` after a written metadata report |
 | 1.35 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-notifications` (T-F1-27): §5.35 gives `notification.show`'s normalization, validation, the order of its checks, the sliding per-source window, the foreground client and decision 15's `blocked` notification; §6 adds `notification.posted`, sent to the foreground client only; §2 advertises the method under `notifications` and adds it to the `cli` row |
 | 1.36 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-policy-explain` (T-F1-28): §5.36's example matches the trace the daemon returns (`decided`, `detail`, `note`, `reason`, `allow_always`, the `exposure` step), and the section says what a thread lends, what is refused (a risk the registered tool does not declare among it), how the target is shaped as a turn shapes it, and who may call; §2's `cli` row gains `policy.explain` |
+| 1.37 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-signed-rule-bundles` (T-F1-30): §5.34 names each `rules.*` method with its params and result, keys addressed by fingerprint, the rejection reasons, what rollback and reset leave behind, and the CLI; §6's `rules.update_rejected` says what it carries — the version only of a bundle that verified — that a repeat is not announced, and that a user notification under `umbral:rules` accompanies it (§5.35); §2's `cli` row gains `rules.*` |

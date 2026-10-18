@@ -78,6 +78,19 @@ func (r Request) Build() (Notification, error) {
 	if strings.HasPrefix(r.Source, ReservedPrefix) {
 		return Notification{}, fmt.Errorf("%w: source %q is reserved for Umbral's own components", ErrValidation, r.Source)
 	}
+	return r.build()
+}
+
+// BuildOwn is Build for one of the daemon's own components, whose source must carry the
+// reserved prefix.
+func (r Request) BuildOwn() (Notification, error) {
+	if !strings.HasPrefix(r.Source, ReservedPrefix) {
+		return Notification{}, fmt.Errorf("%w: an own source must start with %q, not %q", ErrValidation, ReservedPrefix, r.Source)
+	}
+	return r.build()
+}
+
+func (r Request) build() (Notification, error) {
 	if err := validateSource(r.Source); err != nil {
 		return Notification{}, err
 	}
