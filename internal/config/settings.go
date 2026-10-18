@@ -39,6 +39,9 @@ type Settings struct {
 	// Retention is `[retention]`: Data Model §4's configurable windows, which the daily
 	// maintenance job applies (T-F1-22).
 	Retention Retention
+	// NotificationsEnabled is `[notifications] enabled`: on unless the file says false, in
+	// which case every notification answers `disabled` (REQ-NTF-001). Read at start.
+	NotificationsEnabled bool
 }
 
 // Retention is Data Model §4's configurable retention windows, in days.
@@ -102,7 +105,7 @@ func SettingsPath() (string, error) {
 //
 // An unknown key is a warning, so a file written for a later version still starts this one.
 func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
-	settings := Settings{MaxMessageBytes: DefaultMaxMessageBytes, Retention: DefaultRetention()}
+	settings := Settings{MaxMessageBytes: DefaultMaxMessageBytes, Retention: DefaultRetention(), NotificationsEnabled: true}
 
 	raw, err := os.ReadFile(path) // #nosec G304 -- the path is the daemon's own config location
 	if errors.Is(err, os.ErrNotExist) {
@@ -134,6 +137,13 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 					ErrSettingsInvalid, path, value)
 			}
 			settings.AllowEnvSecrets = on
+		case "notifications.enabled":
+			on, err := strconv.ParseBool(value)
+			if err != nil {
+				return Settings{}, fmt.Errorf("%w: %s: notifications.enabled is %q, want true or false",
+					ErrSettingsInvalid, path, value)
+			}
+			settings.NotificationsEnabled = on
 		case "otel.endpoint":
 			endpoint, err := parseOTelEndpoint(value)
 			if err != nil {

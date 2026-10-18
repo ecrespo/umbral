@@ -189,3 +189,22 @@ func TestRetentionWindowsAreConfigurable(t *testing.T) {
 		}
 	}
 }
+
+// TestNotificationsAreOnUnlessTurnedOff_REQ_NTF_001: `[notifications] enabled` defaults to
+// true, so REQ-NTF-001's `disabled` reason is something a user asks for; false turns them off,
+// and anything else stops the daemon like every other malformed boolean.
+func TestNotificationsAreOnUnlessTurnedOff_REQ_NTF_001(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, filepath.Join(t.TempDir(), "config.toml"))
+	if err != nil || !settings.NotificationsEnabled {
+		t.Fatalf("no settings file: enabled=%v err=%v, want on", settings.NotificationsEnabled, err)
+	}
+	settings, err = LoadSettings(nil, write(t, "[notifications]\nenabled = false\n"))
+	if err != nil || settings.NotificationsEnabled {
+		t.Fatalf("enabled = false: enabled=%v err=%v, want off", settings.NotificationsEnabled, err)
+	}
+	if _, err := LoadSettings(nil, write(t, "[notifications]\nenabled = sometimes\n")); !errors.Is(err, ErrSettingsInvalid) {
+		t.Fatalf("a malformed value = %v, want ErrSettingsInvalid", err)
+	}
+}

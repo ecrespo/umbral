@@ -179,3 +179,15 @@ func TestEveryMessageGetsAFreshClientMsgID(t *testing.T) {
 		t.Fatalf("client_msg_ids %q and %q", a, b)
 	}
 }
+
+// TestToEventMapsAPostedNotification_REQ_NTF_001: the daemon delivers a notification to the
+// foreground client as `notification.posted` (API Spec §6); the TUI must see it.
+func TestToEventMapsAPostedNotification_REQ_NTF_001(t *testing.T) {
+	t.Parallel()
+	ev, ok := toEvent(client.Notification{Method: "notification.posted", Params: json.RawMessage(
+		`{"title":"claude needs you","body":"approve the edit?","source":"claude-code","sound":"request"}`)})
+	if !ok || ev.Kind != ports.EventNotification || ev.Title != "claude needs you" ||
+		ev.Text != "approve the edit?" || ev.Sound != "request" {
+		t.Fatalf("notification.posted = %+v %v", ev, ok)
+	}
+}

@@ -514,3 +514,18 @@ func TestHeldOutputBelowTheSnapshotSeqIsDiscarded(t *testing.T) {
 		t.Error("a held chunk below the snapshot's seq was applied; it is on the screen twice")
 	}
 }
+
+// TestAPostedNotificationIsShown_REQ_NTF_001: a notification the daemon hands this client
+// reaches the user on the status line, title and body.
+func TestAPostedNotificationIsShown_REQ_NTF_001(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.openSession()
+	h.step(daemonEventMsg{event: ports.Event{
+		Kind: ports.EventNotification, Title: "claude needs you", Text: "approve the edit?", Sound: "request",
+	}})
+	if got := h.m.Status(); !strings.Contains(got, "claude needs you") || !strings.Contains(got, "approve the edit?") {
+		t.Errorf("status = %q, want the notification's title and body", got)
+	}
+}

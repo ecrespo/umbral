@@ -29,13 +29,13 @@ var stateEvents = []bus.Kind{
 // resolves each pane's state, and starts following the events of the authorities it may not
 // import. It refreshes once before returning, so what it remembers as told starts as the
 // tree restored, before any client connects.
-func newIntegrations(ctx context.Context, db *store.Store, b *bus.Bus, panes intports.Panes, logger *slog.Logger) (*integrations.Service, error) {
+func newIntegrations(ctx context.Context, db *store.Store, b *bus.Bus, panes intports.Panes, notifier intports.Notifier, logger *slog.Logger) (*integrations.Service, error) {
 	reports, err := reportstore.New(db)
 	if err != nil {
 		return nil, err
 	}
 	service, err := integrations.New(integrations.Config{
-		Store: reports, Metadata: reports, Panes: panes, Bus: b, Logger: logger,
+		Store: reports, Metadata: reports, Panes: panes, Notifier: notifier, Bus: b, Logger: logger,
 	})
 	if err != nil {
 		return nil, err

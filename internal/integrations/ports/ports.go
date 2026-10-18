@@ -55,6 +55,22 @@ type Panes interface {
 	Snapshot(ctx context.Context) (wsdomain.Snapshot, error)
 }
 
+// BlockedNotice is an external report that made a pane `blocked`: what the user is told
+// (delta `2026-10-integration-surface`, decision 15).
+type BlockedNotice struct {
+	PaneID  string
+	Source  string
+	Agent   string
+	Message string
+}
+
+// Notifier raises a user notification for a pane an external source made `blocked`. The
+// daemon gives it the notification sink, which normalizes and rate-limits it per source
+// (REQ-NTF-001, REQ-NTF-002); an outcome other than shown is not this module's concern.
+type Notifier interface {
+	NotifyBlocked(ctx context.Context, notice BlockedNotice)
+}
+
 // KindPaneStateChanged is API Spec §6's `pane.state_changed`.
 const KindPaneStateChanged bus.Kind = "pane.state_changed"
 

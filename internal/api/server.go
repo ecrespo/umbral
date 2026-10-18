@@ -15,6 +15,7 @@ import (
 	"time"
 
 	intports "github.com/ecrespo/umbral/internal/integrations/ports"
+	ntfports "github.com/ecrespo/umbral/internal/notify/ports"
 
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	mcpports "github.com/ecrespo/umbral/internal/mcp/ports"
@@ -162,8 +163,11 @@ type Config struct {
 	// Integrations is the integration surface, served as pane.report_state and
 	// pane.release_state. A nil value leaves them answering NOT_IMPLEMENTED.
 	Integrations intports.Integrations
-	Bus          *bus.Bus
-	Logger       *slog.Logger
+	// Notifications is the notification sink, served as notification.show. A nil value
+	// leaves it answering NOT_IMPLEMENTED.
+	Notifications ntfports.Notifier
+	Bus           *bus.Bus
+	Logger        *slog.Logger
 
 	// MaxMessageBytes is the frame limit a connection gets once it completes the handshake
 	// (`[api] max_message_bytes`, API Spec §1). Zero means config.DefaultMaxMessageBytes.
@@ -206,6 +210,10 @@ type Server struct {
 
 	mu    sync.Mutex
 	conns map[*conn]struct{}
+	// activity numbers interactive requests, so the foreground client is the connection
+	// holding the highest one. A counter rather than a clock: two requests in the same
+	// millisecond still have an order.
+	activity atomic.Uint64
 
 	// events is the dispatcher's bus subscription. `Listen` takes it and `Notify` drains
 	// it, because `Notify` runs on a goroutine of its own and nothing orders that goroutine

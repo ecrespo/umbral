@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.43 |
+| **Version** | 1.44 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -662,7 +662,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `workspaces` | `ports` of `sessions` and `store`; never `agents`, `api` or `waits` |
 | `waits` | `ports` and `domain` of `agents` and `sessions`, plus `bus`; never `api`. It reads the store only through the agents runtime, and its own domain reuses the sessions domain's escape-sequence stripper (delta `2026-10-wait-engine`) |
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api`. The tree resolves a pane's state in DD-012's order (`workspaces/domain.ResolveAttention`); `integrations` writes the external reports and announces every change. It hears the changes it did not make — blocks, integration verdicts, exits, thread attention — through events `cmd/umbrald` subscribes it to, and re-reads the whole tree on each (delta `2026-10-integration-surface`). Display metadata is written by `integrations` and read by the tree into a `Pane`'s `metadata`, never on the state path: `ResolveAttention`, the rollup, waits and notifications do not read it, and a written report is announced as `pane.updated` only (delta `2026-10-display-metadata`) |
-| `notify` | `bus` and stdlib only; it is a sink and imports no other module |
+| `notify` | `bus` and stdlib only; it is a sink and imports no other module. `api` implements its `Deliverer` port — the foreground client of API §5.35 — and is handed to it by `cmd/umbrald` once the server exists; `cmd/umbrald` adapts `integrations`' `Notifier` port to it for an external `blocked`. Both modules deliver outside their locks, and `api` through a per-connection queue, so a client that stops reading stalls no source (delta `2026-10-notifications`) |
 | `mcp` | its own `ports` and `domain`, plus `bus`. `tools/adapters` may use `mcp/domain`, for `mcptools`, which offers a server's tools; `api` the `ports` and `domain` of `mcp`; only `cmd/*` wires the manager to the registry (delta `2026-10-mcp-client`) |
 | `obs` | stdlib, and OpenTelemetry from T-F1-18; imported only by `cmd/*`. Modules count through a port of their own, which `cmd/umbrald` gives the `obs` implementation (delta `2026-10-tool-call-repair`) |
 | `cmd/*` | everything |
@@ -1141,7 +1141,7 @@ enforces both rules, with `mustCases` pinned to the 20 MUST rows above.
 
 ### 9.4 The `umb` surface
 
-Commands: `umb status`, `umb block last`, `umb ai`, `umb api schema`, `umb limits`, `umb version`,
+Commands: `umb status`, `umb block last`, `umb ai`, `umb api schema`, `umb limits`, `umb notify` (API Spec §5.35), `umb version`,
 `umb help`, and the workspace tree below. Flags shared by every command: `--socket PATH` (default: the runtime
 directory of API Spec §2), `--daemon-path PATH` (default: `PATH`, then the directory holding
 `umb`), `--no-autostart`, and `--json`, which every command but `umb ai` takes.
@@ -1356,3 +1356,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.41 | 2026-10-17 | E. Crespo (assisted draft) | Ratifies delta `2026-10-attention-focus` (T-F1-24): §5.3d says how the runtime keeps views, writes and announces attention under a per-thread lock, and wakes the waits |
 | 1.42 | 2026-10-17 | E. Crespo (assisted draft) | Ratifies delta `2026-10-integration-surface` (T-F1-25): §5.1 lays out `internal/integrations`; §5.2's `integrations` row says the tree resolves DD-012 and how the module hears the changes it did not make; §5.2b drops inherited `UMBRAL_*` values, leaves a thread PTY's location out and says how `UMBRAL_BIN_PATH` is found; §9.4 adds `umb pane report_state` and `release_state` |
 | 1.43 | 2026-10-18 | E. Crespo (assisted draft) | Ratifies delta `2026-10-display-metadata` (T-F1-26): §5.2's `integrations` row says display metadata is written by the module, read by the tree and kept off the state path |
+| 1.44 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-notifications` (T-F1-27): §5.2's `notify` row says how the sink reaches a client and how `integrations` reaches the sink without importing it, both outside their locks; §9.4 lists `umb notify` |

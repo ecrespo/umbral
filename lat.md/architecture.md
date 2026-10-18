@@ -29,3 +29,15 @@ A handler returning a numeric code has leaked the protocol into the domain. Only
 ## Persist before notifying
 
 The agent runtime writes to SQLite in the turn's own goroutine before publishing on the bus (DD-007), so a client never sees an event the store cannot replay.
+
+## Notifications reach one client
+
+[[internal/notify/notify.go#Service]] is a sink: it normalizes, rate-limits per source and hands the result to one client through a `Deliverer` that [[internal/api/notifications.go#Server#DeliverForeground]] implements (delta `2026-10-notifications`).
+
+Only the foreground client — the `tui` or `desktop` connection that last sent a request — is told, so two open windows do not notify twice and a CLI never receives one. A request counts against its source even when nobody receives it, so a hook looping with no TUI open cannot burst the moment one connects.
+
+An external `pane.report_state` raises a notification only when it makes the pane `blocked`, or changes which source decides a blocked pane ([[internal/integrations/integrations.go#Service#blockedNotice]]). It is raised under the reporter's own source, so a chatty hook spends its own budget, and a repeated or stale `blocked` stays silent.
+
+Delivery never waits on a client: the sink and `integrations` call out only after releasing their locks, and each interactive connection drains a small queue with its own writer ([[internal/api/notifications.go#conn#writePosted]]). A TUI that stops reading costs a `no_client` answer instead of stalling every other source.
+
+A hook raises one with `umb notify` ([[cmd/umb/notify.go#cmdNotify]]), which exits 0 even when the notification was not shown: `rate_limited` or `no_client` is an answer about the user, not a failure of the hook.
