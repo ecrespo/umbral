@@ -83,6 +83,11 @@ type Daemon interface {
 	// Approvals lists the approvals still pending, of every thread, oldest first
 	// (`approval.list`).
 	Approvals(ctx context.Context) ([]Approval, error)
+	// McpServers lists the configured MCP servers with their live state (`mcp.server.list`),
+	// and Skills the installed skills (`skill.list`). A daemon without that module answers an
+	// empty list, not an error: having no MCP client or skill store is a configuration.
+	McpServers(ctx context.Context) ([]McpServer, error)
+	Skills(ctx context.Context) ([]Skill, error)
 	// Events is closed when the connection ends; the model then shows a disconnected
 	// state instead of a frozen screen.
 	Events() <-chan Event
@@ -109,6 +114,20 @@ type Approval struct {
 	Reason   string
 	Summary  string
 	Diff     string
+}
+
+// McpServer is an MCP server as the panel shows it (API §4's McpServer): LastError is ""
+// when there is none.
+type McpServer struct {
+	Name      string
+	State     string
+	LastError string
+}
+
+// Skill is an installed skill as the panel shows it (API §4's Skill).
+type Skill struct {
+	Name    string
+	Enabled bool
 }
 
 // EventKind says what an Event carries.
@@ -144,6 +163,12 @@ const (
 	// EventNotification is a notification for the user (`notification.posted`, API Spec
 	// §5.35): Title, Text as its body, and Sound.
 	EventNotification
+	// EventMcpServerState is an MCP server's state change (`mcp.server_state`), and
+	// EventSkillChanged a skill installed, replaced, enabled, disabled or removed
+	// (`skill.changed`). Both carry nothing: the panel lists again, which the daemon answers
+	// from what it stored before it published (DD-007).
+	EventMcpServerState
+	EventSkillChanged
 )
 
 // Event is one thing that happened, flattened so the model does not decode JSON.
@@ -171,6 +196,8 @@ type Event struct {
 	ToolCallID string
 	Tool       string
 	Status     string
+	// Skill is the skill a `skill_load` call names, from its args, for EventToolCall.
+	Skill string
 	// Approval is what is asked, for EventApprovalRequested.
 	Approval Approval
 	// StopReason is how the turn ended, for EventTurnFinished.

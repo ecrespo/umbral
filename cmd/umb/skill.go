@@ -96,7 +96,7 @@ func cmdSkill(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	case name == skillInstall && len(pos) == 1:
 		params = map[string]any{"path": sourcePath(pos[0])}
 	case method != "" && name != skillList && name != skillInstall && len(pos) == 1:
-		params = map[string]any{"name": pos[0]}
+		params = map[string]any{paramName: pos[0]}
 		switch name {
 		case skillShow:
 			if *body {

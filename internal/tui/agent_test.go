@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -72,6 +73,32 @@ func (f *fakeDaemon) Approvals(context.Context) ([]ports.Approval, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]ports.Approval(nil), f.pending...), nil
+}
+
+func (f *fakeDaemon) McpServers(context.Context) ([]ports.McpServer, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listed++
+	return append([]ports.McpServer(nil), f.servers...), nil
+}
+
+func (f *fakeDaemon) Skills(context.Context) ([]ports.Skill, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listed++
+	return append([]ports.Skill(nil), f.skills...), nil
+}
+
+func (f *fakeDaemon) listCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.listed
+}
+
+func (f *fakeDaemon) setExtensions(servers []ports.McpServer, skills []ports.Skill) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.servers, f.skills = servers, skills
 }
 
 func (f *fakeDaemon) agentCalls() (threads []string, sent []sentMessage, answers []approvalAnswer, cancels []string) {
@@ -697,5 +724,152 @@ func TestFocusCallsKeepTheirOrder_REQ_AGT_016(t *testing.T) {
 	older()
 	if got := h.daemon.focusCalls(); !slices.Equal(got, []string{""}) {
 		t.Fatalf("the daemon got %q, want only the newer view", got)
+	}
+}
+
+// TestAgentPanelShowsServersAndSkills_REQ_TUI_004: while the panel is open it shows every
+// configured MCP server with its live state and every installed skill with whether it is
+// enabled, and a turn that called an MCP tool and loaded a skill says so when it ends. A
+// server going unavailable and a skill being disabled reach the panel through
+// mcp.server_state and skill.changed, which the panel answers by listing again.
+func TestAgentPanelShowsServersAndSkills_REQ_TUI_004(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.daemon.setExtensions(
+		[]ports.McpServer{{Name: "gitlab", State: "connected"}, {Name: "jira", State: "connecting"}},
+		[]ports.Skill{{Name: "release-check", Enabled: true}, {Name: "lint-rules", Enabled: false}},
+	)
+	h.openSession()
+	h.drain(h.m.Init(), 0)
+	h.step(tea.WindowSizeMsg{Width: 200, Height: 40})
+	h.step(ctrlSpace())
+	view := h.m.View().Content
+	for _, want := range []string{"gitlab connected", "jira connecting", "release-check on", "lint-rules off"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the open panel lacks %q:\n%s", want, view)
+		}
+	}
+
+	h.daemon.setExtensions(
+		[]ports.McpServer{{Name: "gitlab", State: "connected"}, {Name: "jira", State: "unavailable", LastError: "connection refused"}},
+		[]ports.Skill{{Name: "release-check", Enabled: false}, {Name: "lint-rules", Enabled: false}},
+	)
+	h.event(ports.Event{Kind: ports.EventMcpServerState})
+	h.event(ports.Event{Kind: ports.EventSkillChanged})
+	view = h.m.View().Content
+	for _, want := range []string{"jira unavailable (connection refused)", "release-check off"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("after the events the panel lacks %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "jira connecting") || strings.Contains(view, "release-check on") {
+		t.Errorf("the panel still shows the old state:\n%s", view)
+	}
+
+	// A turn: the MCP tools it called and the skills it loaded, each once, are listed when it
+	// ends. A built-in tool is neither, and another thread's calls are not this turn's.
+	h.typeText("check the release")
+	h.step(keyPress(t, "enter"))
+	for _, ev := range []ports.Event{
+		{Kind: ports.EventToolCall, ThreadID: "thr_fake", ToolCallID: "tc_1", Tool: "skill_load", Skill: "release-check", Status: "pending"},
+		{Kind: ports.EventToolCall, ThreadID: "thr_fake", ToolCallID: "tc_1", Tool: "skill_load", Skill: "release-check", Status: "ok"},
+		{Kind: ports.EventToolCall, ThreadID: "thr_fake", ToolCallID: "tc_2", Tool: "mcp_gl_search", Status: "ok"},
+		{Kind: ports.EventToolCall, ThreadID: "thr_fake", ToolCallID: "tc_3", Tool: "mcp_gl_bug", Status: "error"},
+		{Kind: ports.EventToolCall, ThreadID: "thr_fake", ToolCallID: "tc_3b", Tool: "mcp_gl_search", Status: "ok"},
+		{Kind: ports.EventToolCall, ThreadID: "thr_fake", ToolCallID: "tc_4", Tool: "read_file", Status: "ok"},
+		{Kind: ports.EventToolCall, ThreadID: "thr_other", ToolCallID: "tc_5", Tool: "mcp_jira_issue", Status: "ok"},
+		// Refused or failed: not called, not loaded. A failed skill_load may name anything.
+		{Kind: ports.EventToolCall, ThreadID: "thr_fake", ToolCallID: "tc_6", Tool: "mcp_gitlab_delete", Status: "denied_by_user"},
+		{Kind: ports.EventToolCall, ThreadID: "thr_fake", ToolCallID: "tc_7", Tool: "mcp_gitlab_push", Status: "denied_by_policy"},
+		{Kind: ports.EventToolCall, ThreadID: "thr_fake", ToolCallID: "tc_8", Tool: "mcp_gitlab_tag", Status: "invalid_args"},
+		{Kind: ports.EventToolCall, ThreadID: "thr_fake", ToolCallID: "tc_9", Tool: "skill_load", Skill: "made-up", Status: "error"},
+		{Kind: ports.EventToolCall, ThreadID: "thr_fake", ToolCallID: "tc_10", Tool: "skill_load", Skill: "lint-rules", Status: "denied_by_policy"},
+		{Kind: ports.EventTurnFinished, ThreadID: "thr_fake", StopReason: "end_turn"},
+	} {
+		h.event(ev)
+	}
+	view = h.m.View().Content
+	if !strings.Contains(view, "mcp tools: mcp_gl_search, mcp_gl_bug · skills loaded: release-check") {
+		t.Errorf("the turn's end does not list what it used:\n%s", view)
+	}
+	// Exactly: refused, malformed and failed calls, another thread's and a built-in tool are
+	// not in the summary row (they keep their own transcript rows).
+	if !strings.Contains(view, "— mcp tools: mcp_gl_search, mcp_gl_bug · skills loaded: release-check\n") || strings.Contains(view, "made-up") {
+		t.Errorf("the turn's summary row holds more than its own successful use:\n%s", view)
+	}
+
+	// The next turn starts empty: one that used nothing adds no such line.
+	h.typeText("thanks")
+	h.step(keyPress(t, "enter"))
+	h.event(ports.Event{Kind: ports.EventTurnFinished, ThreadID: "thr_fake", StopReason: "end_turn"})
+	if n := strings.Count(h.m.View().Content, "mcp tools:"); n != 1 {
+		t.Errorf("%d turn summaries after a turn that used nothing:\n%s", n, h.m.View().Content)
+	}
+
+	// Closing and opening the panel lists again: a removed server sends no notification.
+	h.daemon.setExtensions([]ports.McpServer{{Name: "gitlab", State: "connected"}}, nil)
+	h.step(keyPress(t, "esc"))
+	h.step(ctrlSpace())
+	if view := h.m.View().Content; strings.Contains(view, "jira") || !strings.Contains(view, "skills: none") {
+		t.Errorf("reopening the panel kept a removed server or skill:\n%s", view)
+	}
+}
+
+// TestTheExtensionsViewStaysInItsRows_REQ_TUI_004: a server's last error is text the remote
+// side chose, so a newline or an escape in it cannot leave its row; 64 skills take two rows
+// and a count, never the transcript's room; and every way the panel opens lists again.
+func TestTheExtensionsViewStaysInItsRows_REQ_TUI_004(t *testing.T) {
+	t.Parallel()
+	skills := make([]ports.Skill, 64)
+	for i := range skills {
+		// Names this long leave no room for the count beside a second item.
+		skills[i] = ports.Skill{Name: fmt.Sprintf("skill-with-a-long-name-%02d", i), Enabled: i%2 == 0}
+	}
+	h := newHarness(t)
+	h.daemon.setExtensions([]ports.McpServer{{Name: "evil", State: "unavailable", LastError: "boom\nfake row\x1b[31m red"}}, skills)
+	h.openSession()
+	h.drain(h.m.Init(), 0)
+	h.step(ctrlSpace())
+	rows := h.m.renderAgentPanel(30)
+	// The escape sequence is dropped whole and the newline becomes a space.
+	if !slices.ContainsFunc(rows, func(r string) bool { return strings.HasPrefix(r, "mcp: evil unavailable (boom fake row re") }) {
+		t.Errorf("the error left its row or kept its escape:\n%s", strings.Join(rows, "\n"))
+	}
+	for _, r := range rows {
+		if strings.ContainsAny(r, "\n\x1b") || strings.HasPrefix(r, "fake row") {
+			t.Errorf("row %q carries the remote side's control text", r)
+		}
+	}
+	skillRows := 0
+	for _, r := range rows {
+		if strings.HasPrefix(r, "skills: ") || strings.HasPrefix(r, "  skill-") || strings.HasPrefix(r, "  … ") {
+			skillRows++
+		}
+	}
+	more := regexp.MustCompile(`^  (.* · )?… \d+ more$`)
+	if skillRows != extensionRows || !slices.ContainsFunc(rows, more.MatchString) {
+		t.Errorf("64 skills took %d rows:\n%s", skillRows, strings.Join(rows, "\n"))
+	}
+
+	// Closed, then opened by attaching a block and by an approval: each lists again.
+	h.step(keyPress(t, "esc"))
+	// Init opened a second tab: give both sessions a block, whichever is focused.
+	h.daemon.setBlocks(sessionID(1), "ls")
+	h.daemon.setBlocks(sessionID(2), "ls")
+	h.step(keyPress(t, "ctrl+b"))
+	before := h.daemon.listCount()
+	h.step(altKey('a'))
+	if !h.m.AgentPanelOpen() || h.daemon.listCount() < before+2 {
+		t.Errorf("attaching a block opened the panel without listing: %d → %d", before, h.daemon.listCount())
+	}
+	h.step(keyPress(t, "esc")) // clears the input
+	h.step(keyPress(t, "esc")) // closes the panel
+	if h.m.AgentPanelOpen() {
+		t.Fatal("the panel did not close")
+	}
+	before = h.daemon.listCount()
+	h.event(ports.Event{Kind: ports.EventApprovalRequested, ThreadID: "thr_x", Approval: ports.Approval{ID: "apr_x", ThreadID: "thr_x", Tool: "run_command"}})
+	if !h.m.AgentPanelOpen() || h.daemon.listCount() < before+2 {
+		t.Errorf("an approval opened the panel without listing: %d → %d", before, h.daemon.listCount())
 	}
 }

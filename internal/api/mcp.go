@@ -48,12 +48,13 @@ func mcpServers(c *conn) (mcpports.Servers, error) {
 
 func hasMCP(cfg Config) bool { return cfg.MCP != nil }
 
-// mcpMethods is §5.27. §2's cli row does not name them; T-F1-37 adds them with `umb mcp`.
+// mcpMethods is §5.27. §2 gives them to every client kind that may edit the tree, `umb mcp`
+// included (REQ-CLI-008).
 func mcpMethods() map[string]method {
 	return map[string]method{
-		"mcp.server.list":   {handle: handleMcpList, kinds: interactiveClients, params: emptyResult{}, result: mcpListResult{}},
-		"mcp.server.add":    {handle: handleMcpAdd, kinds: interactiveClients, params: mcpAddParams{}, result: McpServer{}},
-		"mcp.server.remove": {handle: handleMcpRemove, kinds: interactiveClients, params: mcpRemoveParams{}, result: emptyResult{}},
+		"mcp.server.list":   {handle: handleMcpList, kinds: treeClients, params: emptyResult{}, result: mcpListResult{}},
+		"mcp.server.add":    {handle: handleMcpAdd, kinds: treeClients, params: mcpAddParams{}, result: McpServer{}},
+		"mcp.server.remove": {handle: handleMcpRemove, kinds: treeClients, params: mcpRemoveParams{}, result: emptyResult{}},
 	}
 }
 

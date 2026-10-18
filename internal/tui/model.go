@@ -116,7 +116,7 @@ func New(daemon ports.Daemon, screens ports.ScreenFactory) *Model {
 
 // Init opens the first session and starts listening for daemon events.
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.openTabCmd(), m.waitForEvent(), m.loadApprovalsCmd())
+	return tea.Batch(m.openTabCmd(), m.waitForEvent(), m.loadApprovalsCmd(), m.loadExtensionsCmd())
 }
 
 // Update is the single place the model changes.
@@ -172,6 +172,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case approvalsLoadedMsg:
 		return m, m.approvalsLoaded(msg)
+
+	case serversLoadedMsg:
+		m.serversLoaded(msg)
+		return m, nil
+
+	case skillsLoadedMsg:
+		m.skillsLoaded(msg)
+		return m, nil
 
 	case tea.PasteMsg:
 		if m.agent.mode {

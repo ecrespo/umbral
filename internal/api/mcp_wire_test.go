@@ -86,17 +86,24 @@ func TestMcpServerMethodsReachTheWire_REQ_MCP_002(t *testing.T) {
 	}
 }
 
-// TestUmbCannotManageMcpServersYet_REQ_API_001: §2's cli row does not name mcp.server.*
-// until T-F1-37 adds it.
-func TestUmbCannotManageMcpServersYet_REQ_API_001(t *testing.T) {
+// TestCliMayManageMcpServers_REQ_CLI_008: §2's cli row names mcp.server.list, add and
+// remove, so `umb mcp` reaches them; what an agent's own thread does stays out of its reach.
+func TestCliMayManageMcpServers_REQ_CLI_008(t *testing.T) {
 	t.Parallel()
 	s := testServerWithConfig(t, Config{MCP: &fakeMCP{}, Bus: bus.New()})
 	c := dial(t, s)
 	if resp := c.hello(s.Token(), ClientCLI); resp.Error != nil {
 		t.Fatalf("handshake: %+v", resp.Error)
 	}
-	if resp := c.call(2, "mcp.server.list", map[string]any{}); resp.Error == nil || resp.Error.Code != codeMethodNotFound {
-		t.Fatalf("mcp.server.list from umb = %+v", resp.Error)
+	for i, m := range []string{"mcp.server.list", "mcp.server.add", "mcp.server.remove"} {
+		if resp := c.call(2+i, m, map[string]any{}); resp.Error != nil && resp.Error.Code == codeMethodNotFound {
+			t.Errorf("%s from umb = METHOD_NOT_FOUND", m)
+		}
+	}
+	for i, m := range []string{"thread.get", "approval.respond"} {
+		if resp := c.call(10+i, m, map[string]any{}); resp.Error == nil || resp.Error.Code != codeMethodNotFound {
+			t.Errorf("%s from umb = %+v, want METHOD_NOT_FOUND", m, resp.Error)
+		}
 	}
 }
 

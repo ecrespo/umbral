@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.51 |
+| **Version** | 1.52 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -15,9 +15,8 @@
 ---
 
 
-> **Pending from F1 (ratified 2026-09-26, not yet written here).** Several sections are still
-> to be updated:
-> - §9.4 gains `umb mcp` (T-F1-37); `umb skill` is written (T-F1-35).
+> **F1's ratified deltas are all written here.** The last, §9.4's `umb mcp` and §5.3e's
+> extensions view, by T-F1-37.
 >
 > Written by T-F1-33: §5.1's live keys and `[api]` table, §7.2's `umbral_frames_refused_total` and
 > §9.4's `umb limits`.
@@ -1032,6 +1031,23 @@ and the column that separates it, and do the same for the block list.
   - A long approval keeps its head, and it and its diff are cut to the panel's height with
     `… n more lines`, so the keys and the input stay visible.
   - Rows are measured in runes, not terminal cells: wide characters can overflow a row.
+- **The extensions view** (REQ-TUI-004, T-F1-37, delta `2026-10-umb-mcp-panel`).
+  - Under the header, `mcp:` lists every configured MCP server with its state, and its last
+    error cut to 40 runes; `skills:` lists every installed skill, `on` or `off`. Either says
+    `none` when empty. Rows break between items, never inside one, and each list takes at most
+    two rows, the rest counted as `… n more`. Names, states and errors are made one line
+    (sanitized, whitespace and newlines collapsed to a space) before they are drawn.
+  - Both lists come from `mcp.server.list` and `skill.list`: at start, whenever the panel
+    opens, and on every `mcp.server_state` or `skill.changed`. The client lists again rather
+    than patching from the payload; the daemon stores before it publishes (DD-007), so the
+    listing sees the change. Removing a server publishes nothing, which is why every opening of
+    the panel lists too: ctrl+space, attaching a block, or an approval arriving. A daemon without the module answers `NOT_IMPLEMENTED`, drawn as `none`.
+  - The view is read-only: servers are added and removed with `umb mcp`, skills with
+    `umb skill`.
+  - For the panel's own thread, a turn's MCP tools (`mcp_*` calls that ended `ok` or `error`,
+    not refused or malformed ones) and the skills its successful `skill_load` calls named
+    (`args.name`) are gathered once each, and its end adds one row,
+    `mcp tools: … · skills loaded: …`, before `turn ended`. A turn that used neither adds none.
 
 ### 5.4 Error Handling
 
@@ -1235,7 +1251,7 @@ enforces both rules, with `mustCases` pinned to the 20 MUST rows above.
 
 ### 9.4 The `umb` surface
 
-Commands: `umb status`, `umb block last`, `umb ai`, `umb api schema`, `umb limits`, `umb notify` (API Spec §5.35), `umb policy explain` (API Spec §5.36), `umb rules` (API Spec §5.34: `status`, `key list|add|remove|rotate`, `rollback`, `reset`), `umb wait ls` and `umb wait cancel WAIT_ID` (API Spec §5.33), `umb skill` (API Spec §5.37, below), `umb version`,
+Commands: `umb status`, `umb block last`, `umb ai`, `umb api schema`, `umb limits`, `umb notify` (API Spec §5.35), `umb policy explain` (API Spec §5.36), `umb rules` (API Spec §5.34: `status`, `key list|add|remove|rotate`, `rollback`, `reset`), `umb wait ls` and `umb wait cancel WAIT_ID` (API Spec §5.33), `umb skill` (API Spec §5.37, below), `umb mcp` (API Spec §5.27, below), `umb version`,
 `umb help`, and the workspace tree below. Flags shared by every command: `--socket PATH` (default: the runtime
 directory of API Spec §2), `--daemon-path PATH` (default: `PATH`, then the directory holding
 `umb`), `--no-autostart`, and `--json`, which every command but `umb ai` takes.
@@ -1321,6 +1337,25 @@ is exit 1 before anything is read or sent. There is no `--json`: the output is t
 - **Deadlines.** Each call has its own 10 s deadline, and install's starts after the
   confirmation, so the time spent reading the manifest never counts against it.
 - **Exit codes** are REQ-CLI-004's: a daemon error is 1, with its message and domain code.
+
+**`umb mcp`** (REQ-CLI-008; deltas `2026-09-cli-mcp` and `2026-10-umb-mcp-panel`).
+`umb mcp add NAME --stdio [--env NAME=REF]… -- COMMAND [ARGS…]`, `umb mcp add NAME --http URL`,
+`list` and `remove NAME`, each one `mcp.server.*` method of API Spec §5.27.
+
+- **Always untrusted.** `add` sends `trust: "untrusted"` explicitly and has no flag to change
+  it: trusting a server is a policy decision, not a line in a copied script.
+- **`--env`** takes `NAME=keyring:<path>` or `NAME=env:<VAR>`, repeatable, and becomes
+  `env_refs`. Anything else, an empty reference included, exits 1 before `umb` connects. It is
+  taken out of the arguments before the flag parser sees them, because that parser quotes an
+  invalid value in its error and the value may be the secret; the error names the variable,
+  never the value. Whether an `env:` reference is accepted is the daemon's (§5.27, the
+  degraded mode of REQ-SEC-012).
+- **The command** is everything after `--`, so the server's own flags are not `umb`'s. A
+  `stdio` server needs one; an `http` server takes none and no `--env` (§5.27), and either
+  mistake exits 1 without sending anything.
+- **`list`** prints one line per server: name, transport, trust, state and, when there is one,
+  the last error, separated by two spaces and escaped like `umb skill`'s text. `--json` prints
+  `{items}`, `add`'s `McpServer` and `remove`'s `{}` verbatim.
 
 **The workspace tree** (REQ-CLI-005, REQ-CLI-006; deltas `2026-09-cli-workspace-surface` and
 `2026-09-cli-allowlist`). Every command is one call to the method named `<family>.<subcommand>`
@@ -1488,3 +1523,5 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.49 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-skill-store` (T-F1-34): §3.2's `context` row names the skill store; §5.2 gains a `context` row whose ports name `skill.changed`; the pending note keeps the catalog, `skill_load`, the destructive patterns and §9.4 |
 | 1.50 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-umb-skill` (T-F1-35): §9.4 writes `umb skill` — install's inspect, manifest, confirmation and digest; the path resolved by `umb` unless remote; `--json` keeping stdout for the result; bundle text printed escaped; one deadline per call |
 | 1.51 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-skill-catalog` (T-F1-36): §3.2's `tools` row gains `skill_load`; §5.3's built-in destructive list gains `umb skill install|enable|remove` and `umb mcp add`; §5.3b gains `skill_load` and the per-turn catalog; the pending note keeps only §9.4's `umb mcp` |
+| 1.52 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-umb-mcp-panel` (T-F1-37): §9.4 writes `umb mcp` — always untrusted, `--env` references taken out before flag parsing, the command after `--`, the list format; §5.3e gains the extensions view; the pending-from-F1 note is closed |
+

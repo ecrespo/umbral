@@ -6,20 +6,13 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.39 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.40 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
 
 ---
 
-
-> **Pending from F1 (ratified 2026-09-26, not yet written here).** PRD 1.13 adds REQ-CLI-008,
-> which this document does not describe yet: the `cli` row for `mcp.server.*`. Task T-F1-37
-> writes that text as it lands (§5.27's methods are written, by T-F1-17). Until then, the design
-> is in `changes/_archive/2026-09-cli-mcp/`. `skill.*` is written (§5.37, T-F1-34). Already written: the handshake
-> deadline and the id-less hello (REQ-SEC-017/018, T-F1-32), and the frame limit in both directions
-> with `RESULT_TOO_LARGE` and `limits.*` (REQ-API-005, REQ-OBS-005, REQ-CLI-007, T-F1-33).
 
 ## 1. Overview
 
@@ -133,7 +126,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove` |
 
 ### Handshake
 
@@ -767,8 +760,8 @@ or `env_refs`. A `url` with credentials in it, or one the redaction rules would 
 leave the registry, and its row is deleted.
 `env_refs` maps environment variable names to `keyring:<path>` references (column `mcp_servers.env_refs_json`); plaintext values are rejected with `CONFIG_INVALID` (REQ-SEC-004). When the keyring is unavailable and the fallback is enabled, an `env:<VAR>` reference is accepted instead and the daemon reports the degraded mode (REQ-SEC-012, Art. 5 amendment of 2026-09-20).
 Errors: `VALIDATION_ERROR`, `CONFIG_INVALID`, `CONFLICT` (a name already taken, at `add`),
-`NOT_FOUND` (an unknown name, at `remove`). Interactive clients only, until T-F1-37 gives the
-`cli` kind these three methods (§2).
+`NOT_FOUND` (an unknown name, at `remove`). Interactive clients and the `cli` kind, which is
+`umb mcp` (§2, REQ-CLI-008); `umb mcp add` always sends `trust: "untrusted"`.
 
 ### 5.28 `config.get` / `reload` — REQ-SEC-004, REQ-SEC-008, REQ-SEC-012
 `get` params: `{}`. `reload` params: `{}`. Interactive clients only (§2). Both return
@@ -1346,3 +1339,4 @@ printf '%s\n' \
 | 1.37 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-signed-rule-bundles` (T-F1-30): §5.34 names each `rules.*` method with its params and result, keys addressed by fingerprint, the rejection reasons, what rollback and reset leave behind, and the CLI; §6's `rules.update_rejected` says what it carries — the version only of a bundle that verified — that a repeat is not announced, and that a user notification under `umbral:rules` accompanies it (§5.35); §2's `cli` row gains `rules.*` |
 | 1.38 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-wait-monitoring` (T-F1-31): §5.33 gives `wait.list`'s result and `wait.cancel`'s, wait ids, output-wait targets, the per-connection limit counting every kind, the report rate's shared window and the stall rules; §4 `Thread` gains `stalled`; §6 `thread.stalled` names `last_event`'s values; §8 sharpens both limits; §2's `cli` row gains `wait.list` and `wait.cancel` |
 | 1.39 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-09-skills-cli` written by T-F1-34 (with delta `2026-10-skill-store`): §4 `Skill`; §5.37 `skill.inspect`, `install`, `list`, `get`, `set_enabled` and `remove` with their checks, digest and errors; §6 `skill.changed`; §2's `cli` row gains `skill.*` and the `skills` capability; §3 the `skl_` prefix; §9 the namespace |
+| 1.40 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-09-cli-mcp` written by T-F1-37 (with delta `2026-10-umb-mcp-panel`): §2's `cli` row gains `mcp.server.list`, `add` and `remove`; §5.27 says so and that `umb mcp add` sends `trust: "untrusted"`; the pending-from-F1 note is gone, every ratified F1 delta now being written |
