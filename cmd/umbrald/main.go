@@ -18,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
@@ -258,6 +259,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		// PTY reads, so one shared between sessions would mix their streams.
 		NewScanner: func() sessports.Scanner { return shellinteg.NewScanner() },
 		Logger:     logger,
+		SocketPath: socket,
+		BinPath:    findUmb(logger),
 	})
 	if err != nil {
 		logger.Error("cannot build the sessions module", slog.Any("error", err))
@@ -400,6 +403,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	gauges.waits.Store(waitEngine)
 
+	// The integration surface (T-F1-25): external state reports and `pane.state_changed`.
+	paneStates, err := newIntegrations(ctx, db, eventBus, workspaceService, logger)
+	if err != nil {
+		logger.Error("cannot build the integration surface", slog.Any("error", err))
+		return exitCantCreate
+	}
+
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
 		TokenPath:     tokenPath,
@@ -413,6 +423,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Sessions:      sessionService,
 		Blocks:        blockReader,
 		Workspaces:    workspaceService,
+		Integrations:  paneStates,
 		Bus:           eventBus,
 		Logger:        logger,
 		// The first live setting: `limits.set` rewrites it in this file and applies it to
@@ -541,4 +552,36 @@ func (r screenReader) Screen(ctx context.Context, sessionID string) (wsports.Scr
 	// The cursor's row is the closest thing the snapshot has to "how many lines this is",
 	// and Data Model §2.4d stores `rows` beside the screen so a reader knows what it got.
 	return wsports.Screen{Data: snapshot.Data, Rows: int(snapshot.CursorY) + 1}, nil
+}
+
+// findUmb locates the `umb` every pane is told about as UMBRAL_BIN_PATH (REQ-INT-001): the one
+// beside this binary first, because it is the same release as the daemon a hook will talk
+// to, then PATH. Neither is fatal: the pane is told nothing, and a hook falls back to its own
+// PATH.
+func findUmb(logger *slog.Logger) string {
+	self, err := os.Executable()
+	if err != nil {
+		self = ""
+	}
+	bin := findUmbFrom(self, exec.LookPath)
+	if bin == "" {
+		logger.Warn("umb is neither beside umbrald nor on PATH; panes get no UMBRAL_BIN_PATH")
+	}
+	return bin
+}
+
+// findUmbFrom is findUmb's search, given this binary's path and a PATH lookup.
+func findUmbFrom(self string, lookPath func(string) (string, error)) string {
+	if self != "" {
+		sibling := filepath.Join(filepath.Dir(self), "umb")
+		if info, err := os.Stat(sibling); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return sibling
+		}
+	}
+	if bin, err := lookPath("umb"); err == nil {
+		if abs, err := filepath.Abs(bin); err == nil {
+			return abs
+		}
+	}
+	return ""
 }

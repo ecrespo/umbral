@@ -30,7 +30,7 @@ func TestLaunchRunsTheCommandAndSkipsTheBootstrap_REQ_WS_005(t *testing.T) {
 		Logger:    slog.New(slog.DiscardHandler),
 	}}
 
-	program, args, env, cleanup, err := s.launch(domain.CreateParams{
+	program, args, env, cleanup, err := s.launch("ses_test", domain.CreateParams{
 		Shell:            "/bin/sh",
 		Command:          []string{"sh", "-c", "true"},
 		ShellIntegration: true,
@@ -75,7 +75,7 @@ func TestLaunchResolvesAgainstTheSessionsPath(t *testing.T) {
 	}
 
 	s := &Service{cfg: Config{Logger: slog.New(slog.DiscardHandler)}}
-	program, _, _, _, err := s.launch(domain.CreateParams{
+	program, _, _, _, err := s.launch("ses_test", domain.CreateParams{
 		Command: []string{name},
 		Env:     map[string]string{"PATH": dir},
 	})

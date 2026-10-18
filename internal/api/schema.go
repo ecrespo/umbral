@@ -230,6 +230,7 @@ var notificationShapes = map[string]any{
 	"thread.attention_changed": attentionChangedPayload{},
 	"approval.requested":       Approval{},
 	"mcp.server_state":         mcpServerStatePayload{},
+	"pane.state_changed":       paneStateChangedPayload{},
 }
 
 func schemaNotifications() []SchemaNotification {

@@ -131,6 +131,13 @@ func (s Session) CanAcceptInputFrom(writer InputOwner) error {
 	return nil
 }
 
+// PaneLocation is the workspace, tab and pane a session is launched in.
+type PaneLocation struct {
+	WorkspaceID string
+	TabID       string
+	PaneID      string
+}
+
 // CreateParams is a validated `session.create` request (API Spec §5.3).
 type CreateParams struct {
 	Shell string
@@ -147,6 +154,10 @@ type CreateParams struct {
 	// failure, and REQ-BLK-003 already describes the resulting `integration: none`.
 	Command          []string
 	ShellIntegration bool
+	// Pane is where the session is launched, for REQ-INT-001's UMBRAL_WORKSPACE_ID,
+	// UMBRAL_TAB_ID and UMBRAL_PANE_ID. A thread's PTY belongs to no pane and leaves it
+	// empty, and those three variables are then absent.
+	Pane PaneLocation
 	// OwnerThreadID makes the session a thread's PTY (REQ-AGT-003): its input belongs to the
 	// agent from the start, and `sessions.owner_thread_id` records whose it is.
 	OwnerThreadID string

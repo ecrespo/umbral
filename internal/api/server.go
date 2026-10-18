@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	intports "github.com/ecrespo/umbral/internal/integrations/ports"
+
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	mcpports "github.com/ecrespo/umbral/internal/mcp/ports"
 	waitsports "github.com/ecrespo/umbral/internal/waits/ports"
@@ -156,9 +158,12 @@ type Config struct {
 	MCP mcpports.Servers
 	// Waits is the wait engine, served as thread.wait, block.wait_output and the wait
 	// inside thread.send. A nil value leaves them answering NOT_IMPLEMENTED.
-	Waits  waitsports.Waits
-	Bus    *bus.Bus
-	Logger *slog.Logger
+	Waits waitsports.Waits
+	// Integrations is the integration surface, served as pane.report_state and
+	// pane.release_state. A nil value leaves them answering NOT_IMPLEMENTED.
+	Integrations intports.Integrations
+	Bus          *bus.Bus
+	Logger       *slog.Logger
 
 	// MaxMessageBytes is the frame limit a connection gets once it completes the handshake
 	// (`[api] max_message_bytes`, API Spec §1). Zero means config.DefaultMaxMessageBytes.

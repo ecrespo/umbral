@@ -56,6 +56,9 @@ components:
 
   waits-service: { in: internal/waits }
 
+  # The integration surface (T-F1-25): external state reports and `pane.state_changed`.
+  integrations-service: { in: internal/integrations }
+
   # The tree's integration tests wire the real store to the service, which is the job
   # Art. 3 reserves for a composition root — the same exception sessions-integration has.
   workspaces-integration: { in: internal/workspaces/integration }
@@ -64,6 +67,9 @@ components:
   # reserves for a composition root. Naming it here keeps every file under the rules rather
   # than excluding _test.go from them.
   sessions-integration: { in: internal/sessions/integration }
+
+  # The same exception for the integration surface, whose tests run over the real tree.
+  integrations-integration: { in: internal/integrations/integration }
 
   # --- cross-cutting modules (no hexagonal split) -----------------------------
   bus:    { in: internal/bus }
@@ -113,6 +119,10 @@ components:
 
   waits-domain: { in: internal/waits/domain }
   waits-ports:  { in: internal/waits/ports }
+
+  integrations-domain:   { in: internal/integrations/domain }
+  integrations-ports:    { in: internal/integrations/ports }
+  integrations-adapters: { in: internal/integrations/adapters/** }
 deps:
   # --- domain: the standard library and other domains, nothing else -----------
   sessions-domain:
@@ -392,6 +402,8 @@ deps:
       - mcp-domain
       - waits-ports
       - waits-domain
+      - integrations-ports
+      - integrations-domain
   client:
     anyVendorDeps: true
     mayDependOn:
@@ -490,6 +502,7 @@ deps:
       - agents-service
       - mcp-service
       - waits-service
+      - integrations-service
       - shellscripts
       - sessions-ports
       - sessions-adapters
@@ -500,6 +513,8 @@ deps:
       - mcp-ports
       - mcp-adapters
       - waits-ports
+      - integrations-ports
+      - integrations-adapters
       - tools-ports
       - tools-adapters
       - context-ports
@@ -600,4 +615,54 @@ deps:
       - agents-domain
       - sessions-ports
       - sessions-domain
+      - bus
+
+  # --- the integration surface (Tech Design §5.2, T-F1-25) --------------------
+  # `integrations` -> ports of `workspaces` and `store`, plus `bus`; never `agents` or `api`.
+  # It reads a pane's effective state through the tree, which resolves DD-012's precedence,
+  # and learns of the changes its own reports did not make through events `cmd` subscribes
+  # it to. The domain's allowance is unused — a report's rules are arithmetic over strings —
+  # and names the one the rule grants, because go-arch-lint requires one.
+  integrations-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - workspaces-domain
+
+  integrations-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - integrations-domain
+      - workspaces-domain
+      # The published event carries a bus.Kind, as workspaces-ports' do.
+      - bus
+
+  integrations-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - integrations-ports
+      - integrations-domain
+      - store
+
+  integrations-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - integrations-ports
+      - integrations-domain
+      - workspaces-ports
+      - workspaces-domain
+      - bus
+
+  integrations-integration:
+    anyVendorDeps: true
+    mayDependOn:
+      - integrations-service
+      - integrations-ports
+      - integrations-domain
+      - integrations-adapters
+      - workspaces-service
+      - workspaces-ports
+      - workspaces-domain
+      - workspaces-adapters
+      - sessions-domain
+      - store
       - bus

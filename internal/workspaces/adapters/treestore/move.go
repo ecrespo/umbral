@@ -154,8 +154,23 @@ func (s *Store) rename(ctx context.Context, tx *sql.Tx, paneID, destWorkspace st
 	if _, err := tx.ExecContext(ctx, `DELETE FROM pane_aliases WHERE pane_id = ?`, paneID); err != nil {
 		return "", fmt.Errorf("treestore: clear aliases: %w", err)
 	}
+	// A pane's state reports and metadata belong to the pane, not to its identifier, so they
+	// follow it (delta `2026-10-integration-surface`). They carry no history worth
+	// flattening, so they are renamed in place, with the foreign-key check deferred to the
+	// commit: SQLite resets the pragma when the transaction ends.
+	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
+		return "", fmt.Errorf("treestore: defer foreign keys: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE panes SET id = ? WHERE id = ?`, newID, paneID); err != nil {
 		return "", fmt.Errorf("treestore: rename pane: %w", err)
+	}
+	for _, carry := range []string{
+		`UPDATE pane_state_reports SET pane_id = ? WHERE pane_id = ?`,
+		`UPDATE pane_metadata SET pane_id = ? WHERE pane_id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, carry, newID, paneID); err != nil {
+			return "", fmt.Errorf("treestore: carry the pane's reports and metadata: %w", err)
+		}
 	}
 
 	now := s.millis()

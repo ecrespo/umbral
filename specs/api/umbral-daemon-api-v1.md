@@ -285,9 +285,21 @@ method and the ordering that produced it, so one handed to a different method is
 ```
 - `attention_state`: `blocked` | `working` | `done` | `idle` | `unknown`. `unknown` is the
   starting value and the one that survives until some source reports another: it is the absence of
-  a report, not a report of nothing. F0 has no producer at all — `pane_state_reports` arrives with
-  migration 0005 and threads with F1 — so every F0 pane is `unknown` with a `null` `state_source`
-- `state_source`: who owns the state — `umbral:agent` for Umbral's own agent, `umbral:shell` when it is derived from the block lifecycle, or the `source` of an external integration (REQ-INT-002). `null` while nothing has reported. The `umbral:shell` derivation is named here but specified nowhere: which block state maps to which attention state is deferred to the task that owns REQ-INT-002
+  a report, not a report of nothing.
+- `state_source`: who owns the state. Exactly one source decides, in DD-012's order (delta
+  `2026-10-integration-surface`):
+  1. `umbral:agent`, when the pane's live session is a thread's PTY; the state is that thread's
+     `attention_state` and `thread_id` names it. Nothing displaces it (REQ-INT-006).
+  2. The `source` of an external integration (§5.31, REQ-INT-002): the one that reported most
+     recently, among those that have not released the pane.
+  3. `umbral:shell`, derived from the block lifecycle of the pane's live session: its latest block
+     `running` or `interactive` is `working`; `finished` or `abandoned` is `idle`; no block yet,
+     with `integration: osc133`, is `idle` (a shell at its first prompt).
+  4. Otherwise `null` with `unknown`: no live session, or a session whose integration is `pending`
+     or `none` and that no one reports for.
+
+  A change of either field is announced as `pane.state_changed` (§6).
+- `thread_id`: the thread whose PTY the pane's live session is, `null` for any other pane
 - `command_pending`: the pane has a `command` that Umbral has not run. Set by `layout.apply` and
   by a restart, never by `pane.split` — a client asking for a command now is asking for it to run,
   while a layout and a restart replay an intention from another time, and REQ-TERM-011 forbids
@@ -843,11 +855,17 @@ It evaluates the pane's recent output line by line, including what was already o
 ### 5.31 `pane.report_state` / `pane.release_state` — REQ-INT-002, REQ-INT-003, REQ-INT-005
 `report_state` params: `{pane_id, source, agent?, state:"idle"|"working"|"blocked"|"done", message?, seq?}`.
 
-- `source` identifies the reporter (1-80 chars, `[A-Za-z0-9:._-]`) and owns the pane's authority while it reports.
-- A `seq` lower than or equal to the last accepted one for that `source` returns `ok` and changes nothing.
-- Umbral's own agent always owns the panes of its threads; an external `source` cannot take that authority (`PERMISSION_DENIED`).
+- `source` identifies the reporter (1-80 chars, `[A-Za-z0-9:._-]`) and owns the pane's authority while it reports. Names starting `umbral:` are Umbral's own (§4) and are a `VALIDATION_ERROR`.
+- `agent?` is at most 80 characters and `message?` at most 240; both are stored as sent and shown by nothing yet; whatever displays them normalizes them first, as REQ-NTF-001 does.
+- A `seq` lower than or equal to the last accepted one for that `source` on that pane returns `{}` and changes nothing. A report without `seq` always applies and keeps the stored one, so a numbered report after it is still compared with the last number; a source that has sent no number yet has accepted none, so its first numbered report applies, `0` included. A `release_state` forgets the source's number.
+- Umbral's own agent always owns the panes of its threads; an external `source` cannot take that authority (`PERMISSION_DENIED`), and nothing is stored.
+- With several sources on one pane, the one that reported last decides; a release hands the pane to the most recent of the others.
+- `pane_id` may be an alias of a moved pane (REQ-WS-007): a hook keeps the `UMBRAL_PANE_ID` it was started with. A closed or unknown pane is `NOT_FOUND`.
+- Reports live until released or until the daemon restarts (Data Model §6 step 8); a closed pane's are never read again. A moved pane keeps its reports under its new id.
 
-`release_state` params: `{pane_id, source}` — the pane returns to Umbral's own detection.
+`release_state` params: `{pane_id, source}` — the pane returns to Umbral's own detection. Releasing a pane the source never reported for changes nothing and is not an error.
+
+Both answer `{}`. Every client kind may call them (§2: `umb` has `pane.*` but `pane.move`); the capability is `integrations`.
 
 ### 5.32 `pane.report_metadata` — REQ-INT-004
 **Params:** `{pane_id, source, title?, display_name?, state_labels?, tokens?: object, ttl_ms?: 1-86400000, seq?}`.
@@ -982,7 +1000,7 @@ Every client kind may call both (§2). The `limits` capability announces them.
 | `tab.created` / `.closed` / `.focused` | `Tab` | REQ-WS-001 |
 | `pane.created` / `.updated` / `.closed` / `.focused` | `Pane` | REQ-WS-003 |
 | `pane.moved` | `{pane, previous_pane_id, previous_workspace_id, layout}` | REQ-WS-007 |
-| `pane.state_changed` | `{pane_id, attention_state, state_source}` | REQ-INT-002 |
+| `pane.state_changed` | `{pane_id, attention_state, state_source}` — after a pane's effective state or its source changes (§4), once what decided it is written: a report or release, a block starting or ending, a session's integration verdict or exit, a thread's attention. A workspace whose rollup moved with it gets `workspace.updated` | REQ-INT-002 |
 | `layout.updated` | `Layout` | REQ-WS-004 |
 | `thread.attention_changed` | `{thread_id, attention_state}` — after every change written: a turn starts (`working`), asks for an approval (`blocked`), is answered (`working`), ends (`done`, or `idle` when viewed or cancelled), or a `done` thread is focused (`idle`). Not sent for the changes Data Model §6 makes at start, before any client connects | REQ-AGT-016 |
 | `thread.stalled` | `{thread_id, turn_id, idle_ms, last_event}` | REQ-AUT-008 |

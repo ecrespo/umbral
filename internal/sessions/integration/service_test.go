@@ -33,6 +33,13 @@ type harness struct {
 	shell string
 }
 
+// The socket and the `umb` binary every pane is told about (REQ-INT-001). Nothing listens
+// there: these tests read the variables back, and never call through them.
+const (
+	testSocketPath = "/nonexistent/umbral/umbral.sock"
+	testBinPath    = "/nonexistent/bin/umb"
+)
+
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	return newHarnessForShell(t, "bash")
@@ -78,6 +85,8 @@ func newHarnessForShell(t *testing.T, name string) *harness {
 		Blocks:     blocks,
 		NewScanner: func() ports.Scanner { return shellinteg.NewScanner() },
 		Host:       "test-host",
+		SocketPath: testSocketPath,
+		BinPath:    testBinPath,
 	})
 	if err != nil {
 		t.Fatalf("sessions.New: %v", err)

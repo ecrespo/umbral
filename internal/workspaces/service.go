@@ -205,6 +205,7 @@ func (s *Service) attachPending(ctx context.Context, pane domain.Pane) (domain.P
 
 	session, err := s.terminals.Create(ctx, sessdomain.CreateParams{
 		Shell: s.shell, CWD: pane.CWD, Env: pane.Env, Size: defaultPaneSize,
+		Pane:             location(pane),
 		ShellIntegration: true,
 		TypeAtPrompt:     []byte(shellLine(pane.Command)),
 	})
@@ -232,6 +233,7 @@ func (s *Service) attach(ctx context.Context, pane domain.Pane) (domain.Pane, er
 	}
 	session, err := s.terminals.Create(ctx, sessdomain.CreateParams{
 		Shell: s.shell, CWD: pane.CWD, Env: pane.Env, Size: defaultPaneSize,
+		Pane:    location(pane),
 		Command: pane.Command,
 		// A pane running a command gets no integration, because there is nothing to
 		// inject a bootstrap into; the sessions module says so too, and asking for it here
@@ -945,4 +947,11 @@ func logger(l *slog.Logger) *slog.Logger {
 		return l
 	}
 	return slog.New(slog.DiscardHandler)
+}
+
+// location is where a pane's session runs, which the session tells its processes
+// (REQ-INT-001). A pane moved later keeps the identifier its processes were told as an alias
+// (REQ-WS-007), so a hook reading it still reaches the pane.
+func location(pane domain.Pane) sessdomain.PaneLocation {
+	return sessdomain.PaneLocation{WorkspaceID: pane.WorkspaceID, TabID: pane.TabID, PaneID: pane.ID}
 }

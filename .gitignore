@@ -37,6 +37,10 @@ tools/node_modules/
 
 # Build output (task build)
 /bin/
+# ...and what an ad-hoc `go build ./cmd/<name>` leaves at the root
+/umb
+/umbrald
+/umbral-tui
 
 # Python bytecode from the branding kit's build scripts
 __pycache__/
