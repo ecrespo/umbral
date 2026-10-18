@@ -50,3 +50,6 @@ __pycache__/
 # Keeping it out of history: it is a full binary archive of the repository and nothing
 # references it. See docs/checkpoints/2026-09-20-reconciliation.md.
 umbral-repo-en.zip
+.lat-build
+.mcp.json
+graphify-out/
