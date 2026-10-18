@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.17 |
+| **Version** | 1.18 |
 | **Date** | 2026-10-01 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -400,7 +400,8 @@ forward-only: a column added to an applied file exists on no database that alrea
 -- migration 0005, alongside the agent tables (T-F1-01)
 ALTER TABLE threads ADD COLUMN attention_state TEXT NOT NULL DEFAULT 'idle';  -- REQ-AGT-016
                              -- one of 'idle','working','blocked','done','unknown'
-ALTER TABLE threads ADD COLUMN seen_at INTEGER;  -- when a client last focused it; NULL = never
+ALTER TABLE threads ADD COLUMN seen_at INTEGER;  -- when a client last focused it, or a turn
+                             -- ended while one viewed it; NULL = never
 ```
 
 ### 2.6 `messages`
@@ -704,3 +705,4 @@ earlier drafts named.
 | 1.15 | 2026-10-01 | §6 step 3 also sets `attention_state = idle` on the threads it stops (delta `2026-10-thread-cancel`, T-F1-16) |
 | 1.16 | 2026-10-01 | §2.12 `egress_log.provider` also takes `mcp:<name>`; §2.13 notes that the application narrows `name` to `[a-z0-9]{1,32}` (delta `2026-10-mcp-client`, T-F1-17); the CHECK is unchanged, migrations being forward-only |
 | 1.17 | 2026-10-04 | §4: the retention keys as `config.toml` names them (`closed_structure_days` added), and how the daily job runs, batches and purges (delta `2026-10-retention`, T-F1-22) |
+| 1.18 | 2026-10-17 | §2.5: `seen_at` is also written by a turn that ends while a client views its thread; neither write moves `updated_at` (delta `2026-10-attention-focus`, T-F1-24). No DDL change |

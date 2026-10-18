@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED` |
+| **Status** | `RATIFIED 2026-10-17` by E. Crespo, after a spec-guardian review whose findings are folded into decisions 4, 5, 6 and 9. Folded into API 1.32, Data Model 1.18, Tech Design 1.41, Plan 1.13 and the F1 tasks file |
 | **Date** | 2026-10-17 |
 | **Task** | T-F1-24 (REQ-AGT-016, REQ-AGT-017) |
 | **Raised by** | REQ-AGT-016 moves `done` to `idle` "when a client focuses the thread", and API §7 has a turn end `idle` "while being viewed". No method, parameter or rule said how a client focuses or views a thread |
