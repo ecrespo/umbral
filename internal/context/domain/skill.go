@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -30,6 +31,9 @@ const (
 	MaxSkillNameLen        = 64
 	MaxSkillDescriptionLen = 1024
 	MaxSkillVersionLen     = 64
+	// MaxCatalogDescription is how much of a description the prompt's catalog carries
+	// (REQ-SKL-004), in characters.
+	MaxCatalogDescription = 256
 )
 
 // The changes skill.changed announces.
@@ -335,4 +339,48 @@ func unquote(v string) string {
 		}
 	}
 	return v
+}
+
+// CatalogEntry is one enabled skill as each turn's prompt lists it (REQ-SKL-004): its name and
+// the start of its description, never its body.
+type CatalogEntry struct {
+	Name        string
+	Description string
+}
+
+// Catalog is the prompt's view of the installed skills: the enabled ones, in the order given,
+// at most MaxEnabledSkills, each description made one line and cut to MaxCatalogDescription
+// characters.
+func Catalog(skills []Skill) []CatalogEntry {
+	out := []CatalogEntry{}
+	for _, sk := range skills {
+		if !sk.Enabled || len(out) == MaxEnabledSkills {
+			continue
+		}
+		d := oneLine(sk.Description)
+		if r := []rune(d); len(r) > MaxCatalogDescription {
+			d = string(r[:MaxCatalogDescription])
+		}
+		out = append(out, CatalogEntry{Name: sk.Name, Description: d})
+	}
+	return out
+}
+
+// oneLine makes a description one line of plain text for the system prompt. A `|` block keeps
+// its newlines, and a description is the bundle's own text: left as it is, it could open a
+// section of the prompt — a fake `# Git`, a closing `</rules>` — that the model would read as
+// Umbral's. Every run of whitespace becomes one space, and control and format characters (bidi
+// overrides among them) are dropped.
+func oneLine(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case unicode.IsSpace(r):
+			b.WriteRune(' ')
+		case unicode.IsControl(r), unicode.Is(unicode.Cf, r):
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }

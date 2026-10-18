@@ -8,11 +8,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/ecrespo/umbral/internal/bus"
@@ -289,6 +292,68 @@ func (s *Service) List(ctx context.Context) ([]domain.Skill, error) {
 		out = append(out, sk)
 	}
 	return out, rows.Err()
+}
+
+// Catalog implements ports.SkillCatalog: the enabled skills, by name, as each turn's prompt
+// lists them (REQ-SKL-004). It reads the store at every call, so a change reaches the next
+// turn (REQ-SKL-007).
+func (s *Service) Catalog(ctx context.Context) ([]domain.CatalogEntry, error) {
+	all, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return domain.Catalog(all), nil
+}
+
+// ReadSkill implements the tools module's SkillReader: an enabled skill's SKILL.md, or one
+// file of its stored bundle (REQ-SKL-004). file is checked as a bundle entry and opened
+// through an os.Root on the skill's directory, so no component — a `..`, a link swapped into
+// the stored copy — can lead out of it.
+func (s *Service) ReadSkill(ctx context.Context, name, file string) ([]byte, error) {
+	sk, err := s.get(ctx, s.cfg.DB.DB(), name)
+	if err != nil {
+		return nil, err
+	}
+	if !sk.Enabled {
+		return nil, fmt.Errorf("%w: skill %s is disabled", domain.ErrSkillNotFound, name)
+	}
+	if file == "" {
+		file = domain.SkillFileName
+	}
+	entry, err := domain.CleanEntry(file)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(s.path(sk.Name))
+	if err != nil {
+		return nil, fmt.Errorf("skills: open %s: %w", name, err)
+	}
+	defer func() { _ = root.Close() }()
+	f, err := root.OpenFile(filepath.FromSlash(entry), os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// `2026-09-skills-cli` decision 5: a file that is not there is VALIDATION_ERROR.
+			return nil, fmt.Errorf("%w: skill %s has no file %s", domain.ErrSkillValidation, name, entry)
+		}
+		return nil, fmt.Errorf("%w: skill %s: %s cannot be read inside the bundle: %w", domain.ErrSkillValidation, name, entry, err)
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("skills: stat %s/%s: %w", name, entry, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s in skill %s is not a file", domain.ErrSkillValidation, entry, name)
+	}
+	// Install bounded every file at MaxSkillFileBytes; the bound holds if the copy was changed.
+	data, err := io.ReadAll(io.LimitReader(f, domain.MaxSkillFileBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("skills: read %s/%s: %w", name, entry, err)
+	}
+	if len(data) > domain.MaxSkillFileBytes {
+		return nil, fmt.Errorf("%w: %s in skill %s is larger than 1 MiB", domain.ErrSkillValidation, entry, name)
+	}
+	return data, nil
 }
 
 // Get implements ports.Skills.

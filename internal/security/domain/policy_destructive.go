@@ -36,6 +36,11 @@ var DefaultDestructivePatterns = []DestructivePattern{
 	{"sql_drop", regexp.MustCompile(`(?i)\bdrop (table|database|schema)\b`)},
 	{"block_device_write", regexp.MustCompile(`(^| )>+ ?/dev/(sd|hd|vd|xvd|nvme|mmcblk|disk)`)},
 	{"recursive_chmod_root", regexp.MustCompile(`^(chmod|chown)( \S+)* (-[a-zA-Z]*R[a-zA-Z]*|--recursive)( \S+)* /$`)},
+	// The agent must not change what instructs it or which tools it has: a skill installed or
+	// an MCP server added from inside a turn would persist a prompt injection (REQ-SKL-005,
+	// deltas `2026-09-skills-cli` and `2026-09-cli-mcp`).
+	{"umb_skill_change", regexp.MustCompile(`^umb( \S+)* skill( \S+)* (install|enable|remove)( |$)`)},
+	{"umb_mcp_add", regexp.MustCompile(`^umb( \S+)* mcp( \S+)* add( |$)`)},
 }
 
 // MatchDestructive reports the first pattern that matches any simple command of the line.

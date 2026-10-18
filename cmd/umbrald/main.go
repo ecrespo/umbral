@@ -392,12 +392,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	providers.observe(models.configure)
 
+	// The skill store (T-F1-34), its leftovers settled before anyone can install, and before
+	// the agent runtime, whose turns list its catalog and whose skill_load reads it (T-F1-36).
+	skillStore, err := newSkills(ctx, db, eventBus, logger)
+	if err != nil {
+		logger.Error("cannot build the skill store", slog.Any("error", err))
+		return exitCantCreate
+	}
+
 	// The agent runtime (T-F1-13). Its turns run on the daemon's context; closing it waits
 	// for each to record how it ended.
 	runtime, tools, err := newRuntime(ctx, agentDeps{
 		logger: logger, db: db, bus: eventBus, gateway: models, egress: egress,
 		terminal: sessionService, blocks: blockReader, metrics: metrics, tracer: agentTracer{telemetry},
-		maxCost: providers.MaxCostMicroUSD, redact: redact, policy: activeRules.Policy,
+		maxCost: providers.MaxCostMicroUSD, redact: redact, policy: activeRules.Policy, skills: skillStore,
 		stallLocal:  time.Duration(settings.Stall.LocalS) * time.Second,
 		stallRemote: time.Duration(settings.Stall.RemoteS) * time.Second,
 	})
@@ -447,13 +455,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		blockedNotifier{sink: notifications, logger: logger}, metrics.ReportRateLimited, logger)
 	if err != nil {
 		logger.Error("cannot build the integration surface", slog.Any("error", err))
-		return exitCantCreate
-	}
-
-	// The skill store (T-F1-34), its leftovers settled before anyone can install.
-	skillStore, err := newSkills(ctx, db, eventBus, logger)
-	if err != nil {
-		logger.Error("cannot build the skill store", slog.Any("error", err))
 		return exitCantCreate
 	}
 

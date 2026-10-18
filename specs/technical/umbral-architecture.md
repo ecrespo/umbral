@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.50 |
+| **Version** | 1.51 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -17,8 +17,6 @@
 
 > **Pending from F1 (ratified 2026-09-26, not yet written here).** Several sections are still
 > to be updated:
-> - §3.2 gains the catalog and `skill_load` (T-F1-36); the skill store is written (T-F1-34);
-> - §5.3 gains the destructive patterns `umb skill …` and `umb mcp add` (T-F1-36);
 > - §9.4 gains `umb mcp` (T-F1-37); `umb skill` is written (T-F1-35).
 >
 > Written by T-F1-33: §5.1's live keys and `[api]` table, §7.2's `umbral_frames_refused_total` and
@@ -113,8 +111,8 @@ flowchart LR
 | `tui` | Bubble Tea v2 (`charm.land/bubbletea/v2`), go-libghostty for the client's own renderer (DD-001) | tabs, panes, block list, keyboard, agent panel | TUI-* |
 | `sessions` | `creack/pty`, go-libghostty, `shell/` bootstrap, `klauspost/compress/zstd` | PTY, VT, blocks, input lock, snapshots | TERM-*, BLK-* |
 | `agents` | own runtime over ports | per-turn loop, modes, limits, cancellation, persist-first | AGT-* |
-| `context` | `text/template`, a byte estimate of tokens (Q-03) | rules, attachments, git, budget, compaction; the skill store in `context/adapters/skills` — bundles checked, staged and renamed into `skills/` beside the database, recorded in `skills` (delta `2026-10-skill-store`) | CTX-*, SKL-001/002/006 |
-| `tools` | microkernel registry | built-in tools and MCP adapter; JSON Schema validation | AGT-002/006, MCP-001 |
+| `context` | `text/template`, a byte estimate of tokens (Q-03) | rules, attachments, git, budget, compaction; the skill store in `context/adapters/skills` — bundles checked, staged and renamed into `skills/` beside the database, recorded in `skills` (delta `2026-10-skill-store`); the catalog of enabled skills each turn lists, through `context/ports.SkillCatalog` (delta `2026-10-skill-catalog`) | CTX-*, SKL-001/002/004/006/007 |
+| `tools` | microkernel registry | built-in tools and MCP adapter; JSON Schema validation; `skill_load` behind `tools/ports.SkillReader` (delta `2026-10-skill-catalog`) | AGT-002/006, MCP-001, SKL-004/005 |
 | `llmgw` | `charm.land/fantasy` + native Ollama adapter | catalog, candidates per class, fallback, normalized streaming, usage | LLM-* |
 | `mcp` | `modelcontextprotocol/go-sdk` | connection, reconnection with backoff, prefixing | MCP-* |
 | `security` | own rules + `zalando/go-keyring` | policies, destructive patterns, taint, redaction, egress | SEC-*, AGT-004/009/013/014 |
@@ -828,8 +826,10 @@ B-09).
   `git clean -f`; `mkfs`; `dd of=`; `kubectl delete`; `terraform destroy`/`apply -destroy`;
   `helm uninstall`; `docker`/`podman system prune` and `volume rm|prune`; `find -delete`;
   `shred`, `wipefs`; `shutdown`, `reboot`, `halt`, `poweroff`; SQL `DROP TABLE|DATABASE|SCHEMA`;
-  a redirection onto a block device; recursive `chmod`/`chown` of `/`. A rule bundle replaces
-  it (REQ-SEC-010).
+  a redirection onto a block device; recursive `chmod`/`chown` of `/`; `umb skill install`,
+  `enable` or `remove` and `umb mcp add`, so the agent cannot change what instructs it or which
+  tools it has (REQ-SKL-005, deltas `2026-09-skills-cli`, `2026-09-cli-mcp` and
+  `2026-10-skill-catalog`). A rule bundle replaces it (REQ-SEC-010).
 - **MCP tools are `Network`**, whatever their transport and whatever the server says of them:
   what they do happens outside Umbral's view. They ask by default (REQ-MCP-004), a tainted turn
   asks for them, `ask` mode does not offer them, and a rule `mcp_<server>_*` or one naming the
@@ -865,6 +865,16 @@ with `run_command` from T-F1-10. Delta `2026-09-builtin-tools`:
   shared or multicast address, checked at dial time after resolution, redirected or not, with
   no proxy; `http`/`https` only, five redirects, 10 s, 2 MiB (REQ-AGT-018). Its result is
   tainted (REQ-SEC-006).
+- **`skill_load` reads an installed skill** (REQ-SKL-004, delta `2026-10-skill-catalog`):
+  `{name, file?}`, ReadOnly, its target `name` or `name/file`. It serves an enabled skill only —
+  `SKILL.md` whole, or one file of the stored bundle checked as a bundle entry and opened
+  through an `os.Root` on the skill's directory, a regular file of at most 1 MiB — cut at
+  256 KiB as `read_file` cuts; a file the bundle lacks is `VALIDATION_ERROR`. Its
+  result is tainted (REQ-SKL-005, REQ-SEC-006); a refusal is a tool error in the daemon's own
+  words. Each turn's system prompt lists the catalog — every enabled skill by name, at most 64,
+  its description made one line (whitespace collapsed, control and format characters dropped)
+  and cut to 256 characters — under `# Skills`, after the rules files and inside
+  the budget, read again for every turn (REQ-SKL-007).
 - **`run_command` runs in the thread's own PTY** (REQ-AGT-003): a session created on first use
   in the thread's cwd, owned by the thread, its input held by the agent, and reused after, so
   the shell's state carries over. The command — one line — is typed as the agent; the block
@@ -1477,3 +1487,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.48 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-wait-monitoring` (T-F1-31): DD-017 says where the wait inventory, the limit, stall detection, the output bridge and the report rate live; §5.1 adds `[waits]`; §9.4 lists `umb wait` |
 | 1.49 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-skill-store` (T-F1-34): §3.2's `context` row names the skill store; §5.2 gains a `context` row whose ports name `skill.changed`; the pending note keeps the catalog, `skill_load`, the destructive patterns and §9.4 |
 | 1.50 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-umb-skill` (T-F1-35): §9.4 writes `umb skill` — install's inspect, manifest, confirmation and digest; the path resolved by `umb` unless remote; `--json` keeping stdout for the result; bundle text printed escaped; one deadline per call |
+| 1.51 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-skill-catalog` (T-F1-36): §3.2's `tools` row gains `skill_load`; §5.3's built-in destructive list gains `umb skill install|enable|remove` and `umb mcp add`; §5.3b gains `skill_load` and the per-turn catalog; the pending note keeps only §9.4's `umb mcp` |

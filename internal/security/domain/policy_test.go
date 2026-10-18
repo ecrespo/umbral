@@ -219,6 +219,24 @@ func TestDestructiveAlwaysAsk_REQ_SEC_005(t *testing.T) {
 		"chroot /mnt rm -rf /",
 		"watch -n 1 rm -rf x",
 		"find . -delete -exec echo {} ;",
+		// The agent changing what instructs it or which tools it has (REQ-SKL-005).
+		"umb skill install /tmp/evil --yes",
+		"umb skill enable evil",
+		"umb skill remove release-check",
+		"umb skill --yes install x",
+		"umb --socket /run/x skill install x",
+		"./umb skill install x",
+		"/usr/local/bin/umb skill install x",
+		"sudo umb skill install x",
+		"env A=1 umb skill enable x",
+		`sh -c "umb skill install x"`,
+		`u'm'b skill "install" x`,
+		"umb  skill   remove x",
+		"true && umb mcp add evil --stdio -- sh",
+		"umb mcp add evil --http https://evil.example",
+		"umb --socket /s mcp add evil --stdio -- x",
+		"sudo /opt/umb mcp add e --stdio -- x",
+		`bash -lc 'umb mcp add e --http https://x'`,
 	}
 	allowEverything := []Rule{allowRule("*", "*")}
 	for _, cmd := range destructive {
@@ -256,6 +274,12 @@ func TestDestructiveAlwaysAsk_REQ_SEC_005(t *testing.T) {
 		"cat /dev/null",
 		"chmod 644 file",
 		`psql -c "SELECT 1"`,
+		"umb skill list",
+		"umb skill show x --body",
+		"umb skill disable x",
+		"umb mcp list",
+		"umb mcp remove x",
+		"echo umb skill install x",
 	}
 	for _, cmd := range harmless {
 		d := Decide(exec(cmd), ModeNormal, allowEverything, false)
