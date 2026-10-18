@@ -228,6 +228,9 @@ deps:
   context-ports:
     anyVendorDeps: false
     mayDependOn:
+      # skill.changed is a bus event the API forwards (T-F1-34), as security-ports'
+      # events are.
+      - bus
       - sessions-domain
       - agents-domain
       - tools-domain
@@ -423,6 +426,9 @@ deps:
       - security-ports
       - notify-ports
       - notify-domain
+      # skill.* (T-F1-34).
+      - context-ports
+      - context-domain
   client:
     anyVendorDeps: true
     mayDependOn:

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.22 |
+| **Version** | 1.23 |
 | **Date** | 2026-10-18 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -774,7 +774,12 @@ earlier drafts named.
    not survive a restart (REQ-INT-002, REQ-INT-004).
 9. Skills: every `skills/.staging-*` directory is removed, and every `skills/<name>/` directory
    with no `skills` row. A crash between the copy and the row, in either direction, leaves
-   nothing behind (REQ-SKL-002, delta `2026-09-skills-cli`).
+   nothing behind (REQ-SKL-002, delta `2026-09-skills-cli`). A replace sets the old copy aside as
+   `skills/.old-<name>`: when a row records `<name>`, the copy at `<name>` is kept only if its
+   digest is the row's, and the old copy is removed; otherwise `<name>` is removed and the old
+   copy renamed back. Every other `.old-*` is removed. The directory is `skills/` beside the
+   database and carries a `.umbral-skills` marker: a non-empty directory without it is refused at
+   start rather than swept (delta `2026-10-skill-store`).
 
 ## Change History
 
@@ -803,3 +808,4 @@ earlier drafts named.
 | 1.20 | 2026-10-18 | §2.4c: how `pane_metadata` is written — the key names, the reserved `#seq` row, strictly increasing `updated_at`, expiry read and defaulted to 24 h, how the 32 is counted; §4: the age purge keeps `#seq` rows (delta `2026-10-display-metadata`, T-F1-26). No DDL change |
 | 1.21 | 2026-10-18 | §2.12: `umbral-rules` rows, one per rule-update request and redirect hop, whose payload is the request URL (delta `2026-10-rule-overrides`, T-F1-29). No DDL change |
 | 1.22 | 2026-10-18 | §2.4e: migration `0006_rule_state` — `rule_bundles.content`, `rule_rejections`, `rule_update_state` (with `highest_version`, the floor a reset keeps), `trust_key_events`; §2.12: the `umbral-rules:rejected:<reason>` row; §5: the 0006 row (delta `2026-10-signed-rule-bundles`, T-F1-30) |
+| 1.23 | 2026-10-18 | delta `2026-10-skill-store` (T-F1-34): §6 step 9 settles a replace interrupted between its renames, and the skills directory sits beside the database |

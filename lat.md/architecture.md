@@ -85,3 +85,15 @@ Stall detection sits in the agent runtime because it already sees every event of
 `sessions` and `agents` cannot import each other, so [[cmd/umbrald/stall.go#followThreadOutput]] turns the output of a thread's own session into [[internal/agents/stall.go#Runtime#NoteOutput]].
 
 External reporters are limited in [[internal/integrations/rate.go#Service#overRate]]: 10 kept reports per source per sliding second, state and metadata together, checked after validation and the pane's resolution so an unknown or agent-owned pane still answers its error. The excess answers like a kept report so a hook never fails for being chatty, and only written reports use up the window ([[internal/integrations/rate.go#Service#kept]]), so a flooding source is heard again as soon as it slows down.
+
+## Skills are text, installed exactly as inspected
+
+A skill is a directory of text for Umbral's own agent; the store copies it and executes nothing, and installs only the bundle whose digest the user saw (delta `2026-10-skill-store`).
+
+[[internal/context/domain/skill.go#BundleBuilder]] enforces the per-file, per-bundle and entry limits as each entry is read, so a tarball bomb stops at the first byte over, and [[internal/context/domain/skill.go#IsRemoteSource]] refuses a URL or remote before any path is resolved: network material must be signed (Art. 5), and nothing signs skills yet.
+
+[[internal/context/domain/skill.go#Digest]] covers file paths, sizes and contents only, so a directory and its tarball give the same digest and `skill.install` can refuse a bundle that changed after `skill.inspect`.
+
+[[internal/context/adapters/skills/skills.go#Service]] writes through a staging directory renamed into place inside the row's transaction, with modes forced to `0644`/`0755`; [[internal/context/adapters/skills/skills.go#Service#Recover]] runs at start, from [[cmd/umbrald/skills.go#newSkills]], and removes every directory no row records — names starting with `.` cannot be skills, so staging and set-aside copies are covered by that one rule.
+
+Because that sweep deletes, the store first claims its directory with a `.umbral-skills` marker and refuses a non-empty one without it. A replace interrupted between its renames is settled by digest: the copy at the skill's name stays only if it matches the row, else the set-aside copy comes back.

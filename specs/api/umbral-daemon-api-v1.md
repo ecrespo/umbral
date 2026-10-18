@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.38 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.39 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -14,11 +14,10 @@
 ---
 
 
-> **Pending from F1 (ratified 2026-09-26, not yet written here).** PRD 1.13 adds REQ-CLI-008 and
-> REQ-SKL-001…007, which this document does not describe yet: `skill.*` and the `cli` rows for
-> `skill.*` and `mcp.server.*`. Tasks T-F1-34 and T-F1-37 write that text as they land (§5.27's
-> methods are written, by T-F1-17; their `cli` row is T-F1-37's). Until then,
-> the design is in `changes/_archive/2026-09-{skills-cli,cli-mcp}/`. Already written: the handshake
+> **Pending from F1 (ratified 2026-09-26, not yet written here).** PRD 1.13 adds REQ-CLI-008,
+> which this document does not describe yet: the `cli` row for `mcp.server.*`. Task T-F1-37
+> writes that text as it lands (§5.27's methods are written, by T-F1-17). Until then, the design
+> is in `changes/_archive/2026-09-cli-mcp/`. `skill.*` is written (§5.37, T-F1-34). Already written: the handshake
 > deadline and the id-less hello (REQ-SEC-017/018, T-F1-32), and the frame limit in both directions
 > with `RESULT_TOO_LARGE` and `limits.*` (REQ-API-005, REQ-OBS-005, REQ-CLI-007, T-F1-33).
 
@@ -134,7 +133,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*` |
 
 ### Handshake
 
@@ -146,7 +145,7 @@ before the daemon starts.
 ```json
 {"jsonrpc":"2.0","id":1,"result":{
   "daemon_version":"0.1.0","protocol_version":1,
-  "capabilities":["sessions","blocks","threads","mcp","models","workspaces","layouts","waits","integrations","notifications","policy_explain","wait_admin","rules","limits","config"],
+  "capabilities":["sessions","blocks","threads","mcp","models","workspaces","layouts","waits","integrations","notifications","policy_explain","wait_admin","rules","skills","limits","config"],
   "connection_id":"con_01J9Z3K8T2QH6W4V5X7Y8Z9A0B","max_message_bytes":4194304}}
 ```
 
@@ -155,7 +154,7 @@ before the daemon starts.
   compatible would silently pair this daemon with a client built for a version it never declared.
 - Each entry of `capabilities` names a method namespace (`sessions`, `blocks`, `threads`, `mcp`,
   `models`, `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`,
-  `wait_admin`, `rules`, `limits`, `config`) whose methods the daemon **serves at that moment**. THE SYSTEM SHALL derive
+  `wait_admin`, `rules`, `skills`, `limits`, `config`) whose methods the daemon **serves at that moment**. THE SYSTEM SHALL derive
   the list from its method table rather than declaring it statically, SHALL advertise a namespace
   when at least one of its methods is served by this build, and SHALL NOT advertise one whose
   methods are all unserved: a client that branches on the advertisement must not be sent down a path
@@ -180,7 +179,7 @@ before the daemon starts.
 ## 3. General Conventions
 
 ### Identifiers
-- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`, `trn_` for a turn (`turn_id`, T-F1-13), `wt_` for a wait (`wait_id`, T-F1-31), and `key_` for a trust key — fixed by the binary's trust seed for the project's keys, so every install shows the same id, and minted at `rules.key.add` otherwise
+- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`, `trn_` for a turn (`turn_id`, T-F1-13), `wt_` for a wait (`wait_id`, T-F1-31), `skl_` for a skill (T-F1-34), and `key_` for a trust key — fixed by the binary's trust seed for the project's keys, so every install shows the same id, and minted at `rules.key.add` otherwise
   (Constitution Art. 6). Example: `blk_01J9Z3K8T2QH6W4V5X7Y8Z9A0B`.
 - **Structural identifiers** are the documented exception to that rule (Art. 6, amendment of
   2026-09-20): a workspace is `w<n>`, a tab `w<n>:t<m>` and a pane `w<n>:p<m>`, with `n` and `m`
@@ -415,6 +414,17 @@ method and the ordering that produced it, so one handed to a different method is
 - `transport`: `stdio` | `http`
 - `trust`: `trusted` | `untrusted`
 - `state`: `connecting` | `connected` | `unavailable` | `disabled`
+
+### Skill
+```json
+{"id":"skl_…","name":"release-check","description":"Steps to cut a release.","version":"1.2",
+ "source":"/home/me/skills/release-check","sha256":"9f2c…","size_bytes":4210,"enabled":true,
+ "installed_at":1760800000000}
+```
+- `name`: 1–64 of `[a-z0-9-]`, not starting with `-`; unique, and how methods address a skill
+- `version`: `null` when the front matter has none
+- `source`: the path it was installed from, for display only — the stored copy is what is used
+- `sha256`: the bundle's digest (§5.37)
 
 ## 5. Methods
 
@@ -1063,6 +1073,59 @@ Every client kind may call both (§2). The `limits` capability announces them.
   - A daemon with no settings file location answers `NOT_IMPLEMENTED` rather than raising a limit it
     cannot persist.
 
+### 5.37 `skill.inspect` / `skill.install` / `skill.list` / `skill.get` / `skill.set_enabled` / `skill.remove` — REQ-SKL-001, REQ-SKL-002, REQ-SKL-006
+
+Skills are instruction bundles for Umbral's own agent (delta `2026-09-skills-cli`): a directory
+with a `SKILL.md` whose front matter gives `name`, `description` (1–1024 characters) and an
+optional `version`. Nothing in a skill is executed by these methods. Every client kind may call
+them (§2); they are advertised under `skills`.
+
+`skill.inspect` params: `{path}`. **Result:**
+```json
+{"name":"release-check","description":"Steps to cut a release.","version":"1.2",
+ "files":[{"path":"SKILL.md","size_bytes":4100},{"path":"scripts/check.sh","size_bytes":110}],
+ "size_bytes":4210,"sha256":"9f2c…"}
+```
+It checks the bundle and copies nothing.
+
+`skill.install` params: `{path, expected_sha256, replace?}`. **Result:** the `Skill`.
+
+`skill.list` params: `{}`. **Result:** `{items: Skill[]}`, by name.
+
+`skill.get` params: `{name, include?}`, `include` `none` (the default) or `body`. **Result:**
+`{skill: Skill, body}`, `body` SKILL.md after its front matter when asked and `null` otherwise.
+
+`skill.set_enabled` params: `{name, enabled}`. **Result:** the `Skill`.
+
+`skill.remove` params: `{name}`. **Result:** `{}`.
+
+- **The source.** `path` is classified before anything resolves it: one containing `://`,
+  starting `git@` or of scp-like form `user@host:path` is not local and is `VALIDATION_ERROR`
+  (REQ-SKL-006). A local `path` must be absolute — `umb` resolves it — and name a directory or a
+  `.tar.gz`/`.tgz` readable by the daemon's user. A tarball whose entries all sit under one top
+  directory holding `SKILL.md` is read as that directory.
+- **The checks.** A bundle breaking any is `VALIDATION_ERROR` naming the entry and the rule:
+  only regular files and directories (no symlink, hardlink, device, FIFO or socket); no absolute
+  path, no `..` and no backslash; no file and directory under one path; at most 1 MiB per file,
+  8 MiB per bundle and 256 entries, enforced on decompressed bytes as a tarball is read, and a
+  tarball's whole stream, headers included, bounded too; a `SKILL.md` at the root with valid
+  front matter. A directory's files are opened without following a link, so one swapped for a
+  symlink between the walk and the read is refused.
+- **The digest** is the SHA-256 of the files sorted by path, each written `path NUL size NUL
+  sha256(content) LF`. Directories are not part of it, and an empty directory is not installed.
+  The same files give the same digest from a directory and from a tarball.
+- **Install.** The bundle is checked again; a digest other than `expected_sha256` is `CONFLICT`,
+  so what is installed is exactly what was inspected. An installed `name` without `replace` is
+  `CONFLICT`. Files are copied with mode `0644` and directories `0755` — no exec, setuid, setgid
+  or sticky bit survives — through a staging directory renamed into place. A replace keeps the
+  skill's `id` and whether it is enabled. A skill installed while 64 are enabled is stored
+  disabled.
+- **Enabling** a 65th is `VALIDATION_ERROR`; disable one first. Setting the state a skill already
+  has is answered with the `Skill` and announces nothing.
+- **Errors.** An unknown `name` is `NOT_FOUND`. A refused install leaves the store and the stored
+  copies as they were (REQ-SKL-002).
+- **Announced** with `skill.changed` (§6) once stored.
+
 ## 6. Notifications (daemon → client)
 
 | Method | Payload | REQ |
@@ -1092,6 +1155,7 @@ Every client kind may call both (§2). The `limits` capability announces them.
 | `layout.updated` | `Layout` | REQ-WS-004 |
 | `thread.attention_changed` | `{thread_id, attention_state}` — after every change written: a turn starts (`working`), asks for an approval (`blocked`), is answered (`working`), ends (`done`, or `idle` when viewed or cancelled), or a `done` thread is focused (`idle`). Not sent for the changes Data Model §6 makes at start, before any client connects | REQ-AGT-016 |
 | `thread.stalled` | `{thread_id, turn_id, idle_ms, last_event}` — once per stall of a running turn (§5.33); `last_event` is the last activity seen: `turn_started`, `text`, `reasoning`, `tool_call`, `tool_result`, `output` or `approval` | REQ-AUT-008 |
+| `skill.changed` | `{name, change}` — `change` one of `installed`, `replaced`, `enabled`, `disabled`, `removed` — once the change is stored (§5.37) | REQ-SKL-007 |
 | `rules.update_rejected` | `{reason, version, source}` — `reason` as §5.34's `last_rejection`, `version` the bundle's own when its signature verified and 0 otherwise — unverified bytes are never parsed — `source` `"remote"`. Sent to every client once per bundle: a bundle already rejected is not announced again. The daemon also raises a user notification for it under its own source `umbral:rules` (§5.35) | REQ-SEC-013 |
 | `limits.notification_dropped` | `{method, size_bytes, limit_bytes}` — in place of a notification over the frame limit, under that notification's `seq` (§1) | REQ-API-005 |
 
@@ -1202,7 +1266,7 @@ stateDiagram-v2
 - **Optional capabilities:** `system.hello` returns the namespaces the daemon **serves** at that
   moment (§2). The protocol's namespaces are `sessions`, `blocks`, `threads`, `mcp`, `models`,
   `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`, `wait_admin`,
-  `rules`, `limits` and `config`; `worktrees`, `graphics`, `plugins` and `federation` are reserved for later. The §2
+  `rules`, `skills`, `limits` and `config`; `worktrees`, `graphics`, `plugins` and `federation` are reserved for later. The §2
   example shows the full list and is illustrative: what a given daemon returns is whatever it can
   actually do, which is narrower than what its method table holds whenever a module is absent.
 - **Which error a missing method gets.** A name this build does not know receives
@@ -1281,3 +1345,4 @@ printf '%s\n' \
 | 1.36 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-policy-explain` (T-F1-28): §5.36's example matches the trace the daemon returns (`decided`, `detail`, `note`, `reason`, `allow_always`, the `exposure` step), and the section says what a thread lends, what is refused (a risk the registered tool does not declare among it), how the target is shaped as a turn shapes it, and who may call; §2's `cli` row gains `policy.explain` |
 | 1.37 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-signed-rule-bundles` (T-F1-30): §5.34 names each `rules.*` method with its params and result, keys addressed by fingerprint, the rejection reasons, what rollback and reset leave behind, and the CLI; §6's `rules.update_rejected` says what it carries — the version only of a bundle that verified — that a repeat is not announced, and that a user notification under `umbral:rules` accompanies it (§5.35); §2's `cli` row gains `rules.*` |
 | 1.38 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-wait-monitoring` (T-F1-31): §5.33 gives `wait.list`'s result and `wait.cancel`'s, wait ids, output-wait targets, the per-connection limit counting every kind, the report rate's shared window and the stall rules; §4 `Thread` gains `stalled`; §6 `thread.stalled` names `last_event`'s values; §8 sharpens both limits; §2's `cli` row gains `wait.list` and `wait.cancel` |
+| 1.39 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-09-skills-cli` written by T-F1-34 (with delta `2026-10-skill-store`): §4 `Skill`; §5.37 `skill.inspect`, `install`, `list`, `get`, `set_enabled` and `remove` with their checks, digest and errors; §6 `skill.changed`; §2's `cli` row gains `skill.*` and the `skills` capability; §3 the `skl_` prefix; §9 the namespace |

@@ -123,6 +123,10 @@ func (s *Server) registry() map[string]method {
 		m.capability = capabilityRules
 		table[name] = m
 	}
+	for name, m := range skillMethods() {
+		m.available = hasSkills
+		table[name] = m
+	}
 	for name, m := range integrationMethods() {
 		m.available = hasIntegrations
 		m.capability = capabilityIntegrations

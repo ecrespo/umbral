@@ -7,6 +7,7 @@ import (
 	intports "github.com/ecrespo/umbral/internal/integrations/ports"
 
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
+	ctxports "github.com/ecrespo/umbral/internal/context/ports"
 	mcpports "github.com/ecrespo/umbral/internal/mcp/ports"
 	secports "github.com/ecrespo/umbral/internal/security/ports"
 
@@ -61,6 +62,7 @@ var dispatchedKinds = []bus.Kind{
 	agentsports.KindApprovalRequested,
 	agentsports.KindAttentionChanged,
 	agentsports.KindThreadStalled,
+	ctxports.KindSkillChanged,
 	mcpports.KindServerState,
 	intports.KindPaneStateChanged,
 	secports.KindRuleUpdateRejected,
@@ -175,6 +177,8 @@ func toNotification(event bus.Event) (string, any) {
 		return "approval.requested", toWireApproval(e.Approval)
 	case agentsports.ThreadAttentionChanged:
 		return "thread.attention_changed", attentionChangedPayload{ThreadID: e.ThreadID, AttentionState: e.AttentionState}
+	case ctxports.SkillChanged:
+		return "skill.changed", skillChangedPayload{Name: e.Name, Change: e.Change}
 	case agentsports.ThreadStalled:
 		return "thread.stalled", threadStalledPayload{ThreadID: e.ThreadID, TurnID: e.TurnID, IdleMS: e.IdleMS, LastEvent: e.LastEvent}
 	case agentsports.ContextCompacted:

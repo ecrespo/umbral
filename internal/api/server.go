@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	ctxports "github.com/ecrespo/umbral/internal/context/ports"
 	intports "github.com/ecrespo/umbral/internal/integrations/ports"
 	ntfports "github.com/ecrespo/umbral/internal/notify/ports"
 	secports "github.com/ecrespo/umbral/internal/security/ports"
@@ -79,6 +80,7 @@ var capabilityOf = map[string]string{
 	"layout":    "layouts",
 	"wait":      "waits",
 	"rule":      "rules",
+	"skill":     "skills",
 }
 
 // capabilities reports the namespaces this daemon actually serves, which is what the
@@ -172,7 +174,10 @@ type Config struct {
 	PolicyExplain secports.Explainer
 	// Rules is rules.* (REQ-SEC-011, REQ-SEC-013 to REQ-SEC-016). A nil value leaves them
 	// answering NOT_IMPLEMENTED.
-	Rules  secports.RulesService
+	Rules secports.RulesService
+	// Skills is skill.* (REQ-SKL-001, REQ-SKL-002, REQ-SKL-006). A nil value leaves them
+	// answering NOT_IMPLEMENTED.
+	Skills ctxports.Skills
 	Bus    *bus.Bus
 	Logger *slog.Logger
 

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.48 |
+| **Version** | 1.49 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -17,7 +17,7 @@
 
 > **Pending from F1 (ratified 2026-09-26, not yet written here).** Several sections are still
 > to be updated:
-> - §3.2 gains the skill store, the catalog and `skill_load` (T-F1-34, T-F1-36);
+> - §3.2 gains the catalog and `skill_load` (T-F1-36); the skill store is written (T-F1-34);
 > - §5.3 gains the destructive patterns `umb skill …` and `umb mcp add` (T-F1-36);
 > - §9.4 gains `umb skill` and `umb mcp` (T-F1-35, T-F1-37).
 >
@@ -113,7 +113,7 @@ flowchart LR
 | `tui` | Bubble Tea v2 (`charm.land/bubbletea/v2`), go-libghostty for the client's own renderer (DD-001) | tabs, panes, block list, keyboard, agent panel | TUI-* |
 | `sessions` | `creack/pty`, go-libghostty, `shell/` bootstrap, `klauspost/compress/zstd` | PTY, VT, blocks, input lock, snapshots | TERM-*, BLK-* |
 | `agents` | own runtime over ports | per-turn loop, modes, limits, cancellation, persist-first | AGT-* |
-| `context` | `text/template`, a byte estimate of tokens (Q-03) | rules, attachments, git, budget, compaction | CTX-* |
+| `context` | `text/template`, a byte estimate of tokens (Q-03) | rules, attachments, git, budget, compaction; the skill store in `context/adapters/skills` — bundles checked, staged and renamed into `skills/` beside the database, recorded in `skills` (delta `2026-10-skill-store`) | CTX-*, SKL-001/002/006 |
 | `tools` | microkernel registry | built-in tools and MCP adapter; JSON Schema validation | AGT-002/006, MCP-001 |
 | `llmgw` | `charm.land/fantasy` + native Ollama adapter | catalog, candidates per class, fallback, normalized streaming, usage | LLM-* |
 | `mcp` | `modelcontextprotocol/go-sdk` | connection, reconnection with backoff, prefixing | MCP-* |
@@ -746,6 +746,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api`. The tree resolves a pane's state in DD-012's order (`workspaces/domain.ResolveAttention`); `integrations` writes the external reports and announces every change. It hears the changes it did not make — blocks, integration verdicts, exits, thread attention — through events `cmd/umbrald` subscribes it to, and re-reads the whole tree on each (delta `2026-10-integration-surface`). Display metadata is written by `integrations` and read by the tree into a `Pane`'s `metadata`, never on the state path: `ResolveAttention`, the rollup, waits and notifications do not read it, and a written report is announced as `pane.updated` only (delta `2026-10-display-metadata`) |
 | `notify` | `bus` and stdlib only; it is a sink and imports no other module. `api` implements its `Deliverer` port — the foreground client of API §5.35 — and is handed to it by `cmd/umbrald` once the server exists; `cmd/umbrald` adapts `integrations`' `Notifier` port to it for an external `blocked`. Both modules deliver outside their locks, and `api` through a per-connection queue, so a client that stops reading stalls no source (delta `2026-10-notifications`) |
 | `security` | stdlib, `go-keyring` in its adapter, `bus` in its ports (to name `rules.update_rejected`) and the root `llmgw/domain` (for the egress record a rejection writes). Its root holds policy.explain, which reads a thread's mode, directory and rules through its own `ExplainSource` port and asks the same pure `Decide` a turn uses; `cmd/umbrald` adapts the agent thread store to that port and hands both the runtime and the explainer one `isRepo`, so an explanation and a turn agree about the write root (delta `2026-10-policy-explain`). Its root also holds the `Rules` manager of signed bundles (DD-016), which reaches storage through its own `RuleStore` port and replaces the active set's base through `RuleBase`. `tools/rulesign` depends on `security/domain` only (delta `2026-10-signed-rule-bundles`) |
+| `context` | its own `ports` and `domain`, `store` and `bus` in its adapters, and `bus` in its ports, to name `skill.changed` (delta `2026-10-skill-store`) |
 | `mcp` | its own `ports` and `domain`, plus `bus`. `tools/adapters` may use `mcp/domain`, for `mcptools`, which offers a server's tools; `api` the `ports` and `domain` of `mcp`; only `cmd/*` wires the manager to the registry (delta `2026-10-mcp-client`) |
 | `obs` | stdlib, and OpenTelemetry from T-F1-18; imported only by `cmd/*`. Modules count through a port of their own, which `cmd/umbrald` gives the `obs` implementation (delta `2026-10-tool-call-repair`) |
 | `cmd/*` | everything |
@@ -1444,3 +1445,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.46 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-rule-overrides` (T-F1-29): DD-016 gives the rules' JSON shape, a bundle replacing the built-ins and local files layered by name on top; §4 says when rules are fetched, that each redirect hop is recorded and that a `rules_url` carrying a secret stops the daemon; the trust seed moves under `internal/security/adapters/rules/` |
 | 1.47 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-signed-rule-bundles` (T-F1-30): DD-016 states how a bundle is verified, applied, rejected and never retried, the fail-closed latch, rollback and reset, the trust-key history and `tools/rulesign`; §5.2's `security` row gains the `Rules` manager and its imports; §9.4 lists `umb rules`. The floor is the higher of the active and the highest applied version, so a reset reopens no older bundle; a rejection also notifies the user under `umbral:rules` |
 | 1.48 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-wait-monitoring` (T-F1-31): DD-017 says where the wait inventory, the limit, stall detection, the output bridge and the report rate live; §5.1 adds `[waits]`; §9.4 lists `umb wait` |
+| 1.49 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-skill-store` (T-F1-34): §3.2's `context` row names the skill store; §5.2 gains a `context` row whose ports name `skill.changed`; the pending note keeps the catalog, `skill_load`, the destructive patterns and §9.4 |
