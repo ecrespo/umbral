@@ -26,7 +26,11 @@ const tags = `{"models":[
  {"name":"gpt-oss:20b","details":{"context_length":131072},"capabilities":["completion","tools","thinking"]},
  {"name":"qwen3:4b","details":{"context_length":8192},"capabilities":["completion","tools","thinking","vision"]},
  {"name":"nomic-embed-text:latest","details":{"context_length":2048},"capabilities":["embedding"]},
- {"name":"old:latest","details":{}}]}`
+ {"name":"old:latest","details":{}},
+ {"name":"qwen3:4b","details":{"context_length":4096},"capabilities":["completion"]}]}`
+
+// The last entry repeats a name, as Ollama 0.40 does for a model pulled for two backends: the
+// first copy is the one discovery and num_ctx use.
 
 func (f *fakeOllama) server(t *testing.T) *httptest.Server {
 	t.Helper()

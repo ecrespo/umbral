@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.52 |
+| **Version** | 1.53 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -698,7 +698,9 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
   `base_url`), `ollama` through the native adapter of DD-005; `yzma` arrives later, and until then
   it is listed with reason `no_adapter`. A provider down for its credential gets no adapter at all, so nothing can
   call it. Discovery reads `<base_url>/models` (`/api/tags` for `ollama`) at start and after every reload, in the background,
-  and stores the result in `models`; the models of a provider that does not answer stay, `down`
+  and stores the result in `models`, one row per id: a provider that lists one id twice — Ollama 0.40
+  does for a model pulled for two backends — keeps its first entry, in the catalog and for `num_ctx`
+  alike (delta `2026-10-duplicate-models`); the models of a provider that does not answer stay, `down`
   with `discovery_failed`. A model's health and reason are its provider's — `ok` once it answered,
   `degraded` when its key came from the environment — with no column of their own. `local` is true
   for a loopback `base_url` only. A gateway on loopback that forwards to the cloud — a self-hosted OmniRoute —
@@ -1525,4 +1527,5 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.50 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-umb-skill` (T-F1-35): §9.4 writes `umb skill` — install's inspect, manifest, confirmation and digest; the path resolved by `umb` unless remote; `--json` keeping stdout for the result; bundle text printed escaped; one deadline per call |
 | 1.51 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-skill-catalog` (T-F1-36): §3.2's `tools` row gains `skill_load`; §5.3's built-in destructive list gains `umb skill install|enable|remove` and `umb mcp add`; §5.3b gains `skill_load` and the per-turn catalog; the pending note keeps only §9.4's `umb mcp` |
 | 1.52 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-umb-mcp-panel` (T-F1-37): §9.4 writes `umb mcp` — always untrusted, `--env` references taken out before flag parsing, the command after `--`, the list format; §5.3e gains the extensions view; the pending-from-F1 note is closed |
+| 1.53 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-duplicate-models`: §5.1's discovery stores one row per id, a provider's first entry for an id it lists twice |
 

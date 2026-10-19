@@ -3,6 +3,7 @@ package llmgw
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 	"log/slog"
@@ -67,6 +68,14 @@ func (s *memStore) Replace(_ context.Context, provider string, models []domain.M
 		if m.Provider == provider {
 			delete(s.rows, id)
 		}
+	}
+	// models.id is the table's primary key: one id twice fails the whole replace, as SQLite does.
+	seen := map[string]bool{}
+	for _, m := range models {
+		if seen[m.ID] {
+			return fmt.Errorf("insert %s: UNIQUE constraint failed: models.id", m.ID)
+		}
+		seen[m.ID] = true
 	}
 	for _, m := range models {
 		s.rows[m.ID] = m
@@ -174,6 +183,30 @@ func TestCatalogDiscoversEveryProvider_REQ_LLM_002(t *testing.T) {
 	}
 	if _, stale := byID(got)["ollama/gpt-oss:20b"]; stale || len(got) != 2 {
 		t.Errorf("after refresh = %+v, want gpt-oss gone", got)
+	}
+}
+
+// TestAModelListedTwiceIsStoredOnce_REQ_LLM_002: Ollama 0.40 lists a model pulled for two
+// backends twice under one name. The name is what a request sends, so the catalog keeps the
+// first entry; storing both failed the whole replace and left the provider with no models.
+func TestAModelListedTwiceIsStoredOnce_REQ_LLM_002(t *testing.T) {
+	t.Parallel()
+
+	local := &fakeProvider{id: "ollama", local: true, models: []string{"gpt-oss:20b", "qwen3:4b", "gpt-oss:20b"}}
+	store := newMemStore()
+	c := newCatalog(store)
+	c.Configure(false, []Entry{{ID: "ollama", Provider: local}})
+	if err := c.Refresh(t.Context()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	got := mustList(t, c)
+	if len(got) != 2 {
+		t.Fatalf("listed %d models, want 2: %v", len(got), got)
+	}
+	for _, id := range []string{"ollama/gpt-oss:20b", "ollama/qwen3:4b"} {
+		if m, ok := byID(got)[id]; !ok || m.Health != domain.HealthOK {
+			t.Errorf("%s: %+v, present %v; want ok", id, m, ok)
+		}
 	}
 }
 

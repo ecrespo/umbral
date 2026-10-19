@@ -109,3 +109,9 @@ The agent sees skills through [[internal/context/adapters/skills/skills.go#Servi
 [[cmd/umb/mcp.go#cmdMcp]] has no trust flag, and [[internal/api/mcp.go#handleMcpAdd]] refuses any other `trust` from a `cli` connection, so neither a copied script nor raw JSON-RPC can add a trusted server. [[cmd/umb/mcp.go#takeEnv]] removes every `--env` before Go's flag parser runs, because that parser quotes a refused value in its error and the value may be the secret; only `keyring:` and `env:` references pass. The `cli` client kind may call `mcp.server.*` ([[internal/api/mcp.go#mcpMethods]]).
 
 The panel never patches its lists from a notification: `mcp.server_state` and `skill.changed` make it list again ([[internal/tui/commands.go#Model#loadServersCmd]]), relying on persist-before-notify, and opening the panel lists too because removing a server publishes nothing. [[internal/tui/agent.go#Model#extensionLines]] draws the two lists, each made one line per item and capped at two rows by [[internal/tui/agent.go#wrapItems]] so remote text cannot break the layout. A turn's `mcp_*` calls that reached the server and its successful `skill_load` names are summed into one row at its end.
+
+## Discovery stores one model per id
+
+[[internal/llmgw/catalog.go#Catalog#Refresh]] keeps the first entry when a provider lists one id twice, because a request names the model only by that id.
+
+Ollama 0.40 lists a model pulled for two backends twice under one name, with different digests, and Ollama picks the copy when called. The `models` table keys on the id, so passing both to the store failed the whole replace and left the provider with no model at all. The check is in the catalog, since any provider's list can repeat a name, and [[internal/llmgw/adapters/ollama/ollama.go#Provider#Models]] keeps the same first copy for the window that caps `num_ctx`, so the two never describe different copies (delta `2026-10-duplicate-models`).

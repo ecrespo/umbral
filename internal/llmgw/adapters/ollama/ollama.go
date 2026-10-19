@@ -107,7 +107,9 @@ func (p *Provider) Models(ctx context.Context) ([]domain.Model, error) {
 	out := make([]domain.Model, 0, len(list.Models))
 	windows := make(map[string]int64, len(list.Models))
 	for _, m := range list.Models {
-		if m.Name == "" {
+		// Ollama 0.40 lists a model pulled for two backends twice under one name; a request
+		// names only that, so the first copy is the one the catalog and num_ctx describe.
+		if _, seen := windows[m.Name]; m.Name == "" || seen {
 			continue
 		}
 		caps := m.Capabilities

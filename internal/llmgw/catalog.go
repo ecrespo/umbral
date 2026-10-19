@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -141,6 +142,14 @@ func (c *Catalog) Refresh(ctx context.Context) error {
 		for i := range models {
 			models[i].Provider, models[i].Health, models[i].UpdatedAt = e.ID, health, stamp
 		}
+		// A provider may list one id twice — Ollama 0.40 does for a model pulled for two
+		// backends — and a request names the model by that id, so the first entry stands for it.
+		seen := make(map[string]bool, len(models))
+		models = slices.DeleteFunc(models, func(m domain.Model) bool {
+			dup := seen[m.ID]
+			seen[m.ID] = true
+			return dup
+		})
 		if err := c.store.Replace(ctx, e.ID, models); err != nil {
 			errs = append(errs, err)
 		}
