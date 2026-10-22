@@ -2,8 +2,9 @@
 
 > Source specs: `specs/prd/umbral-mvp.md` §6.14 · `specs/plans/umbral-mvp-plan.md` (hardening phase)
 > Folded from `changes/_archive/2026-09-visual-identity/`. REQ-PKG-004, REQ-PKG-005, REQ-PKG-007
-> and REQ-PKG-008 live in `specs/prd/umbral-f2-desktop.md` (finding A-12), together with their
-> tasks T-PKG-04 and T-PKG-05.
+> and REQ-PKG-008 live in `specs/prd/umbral-f2.md` §6.8 (finding A-12; the F2 PRD absorbed the
+> holding file `umbral-f2-desktop.md` on 2026-10-22), with their tasks T-PKG-04 and T-PKG-05 in
+> `umbral-f2-tasks.md`.
 
 ## Conventions for this file
 

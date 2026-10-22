@@ -16,9 +16,11 @@ workdir: .
 
 # e2e/us003/fixture is a module of its own, not Umbral's code: the Go repository with a broken
 # test that the live US-003 run copies and asks the agent to fix (T-F1-21). It imports nothing
-# of Umbral's and nothing of Umbral's imports it, so no component applies to it.
+# of Umbral's and nothing of Umbral's imports it, so no component applies to it. docs/spikes/acp
+# is the same: the throwaway ACP client of spike T-F2-00, a module of its own.
 exclude:
   - e2e/us003/fixture
+  - docs/spikes/acp
 
 components:
   # --- composition root -------------------------------------------------------
