@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `RATIFIED 2026-10-18 — decided by E. Crespo ("apruebo los 9 deltas. el 2 y 3 lo trabajamos en detalle en una nueva sesión? cierra el F1"); applied to specs/ and archived. Revised 2026-10-22 by the implementing agent, under the Tech Lead's instruction to finish F1 ("Ratifico los deltas y terminar todas las tareas pendientes para la fase F1"), when the closing measurement was taken: T-F1-38's evidence added for criterion 4, and T-HRD-03's flaky test replaced, the one first listed having been fixed under T-HRD-03 by delta `2026-10-agent-pty-settle`. The revision awaits the Tech Lead's review` |
+| **Status** | `RATIFIED 2026-10-18 — decided by E. Crespo ("apruebo los 9 deltas. el 2 y 3 lo trabajamos en detalle en una nueva sesión? cierra el F1"); applied to specs/ and archived. Revised 2026-10-22 by the implementing agent, under the Tech Lead's instruction to finish F1 ("Ratifico los deltas y terminar todas las tareas pendientes para la fase F1"), when the closing measurement was taken: T-F1-38's evidence added for criterion 4, and T-HRD-03's flaky test replaced, the one first listed having been fixed under T-HRD-03 by delta `2026-10-agent-pty-settle`. The revision was ratified by the Tech Lead on 2026-10-22 ("apruebo el delta", both pending deltas)` |
 | **Date** | 2026-10-18, revised 2026-10-22 |
 | **Task** | none — a plan change, no code |
 | **Raised by** | The Tech Lead, on 2026-10-18, once every F1 implementation task was merged |

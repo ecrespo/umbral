@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction ("si creas deltas, documentalos, apruebalos"); **pending the Tech Lead's review**. Folded into Tech Design 1.53 |
+| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction ("si creas deltas, documentalos, apruebalos"); ratified by the Tech Lead on 2026-10-22 ("apruebo el delta", both pending deltas). Folded into Tech Design 1.53 |
 | **Date** | 2026-10-18 |
 | **Task** | none — a defect found by the F1 closing run, fixed on `fix/catalog-duplicate-models` |
 | **Raised by** | The live US-003 run of F1's closing checkpoint |
