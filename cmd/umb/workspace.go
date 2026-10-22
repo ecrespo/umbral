@@ -41,6 +41,7 @@ const (
 	subApply  = "apply"
 
 	keyLabel = "label"
+	keyTitle = "title"
 )
 
 // treeCommand is one subcommand of a family: the positional arguments it takes, and how its

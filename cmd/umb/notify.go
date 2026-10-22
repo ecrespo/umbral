@@ -33,7 +33,7 @@ func cmdNotify(ctx context.Context, args []string, stdout, stderr *printer) int 
 		return exitFailure
 	}
 
-	params := map[string]any{"title": title, "source": *source}
+	params := map[string]any{keyTitle: title, "source": *source}
 	if *body != "" {
 		params["body"] = *body
 	}

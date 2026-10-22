@@ -28,12 +28,6 @@ const threadUsage = "umb thread: create [CWD] [--mode M] [--title T] [--model M]
 // §8 allows 1 s to 1 h; a turn of a local model on a real task takes minutes.
 const defaultThreadWait = 10 * time.Minute
 
-// threadMessage mirrors the part of API §4's Message `umb thread get` prints.
-type threadMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
 // cmdThread is `umb thread` (REQ-CLI-009): a script drives a thread with one command per step,
 // each one call to the method of the same name, and waits without polling — `send --wait` and
 // `wait` hold the connection open until the daemon answers (REQ-AUT-001). Each prints the one
@@ -80,7 +74,7 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 			return exitFailure
 		}
 		method, params["cwd"] = "thread.create", abs
-		for key, v := range map[string]string{"mode": *mode, "title": *title, "model": *model} {
+		for key, v := range map[string]string{"mode": *mode, keyTitle: *title, "model": *model} {
 			if v != "" {
 				params[key] = v
 			}
