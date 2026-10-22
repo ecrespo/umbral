@@ -349,8 +349,13 @@ func (c *CLI) snapshot(ctx context.Context, repoRoot, worktree string, sanitized
 	index := f.Name()
 	defer func() { _ = os.Remove(index) }()
 	steps := [][]string{{"add", "-A"}, {"write-tree"}}
+	var stamp time.Time
 	if own, err := os.Open(filepath.Join(admin, "index")); err == nil { //nolint:gosec // the main repository's record of the worktree
-		_, err = io.Copy(f, own)
+		var info os.FileInfo
+		if info, err = own.Stat(); err == nil {
+			stamp = info.ModTime()
+			_, err = io.Copy(f, own)
+		}
 		_ = own.Close()
 		if err != nil {
 			_ = f.Close()
@@ -361,6 +366,15 @@ func (c *CLI) snapshot(ctx context.Context, repoRoot, worktree string, sanitized
 		steps = append([][]string{{"read-tree", headRef}}, steps...)
 	}
 	_ = f.Close()
+	// git distrusts an entry whose file changed in the same timestamp tick as the index was
+	// written ("racy git") by comparing the entry's time with the index file's own. A copy
+	// written now would vouch for every entry, so it keeps the original's time; without that,
+	// a same-size edit inside one tick — a second on some file systems — is not seen.
+	if !stamp.IsZero() {
+		if err := os.Chtimes(index, stamp, stamp); err != nil {
+			return "", err
+		}
+	}
 	env = append(env, "GIT_INDEX_FILE="+index)
 	var r result
 	for _, args := range steps {
