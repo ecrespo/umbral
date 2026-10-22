@@ -3,7 +3,9 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -211,6 +213,73 @@ func TestACancelBeforeTheCommandStartsStillStopsIt_REQ_AGT_007(t *testing.T) {
 				dumpThreadPTY(t, h, threadID)
 				t.Fatalf("after cancelling %q before it started (round %d): %q, %v", command, round, after.Output, err)
 			}
+		}
+	}
+}
+
+// TestALateInterruptDoesNotEatTheNextCommand_REQ_AGT_007: a cancelled command is interrupted
+// again while its PTY stays silent, and one of those interrupts can reach the shell after the
+// command has ended but before the daemon has read the block's close. bash and zsh keep it
+// pending and spend it on the next line they parse, dropping its first byte: `echo still-here`
+// ran as `cho still-here` (T-HRD-03; CI run 39181065284). Interrupting every millisecond makes
+// that race frequent instead of rare, so the next command must still arrive whole.
+func TestALateInterruptDoesNotEatTheNextCommand_REQ_AGT_007(t *testing.T) {
+	h := newHarnessForShell(t, "bash", func(cfg *sessions.Config) { cfg.AgentInterruptEvery = time.Millisecond })
+	cwd := t.TempDir()
+	threadID := thread(t, h, cwd)
+	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
+	defer cancel()
+	for round := range 40 {
+		early, stop := context.WithCancel(ctx)
+		stop()
+		if _, err := h.RunForThread(early, threadID, cwd, "sleep 3174"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("round %d: the cancelled run: %v", round, err)
+		}
+		next, done := context.WithTimeout(ctx, 10*time.Second)
+		after, err := h.RunForThread(next, threadID, cwd, "echo still-here")
+		done()
+		if err != nil || after.Block.Command != "echo still-here" || !strings.Contains(after.Output, "still-here") {
+			dumpThreadPTY(t, h, threadID)
+			t.Fatalf("round %d: the command after a cancel ran as %q: %q, %v", round, after.Block.Command, after.Output, err)
+		}
+	}
+}
+
+// TestAPromptHookIsNotTakenForTheNextCommand_REQ_AGT_003: with a hook of the user's own in
+// bash's PROMPT_COMMAND — Starship, direnv — the empty line typed after a cancel must not open
+// a block. The integration armed its DEBUG trap at the end of one prompt and kept it armed
+// through the next PROMPT_COMMAND, so an empty line ran the hook as a "command": a block named
+// after it opened, took the agent's claim, and the agent's real command ran unrecorded.
+//
+// Not parallel: it gives the package's shells bash and a home whose ~/.bashrc sets the hook.
+func TestAPromptHookIsNotTakenForTheNextCommand_REQ_AGT_003(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("bash is not installed: %v", err)
+	}
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte("myhook() { :; }\nPROMPT_COMMAND=myhook\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", bash)
+	h := newHarnessForShell(t, "bash", func(cfg *sessions.Config) { cfg.AgentInterruptEvery = time.Millisecond })
+	cwd := t.TempDir()
+	threadID := thread(t, h, cwd)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+	for round := range 5 {
+		early, stop := context.WithCancel(ctx)
+		stop()
+		if _, err := h.RunForThread(early, threadID, cwd, "sleep 3174"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("round %d: the cancelled run: %v", round, err)
+		}
+		next, done := context.WithTimeout(ctx, 10*time.Second)
+		after, err := h.RunForThread(next, threadID, cwd, "echo still-here")
+		done()
+		if err != nil || after.Block.Command != "echo still-here" || !strings.Contains(after.Output, "still-here") {
+			dumpThreadPTY(t, h, threadID)
+			t.Fatalf("round %d: the run after a cancel recorded %q: %q, %v", round, after.Block.Command, after.Output, err)
 		}
 	}
 }

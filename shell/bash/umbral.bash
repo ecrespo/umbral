@@ -88,8 +88,16 @@ __umbral_preexec() {
 # Starship installed, a command that exited 3 was reported as 0. The prompt markers must be
 # applied after that framework has rewritten PS1, or they are lost. So this runs first and
 # __umbral_precmd runs last.
+#
+# It also disarms the DEBUG trap. A line with no command — Enter on an empty prompt, or the
+# empty line the daemon types after interrupting a thread's shell — goes straight to the next
+# prompt, and the armed trap then took the first other hook of PROMPT_COMMAND (Starship's,
+# direnv's) for the user's command and opened a block named after it, which took the agent's
+# claim from the command that followed. A real command fires the trap before this runs, so
+# disarming here loses nothing.
 __umbral_save_status() {
 	__umbral_status=$?
+	unset __umbral_armed
 	# Returning the status leaves $? as the next hook expects to find it.
 	return "${__umbral_status}"
 }

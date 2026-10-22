@@ -50,7 +50,7 @@ func newHarness(t *testing.T) *harness {
 // A missing shell is a skip rather than a failure because REQ-BLK-005 covers three shells
 // and a developer's machine rarely has all three; CI installs them all, so the coverage is
 // not lost where it counts.
-func newHarnessForShell(t *testing.T, name string) *harness {
+func newHarnessForShell(t *testing.T, name string, options ...func(*sessions.Config)) *harness {
 	t.Helper()
 
 	shell, err := exec.LookPath(name)
@@ -73,7 +73,7 @@ func newHarnessForShell(t *testing.T, name string) *harness {
 	}
 	t.Cleanup(func() { _ = blocks.Close() })
 
-	service, err := sessions.New(sessions.Config{
+	cfg := sessions.Config{
 		Store:  db,
 		Bus:    eventBus,
 		NewPTY: pty.Open,
@@ -87,7 +87,11 @@ func newHarnessForShell(t *testing.T, name string) *harness {
 		Host:       "test-host",
 		SocketPath: testSocketPath,
 		BinPath:    testBinPath,
-	})
+	}
+	for _, option := range options {
+		option(&cfg)
+	}
+	service, err := sessions.New(cfg)
 	if err != nil {
 		t.Fatalf("sessions.New: %v", err)
 	}
@@ -469,5 +473,32 @@ func TestScreenTextReportsTheOpenLine(t *testing.T) {
 	text, _, open, err := h.ScreenText(t.Context(), session.ID)
 	if err != nil || strings.Contains(open, "Password") {
 		t.Fatalf("after the answer: open %q, err %v, screen %q", open, err, text)
+	}
+}
+
+// TestShutdownPersistsEveryExit_REQ_TERM_005: Shutdown returns only once every session it
+// hung up has its exit in the database. It used to signal and return, so the daemon closed
+// the store while the sessions were still exiting and every one of them logged `persist the
+// session exit: sql: database is closed` (29 of them at the end of the 2026-10-18 US-003 run).
+func TestShutdownPersistsEveryExit_REQ_TERM_005(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	ids := []string{
+		h.create(t, domain.CreateParams{ShellIntegration: false}).ID,
+		h.create(t, domain.CreateParams{ShellIntegration: false}).ID,
+	}
+
+	h.Shutdown()
+
+	for _, id := range ids {
+		var state string
+		if err := h.store.DB().QueryRowContext(t.Context(),
+			"SELECT state FROM sessions WHERE id = ?", id).Scan(&state); err != nil {
+			t.Fatalf("read session %s: %v", id, err)
+		}
+		if state != string(domain.StateExited) {
+			t.Errorf("session %s is %q in the database when Shutdown returns, want exited", id, state)
+		}
 	}
 }

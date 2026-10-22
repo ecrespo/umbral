@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ecrespo/umbral/internal/bus"
@@ -53,6 +54,10 @@ type Config struct {
 	// integration's hook can call back without guessing. An empty one is left out.
 	SocketPath string
 	BinPath    string
+	// AgentInterruptEvery is how often a cancelled agent command's shell is interrupted again
+	// while it holds the PTY in silence (stopAgent). Zero is agentInterruptEvery; tests shorten
+	// it to make the race between a late interrupt and the next command frequent.
+	AgentInterruptEvery time.Duration
 }
 
 // Service implements ports.Sessions.
@@ -109,6 +114,9 @@ type liveSession struct {
 	// agent is the command the agent is waiting on in this session (REQ-AGT-003), guarded by
 	// mu; nil when none is.
 	agent *agentRun
+	// interrupted is set when stopAgent has interrupted the shell, and cleared by the next
+	// agent command, which then types an empty line first (RunForThread).
+	interrupted atomic.Bool
 }
 
 // agentRun is one command the agent typed and is waiting for. claimed turns true once the
@@ -142,6 +150,9 @@ func New(cfg Config) (*Service, error) {
 		return nil, errors.New("sessions: a PTY factory is required")
 	case cfg.NewEmu == nil:
 		return nil, errors.New("sessions: an Emulator factory is required")
+	}
+	if cfg.AgentInterruptEvery <= 0 {
+		cfg.AgentInterruptEvery = agentInterruptEvery
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
@@ -484,8 +495,15 @@ func (s *Service) Close(_ context.Context, id string) error {
 	return nil
 }
 
-// Shutdown closes every live PTY. The daemon calls it on the way out so no shell is
-// orphaned; the rows are repaired on the next start by store.Recover.
+// shutdownGrace bounds how long Shutdown waits for the hung-up shells to be recorded as
+// exited. A process that ignores SIGHUP and keeps the PTY's other end open is left to
+// store.Recover rather than holding the daemon's exit.
+const shutdownGrace = 5 * time.Second
+
+// Shutdown closes every live PTY and waits, up to shutdownGrace, until each session's exit is
+// persisted. The daemon calls it on the way out, before the store closes, so no shell is
+// orphaned and no exit is written to a closed database; a row the wait gives up on is
+// repaired on the next start by store.Recover.
 func (s *Service) Shutdown() {
 	s.mu.Lock()
 	live := make([]*liveSession, 0, len(s.live))
@@ -497,6 +515,18 @@ func (s *Service) Shutdown() {
 	for _, l := range live {
 		_ = l.pty.Signal(ports.SignalHangup)
 		_ = l.pty.Close()
+	}
+
+	deadline := time.NewTimer(shutdownGrace)
+	defer deadline.Stop()
+	for i, l := range live {
+		select {
+		case <-l.done:
+		case <-deadline.C:
+			s.cfg.Logger.Warn("shutdown: sessions still exiting",
+				slog.Int("sessions", len(live)-i), slog.Duration("waited", shutdownGrace))
+			return
+		}
 	}
 }
 

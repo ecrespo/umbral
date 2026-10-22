@@ -722,7 +722,7 @@
 | REQ-TERM-002 | T-F0-07 | Conformance_REQ_TERM_002 |
 | REQ-TERM-003 | T-F0-06 | TestSessionSurvivesNoClients_REQ_TERM_003 |
 | REQ-TERM-004 | T-F0-04, T-F0-06 | TestSubscribeSnapshotBeforeLive_REQ_TERM_004, TestSnapshotRoundTrip_REQ_TERM_004, TestRebaseKeepsWhatTheSnapshotDoesNotContain_REQ_TERM_004, TestSubscribeAnswersBeforeItStreams_REQ_TERM_004, TestOutputPublishedBeforeTheDispatcherRunsIsDelivered_REQ_TERM_004 |
-| REQ-TERM-005 | T-F0-02, T-F0-05 | TestExitedEmitsCode_REQ_TERM_005, TestRecoveryMarksOpenBlocksAbandoned_REQ_TERM_005 |
+| REQ-TERM-005 | T-F0-02, T-F0-05 | TestExitedEmitsCode_REQ_TERM_005, TestRecoveryMarksOpenBlocksAbandoned_REQ_TERM_005, TestShutdownPersistsEveryExit_REQ_TERM_005 |
 | REQ-TERM-006 | T-F0-06, T-F0-13 | BenchmarkOutputLatency_REQ_TERM_006 |
 | REQ-TERM-007 | T-F0-05 | TestResizeNotifies_REQ_TERM_007 |
 | REQ-TERM-008 | T-F0-05 | TestInputLockedRejected_REQ_TERM_008 |
