@@ -14,13 +14,16 @@
 # A key written here in the clear refuses its entry, and only that entry.
 
 [router]
-policy = "local-first"          # local-first | cost | quality
+policy = "local-first"          # local-first: local first | cost: cheapest first | quality: as listed
 offline = false                 # true: only providers with a loopback base_url (see OmniRoute below)
 max_cost_usd_per_thread = 1.5   # a thread stops (stop_reason = budget) once it has spent this; omit for no cap
+breaker_failures = 3            # failed calls in a row before a provider is skipped
+breaker_cooldown = 60           # seconds it is skipped before one call probes it again
 
-# Task classes: candidates in order, each `<provider id>/<model>`. The router takes the first
-# that is up and can do what the call needs, and falls back on a retryable failure (429, 5xx,
-# a transport error, an empty stream) or a slow first token.
+# Task classes: candidates in order, each `<provider id>/<model>`. The router keeps those that are
+# up, can do what the call needs and are not behind an open breaker, orders them by `policy`
+# (`quality` keeps this order), and falls back on a retryable failure (429, 5xx, a transport
+# error, an empty stream) or a slow first token. API `model.route` shows the order it would take.
 # The model names are examples: use what your providers list (API `model.list`).
 [classes]
 fast = ["ollama/qwen2.5-coder:1.5b", "hf/Qwen/Qwen2.5-Coder-7B-Instruct"]

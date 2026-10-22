@@ -154,6 +154,8 @@ type Config struct {
 	Configuration ConfigService
 	// Models serves model.list. A nil value leaves it answering NOT_IMPLEMENTED.
 	Models ModelService
+	// ModelRoutes is model.route (REQ-RTR-003). A nil value leaves it answering NOT_IMPLEMENTED.
+	ModelRoutes ModelRouter
 	// Threads is the agent runtime's inbound port, served as thread.*. A nil value leaves
 	// those methods answering NOT_IMPLEMENTED.
 	Threads agentsports.Threads

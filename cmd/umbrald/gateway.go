@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/ecrespo/umbral/internal/api"
 	"github.com/ecrespo/umbral/internal/config"
@@ -46,6 +48,11 @@ func (g *gateway) configure(models config.Models, resolved []secdomain.ResolvedC
 	// providers, whose missing candidates it skips, rather than old classes naming providers
 	// a reload removed.
 	g.router.Configure(models.Classes)
+	g.router.SetPolicy(llmgw.Policy{
+		Order:           models.Router.Policy,
+		BreakerFailures: models.Router.BreakerFailures,
+		BreakerCooldown: time.Duration(models.Router.BreakerCooldownS) * time.Second,
+	})
 	g.catalog.Configure(models.Router.Offline, buildEntries(g.logger, g.egress, models, resolved))
 	go func() {
 		if err := g.catalog.Refresh(g.ctx); err != nil && g.ctx.Err() == nil {
@@ -122,6 +129,44 @@ func (g *gateway) List(ctx context.Context, refresh bool) ([]api.Model, error) {
 			PriceInMicroUSDPerMTok: m.PriceInMicroUSDPerMTok, PriceOutMicroUSDPerMTok: m.PriceOutMicroUSDPerMTok,
 			Health: string(m.Health), Reason: m.Reason,
 		})
+	}
+	return out, nil
+}
+
+// Route implements api.ModelRouter: the router's own plan, so what model.route answers is what
+// a call of that shape would walk (REQ-RTR-003). A class models.toml does not declare has no
+// candidates.
+func (g *gateway) Route(ctx context.Context, q api.ModelRouteParams) (api.ModelRoute, error) {
+	route, err := g.router.Route(ctx, llmgw.RouteQuery{
+		Class: q.Class, Model: q.Model,
+		Needs: llmgw.Needs{
+			Tools: q.Tools, Vision: q.Vision, JSONSchema: q.JSONSchema, Reasoning: q.Reasoning, Tokens: q.InputTokens,
+		},
+	})
+	switch {
+	case errors.Is(err, llmdomain.ErrUnknownClass):
+		route = llmgw.Route{Policy: g.router.PolicyOrder()}
+	case err != nil:
+		return api.ModelRoute{}, err
+	}
+	out := api.ModelRoute{
+		Class: q.Class, Model: q.Model, Policy: route.Policy,
+		Candidates: make([]api.RouteCandidate, 0, len(route.Candidates)),
+	}
+	rank := 0
+	for _, c := range route.Candidates {
+		wire := api.RouteCandidate{
+			ModelID: c.ModelID, Kept: c.Kept, Reason: c.Reason, Provider: c.Provider, Local: c.Local,
+			Health: string(c.Health), PriceInMicroUSDPerMTok: c.PriceInMicroUSDPerMTok,
+			PriceOutMicroUSDPerMTok: c.PriceOutMicroUSDPerMTok, ContextWindow: c.ContextWindow,
+			DeclaredIndex: c.DeclaredIndex,
+		}
+		if c.Kept {
+			rank++
+			r := rank
+			wire.Rank = &r
+		}
+		out.Candidates = append(out.Candidates, wire)
 	}
 	return out, nil
 }

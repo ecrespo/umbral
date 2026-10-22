@@ -56,6 +56,9 @@ type Request struct {
 	Reasoning string
 	// ResponseSchema, when set, is a JSON Schema the answer must follow (structured output).
 	ResponseSchema map[string]any
+	// Vision says the request carries an image, so only a model with vision may take it
+	// (REQ-RTR-001). The router reads it; no adapter sends images yet.
+	Vision bool
 }
 
 // EventKind is the type of a normalized stream event.

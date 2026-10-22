@@ -477,6 +477,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Status:        withMCP(withProviders(statusFromStore(db), providers), mcpClient),
 		Configuration: providers,
 		Models:        models,
+		ModelRoutes:   models,
 		Threads:       runtime,
 		MCP:           mcpClient,
 		Waits:         waitEngine,

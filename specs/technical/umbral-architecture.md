@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.57 |
+| **Version** | 1.58 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -232,7 +232,15 @@ sequenceDiagram
   3. health;
   4. declared order.
 
-  Cost and quality policies arrive in F2.
+  F2 (delta `2026-10-policy-router`, T-F2-11) adds vision to the capability filter, a circuit
+  breaker per provider after health, and `[router] policy` in place of the declared order:
+  `local-first` puts local candidates first, `cost` orders by price (an unpriced remote model
+  last), `quality` keeps the declared order; ties keep it, and a pinned model is not reordered.
+  `model.route` (API §5.40) answers the same plan a call walks. A breaker counts the failures a
+  call falls back on — a 429, a 5xx, a transport failure, a missing first token — and opens at
+  `breaker_failures` in a row for `breaker_cooldown`; then one call probes it, a first event
+  closing it and a failure reopening it. A 4xx, an unsupported request or a cancel counts
+  nothing, and the breakers live in memory, kept across a reload.
 - **How the router walks them** (T-F1-07, `internal/llmgw/router.go`):
   - A candidate must be in the catalog: not yet discovered, or `down` for any reason — offline
     included — it is skipped. The capability filter drops it when the request has tools and it
@@ -664,6 +672,8 @@ reference. The shape is the reference architecture's (`docs/ARCHITECTURE.md` §7
 policy = "local-first"          # local-first | cost | quality
 offline = false                 # REQ-LLM-004: local providers only
 max_cost_usd_per_thread = 1.5   # micro-USD at load (Art. 6); a thread stops at it (REQ-AGT-008); absent or 0 = no cap
+breaker_failures = 3            # REQ-RTR-002: consecutive failed calls that open a provider's breaker, 1-100
+breaker_cooldown = 60           # seconds an open breaker skips its provider before one probe, 1-3600
 
 [classes]                       # fast | code | plan | embed: candidates in order
 code = ["ollama/gpt-oss:20b", "openrouter/moonshotai/kimi-k2"]
@@ -1573,3 +1583,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.55 | 2026-10-22 | E. Crespo (assisted draft) | Ratifies delta `2026-10-agent-pty-settle` (T-HRD-03): §5.3b says how a cancelled command's shell is settled before the agent's next command. 1.54 is delta `2026-10-cli-thread-wait`'s |
 | 1.56 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-worktree-engine` (T-F2-02): §3.2 and §5.2 add `worktrees`; §5.1 adds `[worktrees] commit_timeout` |
 | 1.57 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-agent-detection` (T-F2-10): DD-012 says detection labels a pane and never decides its state; §5.2's `integrations` row adds the manifests and process-tree adapters, the `Shells` port and the in-memory labels |
+| 1.58 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-policy-router` (T-F2-11): DD-004 adds vision, the breakers and the policies; §5.1's `[router]` gains `breaker_failures` and `breaker_cooldown` |

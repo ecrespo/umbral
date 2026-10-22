@@ -75,7 +75,19 @@ type Router struct {
 	// MaxCostMicroUSDPerThread is `max_cost_usd_per_thread` converted at the boundary, since
 	// money is int64 micro-USD everywhere past it (Art. 6). Zero means no ceiling.
 	MaxCostMicroUSDPerThread int64
+	// BreakerFailures is `breaker_failures`: consecutive failed calls that open a provider's
+	// circuit breaker (REQ-RTR-002), 1 to 100, 3 by default.
+	BreakerFailures int
+	// BreakerCooldownS is `breaker_cooldown`, in seconds: how long an open breaker skips its
+	// provider before one probe, 1 to 3600, 60 by default.
+	BreakerCooldownS int
 }
+
+// The defaults of REQ-RTR-002's breaker keys.
+const (
+	DefaultBreakerFailures  = 3
+	DefaultBreakerCooldownS = 60
+)
 
 // Provider is one `[[providers]]` entry.
 type Provider struct {
@@ -128,7 +140,12 @@ var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // schema refuses is ErrSettingsInvalid naming why; a provider carrying a plaintext key is
 // left out and listed in Rejected.
 func LoadModels(path string) (Models, error) {
-	models := Models{Router: Router{Policy: "local-first"}, Classes: map[string][]string{}}
+	models := Models{
+		Router: Router{
+			Policy: "local-first", BreakerFailures: DefaultBreakerFailures, BreakerCooldownS: DefaultBreakerCooldownS,
+		},
+		Classes: map[string][]string{},
+	}
 
 	raw, err := os.ReadFile(path) // #nosec G304 -- the daemon's own configuration location
 	if errors.Is(err, fs.ErrNotExist) {
@@ -160,6 +177,8 @@ func LoadModels(path string) (Models, error) {
 			Policy              string  `toml:"policy"`
 			Offline             bool    `toml:"offline"`
 			MaxCostUSDPerThread float64 `toml:"max_cost_usd_per_thread"`
+			BreakerFailures     int     `toml:"breaker_failures"`
+			BreakerCooldown     int     `toml:"breaker_cooldown"`
 		} `toml:"router"`
 		Classes   map[string][]string `toml:"classes"`
 		Providers []struct {
@@ -180,6 +199,13 @@ func LoadModels(path string) (Models, error) {
 		models.Router.Policy = file.Router.Policy
 	}
 	models.Router.Offline = file.Router.Offline
+	// The schema bounds both; zero is only ever "absent".
+	if file.Router.BreakerFailures != 0 {
+		models.Router.BreakerFailures = file.Router.BreakerFailures
+	}
+	if file.Router.BreakerCooldown != 0 {
+		models.Router.BreakerCooldownS = file.Router.BreakerCooldown
+	}
 	models.Router.MaxCostMicroUSDPerThread = int64(math.Round(file.Router.MaxCostUSDPerThread * 1e6))
 	// 0 means no cap, so a cap that rounds to 0 micro-USD would lift the limit it was meant to set.
 	if file.Router.MaxCostUSDPerThread > 0 && models.Router.MaxCostMicroUSDPerThread == 0 {

@@ -171,6 +171,11 @@ func TestMalformedModelsFileIsInvalid(t *testing.T) {
 		"a misspelt key":        "[[providers]]\nid = \"x\"\ntype = \"ollama\"\nbase_url = \"http://x\"\napi_kee = \"keyring:a/b\"\n",
 		"an unknown policy":     "[router]\npolicy = \"cheapest\"\n",
 		"a cost cap past 1e6":   "[router]\nmax_cost_usd_per_thread = 2e6\n",
+		"no breaker failures":   "[router]\nbreaker_failures = 0\n",
+		"a breaker of 101":      "[router]\nbreaker_failures = 101\n",
+		"a fractional failure":  "[router]\nbreaker_failures = 2.5\n",
+		"no cooldown":           "[router]\nbreaker_cooldown = 0\n",
+		"an hour and a second":  "[router]\nbreaker_cooldown = 3601\n",
 		// Rounded to micro-USD it would be 0, which means no cap: the opposite of what was asked.
 		"a cost cap under a micro-USD": "[router]\nmax_cost_usd_per_thread = 0.0000004\n",
 		"an unknown class":             "[classes]\nturbo = [\"ollama/x\"]\n",
@@ -217,5 +222,32 @@ func TestAllowEnvIsReadFromTheSettingsFile(t *testing.T) {
 	settings, err = LoadSettings(nil, write(t, "[secrets]\nallow_env = true\n"))
 	if err != nil || !settings.AllowEnvSecrets {
 		t.Fatalf("allow_env = true read as %v, %v", settings.AllowEnvSecrets, err)
+	}
+}
+
+// TestRouterBreakerKeys_REQ_RTR_002: `[router] breaker_failures` and `breaker_cooldown` (seconds)
+// are read from models.toml, and absent they are 3 and 60 s.
+func TestRouterBreakerKeys_REQ_RTR_002(t *testing.T) {
+	t.Parallel()
+	models, err := LoadModels(writeModels(t, "[router]\npolicy = \"cost\"\nbreaker_failures = 5\nbreaker_cooldown = 120\n"))
+	if err != nil {
+		t.Fatalf("LoadModels: %v", err)
+	}
+	if r := models.Router; r.Policy != "cost" || r.BreakerFailures != 5 || r.BreakerCooldownS != 120 {
+		t.Errorf("router = %+v", r)
+	}
+	defaults, err := LoadModels(writeModels(t, "[router]\noffline = true\n"))
+	if err != nil {
+		t.Fatalf("LoadModels: %v", err)
+	}
+	if r := defaults.Router; r.BreakerFailures != 3 || r.BreakerCooldownS != 60 {
+		t.Errorf("defaults = %+v, want 3 failures and 60 s", r)
+	}
+	absent, err := LoadModels(filepath.Join(t.TempDir(), ModelsFileName))
+	if err != nil {
+		t.Fatalf("LoadModels: %v", err)
+	}
+	if r := absent.Router; r.BreakerFailures != 3 || r.BreakerCooldownS != 60 {
+		t.Errorf("no file: router = %+v, want the defaults", r)
 	}
 }
