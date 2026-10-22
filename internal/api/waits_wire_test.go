@@ -321,13 +321,23 @@ func TestWaitOutputOnTheWire_REQ_AUT_003(t *testing.T) {
 	}
 }
 
-// TestThreadWaitIsInteractive: §2's cli row has no thread.wait.
-func TestThreadWaitIsInteractive(t *testing.T) {
+// TestThreadWaitAndGetServeTheCLI_REQ_CLI_009: §2's cli row has thread.wait and thread.get, so a
+// script drives a thread through `umb thread` (delta `2026-10-cli-thread-wait`); thread.list,
+// thread.update and thread.focus stay interactive.
+func TestThreadWaitAndGetServeTheCLI_REQ_CLI_009(t *testing.T) {
 	t.Parallel()
-	_, _, c := waitRig(t, ClientCLI)
-	resp := c.call(10, "thread.wait", map[string]any{"thread_id": "thr_1", "until": []string{"done"}, "timeout_ms": 1000})
-	if resp.Error == nil || resp.Error.Code != codeMethodNotFound {
+	_, waits, c := waitRig(t, ClientCLI)
+	close(waits.release)
+	if resp := c.call(10, "thread.wait", map[string]any{"thread_id": "thr_1", "until": []string{"done"}, "timeout_ms": 1000}); resp.Error != nil {
 		t.Fatalf("thread.wait from umb = %+v", resp.Error)
+	}
+	if resp := c.call(11, "thread.get", map[string]any{"thread_id": "thr_1"}); resp.Error != nil {
+		t.Fatalf("thread.get from umb = %+v", resp.Error)
+	}
+	for i, m := range []string{"thread.list", "thread.update", "thread.focus"} {
+		if resp := c.call(12+i, m, map[string]any{"thread_id": "thr_1"}); resp.Error == nil || resp.Error.Code != codeMethodNotFound {
+			t.Errorf("%s from umb = %+v, want METHOD_NOT_FOUND", m, resp.Error)
+		}
 	}
 }
 

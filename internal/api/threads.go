@@ -154,15 +154,16 @@ func threads(c *conn) (agentsports.Threads, error) {
 	return c.server.cfg.Threads, nil
 }
 
-// threadMethods is §5.19–§5.23. §2's `cli` row gives `umb` thread.create, thread.send and
-// thread.cancel — what `umb ai` needs, and a way to stop it — and not get, list or update:
-// `umb` must not, for one, switch a thread to `auto-edit`.
+// threadMethods is §5.19–§5.23. §2's `cli` row gives `umb` thread.create, thread.send,
+// thread.cancel and thread.get — what `umb ai` and `umb thread` need: start a thread, read what
+// it answered, stop it — and not list, update or focus: `umb` must not, for one, switch a
+// thread to `auto-edit`, and it views nothing.
 func threadMethods() map[string]method {
 	return map[string]method{
 		"thread.create": {handle: handleThreadCreate, params: createThreadParams{}, result: Thread{}},
 		"thread.send":   {handle: handleThreadSend, params: sendParams{}, result: sendResult{}},
 		"thread.cancel": {handle: handleThreadCancel, params: cancelThreadParams{}, result: cancelResult{}},
-		"thread.get":    {handle: handleThreadGet, kinds: interactiveClients, params: getThreadParams{}, result: threadResult{}},
+		"thread.get":    {handle: handleThreadGet, kinds: treeClients, params: getThreadParams{}, result: threadResult{}},
 		"thread.list":   {handle: handleThreadList, kinds: interactiveClients, params: emptyResult{}, result: threadListResult{}},
 		"thread.update": {handle: handleThreadUpdate, kinds: interactiveClients, params: updateThreadParams{}, result: Thread{}},
 		"thread.focus":  {handle: handleThreadFocus, kinds: interactiveClients, params: focusThreadParams{}, result: emptyResult{}},

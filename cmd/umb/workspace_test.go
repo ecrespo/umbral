@@ -377,6 +377,7 @@ var domainErrors = map[string]int{
 	"METHOD_NOT_FOUND": -32601,
 	"VALIDATION_ERROR": -32602,
 	"NOT_FOUND":        -32002,
+	"TIMEOUT":          -32011,
 }
 
 // serveRecordingDaemon starts a socket that answers the handshake and the given methods and
@@ -445,11 +446,18 @@ func (d *recordingDaemon) serve(conn net.Conn, replies map[string]fakeReply) {
 			result, code = reply(req.Params)
 		}
 		if code != "" {
+			// An error's result, when a reply gives one, is extra data: TIMEOUT's last_state.
+			data := map[string]any{"domain_code": code}
+			if extra, ok := result.(map[string]any); ok {
+				for k, v := range extra {
+					data[k] = v
+				}
+			}
 			_ = enc.Encode(map[string]any{
 				"jsonrpc": "2.0", "id": req.ID,
 				"error": map[string]any{
 					"code": domainErrors[code], "message": strings.ToLower(code),
-					"data": map[string]any{"domain_code": code},
+					"data": data,
 				},
 			})
 			continue

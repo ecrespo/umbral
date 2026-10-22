@@ -129,3 +129,9 @@ The empty line opens no block only because [[shell/bash/umbral.bash]] disarms it
 [[internal/sessions/service.go#Service#Shutdown]] hangs up every shell and waits, up to [[internal/sessions/service.go#shutdownGrace]] in all, for each session's exit to be persisted.
 
 It used to return at once, so `cmd/umbrald` closed the store while the sessions were still exiting and each logged `persist the session exit: sql: database is closed`. A shell that ignores the hang-up is left to recovery on the next start rather than holding the daemon's exit.
+
+## A script drives a thread through umb
+
+`umb thread` gives a script one command per step — create, send with a wait, wait, read, cancel — so it drives a thread without polling and without posing as the TUI (REQ-CLI-009).
+
+[[cmd/umb/thread.go#cmdThread]] makes one call per command and prints only the value the next step needs: the thread id, the turn id with its final state, the state a wait answered. A `TIMEOUT` exits 1 naming the state last observed. The `cli` client kind may call `thread.wait` ([[internal/api/waits.go#waitMethods]]) and `thread.get` ([[internal/api/threads.go#threadMethods]]), which only read; `thread.list`, `update`, `focus` and `approval.*` stay interactive, so a script cannot switch a thread to `auto-edit` and hands an approval to a person (delta `2026-10-cli-thread-wait`).

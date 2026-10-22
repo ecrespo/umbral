@@ -144,9 +144,9 @@ func threadRig(t *testing.T) (*fakeThreads, *client, *bus.Bus) {
 	return svc, c, b
 }
 
-// TestUmbReachesOnlyCreateAndSend_REQ_API_001: §2's cli row gives `umb` thread.create and
-// thread.send; get, list and update are the interactive clients'.
-func TestUmbReachesOnlyCreateAndSend_REQ_API_001(t *testing.T) {
+// TestUmbReachesTheThreadMethodsItDrives_REQ_API_001: §2's cli row gives `umb` thread.create,
+// thread.send, thread.cancel and thread.get; list, update and focus are the interactive clients'.
+func TestUmbReachesTheThreadMethodsItDrives_REQ_API_001(t *testing.T) {
 	t.Parallel()
 	svc := &fakeThreads{thread: agentsdomain.Thread{ID: "thr_1", Mode: "normal", ModelClass: "code", Cwd: "/w"}}
 	s := testServerWithConfig(t, Config{Threads: svc, Bus: bus.New()})
@@ -163,7 +163,12 @@ func TestUmbReachesOnlyCreateAndSend_REQ_API_001(t *testing.T) {
 	if resp := c.call(9, "thread.cancel", map[string]any{"thread_id": "thr_1"}); resp.Error != nil {
 		t.Fatalf("thread.cancel from umb = %+v", resp.Error)
 	}
-	for i, m := range []string{"thread.get", "thread.list", "thread.update"} {
+	// thread.get is umb's since delta `2026-10-cli-thread-wait` (REQ-CLI-009): reading what a
+	// thread answered changes nothing.
+	if resp := c.call(8, "thread.get", map[string]any{"thread_id": "thr_1"}); resp.Error != nil {
+		t.Fatalf("thread.get from umb = %+v", resp.Error)
+	}
+	for i, m := range []string{"thread.list", "thread.update", "thread.focus"} {
 		if resp := c.call(4+i, m, map[string]any{"thread_id": "thr_1", "mode": "auto-edit"}); resp.Error == nil || resp.Error.Code != codeMethodNotFound {
 			t.Errorf("%s from umb = %+v, want METHOD_NOT_FOUND", m, resp.Error)
 		}

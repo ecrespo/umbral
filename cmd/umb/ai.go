@@ -82,7 +82,7 @@ func cmdAI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr *
 	s := client.NewStream(c)
 	defer func() { _ = s.Close() }()
 
-	create := map[string]any{"mode": "ask", "cwd": cwd, "ephemeral": true, "title": "umb ai"}
+	create := map[string]any{"mode": "ask", "cwd": cwd, "ephemeral": true, keyTitle: "umb ai"}
 	if *model != "" {
 		create["model"] = *model
 	}

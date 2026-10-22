@@ -98,6 +98,8 @@ func runIO(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return finish(cmdMcp(ctx, args[1:], out, errOut), out, stderr)
 	case "wait":
 		return finish(cmdWait(ctx, args[1:], out, errOut), out, stderr)
+	case "thread":
+		return finish(cmdThread(ctx, args[1:], out, errOut), out, stderr)
 	case famWorkspace, famTab, famPane, famLayout:
 		return finish(cmdTree(ctx, args[0], args[1:], out, errOut), out, stderr)
 	case "version", "--version", "-version":
@@ -146,6 +148,11 @@ Usage:
   umb wait ls [--json]           every open wait: target, age, whether its thread stalled
   umb wait cancel WAIT_ID        end one wait; the turn or command it watched goes on
                                  (REQ-AUT-006, REQ-AUT-007)
+  umb thread create [CWD] [--mode M] [--title T] [--model M]
+  umb thread send THREAD TEXT [--wait STATES] [--timeout D]
+  umb thread wait THREAD --until STATES [--timeout D]
+  umb thread get|cancel THREAD   drive a thread from a script, waiting without polling
+                                 (REQ-CLI-009); STATES is idle,done,blocked,stopped
   umb workspace create|list|focus|rename|close
   umb tab create|list|focus|rename|close
   umb pane split|list|get|focus|rename|close

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.40 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.41 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -126,7 +126,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove` |
 
 ### Handshake
 
@@ -706,7 +706,8 @@ thread, or no thread for `null` (REQ-AGT-016, delta `2026-10-attention-focus`):
 - `thread_id` is required, `null` included: a missing member is `VALIDATION_ERROR`, so a client
   that forgot it is not read as unfocusing. An unknown thread is `NOT_FOUND`, and the
   connection's view is left as it was.
-- Interactive clients only (§2): `umb` drives threads but views none.
+- `list` and `focus` are the interactive clients' (§2): `umb` drives threads but views none. `get` is
+  every kind's, so a script reads what a thread answered (`umb thread get`, REQ-CLI-009).
 
 ### 5.24 `approval.list` → `{items: Approval[]}` (only `pending` by default)
 **Params:** `{thread_id?, all?}`. `all` includes decided and expired approvals; `thread_id`
@@ -825,8 +826,8 @@ The daemon pins the turn in progress when the wait starts: a later turn does not
 - The answer comes when the wait settles; the connection keeps serving meanwhile (§1). A wait
   sent as a JSON-RPC notification has nobody to answer and ends at once; a `thread.send` sent so
   has still sent its message.
-- **Errors:** `NOT_FOUND` (an unknown thread), `VALIDATION_ERROR`, `TIMEOUT`. Interactive clients
-  only (§2). Advertised under `waits`.
+- **Errors:** `NOT_FOUND` (an unknown thread), `VALIDATION_ERROR`, `TIMEOUT`. Every client kind
+  (§2), so a script waits through `umb thread wait` (REQ-CLI-009). Advertised under `waits`.
 
 ### 5.30 `block.wait_output` — REQ-AUT-003
 **Params:** `{session_id | block_id, regex (RE2), lines?: 1-2000 (default 200), timeout_ms}` —
@@ -1342,3 +1343,4 @@ printf '%s\n' \
 | 1.38 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-wait-monitoring` (T-F1-31): §5.33 gives `wait.list`'s result and `wait.cancel`'s, wait ids, output-wait targets, the per-connection limit counting every kind, the report rate's shared window and the stall rules; §4 `Thread` gains `stalled`; §6 `thread.stalled` names `last_event`'s values; §8 sharpens both limits; §2's `cli` row gains `wait.list` and `wait.cancel` |
 | 1.39 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-09-skills-cli` written by T-F1-34 (with delta `2026-10-skill-store`): §4 `Skill`; §5.37 `skill.inspect`, `install`, `list`, `get`, `set_enabled` and `remove` with their checks, digest and errors; §6 `skill.changed`; §2's `cli` row gains `skill.*` and the `skills` capability; §3 the `skl_` prefix; §9 the namespace |
 | 1.40 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-09-cli-mcp` written by T-F1-37 (with delta `2026-10-umb-mcp-panel`): §2's `cli` row gains `mcp.server.list`, `add` and `remove`; §5.27 says so, that `umb mcp add` sends `trust: "untrusted"` and that the daemon refuses any other `trust` from a `cli` connection; the pending-from-F1 note is gone, every ratified F1 delta now being written |
+| 1.41 | 2026-10-22 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-cli-thread-wait` (T-F1-38): §2's `cli` row gains `thread.get` and `thread.wait`, and §5.23 and §5.29 say so |
