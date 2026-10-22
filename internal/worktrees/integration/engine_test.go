@@ -777,3 +777,31 @@ func TestAMergeRefusesAWorktreeChangedSinceItsReview_REQ_WT_004(t *testing.T) {
 		t.Error("the reviewed revision did not land")
 	}
 }
+
+// TestAReviewedRevisionMergesThroughTheUsersFilter_REQ_WT_004: a clean filter makes the tree that
+// lands differ from the tree shown, which is read with filters off. The reviewed revision still
+// merges, landing the filtered content, and a change after the review is still refused.
+func TestAReviewedRevisionMergesThroughTheUsersFilter_REQ_WT_004(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.git(f.repo, "config", "filter.up.clean", "tr a-z A-Z")
+	f.write(f.repo, ".gitattributes", "*.up filter=up\n")
+	f.git(f.repo, "add", "-A")
+	f.git(f.repo, "commit", "-q", "-m", "filter")
+	w := f.create("thr_a")
+	f.write(w.Path, "x.up", "hello\n")
+	reviewed, err := f.svc.Diff(t.Context(), w.ID)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	f.write(w.Path, "x.up", "other\n")
+	_, err = f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID, Revision: reviewed.Revision})
+	wantRefusal(t, err, domain.ReasonChanged)
+	f.write(w.Path, "x.up", "hello\n")
+	if _, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID, Revision: reviewed.Revision}); err != nil {
+		t.Fatalf("Merge of the reviewed revision: %v", err)
+	}
+	if got := f.git(f.repo, "show", "HEAD:x.up"); got != "HELLO" {
+		t.Errorf("landed %q, want the filtered HELLO", got)
+	}
+}

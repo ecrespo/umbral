@@ -154,7 +154,7 @@ Showing a worktree runs git with fsmonitor, filters, external diff and textconv 
 
 The worktree's own `.git` file is never read, because the agent can rewrite it. [[internal/worktrees/adapters/gitcli/gitcli.go#CLI#pinned]] pins `GIT_DIR` and `GIT_WORK_TREE` from the main repository's record of the worktree, and removal deletes the recorded directory, then prunes. The filter drivers turned off while showing are listed through the same pinned directory.
 
-A diff answers with the revision it was read from. A merge that passes it is refused `changed` when the worktree no longer holds that content, so work slipped in after the review never lands.
+A diff answers with the revision it was read from. A merge that passes it is refused `changed` when the worktree no longer holds that content. The check runs inside the squash against the snapshot being committed, so work slipped in after the review never lands.
 
 [[internal/worktrees/domain/domain.go#ParseUnifiedDiff]] gives each hunk an id from its path and lines, not its position, so a hunk keeps its id while an earlier one grows.
 

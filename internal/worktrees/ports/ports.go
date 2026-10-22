@@ -49,13 +49,13 @@ type Git interface {
 	// worktree is read through the main repository's record of it, never its own `.git` file.
 	// revision names the worktree's content as shown: the tree it was read as.
 	Diff(ctx context.Context, repoRoot, worktree, base string) (text, revision string, err error)
-	// Revision is the worktree's content as Diff would show it now, without the diff.
-	Revision(ctx context.Context, repoRoot, worktree string) (string, error)
 	// Squash applies everything the worktree changed since base onto repoRoot's HEAD as one
 	// commit with message, running the repository's hooks and signing, the commit bounded by
 	// timeout. It returns the new commit, or "" when the worktree changed nothing. A conflict
 	// or a failed commit is a *domain.Refusal, with repoRoot and the worktree left as they were.
-	Squash(ctx context.Context, repoRoot, worktree, base, message string, timeout time.Duration) (string, error)
+	// A non-empty revision is a Diff revision: the content committed must be the content it
+	// names, checked after the snapshot that is committed, or the squash is refused `changed`.
+	Squash(ctx context.Context, repoRoot, worktree, base, revision, message string, timeout time.Duration) (string, error)
 	// RemoveWorktree removes the worktree's directory and its branch; either may already be gone.
 	RemoveWorktree(ctx context.Context, repoRoot, path, branch string) error
 }

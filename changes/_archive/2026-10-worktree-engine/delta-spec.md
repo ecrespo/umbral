@@ -114,10 +114,17 @@
     - A merge that passes it is refused `changed`, landing nothing, if the worktree no longer
       holds that content. The agent writes in its worktree, and could otherwise slip work in
       between the review and the merge.
+    - The check is made inside the squash, against the snapshot that is committed, never
+      before it, so nothing written after the check can land. Where no filter driver changes a
+      file, that snapshot is the reviewed tree itself and the binding is exact. Where one does,
+      the landing tree differs from the shown one by design; the content is read again as shown,
+      after the landing snapshot, and must still be the reviewed one. A change reverted in
+      between is the one case this cannot see.
     - A merge without a revision lands what the worktree holds then, as before.
     - T-F2-03 carries `revision` on `worktree.diff` and `worktree.merge`, has `umb worktree
       merge` pass the revision it showed, and refuses a merge while the thread's turn is running.
-    - `TestAMergeRefusesAWorktreeChangedSinceItsReview_REQ_WT_004` is the test.
+    - `TestAMergeRefusesAWorktreeChangedSinceItsReview_REQ_WT_004` and
+      `TestAReviewedRevisionMergesThroughTheUsersFilter_REQ_WT_004` are the tests.
 
 ## Folded into
 

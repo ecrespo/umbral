@@ -261,20 +261,11 @@ func (s *Service) Merge(ctx context.Context, req MergeRequest) (MergeResult, err
 	} else if dirty {
 		return MergeResult{}, &domain.Refusal{Reason: domain.ReasonDirty, Detail: w.RepoRoot}
 	}
-	if req.Revision != "" {
-		now, err := s.o.Git.Revision(ctx, w.RepoRoot, w.Path)
-		if err != nil {
-			return MergeResult{}, err
-		}
-		if now != req.Revision {
-			return MergeResult{}, &domain.Refusal{Reason: domain.ReasonChanged, Detail: "the worktree changed after the diff that was reviewed"}
-		}
-	}
 	msg := req.Message
 	if msg == "" {
 		msg = fmt.Sprintf("Merge Umbral worktree %s\n\nThread %s, from %s.", w.Branch, w.ThreadID, short(w.BaseCommit))
 	}
-	commit, err := s.o.Git.Squash(ctx, w.RepoRoot, w.Path, w.BaseCommit, msg, s.o.CommitTimeout)
+	commit, err := s.o.Git.Squash(ctx, w.RepoRoot, w.Path, w.BaseCommit, req.Revision, msg, s.o.CommitTimeout)
 	if err != nil {
 		return MergeResult{}, err
 	}

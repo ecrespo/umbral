@@ -383,17 +383,26 @@ func (c *CLI) Diff(ctx context.Context, repoRoot, worktree, base string) (text, 
 	return r.stdout, tree, nil
 }
 
-// Revision implements ports.Git: the tree the diff would be read from.
-func (c *CLI) Revision(ctx context.Context, repoRoot, worktree string) (string, error) {
-	return c.snapshot(ctx, repoRoot, worktree, true)
-}
-
 // Squash implements ports.Git. The main copy is clean when it is called (the engine checks), so
 // `reset --hard HEAD` returns it exactly to where it was after a conflict or a failed commit.
-func (c *CLI) Squash(ctx context.Context, repoRoot, worktree, base, message string, timeout time.Duration) (string, error) {
+func (c *CLI) Squash(ctx context.Context, repoRoot, worktree, base, revision, message string, timeout time.Duration) (string, error) {
 	tree, err := c.snapshot(ctx, repoRoot, worktree, false)
 	if err != nil {
 		return "", err
+	}
+	// The reviewed revision is checked against the snapshot about to be committed, never before
+	// it, so nothing written after the check can land. Where no filter driver changes a file,
+	// the two trees are the same object and the binding is exact. Where one does, the landing
+	// tree differs from the shown one by design, and the content is read again as shown, after
+	// the landing snapshot, and must still be the reviewed one.
+	if revision != "" && tree != revision {
+		shown, err := c.snapshot(ctx, repoRoot, worktree, true)
+		if err != nil {
+			return "", err
+		}
+		if shown != revision {
+			return "", &domain.Refusal{Reason: domain.ReasonChanged, Detail: "the worktree changed after the diff that was reviewed"}
+		}
 	}
 	r := c.run(ctx, call{dir: repoRoot, args: []string{revParse, verify, base + "^{tree}"}})
 	if r.err != nil {
