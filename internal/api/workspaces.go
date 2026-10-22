@@ -64,8 +64,11 @@ type Pane struct {
 	AttentionState string            `json:"attention_state"`
 	StateSource    *string           `json:"state_source"`
 	Metadata       map[string]any    `json:"metadata"`
-	CreatedAt      int64             `json:"created_at"`
-	ClosedAt       *int64            `json:"closed_at"`
+	// DetectedAgent is the third-party agent running in the pane, null for none (REQ-XAG-001).
+	// It is a label: nothing decides the pane's state from it.
+	DetectedAgent *DetectedAgent `json:"detected_agent"`
+	CreatedAt     int64          `json:"created_at"`
+	ClosedAt      *int64         `json:"closed_at"`
 }
 
 func toWireWorkspace(w wsdomain.Workspace) Workspace {
@@ -139,6 +142,19 @@ func toWireNode(n *wsdomain.Node) *LayoutNode {
 	}
 }
 
+// DetectedAgent is API Spec §4's `Pane.detected_agent`.
+type DetectedAgent struct {
+	Name        string `json:"name"`
+	StateSource string `json:"state_source"`
+}
+
+func toWireDetectedAgent(a *wsdomain.DetectedAgent) *DetectedAgent {
+	if a == nil {
+		return nil
+	}
+	return &DetectedAgent{Name: a.Name, StateSource: a.StateSource}
+}
+
 func toWirePane(p wsdomain.Pane) Pane {
 	aliases := p.Aliases
 	if aliases == nil {
@@ -150,7 +166,8 @@ func toWirePane(p wsdomain.Pane) Pane {
 		Label: p.Label, CWD: p.CWD, Command: p.Command, CommandPending: p.CommandPending, Env: p.Env,
 		Aliases: aliases, AttentionState: string(p.AttentionState),
 		StateSource: emptyAsNull(p.StateSource), Metadata: toWireMetadata(p.Metadata),
-		CreatedAt: p.CreatedAt.UnixMilli(), ClosedAt: millisPtr(p.ClosedAt),
+		DetectedAgent: toWireDetectedAgent(p.DetectedAgent),
+		CreatedAt:     p.CreatedAt.UnixMilli(), ClosedAt: millisPtr(p.ClosedAt),
 	}
 }
 

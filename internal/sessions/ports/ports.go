@@ -75,6 +75,8 @@ type PTY interface {
 	Wait() (exitCode int, err error)
 	// Signal sends a signal to the child's process group.
 	Signal(sig SignalKind) error
+	// Pid is the child's process id, 0 before it started.
+	Pid() int
 }
 
 // SignalKind is the small set of signals the sessions module sends, named here so the

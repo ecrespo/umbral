@@ -123,6 +123,13 @@ type Terminals interface {
 	Close(ctx context.Context, id string) error
 }
 
+// AgentLabels is what third-party agent detection last found in a session (REQ-XAG-001). The
+// tree reads it to fill `Pane.detected_agent` and nothing else; the composition root hands it
+// the integrations module's detector.
+type AgentLabels interface {
+	AgentLabel(sessionID string) (domain.DetectedAgent, bool)
+}
+
 // Screens is the narrow view of the sessions module that REQ-TERM-010's capture needs: the
 // current screen of one session, as a VT stream that replays into an empty emulator.
 //

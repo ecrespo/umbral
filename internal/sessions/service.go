@@ -309,6 +309,17 @@ func (s *Service) List(ctx context.Context) ([]domain.Session, error) {
 	return out, nil
 }
 
+// ShellPID is the pid of a live session's shell, for third-party agent detection
+// (REQ-XAG-001). A session that is not running, or not this daemon's, reports false.
+func (s *Service) ShellPID(id string) (int, bool) {
+	live := s.lookup(id)
+	if live == nil || live.snapshotState().State == domain.StateExited {
+		return 0, false
+	}
+	pid := live.pty.Pid()
+	return pid, pid > 0
+}
+
 // Get reports one session. A live session is answered from memory, since its state is
 // fresher there than in the row.
 func (s *Service) Get(ctx context.Context, id string) (domain.Session, error) {

@@ -52,6 +52,9 @@ type harness struct {
 	notifier *recordingNotifier
 	// limited counts the reports discarded for their source's rate.
 	limited *atomic.Int64
+	// labels is what agent detection found, read by the tree (REQ-XAG-001).
+	labels *integrations.AgentLabels
+	bus    *bus.Bus
 }
 
 // recordingNotifier keeps every blocked notification the service raised.
@@ -111,8 +114,9 @@ func newHarnessAt(t *testing.T, now func() time.Time) *harness {
 	// The tree gets a bus of its own: its notifications are not what these tests read.
 	treeBus := bus.New()
 	t.Cleanup(treeBus.Close)
+	labels := integrations.NewAgentLabels()
 	tree, err := workspaces.New(workspaces.Config{
-		Tree: treeStore, Terminals: &fakeTerminals{db: db}, Bus: treeBus,
+		Tree: treeStore, Terminals: &fakeTerminals{db: db}, Bus: treeBus, AgentLabels: labels,
 	})
 	if err != nil {
 		t.Fatalf("workspaces.New: %v", err)
@@ -130,7 +134,10 @@ func newHarnessAt(t *testing.T, now func() time.Time) *harness {
 	if err != nil {
 		t.Fatalf("integrations.New: %v", err)
 	}
-	return &harness{Service: service, tree: tree, store: db, events: events, notifier: notifier, limited: limited}
+	return &harness{
+		Service: service, tree: tree, store: db, events: events, notifier: notifier, limited: limited,
+		labels: labels, bus: eventBus,
+	}
 }
 
 // newPane creates a workspace whose root pane runs a shell that spoke OSC 133, so Umbral's

@@ -85,3 +85,31 @@ type PaneStateChanged struct {
 
 // EventKind implements bus.Event.
 func (PaneStateChanged) EventKind() bus.Kind { return KindPaneStateChanged }
+
+// Shells is what agent detection reads of the sessions module: the pid of a live session's
+// shell, false for a session that is not running (REQ-XAG-001).
+type Shells interface {
+	ShellPID(sessionID string) (int, bool)
+}
+
+// ProcessTree reads the process table (REQ-XAG-001). A scan takes one snapshot and asks it about
+// every pane, so the table is read once per scan rather than once per pane.
+type ProcessTree interface {
+	Snapshot() ProcessSnapshot
+}
+
+// ProcessSnapshot is the process table at one moment.
+type ProcessSnapshot interface {
+	// Subtree lists pid itself, then the processes under it, breadth first and in pid order
+	// within a level. The root is included because a pane launched with a command, or a shell
+	// that ran `exec agent`, has the agent as its root.
+	Subtree(pid int) []domain.Process
+}
+
+// Detector is the inbound port of third-party agent detection, served as `agent.explain`
+// (API Spec §5.39).
+type Detector interface {
+	// Explain scans a pane afresh and says what matched it and who decides its state
+	// (REQ-XAG-003). An unknown pane answers wsdomain.ErrNotFound.
+	Explain(ctx context.Context, paneID string) (domain.Explanation, error)
+}

@@ -330,7 +330,7 @@ func TestWorkspaceCreateWireShape_REQ_WS_001(t *testing.T) {
 	pane := field(t, got, "root_pane")
 	for _, key := range []string{
 		"id", "tab_id", "workspace_id", "session_id", "thread_id", "label", "cwd",
-		"aliases", "attention_state", "state_source", "metadata", "created_at", "closed_at",
+		"aliases", "attention_state", "state_source", "metadata", "detected_agent", "created_at", "closed_at",
 	} {
 		if _, ok := pane[key]; !ok {
 			t.Errorf("Pane has no %q; §4 defines it", key)
@@ -343,6 +343,9 @@ func TestWorkspaceCreateWireShape_REQ_WS_001(t *testing.T) {
 	}
 	if string(pane["state_source"]) != "null" {
 		t.Errorf("state_source = %s, want null while nothing has reported", pane["state_source"])
+	}
+	if string(pane["detected_agent"]) != "null" {
+		t.Errorf("detected_agent = %s, want null while nothing is detected", pane["detected_agent"])
 	}
 	if string(pane["attention_state"]) != `"unknown"` {
 		t.Errorf("attention_state = %s, want \"unknown\"", pane["attention_state"])

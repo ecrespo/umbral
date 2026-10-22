@@ -297,7 +297,7 @@ has shown what the shared pieces look like.
   - `TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007` (the `thread.create` reply and
     `umb thread create`'s output).
 
-### [ ] T-F2-10 · Third-party agent detection
+### [x] 2026-10-22 T-F2-10 · Third-party agent detection
 - **What:**
   - built-in manifests for OpenCode, Claude Code, Gemini CLI, Codex and Goose;
   - `$XDG_CONFIG_HOME/umbral/agents/*.toml` overrides them by name, and an invalid file is skipped
@@ -311,6 +311,9 @@ has shown what the shared pieces look like.
   - `cmd/umb/agent.go`
   - `specs/api/umbral-daemon-api-v1.md` (§2, §4 `Pane`, §5)
   - `specs/technical/umbral-architecture.md` (DD-012)
+  - written as `internal/integrations/{detect.go,domain/agents.go,adapters/manifests,adapters/proctree}`,
+    `internal/api/agents.go`, `cmd/umbrald/detection.go` and `cmd/umb/agent.go`; API §5.39 (§5.38
+    was taken), delta `2026-10-agent-detection`
 - **Depends on:** —
 - **Done:**
   - these tests are green:
@@ -457,9 +460,9 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | REQ-ACP-007 | T-F2-01, T-F2-08, T-F2-09 | `TestAnACPTurnHasATrace_REQ_ACP_007`, `TestAnACPThreadIsMarkedUnobserved_REQ_ACP_007`, `TestACPToolCallsAreRecordedWithTheirDecision_REQ_ACP_007`, `TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007` |
 | REQ-ACP-008 | T-F2-09 | `TestACPCancelStopsWithin500ms_REQ_ACP_008`, `TestAnUnresponsiveACPAgentIsKilledAfter5s_REQ_ACP_008` |
 | REQ-ACP-009 | T-F2-07 | `TestAnAgentWithoutAManifestIsRefused_REQ_ACP_009`, `TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009`, `TestTheOpenCodeManifestAsksForEveryPermission_REQ_ACP_009`, `TestARepositoryAgentConfigIsRefused_REQ_ACP_009`, `TestTheUsersGlobalAgentConfigIsNotRead_REQ_ACP_009` |
-| REQ-XAG-001 | T-F2-10 | `TestAPaneRunningOpenCodeIsLabelled_REQ_XAG_001`, `TestDetectionNeverSetsState_REQ_XAG_001` |
-| REQ-XAG-002 | T-F2-10 | `TestALocalManifestOverridesByName_REQ_XAG_002`, `TestAnInvalidManifestIsSkippedAndReported_REQ_XAG_002` |
-| REQ-XAG-003 | T-F2-10 | `TestAgentExplainNamesTheRule_REQ_XAG_003` |
+| REQ-XAG-001 | T-F2-10 | `TestAPaneRunningOpenCodeIsLabelled_REQ_XAG_001`, `TestDetectionNeverSetsState_REQ_XAG_001`, `TestBuiltinManifestsCompile_REQ_XAG_001`, `TestBuiltinsRecogniseTheAgentsAndNothingElse_REQ_XAG_001`, `TestSubtreeFindsAnAgentUnderTheShell_REQ_XAG_001`, `TestSubtreeOfANonexistentProcessIsEmpty_REQ_XAG_001`, `TestAnAgentThatIsThePanesRootIsLabelled_REQ_XAG_001` |
+| REQ-XAG-002 | T-F2-10 | `TestALocalManifestOverridesByName_REQ_XAG_002`, `TestAnInvalidManifestIsSkippedAndReported_REQ_XAG_002`, `TestManifestValidation_REQ_XAG_002`, `TestOverlayReplacesByName_REQ_XAG_002` |
+| REQ-XAG-003 | T-F2-10 | `TestAgentExplainNamesTheRule_REQ_XAG_003`, `TestDetectionIsDeterministic_REQ_XAG_003`, `TestAgentExplainOverTheWire_REQ_XAG_003`, `TestUmbAgentExplain_REQ_XAG_003` |
 | REQ-RTR-001 | T-F2-11 | `TestACandidateWithoutToolsIsDropped_REQ_RTR_001` |
 | REQ-RTR-002 | T-F2-11 | `TestABreakerOpensAndProbes_REQ_RTR_002` |
 | REQ-RTR-003 | T-F2-11 | `TestRouterPoliciesOrderTheCandidates_REQ_RTR_003`, `TestModelRouteExplainsTheOrder_REQ_RTR_003` |
@@ -499,4 +502,5 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | 2026-10-22 | — | ratified | The Tech Lead ratified PRD F2 0.4, this file and constitution 1.3 (PR #32), and allowed per-task F2 deltas to be approved by the implementing agent. |
 | 2026-10-22 | T-F2-01 | done | Migration `0007_orchestration` adds `worktrees` and the F2 columns by `ALTER`, each with its `CHECK`: SQLite accepts one in `ADD COLUMN`, which corrects Data Model §2.5. Recovery stops a queued turn. Mutations removing a `CHECK` or adding a cascade to `worktrees.thread_id` turn the tests red. Delta `2026-10-orchestration-schema`, approved under the standing instruction. |
 | 2026-10-22 | T-F2-02 | done | `internal/worktrees` with `gitcli` and `sqlstore` adapters, and `[worktrees] commit_timeout`. The squash snapshots the worktree through a private index, then runs `cherry-pick --no-commit` and `commit` in the clean main copy, and rolls back with `reset --hard`. git 2.34 has no `merge-tree --write-tree`. Mutations that drop the rollback, the dirty check or the commit timeout turn the tests red. The signing-prompt case is killed at 2 s, not at the 30 s it would sleep. Delta `2026-10-worktree-engine`. |
+| 2026-10-22 | T-F2-10 | done | Built-in manifests for five agents, local TOML manifests read strictly and laid over them by name, and a scan every 2 s of each pane's process tree — its root included, so a pane launched with the agent is labelled — read once per scan from `/proc` or `sysctl`, that labels a pane and never sets its state. `agent.explain` and `umb agent explain` name the manifest, the rule, the pid and the executable's basename, never the argv. Verified against a real daemon: a pane running `exec -a opencode` was labelled within one scan, its state stayed `unknown`, and an invalid local file was logged and listed. A skip reason names the field, key or line and never quotes a value; quoting one, or leaving the root out of the tree, turns a test red. Spec-guardian's review added the root process, argv kept out of memory, and the bounded read. Delta `2026-10-agent-detection`. |
 | — | — | — | — |

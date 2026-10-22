@@ -159,3 +159,11 @@ A diff answers with the revision it was read from. A merge that passes it is ref
 [[internal/worktrees/domain/domain.go#ParseUnifiedDiff]] gives each hunk an id from its path and lines, not its position, so a hunk keeps its id while an earlier one grows.
 
 [[internal/worktrees/worktrees.go#Service#CheckAll]] marks a worktree missing when its directory, branch or repository is gone, and never recreates it.
+
+## Agent detection labels a pane and never decides its state
+
+[[internal/integrations/detect.go#Detector]] names the third-party agent running in a pane: its root process or anything under it. It is a label beside the pane: never an input of DD-012's state precedence (delta `2026-10-agent-detection`).
+
+The built-in manifests in [[internal/integrations/domain/agents.go#Builtins]] are overlaid by name with the local ones that [[internal/integrations/adapters/manifests/manifests.go#Load]] reads once at start from `$XDG_CONFIG_HOME/umbral/agents/`. Unknown keys make a file invalid, and a skip reason names the field, key or line without quoting a value. [[internal/integrations/adapters/proctree/proctree.go#Tree#Snapshot]] reads the process table once per scan, and a pane's subtree is its root process — the agent itself when the pane was launched with it — then what runs under it, breadth first. [[internal/integrations/domain/agents.go#Detect]] tries them in that order against the manifests in name order, so the answer is deterministic.
+
+Labels — name and declared state source, nothing of the process — live in memory, keyed by session, in [[internal/integrations/detect.go#AgentLabels]]; the workspace tree reads them into `Pane.detected_agent`, and a change is announced as `pane.updated`, never `pane.state_changed`. [[internal/integrations/detect.go#Detector#Explain]] backs `agent.explain` and `umb agent explain`, naming the matching pid and executable basename but never the argv, which can carry a secret.
