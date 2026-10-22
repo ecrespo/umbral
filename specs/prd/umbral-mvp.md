@@ -496,7 +496,7 @@ TUI as text:
 | 1.18 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-us003-e2e` (T-F1-21): §4.1 says how "the rate of invalid tool calls after repair" is counted — the calls the one repair did not fix, over every tool call, per model |
 | 1.19 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-retention` (T-F1-22): REQ-TERM-005 names its one retention exception, an ephemeral thread's agent blocks |
 | 1.20 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cost-cap`: REQ-AGT-008 stops a turn at the thread's cost cap too, checked before every priced call, and `thread.send` answers `BUDGET_EXCEEDED` past it |
-| 1.21 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-cli-thread-wait` (T-F1-38, proposed): REQ-CLI-009, `umb thread` over `thread.create`, `send`, `wait`, `get` and `cancel` |
+| 1.21 | 2026-10-22 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cli-thread-wait` (T-F1-38): REQ-CLI-009, `umb thread` over `thread.create`, `send`, `wait`, `get` and `cancel` |
 
 ## Approvals
 

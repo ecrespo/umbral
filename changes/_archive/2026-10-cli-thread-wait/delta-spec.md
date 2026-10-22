@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-10-22 — awaits the Tech Lead's ratification` |
+| **Status** | `RATIFIED 2026-10-22 by the Tech Lead ("Ratifico los deltas"); folded into PRD 1.21, API 1.41 and Tech 1.54` |
 | **Date** | 2026-10-22 |
 | **Task** | T-F1-38 |
 | **Raised by** | F1's closing measurement of 2026-10-22: Done criterion 4 could only be met by a script that connects as `tui` |
