@@ -70,7 +70,15 @@ func (s *Service) RunForThread(ctx context.Context, threadID, cwd, command strin
 		live.mu.Unlock()
 	}
 
-	if err := s.Input(ctx, sessionID, []byte(command+"\n"), domain.InputOwnerAgent); err != nil {
+	// An interrupt that reached the shell after a cancelled command had ended stays pending,
+	// and bash and zsh spend it on the next line they parse by dropping its first byte. An
+	// empty line ahead of the command takes it: losing that byte runs nothing, and an empty
+	// line opens no block, so the agent's claim still falls on the command.
+	line := []byte(command + "\n")
+	if live.interrupted.Swap(false) {
+		line = append([]byte{'\n'}, line...)
+	}
+	if err := s.Input(ctx, sessionID, line, domain.InputOwnerAgent); err != nil {
 		release()
 		return domain.AgentRun{}, err
 	}
@@ -158,7 +166,7 @@ func (s *Service) stopAgent(live *liveSession, run *agentRun) {
 	go func() {
 		kill := time.NewTimer(agentTermGrace)
 		defer kill.Stop()
-		again := time.NewTicker(agentInterruptEvery)
+		again := time.NewTicker(s.cfg.AgentInterruptEvery)
 		defer again.Stop()
 		give := time.NewTimer(agentStopWindow)
 		defer give.Stop()
@@ -198,6 +206,9 @@ func (s *Service) signalRun(live *liveSession, run *agentRun, sig ports.SignalKi
 	var err error
 	if quiet {
 		err = live.pty.Signal(sig)
+		if sig == ports.SignalTermForeground {
+			live.interrupted.Store(true)
+		}
 	}
 	sessionID := live.session.ID
 	live.mu.RUnlock()

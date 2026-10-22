@@ -115,3 +115,15 @@ The panel never patches its lists from a notification: `mcp.server_state` and `s
 [[internal/llmgw/catalog.go#Catalog#Refresh]] keeps the first entry when a provider lists one id twice, because a request names the model only by that id.
 
 Ollama 0.40 lists a model pulled for two backends twice under one name, with different digests, and Ollama picks the copy when called. The `models` table keys on the id, so passing both to the store failed the whole replace and left the provider with no model at all. The check is in the catalog, since any provider's list can repeat a name, and [[internal/llmgw/adapters/ollama/ollama.go#Provider#Models]] keeps the same first copy for the window that caps `num_ctx`, so the two never describe different copies (delta `2026-10-duplicate-models`).
+
+## A cancelled command's shell is settled before the next one
+
+The thread's shell can keep an interrupt meant for a cancelled command and spend it on the next line, so the next agent command is typed after an empty line.
+
+[[internal/sessions/agent.go#Service#stopAgent]] interrupts the shell again while a cancelled command stays silent, and one interrupt can land after the command ended but before the daemon read the block's close. bash and zsh keep it pending and drop the first byte of the next line they parse: `echo still-here` ran as `cho still-here`. [[internal/sessions/agent.go#Service#signalRun]] marks the session interrupted, and [[internal/sessions/agent.go#Service#RunForThread]] then types an empty line before the command: the interrupt eats that byte, and an empty line opens no block, so the agent's claim still falls on the command. `Config.AgentInterruptEvery` lets a test interrupt every millisecond, which turns that race from rare into routine.
+
+## Shutdown records every exit before the store closes
+
+[[internal/sessions/service.go#Service#Shutdown]] hangs up every shell and waits, up to `shutdownGrace`, for each session's exit to be persisted.
+
+It used to return at once, so `cmd/umbrald` closed the store while the sessions were still exiting and each logged `persist the session exit: sql: database is closed`. A shell that ignores the hang-up is left to recovery on the next start rather than holding the daemon's exit.
