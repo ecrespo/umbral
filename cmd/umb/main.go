@@ -100,6 +100,8 @@ func runIO(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return finish(cmdWait(ctx, args[1:], out, errOut), out, stderr)
 	case "thread":
 		return finish(cmdThread(ctx, args[1:], out, errOut), out, stderr)
+	case "agent":
+		return finish(cmdAgent(ctx, args[1:], out, errOut), out, stderr)
 	case famWorkspace, famTab, famPane, famLayout:
 		return finish(cmdTree(ctx, args[0], args[1:], out, errOut), out, stderr)
 	case "version", "--version", "-version":
@@ -153,6 +155,9 @@ Usage:
   umb thread wait THREAD --until STATES [--timeout D]
   umb thread get|cancel THREAD   drive a thread from a script, waiting without polling
                                  (REQ-CLI-009); STATES is idle,done,blocked,stopped
+  umb agent explain PANE [--json]
+                                 the third-party agent detected in a pane, the rule that
+                                 matched and who decides its state (REQ-XAG-003)
   umb workspace create|list|focus|rename|close
   umb tab create|list|focus|rename|close
   umb pane split|list|get|focus|rename|close

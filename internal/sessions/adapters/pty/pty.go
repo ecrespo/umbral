@@ -123,6 +123,14 @@ func (s *session) Wait() (int, error) {
 	return s.exitCode, s.waitErr
 }
 
+// Pid implements ports.PTY.
+func (s *session) Pid() int {
+	if s.cmd.Process == nil {
+		return 0
+	}
+	return s.cmd.Process.Pid
+}
+
 // Signal sends a signal to the child's process group, so that a shell's own children go
 // with it rather than surviving as orphans.
 func (s *session) Signal(sig ports.SignalKind) error {

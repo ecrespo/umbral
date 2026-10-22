@@ -572,6 +572,8 @@ deps:
       - llmgw-domain
       - security-domain
       - mcp-domain
+      # Agent detection: the built-in manifests overlaid with the local ones (T-F2-10).
+      - integrations-domain
 
 
   # --- the workspace tree (Tech Design §5.2) ----------------------------------

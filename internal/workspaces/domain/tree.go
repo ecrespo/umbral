@@ -118,9 +118,20 @@ type Pane struct {
 	AttentionState AttentionState
 	StateSource    string
 	// Metadata is display only (REQ-INT-004): nothing above reads it.
-	Metadata  Metadata
-	CreatedAt time.Time
-	ClosedAt  *time.Time
+	Metadata Metadata
+	// DetectedAgent is the third-party agent detection found running in the pane, nil for
+	// none (REQ-XAG-001). It labels the pane and decides nothing: ResolveAttention never
+	// reads it.
+	DetectedAgent *DetectedAgent
+	CreatedAt     time.Time
+	ClosedAt      *time.Time
+}
+
+// DetectedAgent is a pane's `detected_agent` (API Spec §4): the agent's name and the state
+// source its manifest declares (hooks, acp or none).
+type DetectedAgent struct {
+	Name        string
+	StateSource string
 }
 
 // CreateWorkspaceParams is what `workspace.create` takes (API Spec §5.4).

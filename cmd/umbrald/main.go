@@ -28,6 +28,7 @@ import (
 	"github.com/ecrespo/umbral/internal/api"
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/config"
+	"github.com/ecrespo/umbral/internal/integrations"
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/egresslog"
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/modelstore"
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/usagelog"
@@ -298,6 +299,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// workspaces module's own terms, so neither module has to know the other's shapes.
 	// Adapting them is a composition-root job, which is what this file is for.
 	screens := wsports.Screens(screenReader{sessions: sessionService})
+	// What third-party agent detection found in each session (T-F2-10), read by the tree for
+	// `Pane.detected_agent` and written by the detector built below.
+	agentLabels := integrations.NewAgentLabels()
 	workspaceService, err := workspaces.New(workspaces.Config{
 		Tree:        tree,
 		Terminals:   terminals,
@@ -305,6 +309,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Logger:      logger,
 		PaneHistory: settings.PaneHistory,
 		Screens:     screens,
+		AgentLabels: agentLabels,
 	})
 	if err != nil {
 		logger.Error("cannot build the workspace tree", slog.Any("error", err))
@@ -458,6 +463,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitCantCreate
 	}
 
+	// Third-party agent detection (T-F2-10): a label beside the pane, never its state (DD-012).
+	detector, err := startDetection(ctx, settingsPath, agentLabels, sessionService, workspaceService, eventBus, logger)
+	if err != nil {
+		logger.Error("cannot build agent detection", slog.Any("error", err))
+		return exitCantCreate
+	}
+
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
 		TokenPath:     tokenPath,
@@ -473,6 +485,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Workspaces:    workspaceService,
 		Integrations:  paneStates,
 		Notifications: notifications,
+		Agents:        detector,
 		PolicyExplain: explainer,
 		Rules:         ruleManager,
 		Skills:        skillStore,

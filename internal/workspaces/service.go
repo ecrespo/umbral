@@ -49,6 +49,8 @@ type Config struct {
 	// Screens reads a pane's current screen for that capture. Nil disables capture
 	// whatever the setting says.
 	Screens ports.Screens
+	// AgentLabels fills every pane's DetectedAgent. Nil labels nothing.
+	AgentLabels ports.AgentLabels
 }
 
 // Service is the module's inbound port in the flesh.
@@ -61,6 +63,7 @@ type Service struct {
 
 	paneHistory bool
 	screens     ports.Screens
+	labels      ports.AgentLabels
 
 	// focus is which workspace and tab a client should open on, cached here because every
 	// `layout.export` with no `tab_id` and every `session.snapshot` asks for it and
@@ -83,11 +86,33 @@ func New(cfg Config) (*Service, error) {
 		log:          logger(cfg.Logger),
 		paneHistory:  cfg.PaneHistory,
 		screens:      cfg.Screens,
+		labels:       cfg.AgentLabels,
 		focusedTabOf: map[string]string{},
 	}, nil
 }
 
 var _ ports.Workspaces = (*Service)(nil)
+
+// label fills a pane's DetectedAgent from what detection last found in its live session. The
+// label is the daemon's memory, never stored, so every pane the service answers or announces
+// passes through here.
+func (s *Service) label(p domain.Pane) domain.Pane {
+	p.DetectedAgent = nil
+	if s.labels == nil || p.SessionID == "" || p.ClosedAt != nil {
+		return p
+	}
+	if a, ok := s.labels.AgentLabel(p.SessionID); ok {
+		p.DetectedAgent = &a
+	}
+	return p
+}
+
+func (s *Service) labelAll(panes []domain.Pane) []domain.Pane {
+	for i := range panes {
+		panes[i] = s.label(panes[i])
+	}
+	return panes
+}
 
 func (s *Service) publish(ev bus.Event) {
 	if s.bus != nil {
@@ -580,7 +605,8 @@ func (s *Service) ListPanes(ctx context.Context, tabID string) ([]domain.Pane, e
 	if err := checkTabID(tabID); err != nil {
 		return nil, err
 	}
-	return s.tree.ListPanes(ctx, tabID)
+	panes, err := s.tree.ListPanes(ctx, tabID)
+	return s.labelAll(panes), err
 }
 
 // GetPane reports one pane, resolving a previous identifier through its alias (REQ-WS-007).
@@ -588,7 +614,8 @@ func (s *Service) GetPane(ctx context.Context, id string) (domain.Pane, error) {
 	if err := checkPaneID(id); err != nil {
 		return domain.Pane{}, err
 	}
-	return s.tree.GetPane(ctx, id)
+	pane, err := s.tree.GetPane(ctx, id)
+	return s.label(pane), err
 }
 
 // FocusPane marks a pane focused inside its tab.
@@ -603,6 +630,7 @@ func (s *Service) FocusPane(ctx context.Context, id string) (domain.Pane, error)
 	if err := s.tree.SetFocusedPane(ctx, pane.TabID, pane.ID); err != nil {
 		return domain.Pane{}, err
 	}
+	pane = s.label(pane)
 	s.publish(ports.PaneEvent{Kind: ports.KindPaneFocused, Pane: pane})
 	return pane, nil
 }
@@ -623,6 +651,7 @@ func (s *Service) RenamePane(ctx context.Context, id, label string) (domain.Pane
 	if err != nil {
 		return domain.Pane{}, err
 	}
+	renamed = s.label(renamed)
 	s.publish(ports.PaneEvent{Kind: ports.KindPaneUpdated, Pane: renamed})
 	return renamed, nil
 }
@@ -666,6 +695,7 @@ func (s *Service) MovePane(ctx context.Context, params domain.MoveParams) (ports
 	if err != nil {
 		return ports.Moved{}, err
 	}
+	moved.Pane = s.label(moved.Pane)
 
 	// Whatever the move had to build is announced before the move itself, so a client
 	// applies `pane.moved` to a tab it already knows about rather than to a reference it
@@ -928,7 +958,7 @@ func (s *Service) Snapshot(ctx context.Context) (domain.Snapshot, error) {
 			if err != nil {
 				return domain.Snapshot{}, err
 			}
-			out.Panes = append(out.Panes, panes...)
+			out.Panes = append(out.Panes, s.labelAll(panes)...)
 
 			layout, err := s.tree.Layout(ctx, tab.ID)
 			if err != nil {

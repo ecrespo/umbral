@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.56 |
+| **Version** | 1.57 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -385,6 +385,11 @@ sequenceDiagram
 - **Rationale:** the failure mode to avoid is two sources disagreeing. Screen heuristics are
   deliberately left out of the MVP: they are fragile and they would be a third source of truth.
   Third-party agent detection arrives in F2 as the lowest-priority layer, behind hooks and ACP.
+- **Detection labels and never decides** (delta `2026-10-agent-detection`, T-F2-10). It names the
+  agent running under a pane's shell — `Pane.detected_agent`, from manifests matched against the
+  process table — and the state source that agent's manifest declares, but it is not an input of
+  this precedence: a detected agent's pane keeps whatever state the three sources above give it
+  until the agent itself reports through hooks or ACP. No scan announces `pane.state_changed`.
 - **Consequence:** display metadata is a separate channel (DD-013) precisely so that improving what
   is shown never requires touching the state that drives waits.
 
@@ -749,7 +754,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `tools/adapters` | also `sessions/ports`, for `AgentTerminal` alone: `run_command` runs in the thread's PTY, which the sessions module owns (T-F1-10) |
 | `workspaces` | `ports` of `sessions` and `store`; never `agents`, `api` or `waits` |
 | `waits` | `ports` and `domain` of `agents` and `sessions`, plus `bus`; never `api`. It reads the store only through the agents runtime, and its own domain reuses the sessions domain's escape-sequence stripper (delta `2026-10-wait-engine`) |
-| `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api`. The tree resolves a pane's state in DD-012's order (`workspaces/domain.ResolveAttention`); `integrations` writes the external reports and announces every change. It hears the changes it did not make — blocks, integration verdicts, exits, thread attention — through events `cmd/umbrald` subscribes it to, and re-reads the whole tree on each (delta `2026-10-integration-surface`). Display metadata is written by `integrations` and read by the tree into a `Pane`'s `metadata`, never on the state path: `ResolveAttention`, the rollup, waits and notifications do not read it, and a written report is announced as `pane.updated` only (delta `2026-10-display-metadata`) |
+| `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api`. The tree resolves a pane's state in DD-012's order (`workspaces/domain.ResolveAttention`); `integrations` writes the external reports and announces every change. It hears the changes it did not make — blocks, integration verdicts, exits, thread attention — through events `cmd/umbrald` subscribes it to, and re-reads the whole tree on each (delta `2026-10-integration-surface`). Display metadata is written by `integrations` and read by the tree into a `Pane`'s `metadata`, never on the state path: `ResolveAttention`, the rollup, waits and notifications do not read it, and a written report is announced as `pane.updated` only (delta `2026-10-display-metadata`). Third-party agent detection lives here too (delta `2026-10-agent-detection`): `integrations/adapters/manifests` reads the local manifests and `integrations/adapters/proctree` the process table, without running a command; the detector reaches a pane's shell pid through `integrations/ports.Shells`, which `cmd/umbrald` satisfies with the sessions service, and keeps its labels in memory, keyed by session, for the tree to read through `workspaces/ports.AgentLabels` — never on the state path |
 | `notify` | `bus` and stdlib only; it is a sink and imports no other module. `api` implements its `Deliverer` port — the foreground client of API §5.35 — and is handed to it by `cmd/umbrald` once the server exists; `cmd/umbrald` adapts `integrations`' `Notifier` port to it for an external `blocked`. Both modules deliver outside their locks, and `api` through a per-connection queue, so a client that stops reading stalls no source (delta `2026-10-notifications`) |
 | `worktrees` | its own `ports` and `domain`; its adapters run the `git` binary and use `store`. It imports no other module: the agents runtime reaches a thread's worktree through what `cmd/umbrald` wires (T-F2-03). Reading a worktree to show it runs with fsmonitor, filter drivers, external diff and textconv off. Landing it runs as the user's `git commit` would — hooks and signing included — in a session with no terminal, killed whole at `[worktrees] commit_timeout` (delta `2026-10-worktree-engine`) |
 | `security` | stdlib, `go-keyring` in its adapter, `bus` in its ports (to name `rules.update_rejected`) and the root `llmgw/domain` (for the egress record a rejection writes). Its root holds policy.explain, which reads a thread's mode, directory and rules through its own `ExplainSource` port and asks the same pure `Decide` a turn uses; `cmd/umbrald` adapts the agent thread store to that port and hands both the runtime and the explainer one `isRepo`, so an explanation and a turn agree about the write root (delta `2026-10-policy-explain`). Its root also holds the `Rules` manager of signed bundles (DD-016), which reaches storage through its own `RuleStore` port and replaces the active set's base through `RuleBase`. `tools/rulesign` depends on `security/domain` only (delta `2026-10-signed-rule-bundles`) |
@@ -1567,3 +1572,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.54 | 2026-10-22 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cli-thread-wait` (T-F1-38): §9.4 adds `umb thread` |
 | 1.55 | 2026-10-22 | E. Crespo (assisted draft) | Ratifies delta `2026-10-agent-pty-settle` (T-HRD-03): §5.3b says how a cancelled command's shell is settled before the agent's next command. 1.54 is delta `2026-10-cli-thread-wait`'s |
 | 1.56 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-worktree-engine` (T-F2-02): §3.2 and §5.2 add `worktrees`; §5.1 adds `[worktrees] commit_timeout` |
+| 1.57 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-agent-detection` (T-F2-10): DD-012 says detection labels a pane and never decides its state; §5.2's `integrations` row adds the manifests and process-tree adapters, the `Shells` port and the in-memory labels |

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.41 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.42 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -126,7 +126,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove`, `agent.explain` |
 
 ### Handshake
 
@@ -138,7 +138,7 @@ before the daemon starts.
 ```json
 {"jsonrpc":"2.0","id":1,"result":{
   "daemon_version":"0.1.0","protocol_version":1,
-  "capabilities":["sessions","blocks","threads","mcp","models","workspaces","layouts","waits","integrations","notifications","policy_explain","wait_admin","rules","skills","limits","config"],
+  "capabilities":["sessions","blocks","threads","mcp","models","workspaces","layouts","waits","integrations","notifications","policy_explain","wait_admin","rules","skills","limits","config","agent_detection"],
   "connection_id":"con_01J9Z3K8T2QH6W4V5X7Y8Z9A0B","max_message_bytes":4194304}}
 ```
 
@@ -147,7 +147,7 @@ before the daemon starts.
   compatible would silently pair this daemon with a client built for a version it never declared.
 - Each entry of `capabilities` names a method namespace (`sessions`, `blocks`, `threads`, `mcp`,
   `models`, `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`,
-  `wait_admin`, `rules`, `skills`, `limits`, `config`) whose methods the daemon **serves at that moment**. THE SYSTEM SHALL derive
+  `wait_admin`, `rules`, `skills`, `limits`, `config`, `agent_detection`) whose methods the daemon **serves at that moment**. THE SYSTEM SHALL derive
   the list from its method table rather than declaring it statically, SHALL advertise a namespace
   when at least one of its methods is served by this build, and SHALL NOT advertise one whose
   methods are all unserved: a client that branches on the advertisement must not be sent down a path
@@ -274,6 +274,7 @@ method and the ordering that produced it, so one handed to a different method is
  "command":["sh","-c","go test ./..."],"env":{"UMBRAL_ROLE":"tests"},
  "attention_state":"working","state_source":"umbral:agent",
  "metadata":{"title":"go test","tokens":{"summary":"unit"}},
+ "detected_agent":null,
  "created_at":1757592000000,"closed_at":null}
 ```
 - `attention_state`: `blocked` | `working` | `done` | `idle` | `unknown`. `unknown` is the
@@ -294,6 +295,11 @@ method and the ordering that produced it, so one handed to a different method is
   A change of either field is announced as `pane.state_changed` (§6).
 - `thread_id`: the thread whose PTY the pane's live session is, `null` for any other pane
 - `metadata`: display only (§5.32, REQ-INT-004): `{title?, display_name?, state_labels?: {state: label}, tokens?: {name: value}}`, each member present only when some source set it and its TTL has not passed; `{}` when none has. When two sources set one member, the later write wins. It never feeds `attention_state`, `state_source`, the rollup or a wait
+- `detected_agent`: `{name, state_source}` of the third-party agent detection last found in
+  the pane's live session (REQ-XAG-001), or `null`. `state_source` is what its manifest declares,
+  `hooks`, `acp` or `none`: how the agent could report, not that it does. It is a label only —
+  never an input of `attention_state` or `state_source` above (DD-012) — kept in the daemon's
+  memory and found again after a restart. §5.39 explains it.
 - `command_pending`: the pane has a `command` that Umbral has not run. Set by `layout.apply` and
   by a restart, never by `pane.split` — a client asking for a command now is asking for it to run,
   while a layout and a restart replay an intention from another time, and REQ-TERM-011 forbids
@@ -1122,6 +1128,43 @@ It checks the bundle and copies nothing.
   copies as they were (REQ-SKL-002).
 - **Announced** with `skill.changed` (§6) once stored.
 
+### 5.39 `agent.explain` — REQ-XAG-001, REQ-XAG-002, REQ-XAG-003
+Open to `tui`, `desktop` and `cli` (§2), under the `agent_detection` capability. On the CLI it is
+`umb agent explain PANE [--json]`.
+
+**Params:** `{pane_id}`. **Result:**
+```json
+{"pane_id":"w1:p2",
+ "detected_agent":{"name":"opencode","state_source":"acp"},
+ "manifest":{"name":"opencode","display_name":"OpenCode","origin":"builtin"},
+ "rule":{"kind":"executable","pattern":"opencode","pid":48211,"executable":"opencode"},
+ "state_authority":{"attention_state":"idle","state_source":"umbral:shell"},
+ "skipped_manifests":[{"file":"/home/u/.config/umbral/agents/aider.toml","reason":"…"}]}
+```
+- The pane is scanned afresh, so the answer is current and a changed label is announced as
+  `pane.updated` exactly as a periodic scan would (every 2 s).
+- `detected_agent`, `manifest` and `rule` are `null` together when nothing matched, the pane has no
+  live session, or the platform lists no processes (neither Linux nor macOS).
+- `manifest.origin` is `builtin` or the path of the local file it was loaded from
+  (`$XDG_CONFIG_HOME/umbral/agents/*.toml`, read once at start; a local manifest replaces the
+  built-in one of its name).
+- `rule.kind` is `executable` (a basename compared with the basename of `argv[0]`) or `argv` (an
+  RE2 pattern against the argv joined by single spaces). The process is named by its `pid` and
+  its executable's basename only: its arguments can carry a secret and are never answered,
+  stored or logged.
+- Matching is deterministic: the pane's root process — its shell, or the agent itself when the
+  pane was launched with it as its command or its shell ran `exec` — then the processes under it
+  are taken breadth first and in pid order within a level (at most 8 levels below the root, 256
+  processes), and for one process the manifests in name order, an executable rule before an
+  argv rule.
+- `state_authority` is the pane's `attention_state` and `state_source` as DD-012 resolved them
+  (§4). Detection never feeds them.
+- `skipped_manifests` lists every local file skipped at start with its reason — unreadable, over
+  64 KiB, not a regular file once a symlink is followed, not valid TOML, a field of the wrong
+  type, an unknown key, or a field out of bounds — `[]` when none. A reason names the field, the
+  key or the line and never quotes a value from the file.
+- Errors: no `pane_id` is `VALIDATION_ERROR`; an unknown pane `NOT_FOUND`.
+
 ## 6. Notifications (daemon → client)
 
 | Method | Payload | REQ |
@@ -1144,7 +1187,7 @@ It checks the bundle and copies nothing.
 | `mcp.server_state` | `{name, state, last_error}` | REQ-MCP-003 |
 | `workspace.created` / `.updated` / `.closed` / `.focused` | `Workspace` | REQ-WS-001, REQ-WS-006 |
 | `tab.created` / `.closed` / `.focused` | `Tab` | REQ-WS-001 |
-| `pane.created` / `.updated` / `.closed` / `.focused` | `Pane` — `.updated` also after a written `pane.report_metadata` (§5.32) | REQ-WS-003, REQ-INT-004 |
+| `pane.created` / `.updated` / `.closed` / `.focused` | `Pane` — `.updated` also after a written `pane.report_metadata` (§5.32) and when `detected_agent` changes (§5.39) | REQ-WS-003, REQ-INT-004, REQ-XAG-001 |
 | `pane.moved` | `{pane, previous_pane_id, previous_workspace_id, layout}` | REQ-WS-007 |
 | `notification.posted` | `{title, body, source, sound}` — the normalized notification, sent to the foreground client only, never broadcast (§5.35) | REQ-NTF-001 |
 | `pane.state_changed` | `{pane_id, attention_state, state_source}` — after a pane's effective state or its source changes (§4), once what decided it is written: a report or release, a block starting or ending, a session's integration verdict or exit, a thread's attention. A workspace whose rollup moved with it gets `workspace.updated` | REQ-INT-002 |
@@ -1262,7 +1305,7 @@ stateDiagram-v2
 - **Optional capabilities:** `system.hello` returns the namespaces the daemon **serves** at that
   moment (§2). The protocol's namespaces are `sessions`, `blocks`, `threads`, `mcp`, `models`,
   `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`, `wait_admin`,
-  `rules`, `skills`, `limits` and `config`; `worktrees`, `graphics`, `plugins` and `federation` are reserved for later. The §2
+  `rules`, `skills`, `limits`, `config` and `agent_detection`; `worktrees`, `graphics`, `plugins` and `federation` are reserved for later. The §2
   example shows the full list and is illustrative: what a given daemon returns is whatever it can
   actually do, which is narrower than what its method table holds whenever a module is absent.
 - **Which error a missing method gets.** A name this build does not know receives
@@ -1344,3 +1387,4 @@ printf '%s\n' \
 | 1.39 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-09-skills-cli` written by T-F1-34 (with delta `2026-10-skill-store`): §4 `Skill`; §5.37 `skill.inspect`, `install`, `list`, `get`, `set_enabled` and `remove` with their checks, digest and errors; §6 `skill.changed`; §2's `cli` row gains `skill.*` and the `skills` capability; §3 the `skl_` prefix; §9 the namespace |
 | 1.40 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-09-cli-mcp` written by T-F1-37 (with delta `2026-10-umb-mcp-panel`): §2's `cli` row gains `mcp.server.list`, `add` and `remove`; §5.27 says so, that `umb mcp add` sends `trust: "untrusted"` and that the daemon refuses any other `trust` from a `cli` connection; the pending-from-F1 note is gone, every ratified F1 delta now being written |
 | 1.41 | 2026-10-22 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-cli-thread-wait` (T-F1-38): §2's `cli` row gains `thread.get` and `thread.wait`, and §5.23 and §5.29 say so |
+| 1.42 | 2026-10-22 | Additive within `protocol_version = 1`. Delta `2026-10-agent-detection` (T-F2-10): §4 `Pane` gains `detected_agent`; new §5.39 `agent.explain`; §2's `cli` row gains `agent.explain` and the capability list `agent_detection`; §6 `pane.updated` is also sent when a pane's detected agent changes; §9 lists the capability |

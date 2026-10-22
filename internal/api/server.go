@@ -169,6 +169,9 @@ type Config struct {
 	// Notifications is the notification sink, served as notification.show. A nil value
 	// leaves it answering NOT_IMPLEMENTED.
 	Notifications ntfports.Notifier
+	// Agents is third-party agent detection, served as agent.explain (REQ-XAG-003). A nil value
+	// leaves it answering NOT_IMPLEMENTED.
+	Agents intports.Detector
 	// PolicyExplain is policy.explain (REQ-SEC-009). A nil value leaves it answering
 	// NOT_IMPLEMENTED.
 	PolicyExplain secports.Explainer
