@@ -769,7 +769,8 @@ umbral/
 │   ├── waits/
 │   ├── integrations/{reports,metadata}
 │   ├── notify/
-│   ├── orchestrator/{threads,worktrees,triggers}
+│   ├── worktrees/{domain,ports,adapters/{gitcli,sqlstore}}   # F2a: a thread's worktree
+│   ├── orchestrator/{threads,triggers}
 │   ├── security/{policy,sandbox,redact,egress,keyring}
 │   ├── store/{migrations,sqlite,vectors}
 │   └── api/

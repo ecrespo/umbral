@@ -135,3 +135,25 @@ It used to return at once, so `cmd/umbrald` closed the store while the sessions 
 `umb thread` gives a script one command per step — create, send with a wait, wait, read, cancel — so it drives a thread without polling and without posing as the TUI (REQ-CLI-009).
 
 [[cmd/umb/thread.go#cmdThread]] makes one call per command and prints only the value the next step needs: the thread id, the turn id with its final state, the state a wait answered. A `TIMEOUT` exits 1 naming the state last observed. The `cli` client kind may call `thread.wait` ([[internal/api/waits.go#waitMethods]]) and `thread.get` ([[internal/api/threads.go#threadMethods]]), which only read; `thread.list`, `update`, `focus` and `approval.*` stay interactive, so a script cannot switch a thread to `auto-edit` and hands an approval to a person (delta `2026-10-cli-thread-wait`).
+
+## A worktree lands without a checkout
+
+[[internal/worktrees/worktrees.go#Service]] gives a thread its own copy of a repository outside it. A merge squashes that copy into the branch it came from, in the user's clean working copy, and never checks out another branch (delta `2026-10-worktree-engine`).
+
+[[internal/worktrees/adapters/gitcli/gitcli.go#CLI#Squash]] does this in four steps:
+- it writes the worktree's whole working tree as a tree through a private index;
+- it wraps that tree in an unsigned commit on the base;
+- it runs `cherry-pick --no-commit`, then `commit`;
+- after a conflict or a failed commit, it rolls back with `reset --hard`.
+
+The rollback is exact because [[internal/worktrees/worktrees.go#Service#Merge]] refuses a main copy that is dirty, on another branch or detached before anything runs. git 2.34 has no `merge-tree --write-tree`, which is why the squash goes through a working copy.
+
+Before the cherry-pick, a path the squash adds where the main copy already has a file is refused as a conflict. git would overwrite an ignored file such as `.env`, and the rollback would then delete it. A commit that moved `HEAD` before its timeout has landed and is not rolled back.
+
+Showing a worktree runs git with fsmonitor, filters, external diff and textconv off. Landing it runs the user's hooks and signing, in a session of its own with no terminal, and the process group is killed at `[worktrees] commit_timeout`.
+
+The worktree's own `.git` file is never read, because the agent can rewrite it. [[internal/worktrees/adapters/gitcli/gitcli.go#CLI#pinned]] pins `GIT_DIR` and `GIT_WORK_TREE` from the main repository's record of the worktree, and removal deletes the recorded directory, then prunes.
+
+[[internal/worktrees/domain/domain.go#ParseUnifiedDiff]] gives each hunk an id from its path and lines, not its position, so a hunk keeps its id while an earlier one grows.
+
+[[internal/worktrees/worktrees.go#Service#CheckAll]] marks a worktree missing when its directory, branch or repository is gone, and never recreates it.
