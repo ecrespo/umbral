@@ -470,25 +470,18 @@ func (c *CLI) Squash(ctx context.Context, repoRoot, worktree, base, revision, me
 
 // filtered reports whether tree is revision with the clean filters applied: the same paths and
 // modes, and every blob that differs is what `hash-object --path` makes of the reviewed blob.
-// The filter runs through the pinned git directory, as the landing snapshot's did.
+//
+// The attributes that choose a filter are the reviewed tree's own. hash-object runs in a
+// directory of the daemon's that holds only the reviewed `.gitattributes` files above each path,
+// so nothing the agent writes in its worktree — an ignored attributes file, a case variant of
+// one, a change between two reads — has a say. The filter drivers themselves come from the main
+// repository's configuration, through its record of the worktree, as the landing snapshot's did.
 func (c *CLI) filtered(ctx context.Context, repoRoot, worktree, revision, tree string) (bool, error) {
-	_, env, err := c.pinned(ctx, repoRoot, worktree)
+	admin, _, err := c.pinned(ctx, repoRoot, worktree)
 	if err != nil {
 		return false, err
 	}
-	// hash-object reads attributes from the worktree. Every attributes file it can read there is
-	// in the reviewed tree, and compared below, except one .gitignore excludes: the snapshot
-	// leaves it out, so its presence means the filters cannot be taken from the review.
-	r := c.run(ctx, call{dir: worktree, env: env, sanitized: true, args: []string{"ls-files", "-z", "--others", "--ignored", "--exclude-standard"}})
-	if r.err != nil {
-		return false, r.failure("ls-files")
-	}
-	for _, p := range strings.Split(r.stdout, "\x00") {
-		if filepath.Base(p) == ".gitattributes" {
-			return false, nil
-		}
-	}
-	r = c.run(ctx, call{dir: repoRoot, sanitized: true, args: []string{"diff-tree", "-r", "-z", noRenames, revision, tree}})
+	r := c.run(ctx, call{dir: repoRoot, sanitized: true, args: []string{"diff-tree", "-r", "-z", noRenames, revision, tree}})
 	if r.err != nil {
 		return false, r.failure("diff-tree")
 	}
@@ -497,16 +490,26 @@ func (c *CLI) filtered(ctx context.Context, repoRoot, worktree, revision, tree s
 	if len(fields)%2 != 0 {
 		return false, fmt.Errorf("git diff-tree: unexpected output %q", r.stdout)
 	}
+	attrs, err := os.MkdirTemp("", "umbral-attrs-*")
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = os.RemoveAll(attrs) }()
+	env := []string{"GIT_DIR=" + admin, "GIT_WORK_TREE=" + attrs}
+	placed := map[string]bool{}
 	for i := 0; i < len(fields); i += 2 {
 		meta, path := strings.Fields(strings.TrimPrefix(fields[i], ":")), fields[i+1]
 		if len(meta) != 5 || meta[4] != "M" || meta[0] != meta[1] {
 			return false, nil // a path added, removed or changed in kind: not a filter's doing
 		}
+		if err := c.placeAttributes(ctx, repoRoot, revision, attrs, path, placed); err != nil {
+			return false, err
+		}
 		blob := c.run(ctx, call{dir: repoRoot, args: []string{"cat-file", "blob", meta[2]}})
 		if blob.err != nil {
 			return false, blob.failure("cat-file")
 		}
-		hashed := c.run(ctx, call{dir: worktree, env: env, stdin: []byte(blob.stdout), args: []string{"hash-object", "--path=" + path, "--stdin"}})
+		hashed := c.run(ctx, call{dir: attrs, env: env, stdin: []byte(blob.stdout), args: []string{"hash-object", "--path=" + path, "--stdin"}})
 		if hashed.err != nil {
 			return false, hashed.failure("hash-object")
 		}
@@ -515,6 +518,35 @@ func (c *CLI) filtered(ctx context.Context, repoRoot, worktree, revision, tree s
 		}
 	}
 	return true, nil
+}
+
+// placeAttributes writes, under dir, the reviewed tree's `.gitattributes` of every directory
+// from the root down to path's own, as git would read them for path.
+func (c *CLI) placeAttributes(ctx context.Context, repoRoot, revision, dir, path string, placed map[string]bool) error {
+	parts := strings.Split(path, "/")
+	for depth := range parts {
+		rel := strings.Join(parts[:depth], "/")
+		if placed[rel] {
+			continue
+		}
+		placed[rel] = true
+		name := ".gitattributes"
+		if rel != "" {
+			name = rel + "/" + name
+		}
+		r := c.run(ctx, call{dir: repoRoot, args: []string{"cat-file", "blob", revision + ":" + name}})
+		if r.err != nil {
+			continue // that directory has no attributes file in the reviewed tree
+		}
+		target := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, []byte(r.stdout), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *CLI) head(ctx context.Context, dir string) (string, error) {

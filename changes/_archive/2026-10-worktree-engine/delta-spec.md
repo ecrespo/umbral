@@ -121,9 +121,10 @@
       differs must be what `git hash-object --path` makes of the reviewed blob, through the
       user's clean filter. The landed content is derived from the reviewed content, never from a
       second reading of the worktree.
-      The attributes that choose the filter are the reviewed tree's: a `.gitattributes` that
-      `.gitignore` excludes is never in that tree, so its presence in the worktree refuses
-      such a merge `changed`.
+      The attributes that choose the filter are the reviewed tree's own: `hash-object` runs in a
+      directory of the daemon's holding only the reviewed `.gitattributes` above each path, so
+      nothing the agent writes in its worktree (an ignored attributes file, a case variant of
+      one, a change between two reads) decides which filter applies.
     - A merge without a revision lands what the worktree holds then, as before.
     - T-F2-03 carries `revision` on `worktree.diff` and `worktree.merge`, has `umb worktree
       merge` pass the revision it showed, and refuses a merge while the thread's turn is running.
