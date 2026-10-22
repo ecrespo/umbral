@@ -152,7 +152,9 @@ Before the cherry-pick, a path the squash adds where the main copy already has a
 
 Showing a worktree runs git with fsmonitor, filters, external diff and textconv off. Landing it runs the user's hooks and signing, in a session of its own with no terminal, and the process group is killed at `[worktrees] commit_timeout`.
 
-The worktree's own `.git` file is never read, because the agent can rewrite it. [[internal/worktrees/adapters/gitcli/gitcli.go#CLI#pinned]] pins `GIT_DIR` and `GIT_WORK_TREE` from the main repository's record of the worktree, and removal deletes the recorded directory, then prunes.
+The worktree's own `.git` file is never read, because the agent can rewrite it. [[internal/worktrees/adapters/gitcli/gitcli.go#CLI#pinned]] pins `GIT_DIR` and `GIT_WORK_TREE` from the main repository's record of the worktree, and removal deletes the recorded directory, then prunes. The filter drivers turned off while showing are listed through the same pinned directory.
+
+A diff answers with the revision it was read from. A merge that passes it is refused `changed` when the worktree no longer holds that content, so work slipped in after the review never lands.
 
 [[internal/worktrees/domain/domain.go#ParseUnifiedDiff]] gives each hunk an id from its path and lines, not its position, so a hunk keeps its id while an earlier one grows.
 

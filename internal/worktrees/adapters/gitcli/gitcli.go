@@ -132,7 +132,7 @@ func (c *CLI) run(ctx context.Context, k call) result {
 	defer cancel()
 	args := []string{"-C", k.dir}
 	if k.sanitized {
-		overrides, err := c.filterOverrides(ctx, k.dir)
+		overrides, err := c.filterOverrides(ctx, k.dir, k.env)
 		if err != nil {
 			return result{err: err}
 		}
@@ -160,9 +160,10 @@ func (c *CLI) run(ctx context.Context, k call) result {
 
 // filterOverrides turns off every filter driver the configuration defines: status, diff and add
 // run a driver's clean command on a file whose stat information changed. A name an override
-// cannot carry stops the command rather than running the driver.
-func (c *CLI) filterOverrides(ctx context.Context, dir string) ([]string, error) {
-	r := c.run(ctx, call{dir: dir, args: []string{"config", "--null", nameOnly, "--get-regexp", `^filter\.`}})
+// cannot carry stops the command rather than running the driver. The configuration is read with
+// the command's own environment, so a pinned git directory is the one whose drivers are listed.
+func (c *CLI) filterOverrides(ctx context.Context, dir string, env []string) ([]string, error) {
+	r := c.run(ctx, call{dir: dir, env: env, args: []string{"config", "--null", nameOnly, "--get-regexp", `^filter\.`}})
 	if r.err != nil {
 		if r.exitCode() == 1 {
 			return nil, nil // no filter driver configured
@@ -366,10 +367,10 @@ func (c *CLI) snapshot(ctx context.Context, repoRoot, worktree string, sanitized
 }
 
 // Diff implements ports.Git.
-func (c *CLI) Diff(ctx context.Context, repoRoot, worktree, base string) (string, error) {
+func (c *CLI) Diff(ctx context.Context, repoRoot, worktree, base string) (text, revision string, err error) {
 	tree, err := c.snapshot(ctx, repoRoot, worktree, true)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	// Both sides are objects now, so the diff runs in the main copy and never reads the worktree.
 	r := c.run(ctx, call{dir: repoRoot, sanitized: true, args: []string{
@@ -377,9 +378,14 @@ func (c *CLI) Diff(ctx context.Context, repoRoot, worktree, base string) (string
 		"-U3", base, tree, "--",
 	}})
 	if r.err != nil {
-		return "", r.failure(diffCmd)
+		return "", "", r.failure(diffCmd)
 	}
-	return r.stdout, nil
+	return r.stdout, tree, nil
+}
+
+// Revision implements ports.Git: the tree the diff would be read from.
+func (c *CLI) Revision(ctx context.Context, repoRoot, worktree string) (string, error) {
+	return c.snapshot(ctx, repoRoot, worktree, true)
 }
 
 // Squash implements ports.Git. The main copy is clean when it is called (the engine checks), so

@@ -261,18 +261,20 @@ func TestWorktreeDiffHasStableHunks_REQ_WT_003(t *testing.T) {
 	f.write(w.Path, "a.txt", "one\nTWO\nthree\n")
 	f.write(w.Path, "new/b.txt", "brand new\n")
 
-	first, err := f.svc.Diff(t.Context(), w.ID)
+	firstDiff, err := f.svc.Diff(t.Context(), w.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	first := firstDiff.Files
 	if len(first) != 2 || first[0].Path != "a.txt" || first[1].Path != "new/b.txt" || first[1].Status != "added" {
 		t.Fatalf("diff %+v, want a.txt modified and new/b.txt added", first)
 	}
 	if len(first[0].Hunks) != 1 || !strings.Contains(strings.Join(first[0].Hunks[0].Lines, "\n"), "+TWO") {
 		t.Fatalf("a.txt's hunk %+v", first[0].Hunks)
 	}
-	again, err := f.svc.Diff(t.Context(), w.ID)
-	if err != nil || again[0].Hunks[0].ID != first[0].Hunks[0].ID || again[1].Hunks[0].ID != first[1].Hunks[0].ID {
+	againDiff, err := f.svc.Diff(t.Context(), w.ID)
+	again := againDiff.Files
+	if err != nil || againDiff.Revision != firstDiff.Revision || again[0].Hunks[0].ID != first[0].Hunks[0].ID || again[1].Hunks[0].ID != first[1].Hunks[0].ID {
 		t.Errorf("the ids changed between two diffs of the same tree: %v", err)
 	}
 	// Reading the diff staged nothing in the worktree.
@@ -707,15 +709,71 @@ func TestWorktreeDiffReadsPathsWhateverTheConfig_REQ_WT_003(t *testing.T) {
 	w := f.create("thr_a")
 	f.write(w.Path, "a.txt", "changed\n")
 	f.write(w.Path, `we"ird b.txt`, "new\n")
-	files, err := f.svc.Diff(t.Context(), w.ID)
+	diff, err := f.svc.Diff(t.Context(), w.ID)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
-	paths := make([]string, 0, len(files))
-	for _, d := range files {
+	paths := make([]string, 0, len(diff.Files))
+	for _, d := range diff.Files {
 		paths = append(paths, d.Path)
 	}
 	if strings.Join(paths, "|") != `a.txt|we"ird b.txt` {
 		t.Errorf("paths %q", paths)
+	}
+}
+
+// TestShowingARedirectedWorktreeRunsNoFilter_REQ_WT_003: the filter drivers turned off while a
+// worktree is shown are read from the configuration the command uses — the main repository's,
+// through the pinned git directory — not from whatever the worktree's own `.git` names.
+func TestShowingARedirectedWorktreeRunsNoFilter_REQ_WT_003(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	f.git(f.repo, "config", "filter.x.clean", "touch "+marker+"; cat")
+	w := f.create("thr_a")
+	empty := filepath.Join(t.TempDir(), "empty.git")
+	f.git(f.repo, "init", "-q", "--bare", empty)
+	f.write(w.Path, ".gitattributes", "* filter=x\n")
+	f.write(w.Path, "a.txt", "agent's change\n")
+	f.write(w.Path, ".git", "gitdir: "+empty+"\n")
+	if _, err := f.svc.Diff(t.Context(), w.ID); err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("showing the worktree ran the main repository's filter driver")
+	}
+}
+
+// TestAMergeRefusesAWorktreeChangedSinceItsReview_REQ_WT_004: a merge that names the revision
+// of the diff it reviewed is refused `changed`, landing nothing, when the worktree no longer
+// holds that revision; the same revision merges.
+func TestAMergeRefusesAWorktreeChangedSinceItsReview_REQ_WT_004(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	w := f.create("thr_a")
+	f.write(w.Path, "a.txt", "reviewed\n")
+	reviewed, err := f.svc.Diff(t.Context(), w.ID)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	f.write(w.Path, "a.txt", "changed after the review\n")
+	main := f.state(f.repo)
+	_, err = f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID, Revision: reviewed.Revision})
+	wantRefusal(t, err, domain.ReasonChanged)
+	if f.state(f.repo) != main {
+		t.Error("the main copy was changed")
+	}
+	again, err := f.svc.Diff(t.Context(), w.ID)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if again.Revision == reviewed.Revision {
+		t.Fatal("two different worktree contents have one revision")
+	}
+	if _, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID, Revision: again.Revision}); err != nil {
+		t.Fatalf("Merge of the reviewed revision: %v", err)
+	}
+	if f.read(f.repo, "a.txt") != "changed after the review\n" {
+		t.Error("the reviewed revision did not land")
 	}
 }

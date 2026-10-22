@@ -36,13 +36,15 @@
 4. **A worktree that changed nothing merges without a commit.** The result's `commit` is empty and
    the row is `merged`. The same holds when the origin branch already carries exactly the
    worktree's change, so nothing is staged after the cherry-pick.
-5. **Four refusal reasons the PRD does not name.** T-F2-03 writes them into API §8:
+5. **Five refusal reasons the PRD does not name.** T-F2-03 writes them into API §8:
    - `no_commit` (`VALIDATION_ERROR`): the repository has no commit, so there is no `HEAD` to
      start from;
    - `exists` (`CONFLICT`): the thread already has an active worktree;
    - `not_active` (`CONFLICT`): the worktree is merged, discarded or missing;
    - `bad_thread` (`VALIDATION_ERROR`): the thread id is not `thr_` followed by letters and
-     digits, so it cannot name a branch and a directory.
+     digits, so it cannot name a branch and a directory;
+   - `changed` (`CONFLICT`): the merge named a reviewed revision the worktree no longer holds
+     (decision 19).
 6. **A hunk's id does not depend on its position.**
    - It is the first 16 hex digits of the SHA-256 of the file's path, the hunk's lines and its
      occurrence among identical hunks of the file. Its line numbers are left out.
@@ -83,6 +85,10 @@
     - Every command that reads the worktree runs with `GIT_DIR` and `GIT_WORK_TREE` pinned to
       the main repository's own record of it, `<common dir>/worktrees/<name>/gitdir`.
     - The diff of the snapshot runs in the main copy.
+    - The filter drivers the read path turns off are listed from the configuration the command
+      will use, read with the same pinned environment. Listing them from the worktree's own
+      `.git` would miss the main repository's drivers, which would then run on the agent's
+      files. `TestShowingARedirectedWorktreeRunsNoFilter_REQ_WT_003` is the test.
     - Removal deletes the recorded directory itself and then runs `git worktree prune`, instead
       of `git worktree remove`, which reads that file. Prune also drops any other stale record
       of the repository, as `git gc` would.
@@ -103,6 +109,15 @@
     retry.
 18. **A version check that could not run git is not remembered.** Only a supported version or an
     `old_git` refusal is kept for the life of the daemon.
+19. **A merge can require the revision that was reviewed.**
+    - The diff answers with a `revision`, the tree its content was read as.
+    - A merge that passes it is refused `changed`, landing nothing, if the worktree no longer
+      holds that content. The agent writes in its worktree, and could otherwise slip work in
+      between the review and the merge.
+    - A merge without a revision lands what the worktree holds then, as before.
+    - T-F2-03 carries `revision` on `worktree.diff` and `worktree.merge`, has `umb worktree
+      merge` pass the revision it showed, and refuses a merge while the thread's turn is running.
+    - `TestAMergeRefusesAWorktreeChangedSinceItsReview_REQ_WT_004` is the test.
 
 ## Folded into
 

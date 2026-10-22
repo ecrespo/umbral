@@ -135,7 +135,7 @@ func TestRefusalsAreValidationOrConflict_REQ_WT_004(t *testing.T) {
 	for reason, conflict := range map[Reason]bool{
 		ReasonNotGit: false, ReasonBare: false, ReasonOldGit: false, ReasonNoCommit: false, ReasonConfirmRequired: false, ReasonBadThread: false,
 		ReasonDirty: true, ReasonOtherBranch: true, ReasonDetached: true, ReasonConflict: true,
-		ReasonCommitFailed: true, ReasonNotActive: true, ReasonExists: true,
+		ReasonCommitFailed: true, ReasonNotActive: true, ReasonExists: true, ReasonChanged: true,
 	} {
 		r := &Refusal{Reason: reason}
 		if r.Conflict() != conflict {

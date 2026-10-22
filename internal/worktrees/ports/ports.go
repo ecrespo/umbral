@@ -47,7 +47,10 @@ type Git interface {
 	// Diff is the unified diff from base to the worktree's working tree, untracked files
 	// included, read without running anything the repository's configuration names. The
 	// worktree is read through the main repository's record of it, never its own `.git` file.
-	Diff(ctx context.Context, repoRoot, worktree, base string) (string, error)
+	// revision names the worktree's content as shown: the tree it was read as.
+	Diff(ctx context.Context, repoRoot, worktree, base string) (text, revision string, err error)
+	// Revision is the worktree's content as Diff would show it now, without the diff.
+	Revision(ctx context.Context, repoRoot, worktree string) (string, error)
 	// Squash applies everything the worktree changed since base onto repoRoot's HEAD as one
 	// commit with message, running the repository's hooks and signing, the commit bounded by
 	// timeout. It returns the new commit, or "" when the worktree changed nothing. A conflict

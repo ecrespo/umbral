@@ -110,6 +110,7 @@ const (
 	ReasonCommitFailed Reason = "commit_failed"
 	ReasonNotActive    Reason = "not_active" // merged, discarded or missing: nothing to act on
 	ReasonExists       Reason = "exists"     // the thread already has an active worktree
+	ReasonChanged      Reason = "changed"    // the worktree no longer holds the revision reviewed
 )
 
 // MaxOutputBytes is how much of git's error output a commit_failed refusal carries.

@@ -198,23 +198,35 @@ func (s *Service) active(ctx context.Context, id string) (domain.Worktree, error
 	return w, nil
 }
 
+// DiffResult is a worktree's changes and the revision they were read from.
+type DiffResult struct {
+	Files []domain.FileDiff
+	// Revision names the content shown. A merge that passes it lands exactly that content or
+	// nothing (MergeRequest.Revision).
+	Revision string
+}
+
 // Diff is the worktree's changes since its base, split into files and hunks (REQ-WT-003).
-func (s *Service) Diff(ctx context.Context, id string) ([]domain.FileDiff, error) {
+func (s *Service) Diff(ctx context.Context, id string) (DiffResult, error) {
 	w, err := s.active(ctx, id)
 	if err != nil {
-		return nil, err
+		return DiffResult{}, err
 	}
-	text, err := s.o.Git.Diff(ctx, w.RepoRoot, w.Path, w.BaseCommit)
+	text, revision, err := s.o.Git.Diff(ctx, w.RepoRoot, w.Path, w.BaseCommit)
 	if err != nil {
-		return nil, err
+		return DiffResult{}, err
 	}
-	return domain.ParseUnifiedDiff(text), nil
+	return DiffResult{Files: domain.ParseUnifiedDiff(text), Revision: revision}, nil
 }
 
 // MergeRequest is `worktree.merge`.
 type MergeRequest struct {
 	ID      string
 	Message string // the generated one when empty
+	// Revision, when set, is the DiffResult.Revision the user reviewed: the merge is refused
+	// `changed` if the worktree no longer holds it, so the agent cannot slip in work after the
+	// review.
+	Revision string
 }
 
 // MergeResult is what a merge made.
@@ -248,6 +260,15 @@ func (s *Service) Merge(ctx context.Context, req MergeRequest) (MergeResult, err
 		return MergeResult{}, err
 	} else if dirty {
 		return MergeResult{}, &domain.Refusal{Reason: domain.ReasonDirty, Detail: w.RepoRoot}
+	}
+	if req.Revision != "" {
+		now, err := s.o.Git.Revision(ctx, w.RepoRoot, w.Path)
+		if err != nil {
+			return MergeResult{}, err
+		}
+		if now != req.Revision {
+			return MergeResult{}, &domain.Refusal{Reason: domain.ReasonChanged, Detail: "the worktree changed after the diff that was reviewed"}
+		}
 	}
 	msg := req.Message
 	if msg == "" {

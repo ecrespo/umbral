@@ -118,8 +118,10 @@ has shown what the shared pieces look like.
   - methods `worktree.create`, `list`, `get`, `diff`, `merge`, `discard` and `close_group`;
   - `thread.create` takes `worktree: true` and `workspace`;
   - a thread with a worktree uses it as cwd and write root;
-  - `CONFLICT`'s `data.reason` and `data.paths` (API §8), with the four reasons of delta
+  - `CONFLICT`'s `data.reason` and `data.paths` (API §8), with the five reasons of delta
     `2026-10-worktree-engine` decision 5;
+  - `revision` on `worktree.diff` and `worktree.merge`, passed by `umb worktree merge`, and a
+    merge refused while the thread's turn runs (the same delta, decision 19);
   - the engine wired in `cmd/umbrald`: `CheckAll` at start (REQ-WT-006) and
     `[worktrees] commit_timeout`;
   - `umb worktree list|diff|merge|discard`;
@@ -435,8 +437,8 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 |---|---|---|
 | REQ-WT-001 | T-F2-01, T-F2-02, T-F2-03 | `TestWorktreeCreateIsOutsideTheRepo_REQ_WT_001`, `TestMigration0007Constraints_REQ_WT_001`, `TestRetentionKeepsAThreadWithAWorktree_REQ_WT_001`, `TestRepoIDIsSixteenHexOfTheCommonDir_REQ_WT_001`, `TestWorktreeRowsRoundTrip_REQ_WT_001`, `TestAFailedCreateLeavesNothing_REQ_WT_001`, `TestThreadIDsThatCanNameAPath_REQ_WT_001` |
 | REQ-WT-002 | T-F2-03 | `TestAThreadWritesOnlyInItsWorktree_REQ_WT_002` |
-| REQ-WT-003 | T-F2-02 | `TestWorktreeDiffHasStableHunks_REQ_WT_003`, `TestParseUnifiedDiffSplitsFilesAndHunks_REQ_WT_003`, `TestHunkIDsAreStable_REQ_WT_003`, `TestWorktreeDiffReadsPathsWhateverTheConfig_REQ_WT_003`, `TestQuotedDiffPathsAreUnquoted_REQ_WT_003` |
-| REQ-WT-004 | T-F2-02 | `TestWorktreeMergeSquashesIntoTheOriginBranch_REQ_WT_004`, `TestWorktreeMergeRefusesADirtyCopy_REQ_WT_004`, `TestWorktreeMergeRefusesAnotherBranch_REQ_WT_004`, `TestWorktreeMergeRefusesADetachedHead_REQ_WT_004`, `TestWorktreeMergeConflictLeavesBothSides_REQ_WT_004`, `TestARejectedCommitLeavesBothSides_REQ_WT_004`, `TestRefusalsAreValidationOrConflict_REQ_WT_004`, `TestWorktreeCommitTimeoutIsConfigurable_REQ_WT_004`, `TestAMergeNeverOverwritesAnIgnoredFile_REQ_WT_004`, `TestASlowPostCommitHookStillLands_REQ_WT_004`, `TestAMergeOfWorkAlreadyOnTheBranchIsEmpty_REQ_WT_004`, `TestARedirectedWorktreeGitDirIsNotFollowed_REQ_WT_004` |
+| REQ-WT-003 | T-F2-02 | `TestWorktreeDiffHasStableHunks_REQ_WT_003`, `TestParseUnifiedDiffSplitsFilesAndHunks_REQ_WT_003`, `TestHunkIDsAreStable_REQ_WT_003`, `TestWorktreeDiffReadsPathsWhateverTheConfig_REQ_WT_003`, `TestQuotedDiffPathsAreUnquoted_REQ_WT_003`, `TestShowingARedirectedWorktreeRunsNoFilter_REQ_WT_003` |
+| REQ-WT-004 | T-F2-02 | `TestWorktreeMergeSquashesIntoTheOriginBranch_REQ_WT_004`, `TestWorktreeMergeRefusesADirtyCopy_REQ_WT_004`, `TestWorktreeMergeRefusesAnotherBranch_REQ_WT_004`, `TestWorktreeMergeRefusesADetachedHead_REQ_WT_004`, `TestWorktreeMergeConflictLeavesBothSides_REQ_WT_004`, `TestARejectedCommitLeavesBothSides_REQ_WT_004`, `TestRefusalsAreValidationOrConflict_REQ_WT_004`, `TestWorktreeCommitTimeoutIsConfigurable_REQ_WT_004`, `TestAMergeNeverOverwritesAnIgnoredFile_REQ_WT_004`, `TestASlowPostCommitHookStillLands_REQ_WT_004`, `TestAMergeOfWorkAlreadyOnTheBranchIsEmpty_REQ_WT_004`, `TestARedirectedWorktreeGitDirIsNotFollowed_REQ_WT_004`, `TestAMergeRefusesAWorktreeChangedSinceItsReview_REQ_WT_004` |
 | REQ-WT-005 | T-F2-02 | `TestWorktreeDiscardNeedsConfirm_REQ_WT_005` |
 | REQ-WT-006 | T-F2-02 | `TestAMissingWorktreeIsMarked_REQ_WT_006` |
 | REQ-WT-007 | T-F2-03 | `TestCloseGroupNeverDropsAnUnmergedChange_REQ_WT_007`, `TestCloseGroupReportsAMissingWorktree_REQ_WT_007` |
