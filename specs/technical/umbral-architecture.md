@@ -1534,5 +1534,5 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.51 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-skill-catalog` (T-F1-36): §3.2's `tools` row gains `skill_load`; §5.3's built-in destructive list gains `umb skill install|enable|remove` and `umb mcp add`; §5.3b gains `skill_load` and the per-turn catalog; the pending note keeps only §9.4's `umb mcp` |
 | 1.52 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-umb-mcp-panel` (T-F1-37): §9.4 writes `umb mcp` — always untrusted, `--env` references taken out before flag parsing, the command after `--`, the list format; §5.3e gains the extensions view; the pending-from-F1 note is closed |
 | 1.53 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-duplicate-models`: §5.1's discovery stores one row per id, a provider's first entry for an id it lists twice |
-| 1.55 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-agent-pty-settle` (T-HRD-03, proposed): §5.3b says how a cancelled command's shell is settled before the agent's next command. 1.54 is delta `2026-10-cli-thread-wait`'s |
+| 1.55 | 2026-10-22 | E. Crespo (assisted draft) | Ratifies delta `2026-10-agent-pty-settle` (T-HRD-03): §5.3b says how a cancelled command's shell is settled before the agent's next command. 1.54 is delta `2026-10-cli-thread-wait`'s |
 

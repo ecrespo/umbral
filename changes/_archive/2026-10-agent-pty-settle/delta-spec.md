@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-10-22 — awaits the Tech Lead's ratification` |
+| **Status** | `RATIFIED 2026-10-22 by the Tech Lead ("Ratifico los deltas"); folded into Tech 1.55 §5.3b` |
 | **Date** | 2026-10-22 |
 | **Task** | T-HRD-03 (the AGT_007 flake), raised by F1's closing work |
 | **Raised by** | `TestACancelBeforeTheCommandStartsStillStopsIt_REQ_AGT_007` failing now and then on macOS and Ubuntu (CI run 39181065284): `echo still-here` ran as `cho still-here` |
