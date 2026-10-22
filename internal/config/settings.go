@@ -51,7 +51,20 @@ type Settings struct {
 	// Stall is `[waits]`: how long a running turn may go without activity before it is
 	// marked stalled (REQ-AUT-008). Read at start.
 	Stall Stall
+	// WorktreeCommitTimeoutS is `[worktrees] commit_timeout`: how long a worktree merge's
+	// commit — hooks and signing included — may run before it is killed and refused as
+	// `commit_failed` (REQ-WT-004). Read at start.
+	WorktreeCommitTimeoutS int
 }
+
+// DefaultWorktreeCommitTimeoutS is REQ-WT-004's default, in seconds.
+const DefaultWorktreeCommitTimeoutS = 60
+
+// The bounds of `[worktrees] commit_timeout`, in seconds.
+const (
+	MinWorktreeCommitTimeoutS = 5
+	MaxWorktreeCommitTimeoutS = 3600
+)
 
 // Stall is the stall windows, in seconds (delta `2026-10-wait-monitoring`, decision 8).
 type Stall struct {
@@ -134,7 +147,7 @@ func SettingsPath() (string, error) {
 func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 	settings := Settings{
 		MaxMessageBytes: DefaultMaxMessageBytes, Retention: DefaultRetention(), NotificationsEnabled: true,
-		RulesURL: DefaultRulesURL, Stall: DefaultStall(),
+		RulesURL: DefaultRulesURL, Stall: DefaultStall(), WorktreeCommitTimeoutS: DefaultWorktreeCommitTimeoutS,
 	}
 
 	raw, err := os.ReadFile(path) // #nosec G304 -- the path is the daemon's own config location
@@ -221,6 +234,13 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 			} else {
 				settings.Stall.RemoteS = secs
 			}
+		case "worktrees.commit_timeout":
+			secs, err := strconv.Atoi(value)
+			if err != nil || secs < MinWorktreeCommitTimeoutS || secs > MaxWorktreeCommitTimeoutS {
+				return Settings{}, fmt.Errorf("%w: %s: %s is %q, want whole seconds from %d to %d",
+					ErrSettingsInvalid, path, key, value, MinWorktreeCommitTimeoutS, MaxWorktreeCommitTimeoutS)
+			}
+			settings.WorktreeCommitTimeoutS = secs
 		case apiSection + "." + maxMessageKey:
 			n, err := parseMaxMessageBytes(value)
 			if err != nil {

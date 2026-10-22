@@ -69,6 +69,10 @@ components:
   # The notification sink (T-F1-27): normalization, rate limit, typed reasons.
   notify-service: { in: internal/notify }
 
+  # The worktree engine (T-F2-02): it orders the git operations and owns the rows' states over
+  # its own two ports, a store and a git.
+  worktrees-service: { in: internal/worktrees }
+
   # policy.explain (T-F1-28): it gathers a thread's mode, write root and rules through a
   # port of its own and asks the pure engine, so it belongs in neither domain nor adapters.
   security-service: { in: internal/security }
@@ -84,6 +88,9 @@ components:
 
   # The same exception for the integration surface, whose tests run over the real tree.
   integrations-integration: { in: internal/integrations/integration }
+
+  # The worktree engine's tests drive a real git through the real adapter (T-F2-02).
+  worktrees-integration: { in: internal/worktrees/integration }
 
   # --- cross-cutting modules (no hexagonal split) -----------------------------
   bus:    { in: internal/bus }
@@ -132,6 +139,9 @@ components:
   mcp-adapters: { in: internal/mcp/adapters/** }
 
   waits-domain: { in: internal/waits/domain }
+  worktrees-domain:   { in: internal/worktrees/domain }
+  worktrees-ports:    { in: internal/worktrees/ports }
+  worktrees-adapters: { in: internal/worktrees/adapters/** }
   waits-ports:  { in: internal/waits/ports }
 
   integrations-domain:   { in: internal/integrations/domain }
@@ -647,6 +657,41 @@ deps:
       - sessions-ports
       - sessions-domain
       - bus
+
+  # --- the worktree engine (Tech Design §5.2, T-F2-02) -------------------------
+  # `worktrees` -> its own ports and domain; its adapters reach the git binary and `store`.
+  # It imports no other module: a thread reaches its worktree through the agents runtime, which
+  # `cmd` wires (T-F2-03). The domain's allowance is unused, as workspaces-domain's is.
+  worktrees-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+
+  worktrees-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - worktrees-domain
+
+  worktrees-adapters:
+    anyVendorDeps: false
+    mayDependOn:
+      - worktrees-ports
+      - worktrees-domain
+      - store
+
+  worktrees-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - worktrees-ports
+      - worktrees-domain
+
+  worktrees-integration:
+    anyVendorDeps: false
+    mayDependOn:
+      - worktrees-service
+      - worktrees-ports
+      - worktrees-domain
+      - worktrees-adapters
 
   # --- the integration surface (Tech Design §5.2, T-F1-25) --------------------
   # `integrations` -> ports of `workspaces` and `store`, plus `bus`; never `agents` or `api`.

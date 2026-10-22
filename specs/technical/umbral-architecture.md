@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.55 |
+| **Version** | 1.56 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -120,6 +120,7 @@ flowchart LR
 | `waits` | server-owned, event-driven | pinned waits on threads and output | AUT-* |
 | `integrations` | socket + env | external state reports, display metadata, authority | INT-* |
 | `notify` | client channel | normalization, rate limit, typed reasons | NTF-* |
+| `worktrees` | the `git` CLI ≥ 2.34 + SQLite | a thread's worktree outside the repository: create, diff with stable hunk ids, squash merge, discard, missing detection | WT-* (F2) |
 | `obs` | OpenTelemetry Go, `log/slog` | traces, metrics | OBS-* |
 
 ### 3.3 Main flow: US-003 scenario ("fix it")
@@ -622,6 +623,12 @@ for a turn whose model or class has a local candidate, `stall_remote_s` (30) for
 A value out of range stops the daemon naming the key. Not live: a change needs a restart
 (delta `2026-10-wait-monitoring`).
 
+`[worktrees] commit_timeout` bounds a worktree merge's commit in whole seconds, 5 to 3600 (60).
+It covers the repository's hooks and signing. When it passes, the commit's whole process
+group is killed and the merge is refused `commit_failed` (REQ-WT-004). A value out of range
+stops the daemon naming the key. Not live: a change needs a restart (delta
+`2026-10-worktree-engine`).
+
 `[otel] endpoint` (unset by default) exports traces and metrics over OTLP/HTTP (REQ-OBS-003).
 - **Local only.** It must be an `http://` or `https://` base URL, with no path, query,
   fragment or credentials, whose host is `localhost` or a loopback address. Anything else stops
@@ -744,6 +751,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `waits` | `ports` and `domain` of `agents` and `sessions`, plus `bus`; never `api`. It reads the store only through the agents runtime, and its own domain reuses the sessions domain's escape-sequence stripper (delta `2026-10-wait-engine`) |
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api`. The tree resolves a pane's state in DD-012's order (`workspaces/domain.ResolveAttention`); `integrations` writes the external reports and announces every change. It hears the changes it did not make — blocks, integration verdicts, exits, thread attention — through events `cmd/umbrald` subscribes it to, and re-reads the whole tree on each (delta `2026-10-integration-surface`). Display metadata is written by `integrations` and read by the tree into a `Pane`'s `metadata`, never on the state path: `ResolveAttention`, the rollup, waits and notifications do not read it, and a written report is announced as `pane.updated` only (delta `2026-10-display-metadata`) |
 | `notify` | `bus` and stdlib only; it is a sink and imports no other module. `api` implements its `Deliverer` port — the foreground client of API §5.35 — and is handed to it by `cmd/umbrald` once the server exists; `cmd/umbrald` adapts `integrations`' `Notifier` port to it for an external `blocked`. Both modules deliver outside their locks, and `api` through a per-connection queue, so a client that stops reading stalls no source (delta `2026-10-notifications`) |
+| `worktrees` | its own `ports` and `domain`; its adapters run the `git` binary and use `store`. It imports no other module: the agents runtime reaches a thread's worktree through what `cmd/umbrald` wires (T-F2-03). Reading a worktree to show it runs with fsmonitor, filter drivers, external diff and textconv off. Landing it runs as the user's `git commit` would — hooks and signing included — in a session with no terminal, killed whole at `[worktrees] commit_timeout` (delta `2026-10-worktree-engine`) |
 | `security` | stdlib, `go-keyring` in its adapter, `bus` in its ports (to name `rules.update_rejected`) and the root `llmgw/domain` (for the egress record a rejection writes). Its root holds policy.explain, which reads a thread's mode, directory and rules through its own `ExplainSource` port and asks the same pure `Decide` a turn uses; `cmd/umbrald` adapts the agent thread store to that port and hands both the runtime and the explainer one `isRepo`, so an explanation and a turn agree about the write root (delta `2026-10-policy-explain`). Its root also holds the `Rules` manager of signed bundles (DD-016), which reaches storage through its own `RuleStore` port and replaces the active set's base through `RuleBase`. `tools/rulesign` depends on `security/domain` only (delta `2026-10-signed-rule-bundles`) |
 | `context` | its own `ports` and `domain`, `store` and `bus` in its adapters, and `bus` in its ports, to name `skill.changed` (delta `2026-10-skill-store`) |
 | `mcp` | its own `ports` and `domain`, plus `bus`. `tools/adapters` may use `mcp/domain`, for `mcptools`, which offers a server's tools; `api` the `ports` and `domain` of `mcp`; only `cmd/*` wires the manager to the registry (delta `2026-10-mcp-client`) |
@@ -1558,4 +1566,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.53 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-duplicate-models`: §5.1's discovery stores one row per id, a provider's first entry for an id it lists twice |
 | 1.54 | 2026-10-22 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cli-thread-wait` (T-F1-38): §9.4 adds `umb thread` |
 | 1.55 | 2026-10-22 | E. Crespo (assisted draft) | Ratifies delta `2026-10-agent-pty-settle` (T-HRD-03): §5.3b says how a cancelled command's shell is settled before the agent's next command. 1.54 is delta `2026-10-cli-thread-wait`'s |
-
+| 1.56 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-worktree-engine` (T-F2-02): §3.2 and §5.2 add `worktrees`; §5.1 adds `[worktrees] commit_timeout` |

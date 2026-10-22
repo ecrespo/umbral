@@ -263,3 +263,28 @@ func TestRuleUpdatesAreOffUnlessAsked_REQ_SEC_011(t *testing.T) {
 		}
 	}
 }
+
+// TestWorktreeCommitTimeoutIsConfigurable_REQ_WT_004: `[worktrees] commit_timeout` bounds a
+// merge's commit in whole seconds from 5 to 3600, 60 by default; a value outside the range
+// stops the daemon naming the key.
+func TestWorktreeCommitTimeoutIsConfigurable_REQ_WT_004(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, write(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.WorktreeCommitTimeoutS != 60 {
+		t.Fatalf("default commit_timeout %d, want 60", settings.WorktreeCommitTimeoutS)
+	}
+	settings, err = LoadSettings(nil, write(t, "[worktrees]\ncommit_timeout = 300\n"))
+	if err != nil || settings.WorktreeCommitTimeoutS != 300 {
+		t.Fatalf("commit_timeout = 300: %d, %v", settings.WorktreeCommitTimeoutS, err)
+	}
+	for _, bad := range []string{"commit_timeout = 4", "commit_timeout = 3601", "commit_timeout = 60s"} {
+		_, err := LoadSettings(nil, write(t, "[worktrees]\n"+bad+"\n"))
+		if !errors.Is(err, ErrSettingsInvalid) || !strings.Contains(err.Error(), "worktrees.commit_timeout") {
+			t.Errorf("%q: %v, want ErrSettingsInvalid naming worktrees.commit_timeout", bad, err)
+		}
+	}
+}

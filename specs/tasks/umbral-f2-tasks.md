@@ -72,7 +72,7 @@ has shown what the shared pieces look like.
   - `python3 tools/sdd_check.py` runs the new DDL;
   - `task ci` is green.
 
-### [ ] T-F2-02 · Worktree engine
+### [x] 2026-10-22 T-F2-02 · Worktree engine
 - **What:**
   - the `internal/worktrees` module (`domain` / `ports` / `adapters`) over the `git` CLI, with
     `.go-arch-lint.yml` rules and architecture §9's tree updated;
@@ -107,14 +107,23 @@ has shown what the shared pieces look like.
   - `TestAMissingWorktreeIsMarked_REQ_WT_006`;
   - `TestWorktreeRefusesANonGitDirectory_REQ_WT_008`;
   - `TestWorktreeRefusesABareRepo_REQ_WT_008`;
-  - `TestWorktreeRefusesAnOldGit_REQ_WT_008`.
+  - `TestWorktreeRefusesAnOldGit_REQ_WT_008`;
+  - also `TestParseUnifiedDiffSplitsFilesAndHunks_REQ_WT_003`, `TestHunkIDsAreStable_REQ_WT_003`,
+    `TestRepoIDIsSixteenHexOfTheCommonDir_REQ_WT_001`, `TestGitVersionFloor_REQ_WT_008`,
+    `TestRefusalsAreValidationOrConflict_REQ_WT_004`, `TestWorktreeRowsRoundTrip_REQ_WT_001` and
+    `TestWorktreeCommitTimeoutIsConfigurable_REQ_WT_004` (delta `2026-10-worktree-engine`).
 
 ### [ ] T-F2-03 · `worktree.*` methods, threads in their worktree, `umb worktree`
 - **What:**
   - methods `worktree.create`, `list`, `get`, `diff`, `merge`, `discard` and `close_group`;
   - `thread.create` takes `worktree: true` and `workspace`;
   - a thread with a worktree uses it as cwd and write root;
-  - `CONFLICT`'s `data.reason` and `data.paths` (API §8);
+  - `CONFLICT`'s `data.reason` and `data.paths` (API §8), with the five reasons of delta
+    `2026-10-worktree-engine` decision 5;
+  - `revision` on `worktree.diff` and `worktree.merge`, passed by `umb worktree merge`, and a
+    merge refused while the thread's turn runs (the same delta, decision 19);
+  - the engine wired in `cmd/umbrald`: `CheckAll` at start (REQ-WT-006) and
+    `[worktrees] commit_timeout`;
   - `umb worktree list|diff|merge|discard`;
   - the `worktrees` capability, served (API §9).
 - **REQ:** REQ-WT-002, REQ-WT-007 (and the wire of WT-001, 003, 004 and 005)
@@ -426,14 +435,14 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 
 | REQ | Tasks | Verification |
 |---|---|---|
-| REQ-WT-001 | T-F2-01, T-F2-02, T-F2-03 | `TestWorktreeCreateIsOutsideTheRepo_REQ_WT_001`, `TestMigration0007Constraints_REQ_WT_001`, `TestRetentionKeepsAThreadWithAWorktree_REQ_WT_001` |
+| REQ-WT-001 | T-F2-01, T-F2-02, T-F2-03 | `TestWorktreeCreateIsOutsideTheRepo_REQ_WT_001`, `TestMigration0007Constraints_REQ_WT_001`, `TestRetentionKeepsAThreadWithAWorktree_REQ_WT_001`, `TestRepoIDIsSixteenHexOfTheCommonDir_REQ_WT_001`, `TestWorktreeRowsRoundTrip_REQ_WT_001`, `TestAFailedCreateLeavesNothing_REQ_WT_001`, `TestThreadIDsThatCanNameAPath_REQ_WT_001` |
 | REQ-WT-002 | T-F2-03 | `TestAThreadWritesOnlyInItsWorktree_REQ_WT_002` |
-| REQ-WT-003 | T-F2-02 | `TestWorktreeDiffHasStableHunks_REQ_WT_003` |
-| REQ-WT-004 | T-F2-02 | `TestWorktreeMergeSquashesIntoTheOriginBranch_REQ_WT_004`, `TestWorktreeMergeRefusesADirtyCopy_REQ_WT_004`, `TestWorktreeMergeRefusesAnotherBranch_REQ_WT_004`, `TestWorktreeMergeRefusesADetachedHead_REQ_WT_004`, `TestWorktreeMergeConflictLeavesBothSides_REQ_WT_004`, `TestARejectedCommitLeavesBothSides_REQ_WT_004` |
+| REQ-WT-003 | T-F2-02 | `TestWorktreeDiffHasStableHunks_REQ_WT_003`, `TestParseUnifiedDiffSplitsFilesAndHunks_REQ_WT_003`, `TestHunkIDsAreStable_REQ_WT_003`, `TestWorktreeDiffReadsPathsWhateverTheConfig_REQ_WT_003`, `TestQuotedDiffPathsAreUnquoted_REQ_WT_003`, `TestShowingARedirectedWorktreeRunsNoFilter_REQ_WT_003` |
+| REQ-WT-004 | T-F2-02 | `TestWorktreeMergeSquashesIntoTheOriginBranch_REQ_WT_004`, `TestWorktreeMergeRefusesADirtyCopy_REQ_WT_004`, `TestWorktreeMergeRefusesAnotherBranch_REQ_WT_004`, `TestWorktreeMergeRefusesADetachedHead_REQ_WT_004`, `TestWorktreeMergeConflictLeavesBothSides_REQ_WT_004`, `TestARejectedCommitLeavesBothSides_REQ_WT_004`, `TestRefusalsAreValidationOrConflict_REQ_WT_004`, `TestWorktreeCommitTimeoutIsConfigurable_REQ_WT_004`, `TestAMergeNeverOverwritesAnIgnoredFile_REQ_WT_004`, `TestASlowPostCommitHookStillLands_REQ_WT_004`, `TestAMergeOfWorkAlreadyOnTheBranchIsEmpty_REQ_WT_004`, `TestARedirectedWorktreeGitDirIsNotFollowed_REQ_WT_004`, `TestAMergeRefusesAWorktreeChangedSinceItsReview_REQ_WT_004`, `TestAReviewedRevisionMergesThroughTheUsersFilter_REQ_WT_004`, `TestAnIgnoredAttributesFileCannotReshapeAReviewedMerge_REQ_WT_004` |
 | REQ-WT-005 | T-F2-02 | `TestWorktreeDiscardNeedsConfirm_REQ_WT_005` |
 | REQ-WT-006 | T-F2-02 | `TestAMissingWorktreeIsMarked_REQ_WT_006` |
 | REQ-WT-007 | T-F2-03 | `TestCloseGroupNeverDropsAnUnmergedChange_REQ_WT_007`, `TestCloseGroupReportsAMissingWorktree_REQ_WT_007` |
-| REQ-WT-008 | T-F2-02 | `TestWorktreeRefusesANonGitDirectory_REQ_WT_008`, `TestWorktreeRefusesABareRepo_REQ_WT_008`, `TestWorktreeRefusesAnOldGit_REQ_WT_008` |
+| REQ-WT-008 | T-F2-02 | `TestWorktreeRefusesANonGitDirectory_REQ_WT_008`, `TestWorktreeRefusesABareRepo_REQ_WT_008`, `TestWorktreeRefusesAnOldGit_REQ_WT_008`, `TestGitVersionFloor_REQ_WT_008` |
 | REQ-ORC-001 | T-F2-04 | `TestThreeThreadsRunConcurrently_REQ_ORC_001` |
 | REQ-ORC-002 | T-F2-01, T-F2-04 | `TestAFourthTurnIsQueued_REQ_ORC_002`, `TestASecondSendToAQueuedThreadConflicts_REQ_ORC_002`, `TestCancellingAQueuedTurnDropsIt_REQ_ORC_002`, `TestAQueuedTurnIsRecoveredStopped_REQ_ORC_002` |
 | REQ-ORC-003 | T-F2-01, T-F2-06 | `TestAgentPanelListsEveryThread_REQ_ORC_003` |
@@ -489,4 +498,5 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | 2026-10-22 | — | revised | spec-guardian verify pass on PRD F2 0.3: FIX FIRST (N-01…N-10). Applied in PRD F2 0.4 and here: `tool_calls.decision`, the merge's `commit_failed`, the ACP manifest's isolation and project-config refusal, and a named test for every clause the pass found untested. |
 | 2026-10-22 | — | ratified | The Tech Lead ratified PRD F2 0.4, this file and constitution 1.3 (PR #32), and allowed per-task F2 deltas to be approved by the implementing agent. |
 | 2026-10-22 | T-F2-01 | done | Migration `0007_orchestration` adds `worktrees` and the F2 columns by `ALTER`, each with its `CHECK`: SQLite accepts one in `ADD COLUMN`, which corrects Data Model §2.5. Recovery stops a queued turn. Mutations removing a `CHECK` or adding a cascade to `worktrees.thread_id` turn the tests red. Delta `2026-10-orchestration-schema`, approved under the standing instruction. |
+| 2026-10-22 | T-F2-02 | done | `internal/worktrees` with `gitcli` and `sqlstore` adapters, and `[worktrees] commit_timeout`. The squash snapshots the worktree through a private index, then runs `cherry-pick --no-commit` and `commit` in the clean main copy, and rolls back with `reset --hard`. git 2.34 has no `merge-tree --write-tree`. Mutations that drop the rollback, the dirty check or the commit timeout turn the tests red. The signing-prompt case is killed at 2 s, not at the 30 s it would sleep. Delta `2026-10-worktree-engine`. |
 | — | — | — | — |
