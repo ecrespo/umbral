@@ -5,10 +5,10 @@
 | Field | Value |
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
-| **Status** | `PROPOSED` — Q-F2-01…05 and the Analyze decisions on Art. 4, Art. 5 and `full-auto` taken by the Tech Lead on 2026-10-22; the document awaits ratification; nothing below is implemented |
+| **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`; nothing below is implemented yet |
 | **Version** | 0.4 |
 | **Date** | 2026-10-22 |
-| **Reviewers** | pending |
+| **Reviewers** | spec-guardian (Analyze and two verify passes); Tech Lead, ratified 2026-10-22 |
 | **Source** | `docs/ARCHITECTURE.md` §5.4–5.8 and §10 (F2 ADE row); `specs/prd/umbral-mvp.md` §5.2–5.3; Plan 1.14 §4 |
 | **Builds on** | PRD MVP 1.21, API 1.41, Tech 1.55, Data Model 1.23, constitution 1.3 |
 

@@ -1,7 +1,7 @@
 # Tasks — Umbral F2 (the agentic development environment)
 
-> Source specs: `specs/prd/umbral-f2.md` (0.3) · `specs/api/umbral-daemon-api-v1.md` · `specs/technical/umbral-architecture.md` · `specs/data-model/umbral-schema.md` · `specs/plans/umbral-mvp-plan.md`
-> Plan phase covered: F2 · Generated: 2026-10-22 · Status: **PROPOSED**, awaiting ratification with PRD F2 0.3
+> Source specs: `specs/prd/umbral-f2.md` (0.4) · `specs/api/umbral-daemon-api-v1.md` · `specs/technical/umbral-architecture.md` · `specs/data-model/umbral-schema.md` · `specs/plans/umbral-mvp-plan.md`
+> Plan phase covered: F2 · Generated: 2026-10-22 · Status: **RATIFIED** 2026-10-22 with PRD F2 0.4 (PR #32); per-task deltas may be approved by the implementing agent under the Tech Lead's standing F2 instruction
 
 ## Conventions for this file
 
@@ -485,4 +485,5 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | 2026-10-22 | — | proposed | PRD F2 0.2 and this file drafted. The Tech Lead decided Q-F2-01…04 the same day. |
 | 2026-10-22 | T-F2-00 | done | OpenCode 1.18.33 over ACP with `coder/acp-go-sdk` v0.13.5, against `gpt-oss:20b` (`docs/spikes/2026-10-acp-opencode.md`). With default permissions OpenCode asks the client nothing: it writes files and runs commands itself. With `ask` every write and command arrives as `session/request_permission`, with path, diff or command, and writes come through `fs/write_text_file`; commands still run in its own shell. Reads are never mediated. Cancel ends the turn `cancelled` in about 0.4 s. That evidence and the Analyze pass (22 findings, FIX FIRST) reshaped PRD F2 to 0.3. |
 | 2026-10-22 | — | revised | spec-guardian verify pass on PRD F2 0.3: FIX FIRST (N-01…N-10). Applied in PRD F2 0.4 and here: `tool_calls.decision`, the merge's `commit_failed`, the ACP manifest's isolation and project-config refusal, and a named test for every clause the pass found untested. |
+| 2026-10-22 | — | ratified | The Tech Lead ratified PRD F2 0.4, this file and constitution 1.3 (PR #32), and allowed per-task F2 deltas to be approved by the implementing agent. |
 | — | — | — | — |

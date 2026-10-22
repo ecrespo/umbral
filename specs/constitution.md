@@ -1,6 +1,6 @@
 # Constitution — Umbral
 
-> Version 1.3 · Ratified: pending (proposed 2026-09-11) · Last amendment: 2026-10-22 (Art. 4, stack)
+> Version 1.3 · Ratified: 2026-10-22 (proposed 2026-09-11; 1.3 ratified with PR #32) · Last amendment: 2026-10-22 (Art. 4, stack)
 > Scope: the `umbral` repository (daemon `umbrald`, clients `umbral-tui`, `umbral-desktop`, CLI `umb`)
 > SDD rigor level: **spec-anchored** — `specs/` is the current truth; changes enter through `changes/`.
 

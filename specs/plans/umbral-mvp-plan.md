@@ -214,9 +214,9 @@ questions the ratified F1 deltas left open) and T-HRD-03 (three known defects).
   `2026-09-defer-tui-week`) so the week is spent on the TUI that ships. Release 0.1 does not
   ship without it.
 
-### Phase F2: the agentic development environment — **proposed 2026-10-22**
+### Phase F2: the agentic development environment — **ratified 2026-10-22**
 
-**PRD:** `specs/prd/umbral-f2.md` (0.3, proposed). T-F2-00, the ACP spike, is done. **Tasks:** `specs/tasks/umbral-f2-tasks.md`.
+**PRD:** `specs/prd/umbral-f2.md` (0.4, ratified 2026-10-22). T-F2-00, the ACP spike, is done. **Tasks:** `specs/tasks/umbral-f2-tasks.md`.
 **Goal:** three agents in parallel on one repository, one of them external through ACP, each in its
 own worktree, without interference and with a trace per turn — offline with local models.
 
