@@ -35,10 +35,12 @@ type RouterConfig struct {
 	Logger *slog.Logger
 	// FirstTokenRemote and FirstTokenLocal override the REQ-LLM-003 timeouts; zero keeps them.
 	FirstTokenRemote, FirstTokenLocal time.Duration
+	// Policy orders the candidates and sets the breakers (REQ-RTR-002, REQ-RTR-003).
+	Policy Policy
 }
 
-// Router walks a task class's candidates (DD-004): offline filter, capability filter, health,
-// then declared order, falling back on 429, 5xx, a transport failure or a first token that
+// Router walks a task class's candidates (DD-004): offline filter, health, capability filter and
+// circuit breakers, then the policy's order, falling back on 429, 5xx, a transport failure or a first token that
 // does not arrive (REQ-LLM-003). Every call is recorded in usage (REQ-LLM-005), the request is
 // redacted before any candidate sees it (REQ-SEC-001), and the call's context names its
 // thread for the egress log (REQ-SEC-002).
@@ -47,8 +49,11 @@ type Router struct {
 	cfg     RouterConfig
 	now     func() time.Time
 
+	breakers *breakers
+
 	mu      sync.RWMutex
 	classes map[string][]string
+	policy  Policy
 }
 
 // Call is one routed model call: Model, a catalog id, is the only candidate when set — a
@@ -86,7 +91,10 @@ func NewRouter(catalog *Catalog, cfg RouterConfig) (*Router, error) {
 		cfg.FirstTokenLocal = FirstTokenTimeoutLocal
 	}
 	r := &Router{catalog: catalog, cfg: cfg, now: time.Now}
+	// Through r.now, read at each call, so a test's clock reaches the breakers too.
+	r.breakers = newBreakers(func() time.Time { return r.now() })
 	r.Configure(cfg.Classes)
+	r.SetPolicy(cfg.Policy)
 	return r, nil
 }
 
@@ -195,52 +203,6 @@ func (r *Router) Window(ctx context.Context, class, model string) int64 {
 	return smallest
 }
 
-// candidates applies DD-004's filters to the class, keeping the declared order. The offline
-// filter is the catalog's: offline, a remote provider is not callable and its models are down.
-func (r *Router) candidates(ctx context.Context, call Call) ([]candidate, error) {
-	ids, err := r.candidateIDs(call.Class, call.Model)
-	if err != nil {
-		return nil, err
-	}
-	listed, err := r.catalog.List(ctx, false)
-	if err != nil {
-		return nil, err
-	}
-	models := make(map[string]domain.Model, len(listed))
-	for _, m := range listed {
-		models[m.ID] = m
-	}
-	need := estimateTokens(call.Request)
-	out := make([]candidate, 0, len(ids))
-	for _, id := range ids {
-		m, ok := models[id]
-		if !ok || m.Health == domain.HealthDown {
-			continue
-		}
-		p, ok := r.catalog.Provider(m.Provider)
-		if !ok || !capable(m.Caps, call.Request, need) {
-			continue
-		}
-		out = append(out, candidate{model: m, provider: p})
-	}
-	return out, nil
-}
-
-// capable is the capability filter: tools, structured output, reasoning and the window.
-func capable(caps domain.Capabilities, req domain.Request, need int64) bool {
-	switch {
-	case len(req.Tools) > 0 && !caps.Tools:
-		return false
-	case req.ResponseSchema != nil && !caps.JSONSchema:
-		return false
-	case req.Reasoning != "" && req.Reasoning != "off" && !caps.Reasoning:
-		return false
-	case caps.ContextWindow > 0 && need > caps.ContextWindow:
-		return false
-	}
-	return true
-}
-
 // estimateTokens is a deliberately rough count — four characters a token — for the window
 // filter only; what a call consumed is the provider's own count.
 func estimateTokens(req domain.Request) int64 {
@@ -318,9 +280,15 @@ func (r *Router) redactValue(v any) any {
 // one; after it, the failure ends the call. When every candidate fails the stream ends with
 // ErrNoCandidate.
 func (r *Router) Stream(ctx context.Context, call Call) (iter.Seq2[domain.Event, error], error) {
-	cands, err := r.candidates(ctx, call)
+	plan, err := r.plan(ctx, RouteQuery{Class: call.Class, Model: call.Model, Needs: NeedsOf(call.Request)})
 	if err != nil {
 		return nil, err
+	}
+	var cands []candidate
+	for _, p := range plan {
+		if p.Kept {
+			cands = append(cands, p.candidate)
+		}
 	}
 	if len(cands) == 0 {
 		return nil, fmt.Errorf("%w: class %q, model %q", domain.ErrNoCandidate, call.Class, call.Model)
@@ -330,7 +298,13 @@ func (r *Router) Stream(ctx context.Context, call Call) (iter.Seq2[domain.Event,
 	return func(yield func(domain.Event, error) bool) {
 		var errs []error
 		for _, c := range cands {
-			finished, err := r.attempt(ctx, call, c, req, yield)
+			// Another call may have opened the breaker, or taken its one probe, since the plan.
+			ok, probe := r.breakers.acquire(c.model.Provider)
+			if !ok {
+				errs = append(errs, fmt.Errorf("%s: %s", c.model.Provider, ReasonBreakerOpen))
+				continue
+			}
+			finished, err := r.attempt(ctx, call, c, req, probe, yield)
 			if finished {
 				return
 			}
@@ -347,8 +321,21 @@ type item struct {
 
 // attempt makes the call on one candidate. finished is true when the call is over — it
 // succeeded, or it failed in a way the next candidate cannot fix — and false with the reason
-// when the next candidate should be tried.
-func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain.Request, yield func(domain.Event, error) bool) (finished bool, _ error) {
+// when the next candidate should be tried. It reports to the provider's breaker as soon as it
+// knows, so a probe frees its slot at the first event rather than at the end of a long answer:
+// a first event is a success, a timeout or a retryable failure is a failure, and anything else
+// says nothing.
+func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain.Request, probe bool, yield func(domain.Event, error) bool) (finished bool, _ error) {
+	reported := false
+	settle := func(o outcome) {
+		if reported {
+			return
+		}
+		reported = true
+		r.breakerMoved(ctx, c.model.Provider, r.breakers.report(c.model.Provider, probe, o))
+	}
+	defer settle(outcomeNone)
+
 	start := r.now()
 	actx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -400,6 +387,7 @@ func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain
 		err := &domain.ProviderError{Provider: c.model.Provider, Err: fmt.Errorf("no first token within %v", timeout)}
 		rec.Status, rec.Error = domain.UsageTimeout, err.Error()
 		r.record(ctx, rec, start)
+		settle(outcomeFailure)
 		return false, err
 	case <-ctx.Done():
 		first = item{err: ctx.Err()}
@@ -409,8 +397,13 @@ func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain
 		first.err = &domain.ProviderError{Provider: c.model.Provider, Err: errors.New("the stream ended without an event")}
 	}
 	if first.err != nil {
-		return r.failedBeforeFirst(ctx, rec, start, first.err, yield)
+		finished, retried, err := r.failedBeforeFirst(ctx, rec, start, first.err, yield)
+		if retried {
+			settle(outcomeFailure)
+		}
+		return finished, err
 	}
+	settle(outcomeSuccess)
 
 	ms := r.now().Sub(start).Milliseconds()
 	rec.FirstTokenMS = &ms
@@ -457,10 +450,11 @@ func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain
 
 // failedBeforeFirst handles a failure before any event reached the caller: a request the
 // adapter cannot carry is skipped unrecorded; a retryable provider failure is recorded and
-// moves on; anything else is recorded and ends the call.
-func (r *Router) failedBeforeFirst(ctx context.Context, rec domain.UsageRecord, start time.Time, err error, yield func(domain.Event, error) bool) (bool, error) {
+// moves on; anything else is recorded and ends the call. retried says the failure was the
+// provider's, which its breaker counts.
+func (r *Router) failedBeforeFirst(ctx context.Context, rec domain.UsageRecord, start time.Time, err error, yield func(domain.Event, error) bool) (finished, retried bool, _ error) {
 	if errors.Is(err, domain.ErrUnsupported) {
-		return false, err
+		return false, false, err
 	}
 	rec.Status, rec.Error = domain.UsageError, err.Error()
 	var pe *domain.ProviderError
@@ -470,10 +464,10 @@ func (r *Router) failedBeforeFirst(ctx context.Context, rec domain.UsageRecord, 
 	}
 	r.record(ctx, rec, start)
 	if retry {
-		return false, err
+		return false, true, err
 	}
 	yield(domain.Event{}, err)
-	return true, nil
+	return true, false, nil
 }
 
 // record writes one usage row and traces the call. It uses a context the caller's
@@ -486,5 +480,18 @@ func (r *Router) record(ctx context.Context, rec domain.UsageRecord, start time.
 		r.cfg.Logger.WarnContext(ctx, "a model call could not be recorded in usage",
 			slog.String("thread", rec.ThreadID), slog.String("turn", rec.TurnID),
 			slog.String("model", rec.ModelID), slog.String("status", rec.Status), slog.Any("error", err))
+	}
+}
+
+// breakerMoved logs a breaker opening or closing, so a user whose turns skip a provider, or fail
+// for a pinned model behind an open breaker, can see why.
+func (r *Router) breakerMoved(ctx context.Context, provider string, t transition) {
+	switch t {
+	case opened:
+		r.cfg.Logger.WarnContext(ctx, "a provider's circuit breaker opened; it is skipped until a probe succeeds",
+			slog.String("provider", provider))
+	case closed:
+		r.cfg.Logger.InfoContext(ctx, "a provider's circuit breaker closed after a successful probe",
+			slog.String("provider", provider))
 	}
 }

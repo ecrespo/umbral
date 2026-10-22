@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.42 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.43 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -126,7 +126,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove`, `agent.explain` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove`, `agent.explain`, `model.route` |
 
 ### Handshake
 
@@ -748,7 +748,7 @@ credential is never contacted, not even to list models (REQ-SEC-008), and neithe
 provider while `router.offline = true` (REQ-LLM-004). Every discovery request to a host that is not
 loopback is recorded in `egress_log` before it is sent, like a model call (REQ-SEC-002). A provider
 that was never discovered has no models to list. Open to `umb` (§2). A daemon with no gateway
-answers `NOT_IMPLEMENTED`.
+answers `NOT_IMPLEMENTED`. How the router would order a class is `model.route` (§5.40).
 
 ### 5.27 `mcp.server.list` / `mcp.server.add` / `mcp.server.remove` — REQ-MCP-001, REQ-MCP-002
 `mcp.server.list` params: `{}`. **Result:** `{items: McpServer[]}`, by name, each with its live
@@ -1165,6 +1165,48 @@ Open to `tui`, `desktop` and `cli` (§2), under the `agent_detection` capability
   key or the line and never quotes a value from the file.
 - Errors: no `pane_id` is `VALIDATION_ERROR`; an unknown pane `NOT_FOUND`.
 
+### 5.40 `model.route` — REQ-RTR-001, REQ-RTR-002, REQ-RTR-003
+Every client kind may call it (§2), under the `models` capability. It sends nothing to any
+provider and takes no breaker's probe.
+
+**Params:** `{class?, model?, tools?, vision?, json_schema?, reasoning?, input_tokens?}` — exactly
+one of `class` (`fast`, `code`, `plan` or `embed`) and `model` (a catalog id, as a thread pins
+one), and the request's shape: what it needs from a model, and `input_tokens`, the estimated prompt
+plus response reserve (0 needs no particular window). **Result:**
+```json
+{"class":"code","policy":"local-first","candidates":[
+ {"model_id":"ollama/gpt-oss:20b","rank":1,"kept":true,"reason":"eligible","provider":"ollama",
+  "local":true,"health":"ok","price_in_micro_usd_per_mtok":0,"price_out_micro_usd_per_mtok":0,
+  "context_window":32768,"declared_index":1},
+ {"model_id":"or/moonshotai/kimi-k2","rank":null,"kept":false,"reason":"breaker_open","provider":"or",
+  "local":false,"health":"ok","price_in_micro_usd_per_mtok":600000,"price_out_micro_usd_per_mtok":2500000,
+  "context_window":131072,"declared_index":0}]}
+```
+- The result echoes `class`, or `model` for a pinned one. The kept candidates come first, ranked
+  from 1 in the order a call of that shape would try them now; the dropped ones follow,
+  `rank: null`, in declared order. A `not_in_catalog` candidate has `provider` and `health` empty,
+  `local: false`, and zero prices and window. `declared_index` is the
+  candidate's place in the class as `models.toml` writes it.
+- `reason` is `eligible` for a kept candidate, and for a dropped one the first filter that
+  dropped it, in this order: `not_in_catalog`; `down` (any health `down`, offline included, or a
+  provider that may not be called); `no_tools`, `no_vision`, `no_json_schema`, `no_reasoning`,
+  `window_too_small` (REQ-RTR-001); `breaker_open` (REQ-RTR-002).
+- `policy` is `[router] policy` (REQ-RTR-003). `local-first` puts local candidates before remote
+  ones; `cost` orders by input plus output price, a local model costing nothing and a remote one
+  with no published price after every priced one; `quality` keeps the declared order. Ties keep
+  the declared order. A pinned `model` is never reordered.
+- A breaker opens after `[router] breaker_failures` consecutive failed calls to its provider — a
+  429, a 5xx, a transport failure or a first token that does not arrive; a 4xx, an unsupported
+  request or a cancel does not count — and stays open `breaker_cooldown` seconds. Then one call
+  probes it: a first event closes it at once, a failure opens it for another cooldown. Until the
+  probe's first event or failure the provider reads `breaker_open`. While a breaker is open only
+  the probe counts: a call that started before it opened moves it neither way. Each opening and
+  closing is logged with the provider. Breakers live in the daemon's memory. A thread pinned to
+  a model behind an open breaker has no other candidate, so its call is `PROVIDER_UNAVAILABLE`
+  until the probe succeeds.
+- A class `models.toml` does not declare answers no candidates. An unknown class name, both
+  `class` and `model` or neither, or a negative `input_tokens` is `VALIDATION_ERROR`.
+
 ## 6. Notifications (daemon → client)
 
 | Method | Payload | REQ |
@@ -1388,3 +1430,4 @@ printf '%s\n' \
 | 1.40 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-09-cli-mcp` written by T-F1-37 (with delta `2026-10-umb-mcp-panel`): §2's `cli` row gains `mcp.server.list`, `add` and `remove`; §5.27 says so, that `umb mcp add` sends `trust: "untrusted"` and that the daemon refuses any other `trust` from a `cli` connection; the pending-from-F1 note is gone, every ratified F1 delta now being written |
 | 1.41 | 2026-10-22 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-cli-thread-wait` (T-F1-38): §2's `cli` row gains `thread.get` and `thread.wait`, and §5.23 and §5.29 say so |
 | 1.42 | 2026-10-22 | Additive within `protocol_version = 1`. Delta `2026-10-agent-detection` (T-F2-10): §4 `Pane` gains `detected_agent`; new §5.39 `agent.explain`; §2's `cli` row gains `agent.explain` and the capability list `agent_detection`; §6 `pane.updated` is also sent when a pane's detected agent changes; §9 lists the capability |
+| 1.43 | 2026-10-22 | Additive within `protocol_version = 1`. Delta `2026-10-policy-router` (T-F2-11): new §5.40 `model.route`, with each candidate's rank and reason, the policies and the breakers; §2's `cli` row gains `model.route` |

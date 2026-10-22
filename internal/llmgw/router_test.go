@@ -252,6 +252,9 @@ func TestFallbackOn429_REQ_LLM_003(t *testing.T) {
 		map[string][]string{"code": {"or/limited", "or/broken", "or/slow", "or/mute", "ollama/good"}},
 		[]*streamProvider{remote, local},
 		[]domain.Model{model("or", "limited"), model("or", "broken"), model("or", "slow"), model("or", "mute"), model("ollama", "good")})
+	// Four failures of one provider in a row would open its breaker at the third
+	// (REQ-RTR-002); this test is about the fallback walking every candidate.
+	r.router.SetPolicy(Policy{BreakerFailures: 10})
 
 	start := time.Now()
 	text, err := collect(t, r.router, hello("code"))

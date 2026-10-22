@@ -51,6 +51,12 @@ func (s *Server) registry() map[string]method {
 			handle: handleModelList, available: modelsWired,
 			params: listModelsParams{}, result: modelsResult{},
 		},
+		// How the router would order a class for a request's shape (API Spec §5.40); read-only,
+		// so `umb` may ask too.
+		"model.route": {
+			handle: handleModelRoute, available: routesWired,
+			params: ModelRouteParams{}, result: ModelRoute{},
+		},
 
 		// The frame limit's two narrow methods (REQ-OBS-005, REQ-CLI-007). Every client kind
 		// may call them, `umb` included: raising the limit is what its hint tells a user to do.

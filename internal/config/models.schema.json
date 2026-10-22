@@ -12,7 +12,9 @@
       "properties": {
         "policy": { "enum": ["local-first", "cost", "quality"] },
         "offline": { "type": "boolean" },
-        "max_cost_usd_per_thread": { "type": "number", "minimum": 0, "maximum": 1000000 }
+        "max_cost_usd_per_thread": { "type": "number", "minimum": 0, "maximum": 1000000 },
+        "breaker_failures": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "breaker_cooldown": { "type": "integer", "minimum": 1, "maximum": 3600 }
       }
     },
     "classes": {

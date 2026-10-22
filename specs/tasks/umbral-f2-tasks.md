@@ -324,7 +324,7 @@ has shown what the shared pieces look like.
     - `TestAgentExplainNamesTheRule_REQ_XAG_003`;
   - `task schema` is green.
 
-### [ ] T-F2-11 · Router: capabilities, circuit breakers, policy, `model.route`
+### [x] 2026-10-22 T-F2-11 · Router: capabilities, circuit breakers, policy, `model.route`
 - **What:**
   - a candidate lacking a capability the request needs is filtered out: tools, vision, or a large
     enough window;
@@ -339,6 +339,8 @@ has shown what the shared pieces look like.
   - `internal/api/models.go`
   - `specs/api/umbral-daemon-api-v1.md` (§5)
   - `specs/technical/umbral-architecture.md` (§5.1, the router)
+  - written as `internal/llmgw/policy.go` and `router.go`, `internal/config/models.go`,
+    `internal/api/models.go` and `cmd/umbrald/gateway.go`; API §5.40, delta `2026-10-policy-router`
 - **Depends on:** —
 - **Done:**
   - these tests are green:
@@ -464,8 +466,8 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | REQ-XAG-002 | T-F2-10 | `TestALocalManifestOverridesByName_REQ_XAG_002`, `TestAnInvalidManifestIsSkippedAndReported_REQ_XAG_002`, `TestManifestValidation_REQ_XAG_002`, `TestOverlayReplacesByName_REQ_XAG_002` |
 | REQ-XAG-003 | T-F2-10 | `TestAgentExplainNamesTheRule_REQ_XAG_003`, `TestDetectionIsDeterministic_REQ_XAG_003`, `TestAgentExplainOverTheWire_REQ_XAG_003`, `TestUmbAgentExplain_REQ_XAG_003` |
 | REQ-RTR-001 | T-F2-11 | `TestACandidateWithoutToolsIsDropped_REQ_RTR_001` |
-| REQ-RTR-002 | T-F2-11 | `TestABreakerOpensAndProbes_REQ_RTR_002` |
-| REQ-RTR-003 | T-F2-11 | `TestRouterPoliciesOrderTheCandidates_REQ_RTR_003`, `TestModelRouteExplainsTheOrder_REQ_RTR_003` |
+| REQ-RTR-002 | T-F2-11 | `TestABreakerOpensAndProbes_REQ_RTR_002`, `TestRouterBreakerKeys_REQ_RTR_002` |
+| REQ-RTR-003 | T-F2-11 | `TestRouterPoliciesOrderTheCandidates_REQ_RTR_003`, `TestModelRouteExplainsTheOrder_REQ_RTR_003`, `TestModelRouteOverTheWire_REQ_RTR_003` |
 | REQ-FTU-001 | T-F2-20, T-F2-23 | deferred: named when the slice starts |
 | REQ-FTU-002 | T-F2-20 | deferred: named when the slice starts |
 | REQ-FTU-003 | T-F2-20 | deferred: named when the slice starts |
@@ -503,4 +505,5 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | 2026-10-22 | T-F2-01 | done | Migration `0007_orchestration` adds `worktrees` and the F2 columns by `ALTER`, each with its `CHECK`: SQLite accepts one in `ADD COLUMN`, which corrects Data Model §2.5. Recovery stops a queued turn. Mutations removing a `CHECK` or adding a cascade to `worktrees.thread_id` turn the tests red. Delta `2026-10-orchestration-schema`, approved under the standing instruction. |
 | 2026-10-22 | T-F2-02 | done | `internal/worktrees` with `gitcli` and `sqlstore` adapters, and `[worktrees] commit_timeout`. The squash snapshots the worktree through a private index, then runs `cherry-pick --no-commit` and `commit` in the clean main copy, and rolls back with `reset --hard`. git 2.34 has no `merge-tree --write-tree`. Mutations that drop the rollback, the dirty check or the commit timeout turn the tests red. The signing-prompt case is killed at 2 s, not at the 30 s it would sleep. Delta `2026-10-worktree-engine`. |
 | 2026-10-22 | T-F2-10 | done | Built-in manifests for five agents, local TOML manifests read strictly and laid over them by name, and a scan every 2 s of each pane's process tree — its root included, so a pane launched with the agent is labelled — read once per scan from `/proc` or `sysctl`, that labels a pane and never sets its state. `agent.explain` and `umb agent explain` name the manifest, the rule, the pid and the executable's basename, never the argv. Verified against a real daemon: a pane running `exec -a opencode` was labelled within one scan, its state stayed `unknown`, and an invalid local file was logged and listed. A skip reason names the field, key or line and never quotes a value; quoting one, or leaving the root out of the tree, turns a test red. Spec-guardian's review added the root process, argv kept out of memory, and the bounded read. Delta `2026-10-agent-detection`. |
+| 2026-10-22 | T-F2-11 | done | The router drops candidates without tools, vision, structured output, reasoning or the window; skips a provider whose breaker is open; and orders what is left by `[router] policy`. `model.route` answers the same plan with each candidate's rank and reason, and sends nothing. Each of these mutations turns a test red: ignoring vision, local-first or the unpriced rule; never opening a breaker; skipping the cooldown; a failed probe counted as an ordinary failure; dropping the policy from the daemon's wiring; and, added after spec-guardian's review, two probes in flight at once, a late non-probe success closing an open breaker, success reported at the end of the answer instead of its first event, and dropped candidates in policy order. The F1 fallback test now raises the breaker threshold, because four failures of one provider in one call open it at the third. Delta `2026-10-policy-router`. |
 | — | — | — | — |
