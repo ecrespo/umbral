@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.53 |
+| **Version** | 1.55 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -883,7 +883,13 @@ with `run_command` from T-F1-10. Delta `2026-09-builtin-tools`:
   closes, with the exit code and the last 64 KiB of output, marked not persisted when the
   block's row could not be written. 120 s by default, 600 at most. Cancelling sends SIGTERM to
   the process group of every child of the shell and SIGINT to the shell, then SIGKILL 300 ms
-  later, returning within 500 ms with the shell alive (REQ-AGT-007).
+  later, returning within 500 ms with the shell alive (REQ-AGT-007). While the cancelled command
+  holds the PTY in silence, the shell is interrupted again every 100 ms. An interrupt that lands
+  after the command ended stays pending in bash and zsh and would drop the first byte of the
+  next line, so the agent's next command after an interrupt is typed after an empty line, which
+  runs nothing and opens no block; the bash integration disarms its DEBUG trap in its first
+  `PROMPT_COMMAND` hook, so no hook of the prompt is taken for a command (delta
+  `2026-10-agent-pty-settle`).
 - **Output is bounded**: `read_file` 256 KiB, `grep` 500 matches of 300 characters, `glob` and
   `list_dir` 1000 entries; searches skip `.git`, binary files and files over 4 MiB.
 
@@ -1528,4 +1534,5 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.51 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-skill-catalog` (T-F1-36): §3.2's `tools` row gains `skill_load`; §5.3's built-in destructive list gains `umb skill install|enable|remove` and `umb mcp add`; §5.3b gains `skill_load` and the per-turn catalog; the pending note keeps only §9.4's `umb mcp` |
 | 1.52 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-umb-mcp-panel` (T-F1-37): §9.4 writes `umb mcp` — always untrusted, `--env` references taken out before flag parsing, the command after `--`, the list format; §5.3e gains the extensions view; the pending-from-F1 note is closed |
 | 1.53 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-duplicate-models`: §5.1's discovery stores one row per id, a provider's first entry for an id it lists twice |
+| 1.55 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-agent-pty-settle` (T-HRD-03, proposed): §5.3b says how a cancelled command's shell is settled before the agent's next command. 1.54 is delta `2026-10-cli-thread-wait`'s |
 

@@ -519,11 +519,12 @@ func (s *Service) Shutdown() {
 
 	deadline := time.NewTimer(shutdownGrace)
 	defer deadline.Stop()
-	for _, l := range live {
+	for i, l := range live {
 		select {
 		case <-l.done:
 		case <-deadline.C:
-			s.cfg.Logger.Warn("shutdown: sessions still exiting", slog.Duration("waited", shutdownGrace))
+			s.cfg.Logger.Warn("shutdown: sessions still exiting",
+				slog.Int("sessions", len(live)-i), slog.Duration("waited", shutdownGrace))
 			return
 		}
 	}

@@ -120,10 +120,12 @@ Ollama 0.40 lists a model pulled for two backends twice under one name, with dif
 
 The thread's shell can keep an interrupt meant for a cancelled command and spend it on the next line, so the next agent command is typed after an empty line.
 
-[[internal/sessions/agent.go#Service#stopAgent]] interrupts the shell again while a cancelled command stays silent, and one interrupt can land after the command ended but before the daemon read the block's close. bash and zsh keep it pending and drop the first byte of the next line they parse: `echo still-here` ran as `cho still-here`. [[internal/sessions/agent.go#Service#signalRun]] marks the session interrupted, and [[internal/sessions/agent.go#Service#RunForThread]] then types an empty line before the command: the interrupt eats that byte, and an empty line opens no block, so the agent's claim still falls on the command. `Config.AgentInterruptEvery` lets a test interrupt every millisecond, which turns that race from rare into routine.
+[[internal/sessions/agent.go#Service#stopAgent]] interrupts the shell again while a cancelled command stays silent, and one interrupt can land after the command ended but before the daemon read the block's close. bash and zsh keep it pending and drop the first byte of the next line they parse: `echo still-here` ran as `cho still-here`. [[internal/sessions/agent.go#Service#signalRun]] marks the session interrupted, and [[internal/sessions/agent.go#Service#RunForThread]] then types an empty line before the command: the interrupt eats that byte, and the empty line runs nothing (delta `2026-10-agent-pty-settle`).
+
+The empty line opens no block only because [[shell/bash/umbral.bash]] disarms its DEBUG trap in `__umbral_save_status`, the first hook of `PROMPT_COMMAND`. Armed through the prompt, the trap took a user's own hook (Starship, direnv) for a command, and its phantom block took the agent's claim. [[internal/sessions/service.go#Config]]'s `AgentInterruptEvery` lets a test interrupt every millisecond, which turns the race from rare into routine.
 
 ## Shutdown records every exit before the store closes
 
-[[internal/sessions/service.go#Service#Shutdown]] hangs up every shell and waits, up to `shutdownGrace`, for each session's exit to be persisted.
+[[internal/sessions/service.go#Service#Shutdown]] hangs up every shell and waits, up to [[internal/sessions/service.go#shutdownGrace]] in all, for each session's exit to be persisted.
 
 It used to return at once, so `cmd/umbrald` closed the store while the sessions were still exiting and each logged `persist the session exit: sql: database is closed`. A shell that ignores the hang-up is left to recovery on the next start rather than holding the daemon's exit.
