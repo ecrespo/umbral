@@ -521,7 +521,9 @@ Practical rules:
 
 - **Parallel threads** with an attention panel (who is waiting for approval, who finished, who failed).
 - **Isolation**: every thread that writes works in its own `git worktree` under
-  `.umbral/worktrees/<thread>`; when it finishes it offers diff, merge or PR.
+  `$XDG_DATA_HOME/umbral/worktrees/<repo_id>/<thread>`, outside the repository (PRD F2 Q-F2-03; first
+  drafted here as `.umbral/worktrees/`); when it finishes it offers a diff and a squash merge, and a PR
+  in F3.
 - **Local triggers** (a local Oz): cron (`robfig/cron`), incoming HTTP webhooks (optional, with an
   HMAC secret), file changes (`fsnotify`), end of a CI job queried through the GitLab/GitHub MCP.
 - **Background execution** inside a Podman/Docker container with the repo mounted in a worktree,

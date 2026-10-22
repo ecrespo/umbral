@@ -206,7 +206,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-LLM-005** · MUST · ubiquitous — THE SYSTEM SHALL record, for every model call made to a provider, the input tokens, output tokens, time to first token and cost in micro-USD.
 - **REQ-LLM-006** · MUST · ubiquitous — THE SYSTEM SHALL send Ollama the model's configured `num_ctx` in every request.
 - **REQ-LLM-007** · SHOULD · ubiquitous — THE SYSTEM SHOULD include configuration presets for the Hugging Face router (`https://router.huggingface.co/v1`) and for a self-hosted OmniRoute instance.
-- **REQ-LLM-008** · COULD · ubiquitous — THE SYSTEM MAY run an embedded model through yzma for the `fast` class.
+- **REQ-LLM-008** · COULD · ubiquitous — THE SYSTEM MAY run an embedded model through yzma for the `fast` class. Superseded in F2 by REQ-LLM-009 (`specs/prd/umbral-f2.md`), a MUST for the `fast` class.
 
 ### 6.6 Security (SEC)
 
@@ -301,7 +301,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 
 Folded from `changes/_archive/2026-09-visual-identity/`. REQ-PKG-004, REQ-PKG-005, REQ-PKG-007
 and REQ-PKG-008 depend on the desktop client or on a release channel this MVP does not have, and
-live in `specs/prd/umbral-f2-desktop.md` (finding A-12); their IDs stay reserved here.
+live in `specs/prd/umbral-f2.md` §6.8 (finding A-12); their IDs stay reserved here.
 
 - **REQ-PKG-001** · MUST · ubiquitous — THE SYSTEM SHALL install its icon in the `hicolor` theme with the name `io.github.ecrespo.Umbral`, in `scalable/apps` (SVG) and as PNG at 16, 22, 24, 32, 48, 64, 128, 256 and 512 px, plus `symbolic/apps/io.github.ecrespo.Umbral-symbolic.svg`.
 - **REQ-PKG-002** · MUST · ubiquitous — THE SYSTEM SHALL install `io.github.ecrespo.Umbral.desktop` with `Icon=io.github.ecrespo.Umbral` and `StartupWMClass=io.github.ecrespo.Umbral`, and that file SHALL pass `desktop-file-validate` without errors.

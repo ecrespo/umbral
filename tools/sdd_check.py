@@ -16,11 +16,19 @@ REQ_REF = re.compile(r"REQ-[A-Z]+-\d{3}")
 ART_REF = re.compile(r"Art\. ?\d+")
 
 
+DUPLICATES = []
+
+
 def defined(paths):
     reqs = {}
     for p in paths:
+        src = p.relative_to(ROOT).as_posix()
         for rid, prio in REQ_DEF.findall(p.read_text(encoding="utf-8")):
-            reqs[rid] = (prio, p.relative_to(ROOT).as_posix())
+            if rid in reqs:
+                # Every PRD under specs/prd/ is read now, so one id defined twice would let the
+                # later file silently replace the earlier one's priority and wording.
+                DUPLICATES.append((rid, reqs[rid][1], src))
+            reqs[rid] = (prio, src)
     return reqs
 
 
@@ -48,7 +56,7 @@ def tasks(path):
 
 
 def main():
-    base = defined([ROOT / "specs/prd/umbral-mvp.md"])
+    base = defined(sorted((ROOT / "specs/prd").glob("*.md")))
     delta_files = sorted(p for p in (ROOT / "changes").glob("*/delta-spec.md") if "_archive" not in p.parts)
     delta = defined(delta_files)
     all_defined = {**base, **delta}
@@ -76,7 +84,13 @@ def main():
     for rid in sorted(set(cited) | set(matrix)):
         if rid not in all_defined:
             findings.append(("CRITICAL", f"{rid} cited but not defined (ghost REQ)", "tasks"))
+    for rid, first, second in DUPLICATES:
+        findings.append(("CRITICAL", f"{rid} defined twice ({first}, {second})", second))
     for rid, (_, tests) in sorted(matrix.items()):
+        if "deferred" in tests.lower() and all_defined.get(rid, ("",))[0] == "MUST":
+            # A MUST whose test is not named yet: acceptable while its slice has not started, and
+            # listed so it is named before that slice's first task closes.
+            findings.append(("LOW", f"{rid} (MUST): test deferred", "tasks"))
         suffix = rid.replace("-", "_")
         if rid.startswith("REQ-PKG"):
             continue  # packaging verifications are commands, not Go tests

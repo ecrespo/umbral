@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.14 |
+| **Version** | 1.15 |
 | **Date** | 2026-10-22 |
 | **PRD** | `specs/prd/umbral-mvp.md` |
 | **Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -214,12 +214,27 @@ questions the ratified F1 deltas left open) and T-HRD-03 (three known defects).
   `2026-09-defer-tui-week`) so the week is spent on the TUI that ships. Release 0.1 does not
   ship without it.
 
+### Phase F2: the agentic development environment — **proposed 2026-10-22**
+
+**PRD:** `specs/prd/umbral-f2.md` (0.3, proposed). T-F2-00, the ACP spike, is done. **Tasks:** `specs/tasks/umbral-f2-tasks.md`.
+**Goal:** three agents in parallel on one repository, one of them external through ACP, each in its
+own worktree, without interference and with a trace per turn — offline with local models.
+
+| Slice | Tasks | Closes when |
+|---|---|---|
+| F2a Orchestration | T-F2-00 … T-F2-12 | US-F2-001 passes — the phase's exit criterion |
+| F2b Agent in the terminal | T-F2-20 … T-F2-23 | US-F2-002 ≥ 70 %; Active AI offline only |
+| F2c Desktop | T-F2-30, T-F2-31, T-PKG-04, T-PKG-05 | the desktop QA walk with no failing step |
+| F2d Durability and remote | T-F2-40, T-F2-41 | an upgrade with live panes and a dropped remote link survive, measured |
+| F2e Windows | T-F2-50 | the CI gate green on `windows-latest` |
+| F2f Extensibility | T-F2-60, T-F2-61 | a plugin installed by digest adds an MCP server and a command |
+
+F2a goes first. The Hardening phase's release gates are independent of it and can close alongside.
+
 ## 4. Horizon (outside this plan)
 
 | Phase | Content | Artifacts it will require |
 |---|---|---|
-| F2 ADE | Wails v3 client, Full Terminal Use, Active AI + yzma, policy router, multi-thread worktrees, ACP client, durable SSH, Windows | F2 PRD + deltas on the API and Tech Design; REQ-PKG-004/005/007 and tasks T-PKG-04/05 are reserved for that PRD (finding A-12) |
-| F2 orchestration | Third-party agent detection (process + declarative manifests with local override and `umb agent explain`), worktrees as a daemon primitive with provenance and group close, plugins with a declarative manifest before WASM, pane graphics capability, live PTY handoff across daemon versions, multi-machine federation over SSH with independent reconnects | F2 PRD; the capability names are already reserved in API Spec §9 |
 | F3 | background agents, MCP/ACP server, WASM plugins, workflows/notebooks | F3 PRD |
 
 ## 5. Execution strategy with agents
@@ -261,3 +276,4 @@ questions the ratified F1 deltas left open) and T-HRD-03 (three known defects).
 | 1.12 | 2026-10-04 | E. Crespo (assisted draft) | T-F1-22 done (delta `2026-10-retention`) |
 | 1.13 | 2026-10-17 | E. Crespo (assisted draft) | T-F1-24 done (delta `2026-10-attention-focus`) |
 | 1.14 | 2026-10-22 | E. Crespo (assisted draft) | T-F1-25 … T-F1-38 done (T-F1-38, `umb thread`, from delta `2026-10-cli-thread-wait`, so criterion 4 is met by a script using `umb` alone); deltas `2026-10-cli-thread-wait` and `2026-10-agent-pty-settle` ratified on 2026-10-22; the nine deltas of T-F1-27 … T-F1-37 ratified; **F1 closed** on its five criteria (delta `2026-10-f1-close`), with T-F1-20's QA walk moved to `T-REL-02` and T-HRD-01 … 03 added to the Hardening phase |
+| 1.15 | 2026-10-22 | E. Crespo (assisted draft) | Phase F2 proposed: PRD F2 0.3 (`specs/prd/umbral-f2.md`, absorbing `umbral-f2-desktop.md`), six slices, `specs/tasks/umbral-f2-tasks.md`; the F2 rows leave §4's horizon |
