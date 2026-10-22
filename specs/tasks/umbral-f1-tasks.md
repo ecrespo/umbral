@@ -472,9 +472,10 @@ default CI.
   `specs/technical/umbral-architecture.md`
 - **Depends on:** T-F1-19, T-F1-23
 - **Delta:** `changes/2026-10-cli-thread-wait/`
-- **Done:** `TestThreadCommandsDriveAThread_REQ_CLI_009`, `TestThreadWaitTimeoutExitsOne_REQ_CLI_009`
-  and `TestThreadWaitAndGetServeTheCLI_REQ_CLI_009` green; F1 criterion 4 performed by
-  `e2e/f1close/criteria.sh` with `umb` alone, against a real daemon.
+- **Done:** `TestThreadCommandsDriveAThread_REQ_CLI_009`, `TestThreadWaitTimeoutExitsOne_REQ_CLI_009`,
+  `TestThreadGetPrintsEveryPage_REQ_CLI_009` and `TestThreadWaitAndGetServeTheCLI_REQ_CLI_009`
+  green. F1 criterion 4 is then performed with `umb thread` alone against a real daemon by
+  F1's closing measurement, which records it in the closing checkpoint.
 
 ## Traceability matrix (F1)
 
@@ -519,10 +520,10 @@ default CI.
 | REQ-TUI-003 | T-F1-20 | TestAttachBlock_REQ_TUI_003 |
 | REQ-OBS-001 | T-F1-18 | TestTurnTraceHasSpans_REQ_OBS_001; also TestTheRuntimeTracesEachTurn_REQ_OBS_001 (`internal/agents`), TestEveryModelCallIsTraced_REQ_OBS_001 (`internal/llmgw`) |
 | REQ-OBS-002 | T-F1-15, T-F1-18 | TestInvalidMetricIncrements_REQ_OBS_002; also TestToolCallsInvalidCountsPerModel_REQ_OBS_002 (`internal/obs`), TestTheRuntimeRequiresMetrics_REQ_OBS_002; the export through OTel: TestInvalidCallsExported_REQ_OBS_002 (T-F1-18, delta `2026-10-tool-call-repair`) |
-| REQ-AUT-001 | T-F1-23 | TestWaitPinsTurn_REQ_AUT_001; also TestAWaitOnAThreadAlreadyInATargetReturnsAtOnce_REQ_AUT_001, TestALaterTurnSeenFirstDoesNotAnswerForThePinnedOne_REQ_AUT_001, TestAReplacedTurnAnswersWithItsOwnEnd_REQ_AUT_001, TestSendWaitPinsItsTurnAndReturnsFinalState_REQ_AUT_001, TestSendWithWaitPinsItsOwnTurn_REQ_AUT_001, TestALaterTurnNeverSatisfiesThePinnedWait_REQ_AUT_001, TestAnEndedTurnThatCannotReachATargetSettles_REQ_AUT_001, TestAReplacementTurnDoesNotSatisfyThePinnedWait_REQ_AUT_001, TestTheTurnEndingSettlesTheWait_REQ_AUT_001, TestAnApprovalOfThePinnedTurnIsBlocked_REQ_AUT_001 |
+| REQ-AUT-001 | T-F1-23, T-F1-38 | TestWaitPinsTurn_REQ_AUT_001; also TestAWaitOnAThreadAlreadyInATargetReturnsAtOnce_REQ_AUT_001, TestALaterTurnSeenFirstDoesNotAnswerForThePinnedOne_REQ_AUT_001, TestAReplacedTurnAnswersWithItsOwnEnd_REQ_AUT_001, TestSendWaitPinsItsTurnAndReturnsFinalState_REQ_AUT_001, TestSendWithWaitPinsItsOwnTurn_REQ_AUT_001, TestALaterTurnNeverSatisfiesThePinnedWait_REQ_AUT_001, TestAnEndedTurnThatCannotReachATargetSettles_REQ_AUT_001, TestAReplacementTurnDoesNotSatisfyThePinnedWait_REQ_AUT_001, TestTheTurnEndingSettlesTheWait_REQ_AUT_001, TestAnApprovalOfThePinnedTurnIsBlocked_REQ_AUT_001 |
 | REQ-AUT-002 | T-F1-23 | TestSendWaitRejectsBlocked_REQ_AUT_002; also TestSendWithWaitOnABlockedThreadIsRefused_REQ_AUT_002, TestSendWaitRejectsBlockedOnTheWire_REQ_AUT_002 |
 | REQ-AUT-003 | T-F1-23 | TestWaitOutputMatchesLine_REQ_AUT_003; also TestFeedKeepsReadingPastTheStrippersCap_REQ_AUT_003, TestALineHalfOnScreenIsContinued_REQ_AUT_003, TestOutputAlreadyOnScreenMatches_REQ_AUT_003, TestOutputAfterTheStartMatches_REQ_AUT_003, TestAClosedBlockIsReadFromItsOutput_REQ_AUT_003, TestWaitOutputOnTheWire_REQ_AUT_003 |
-| REQ-AUT-004 | T-F1-23 | TestWaitTimeoutReportsLastState_REQ_AUT_004; also TestATimeoutCarriesTheLastState_REQ_AUT_004, TestAnOutputTimeoutReportsTheLastLine_REQ_AUT_004, TestAWaitTimeoutCarriesLastState_REQ_AUT_004 |
+| REQ-AUT-004 | T-F1-23, T-F1-38 | TestWaitTimeoutReportsLastState_REQ_AUT_004; also TestATimeoutCarriesTheLastState_REQ_AUT_004, TestAnOutputTimeoutReportsTheLastLine_REQ_AUT_004, TestAWaitTimeoutCarriesLastState_REQ_AUT_004 |
 | REQ-AGT-016 | T-F1-24 | TestDoneUntilFocused_REQ_AGT_016 |
 | REQ-AGT-017 | T-F1-24 | TestThreadsResumeAfterRestart_REQ_AGT_017 |
 | REQ-INT-001 | T-F1-25 | TestEnvInjectedAndAuthoritative_REQ_INT_001 |
@@ -562,7 +563,7 @@ default CI.
 | REQ-SKL-006 | T-F1-34 | TestARemoteSourceIsRefused_REQ_SKL_006 |
 | REQ-SKL-007 | T-F1-36 | TestASkillChangeReachesTheNextTurn_REQ_SKL_007 |
 | REQ-CLI-008 | T-F1-37 | TestMcpCommandsMirrorTheMethods_REQ_CLI_008, TestCliMayManageMcpServers_REQ_CLI_008, TestEnvIsTakenOutBeforeTheFlags_REQ_CLI_008 |
-| REQ-CLI-009 | T-F1-38 | TestThreadCommandsDriveAThread_REQ_CLI_009, TestThreadWaitTimeoutExitsOne_REQ_CLI_009, TestThreadWaitAndGetServeTheCLI_REQ_CLI_009 |
+| REQ-CLI-009 | T-F1-38 | TestThreadCommandsDriveAThread_REQ_CLI_009, TestThreadWaitTimeoutExitsOne_REQ_CLI_009, TestThreadGetPrintsEveryPage_REQ_CLI_009, TestThreadWaitAndGetServeTheCLI_REQ_CLI_009 |
 | REQ-TUI-004 | T-F1-37 | TestAgentPanelShowsServersAndSkills_REQ_TUI_004, TestTheExtensionsViewStaysInItsRows_REQ_TUI_004, TestToEventMapsTheExtensionsNotifications_REQ_TUI_004 |
 
 **SHOULD/COULD covered or deferred:**

@@ -110,7 +110,7 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 		}
 		method, params["thread_id"] = "thread."+sub, pos[0]
 		if sub == threadGet {
-			params["include_messages"] = true
+			params["include_messages"], params["limit"] = true, threadGetPage
 		}
 	default:
 		stderr.println(threadUsage)
@@ -126,7 +126,7 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 	defer cancel()
 
 	var result map[string]any
-	if err := c.Call(callCtx, method, params, &result); err != nil {
+	if err := callThread(callCtx, c, method, params, &result); err != nil {
 		var rpcErr *client.Error
 		if errors.As(err, &rpcErr) && rpcErr.DomainCode == "TIMEOUT" {
 			stderr.printf("umb thread %s: no target state within %s; the thread was last %s\n", sub, *timeout, rpcErr.LastState)
@@ -156,6 +156,36 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 	return exitOK
 }
 
+// threadGetPage is the largest page API §5.23 serves.
+const threadGetPage = 1000
+
+// callThread makes the call, and for `thread.get` follows `next_cursor` to the last page,
+// gathering every message into one result: pages run oldest first, so the first alone would
+// leave out the turn's answer on any thread longer than a page.
+func callThread(ctx context.Context, c *client.Client, method string, params map[string]any, result *map[string]any) error {
+	if err := c.Call(ctx, method, params, result); err != nil || method != "thread.get" {
+		return err
+	}
+	messages, _ := (*result)["messages"].([]any)
+	for {
+		cursor, _ := (*result)["next_cursor"].(string)
+		if cursor == "" {
+			break
+		}
+		params["cursor"] = cursor
+		var page map[string]any
+		if err := c.Call(ctx, method, params, &page); err != nil {
+			return err
+		}
+		more, _ := page["messages"].([]any)
+		messages = append(messages, more...)
+		(*result)["next_cursor"] = page["next_cursor"]
+	}
+	delete(*result, "next_cursor")
+	(*result)["messages"] = messages
+	return nil
+}
+
 // splitStates turns "done, blocked" into the list a wait takes; the daemon validates the names.
 func splitStates(s string) []string {
 	var out []string
@@ -169,7 +199,8 @@ func splitStates(s string) []string {
 
 // printThread is the human form of `thread.get`: the thread's id and state, then each message
 // with its role, oldest first, escaped as `umb skill show` escapes a body so model text cannot
-// drive the terminal.
+// drive the terminal, and with its extra lines indented so a line of model text cannot pass
+// for a message of its own. A script reads `--json`.
 func printThread(out *printer, result map[string]any) {
 	if thread, ok := result["thread"].(map[string]any); ok {
 		out.printf("%v  %v\n", thread["id"], thread["attention_state"])
@@ -179,6 +210,6 @@ func printThread(out *printer, result map[string]any) {
 		obj, _ := m.(map[string]any)
 		role, _ := obj["role"].(string)
 		content, _ := obj["content"].(string)
-		out.printf("%s: %s\n", printable(role), printableText(content))
+		out.printf("%s: %s\n", printable(role), strings.ReplaceAll(printableText(content), "\n", "\n  "))
 	}
 }

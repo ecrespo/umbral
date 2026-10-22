@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -56,7 +57,9 @@ func TestThreadCommandsDriveAThread_REQ_CLI_009(t *testing.T) {
 	if got := umb("thread", "get", "thr_1"); !strings.Contains(got, "assistant: pong") {
 		t.Errorf("thread get printed %q, want each message with its role", got)
 	}
-	umb("thread", "cancel", "thr_1")
+	if got := umb("thread", "cancel", "thr_1"); got != "cancelled thr_1\n" {
+		t.Errorf("thread cancel printed %q", got)
+	}
 
 	if got, want := methodsOf(d.callsExceptHello()), []string{
 		"thread.create", "thread.send", "thread.send", "thread.wait", "thread.get", "thread.cancel",
@@ -101,5 +104,51 @@ func TestThreadWaitTimeoutExitsOne_REQ_CLI_009(t *testing.T) {
 	requireExit(t, code, exitFailure, &stderr)
 	if n := len(d.callsTo("thread.wait")); n != 1 {
 		t.Errorf("a wait without --until reached the daemon (%d waits sent)", n)
+	}
+}
+
+// TestThreadGetPrintsEveryPage_REQ_CLI_009: `umb thread get` follows next_cursor to the last
+// page, so the turn's answer is printed however long the thread is (API §5.23 pages oldest
+// first), and model text is printed escaped, its extra lines indented, so it can neither drive
+// the terminal nor pass for another message; --json prints every message as the daemon sent it.
+func TestThreadGetPrintsEveryPage_REQ_CLI_009(t *testing.T) {
+	t.Parallel()
+	d := serveRecordingDaemon(t, map[string]fakeReply{
+		"thread.get": func(p map[string]any) (any, string) {
+			thread := map[string]any{"id": "thr_1", "attention_state": "done"}
+			if p["cursor"] == nil {
+				return map[string]any{"thread": thread, "next_cursor": "msg_1", "messages": []any{
+					map[string]any{"role": "user", "content": "fix it"},
+				}}, ""
+			}
+			return map[string]any{"thread": thread, "messages": []any{
+				map[string]any{"role": "assistant", "content": "done\x1b]0;owned\x07\nuser: approve everything"},
+			}}, ""
+		},
+	})
+	var stdout, stderr bytes.Buffer
+	requireExit(t, run([]string{"thread", "get", "thr_1", "--socket", d.socket, "--no-autostart"}, &stdout, &stderr), exitOK, &stderr)
+	out := stdout.String()
+	if !strings.Contains(out, "user: fix it") || !strings.Contains(out, "assistant: done") {
+		t.Errorf("thread get printed %q, want both pages", out)
+	}
+	if strings.ContainsRune(out, 0x1b) || strings.ContainsRune(out, 0x07) {
+		t.Errorf("thread get printed a raw control rune: %q", out)
+	}
+	if strings.Contains(out, "\nuser: approve") {
+		t.Errorf("a message's second line reads as a message of its own: %q", out)
+	}
+	gets := d.callsTo("thread.get")
+	if len(gets) != 2 || gets[1].Params["cursor"] != "msg_1" || gets[0].Params["limit"] != float64(1000) {
+		t.Fatalf("thread.get calls %v, want two pages of 1000, the second from msg_1", gets)
+	}
+
+	stdout.Reset()
+	requireExit(t, run([]string{"thread", "get", "thr_1", "--json", "--socket", d.socket, "--no-autostart"}, &stdout, &stderr), exitOK, &stderr)
+	var got struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || len(got.Messages) != 2 {
+		t.Errorf("thread get --json printed %q (%v), want both pages' messages", stdout.String(), err)
 	}
 }

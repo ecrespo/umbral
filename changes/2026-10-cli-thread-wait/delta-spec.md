@@ -19,7 +19,8 @@ is the only thread command, and it makes an ephemeral `ask` thread.
 
 **Measured, not read.** On 2026-10-22, against an isolated daemon built from the tree,
 `e2e/f1close/criteria.sh` met criterion 4 only because its client, `rpc.py`, says
-`client_kind: "tui"`:
+`client_kind: "tui"` (a local measuring script, `e2e/f1close/rpc.py`, which this task replaces
+with `umb thread` in `e2e/f1close/criteria.sh`):
 
 ```
 send+wait: turn trn_01M5HP2XVJKGTK56QXANKH6G9P final_state=done in 6.1s
@@ -54,8 +55,11 @@ every block, the agent's included.
 - `umb thread wait THREAD --until STATES [--timeout D]` prints the state the wait answered —
   which may be outside `--until`, as §5.29 allows; the script compares. `--until` is required and
   checked before connecting.
-- `umb thread get THREAD` prints the thread's id and attention state, then `role: content` per
-  message, oldest first, with control runes escaped as `umb skill show` does.
+- `umb thread get THREAD` follows `next_cursor` through pages of 1000, so a thread longer than one
+  page still shows the turn's answer, and prints the thread's id and attention state, then
+  `role: content` per message, oldest first, with control runes escaped as `umb skill show` does
+  and a message's extra lines indented, so model text cannot pass for another message. `--json`
+  holds every page's messages and is what a script parses.
 - `umb thread cancel THREAD` prints `cancelled THREAD`.
 - `STATES` is comma-separated (`done,blocked`). `--timeout` defaults to 10 minutes and the
   daemon validates its 1 s–1 h range (§8); the call itself is given that plus the usual 10 s.
@@ -72,7 +76,12 @@ every block, the agent's included.
 - **API** 1.41: §2's `cli` row adds `thread.wait` and `thread.get`; §5.23 and §5.29 replace
   "Interactive clients only" with what they now say. Additive within `protocol_version = 1`.
 - **Tech** 1.54 §9.4: `umb thread` in the command list, with the grammar of decision 3.
-- **Tasks:** T-F1-38 in `specs/tasks/umbral-f1-tasks.md`; REQ-CLI-009 in its matrix.
+- Positionals and flags interleave, as in every `umb` command; a word of `send`'s text that
+  starts with `-` goes after `--`.
+- **Tasks:** T-F1-38 in `specs/tasks/umbral-f1-tasks.md`; REQ-CLI-009 in its matrix, and T-F1-38
+  beside T-F1-23 for REQ-AUT-001 and REQ-AUT-004.
+- **Plan:** a T-F1-38 row in the F1 table, and criterion 4's record corrected, are written with
+  F1's closing paperwork (branch `chore/f1-close`), which already rewrites that table.
 
 ## Not modified
 

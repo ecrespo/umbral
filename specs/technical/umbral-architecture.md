@@ -1325,8 +1325,14 @@ is exit 1 before anything is read or sent. There is no `--json`: the output is t
   prints the turn id, or `<turn id> <final_state>` with `--wait`.
 - `umb thread wait THREAD --until STATES [--timeout D]` prints the state the wait answered, which
   may lie outside `--until` (API Spec §5.29); a missing `--until` is exit 1 before connecting.
-- `umb thread get THREAD` prints the thread's id and attention state, then `role: content` per
-  message, oldest first, control runes escaped; `umb thread cancel THREAD` prints `cancelled THREAD`.
+- `umb thread get THREAD` asks for pages of 1000 and follows `next_cursor` to the last, so the
+  turn's answer is there however long the thread is. It prints the thread's id and attention
+  state, then `role: content` per message, oldest first, with control runes escaped and a
+  message's extra lines indented by two spaces, so model text can neither drive the terminal nor
+  pass for a message of its own; a script reads `--json`, which holds every page's messages.
+  `umb thread cancel THREAD` prints `cancelled THREAD`.
+- Positionals and flags may be interleaved; a word of `send`'s text that starts with `-` goes
+  after `--`, as in `umb thread send thr_… -- --help me`.
 - `STATES` is comma-separated. `--timeout` defaults to 10 minutes; the daemon checks its range
   (API Spec §8), and the call is given that plus the usual 10 s.
 - `--json` prints the method's result. `TIMEOUT` is exit 1 naming `data.last_state`; every other

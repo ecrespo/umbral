@@ -144,9 +144,9 @@ func threadRig(t *testing.T) (*fakeThreads, *client, *bus.Bus) {
 	return svc, c, b
 }
 
-// TestUmbReachesOnlyCreateAndSend_REQ_API_001: §2's cli row gives `umb` thread.create,
+// TestUmbReachesTheThreadMethodsItDrives_REQ_API_001: §2's cli row gives `umb` thread.create,
 // thread.send, thread.cancel and thread.get; list, update and focus are the interactive clients'.
-func TestUmbReachesOnlyCreateAndSend_REQ_API_001(t *testing.T) {
+func TestUmbReachesTheThreadMethodsItDrives_REQ_API_001(t *testing.T) {
 	t.Parallel()
 	svc := &fakeThreads{thread: agentsdomain.Thread{ID: "thr_1", Mode: "normal", ModelClass: "code", Cwd: "/w"}}
 	s := testServerWithConfig(t, Config{Threads: svc, Bus: bus.New()})
