@@ -495,7 +495,10 @@ func (c *CLI) filtered(ctx context.Context, repoRoot, worktree, revision, tree s
 		return false, err
 	}
 	defer func() { _ = os.RemoveAll(attrs) }()
-	env := []string{"GIT_DIR=" + admin, "GIT_WORK_TREE=" + attrs}
+	// git falls back to the index for an attributes file the working tree lacks, and the
+	// worktree's index is the agent's to write: an index that does not exist leaves nothing to
+	// fall back to.
+	env := []string{"GIT_DIR=" + admin, "GIT_WORK_TREE=" + attrs, "GIT_INDEX_FILE=" + attrs + ".index"}
 	placed := map[string]bool{}
 	for i := 0; i < len(fields); i += 2 {
 		meta, path := strings.Fields(strings.TrimPrefix(fields[i], ":")), fields[i+1]

@@ -124,7 +124,11 @@
       The attributes that choose the filter are the reviewed tree's own: `hash-object` runs in a
       directory of the daemon's holding only the reviewed `.gitattributes` above each path, so
       nothing the agent writes in its worktree (an ignored attributes file, a case variant of
-      one, a change between two reads) decides which filter applies.
+      one, a change between two reads) decides which filter applies. Its index is one that does not
+      exist, because git falls back to the index for an attributes file the directory lacks and
+      the worktree's index is the agent's to write. On git 2.53, the version tested, a staged-then-deleted
+      attributes file did not reach the landing snapshot either, so no test can show the
+      difference; this is defence in depth.
     - A merge without a revision lands what the worktree holds then, as before.
     - T-F2-03 carries `revision` on `worktree.diff` and `worktree.merge`, has `umb worktree
       merge` pass the revision it showed, and refuses a merge while the thread's turn is running.
