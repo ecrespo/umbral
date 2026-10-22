@@ -85,6 +85,7 @@ func TestUS003FixItOffline_REQ_AGT_001(t *testing.T) {
 		model = "gpt-oss:20b"
 	}
 	requireModel(t, url, model)
+	requireIdleModel(t, url, model)
 
 	stream, ctx, dbPath, stop := us003Daemon(t, url, model)
 	results := make([]us003Run, 0, runs)
