@@ -116,10 +116,11 @@
       between the review and the merge.
     - The check is made inside the squash, against the snapshot that is committed, never
       before it, so nothing written after the check can land. Where no filter driver changes a
-      file, that snapshot is the reviewed tree itself and the binding is exact. Where one does,
-      the landing tree differs from the shown one by design; the content is read again as shown,
-      after the landing snapshot, and must still be the reviewed one. A change reverted in
-      between is the one case this cannot see.
+      file, that snapshot is the reviewed tree itself. Where one does, the landing tree differs
+      from the shown one by design: it must have the same paths and modes, and every blob that
+      differs must be what `git hash-object --path` makes of the reviewed blob, through the
+      user's clean filter. The landed content is derived from the reviewed content, never from a
+      second reading of the worktree.
     - A merge without a revision lands what the worktree holds then, as before.
     - T-F2-03 carries `revision` on `worktree.diff` and `worktree.merge`, has `umb worktree
       merge` pass the revision it showed, and refuses a merge while the thread's turn is running.

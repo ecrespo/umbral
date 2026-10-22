@@ -31,11 +31,12 @@ import (
 
 // The git words the adapter uses most.
 const (
-	revParse = "rev-parse"
-	verify   = "--verify"
-	headRef  = "HEAD"
-	diffCmd  = "diff"
-	nameOnly = "--name-only"
+	revParse  = "rev-parse"
+	verify    = "--verify"
+	headRef   = "HEAD"
+	diffCmd   = "diff"
+	nameOnly  = "--name-only"
+	noRenames = "--no-renames"
 )
 
 // defaultTimeout bounds every git command but the merge's commit, which has its own.
@@ -76,6 +77,7 @@ type call struct {
 	sanitized bool          // read-only display: nothing the repository's configuration names runs
 	env       []string      // added after the CLI's own
 	timeout   time.Duration // the CLI's when zero
+	stdin     []byte        // standard input; /dev/null when nil
 }
 
 // result is a finished git invocation. err is non-nil when git exited non-zero or did not run.
@@ -145,6 +147,9 @@ func (c *CLI) run(ctx context.Context, k call) result {
 	cmd := exec.CommandContext(ctx, c.bin, args...) //nolint:gosec // fixed git subcommands over the daemon's own paths
 	cmd.Env = c.environ(k.env)
 	cmd.Stdin = nil // standard input is /dev/null: nothing may wait on a person
+	if k.stdin != nil {
+		cmd.Stdin = bytes.NewReader(k.stdin)
+	}
 	isolate(cmd)
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
@@ -374,7 +379,7 @@ func (c *CLI) Diff(ctx context.Context, repoRoot, worktree, base string) (text, 
 	}
 	// Both sides are objects now, so the diff runs in the main copy and never reads the worktree.
 	r := c.run(ctx, call{dir: repoRoot, sanitized: true, args: []string{
-		diffCmd, "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/",
+		diffCmd, "--no-ext-diff", "--no-textconv", "--no-color", noRenames, "--src-prefix=a/", "--dst-prefix=b/",
 		"-U3", base, tree, "--",
 	}})
 	if r.err != nil {
@@ -390,17 +395,17 @@ func (c *CLI) Squash(ctx context.Context, repoRoot, worktree, base, revision, me
 	if err != nil {
 		return "", err
 	}
-	// The reviewed revision is checked against the snapshot about to be committed, never before
-	// it, so nothing written after the check can land. Where no filter driver changes a file,
-	// the two trees are the same object and the binding is exact. Where one does, the landing
-	// tree differs from the shown one by design, and the content is read again as shown, after
-	// the landing snapshot, and must still be the reviewed one.
+	// The reviewed revision is checked against the snapshot about to be committed, so nothing
+	// written after the check can land. Where no filter driver changes a file, the two trees are
+	// the same object. Where one does, every file that differs must be the user's clean filter
+	// applied to the reviewed blob itself: the landed content is derived from what was reviewed,
+	// never from a second reading of the worktree.
 	if revision != "" && tree != revision {
-		shown, err := c.snapshot(ctx, repoRoot, worktree, true)
+		ok, err := c.filtered(ctx, repoRoot, worktree, revision, tree)
 		if err != nil {
 			return "", err
 		}
-		if shown != revision {
+		if !ok {
 			return "", &domain.Refusal{Reason: domain.ReasonChanged, Detail: "the worktree changed after the diff that was reviewed"}
 		}
 	}
@@ -463,6 +468,43 @@ func (c *CLI) Squash(ctx context.Context, repoRoot, worktree, base, revision, me
 	return c.head(ctx, repoRoot)
 }
 
+// filtered reports whether tree is revision with the clean filters applied: the same paths and
+// modes, and every blob that differs is what `hash-object --path` makes of the reviewed blob.
+// The filter runs through the pinned git directory, as the landing snapshot's did.
+func (c *CLI) filtered(ctx context.Context, repoRoot, worktree, revision, tree string) (bool, error) {
+	_, env, err := c.pinned(ctx, repoRoot, worktree)
+	if err != nil {
+		return false, err
+	}
+	r := c.run(ctx, call{dir: repoRoot, sanitized: true, args: []string{"diff-tree", "-r", "-z", noRenames, revision, tree}})
+	if r.err != nil {
+		return false, r.failure("diff-tree")
+	}
+	// -z raw output: ":<mode> <mode> <blob> <blob> <status>" NUL "<path>" NUL, per file.
+	fields := strings.Split(strings.TrimSuffix(r.stdout, "\x00"), "\x00")
+	if len(fields)%2 != 0 {
+		return false, fmt.Errorf("git diff-tree: unexpected output %q", r.stdout)
+	}
+	for i := 0; i < len(fields); i += 2 {
+		meta, path := strings.Fields(strings.TrimPrefix(fields[i], ":")), fields[i+1]
+		if len(meta) != 5 || meta[4] != "M" || meta[0] != meta[1] {
+			return false, nil // a path added, removed or changed in kind: not a filter's doing
+		}
+		blob := c.run(ctx, call{dir: repoRoot, args: []string{"cat-file", "blob", meta[2]}})
+		if blob.err != nil {
+			return false, blob.failure("cat-file")
+		}
+		hashed := c.run(ctx, call{dir: worktree, env: env, stdin: []byte(blob.stdout), args: []string{"hash-object", "--path=" + path, "--stdin"}})
+		if hashed.err != nil {
+			return false, hashed.failure("hash-object")
+		}
+		if strings.TrimSpace(hashed.stdout) != meta[3] {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (c *CLI) head(ctx context.Context, dir string) (string, error) {
 	r := c.run(ctx, call{dir: dir, args: []string{revParse, verify, headRef}})
 	if r.err != nil {
@@ -476,7 +518,7 @@ func (c *CLI) head(ctx context.Context, dir string) (string, error) {
 // nothing from the worktree.
 func (c *CLI) occupied(ctx context.Context, repoRoot, head, snap string) ([]string, error) {
 	r := c.run(ctx, call{dir: repoRoot, sanitized: true, args: []string{
-		diffCmd, nameOnly, "-z", "--no-renames", "--diff-filter=A", head, snap, "--",
+		diffCmd, nameOnly, "-z", noRenames, "--diff-filter=A", head, snap, "--",
 	}})
 	if r.err != nil {
 		return nil, r.failure(diffCmd)
