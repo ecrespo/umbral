@@ -102,7 +102,8 @@ including across the API (Art. 6).
     untracked `.mcp.json`.
 - **Migrations:** `0001_terminal`, `0002_block_index`, `0003_structure` and `0004_restore`
   are applied, `0005_agent` (T-F1-01) adds the agent subdomain and `0006_rule_state` (T-F1-30)
-  the state of signed rule bundles. Migrations are forward-only
+  the state of signed rule bundles, and `0007_orchestration` (T-F2-01) the worktrees and the F2
+  thread, tool-call and block columns. Migrations are forward-only
   (Art. 6), so an applied file is never edited; that is why the agent subdomain is `0005`
   and not the `0002` or `0004` older drafts name.
 - **Recommended flow:** start each task in Plan Mode, get the plan approved, implement it,

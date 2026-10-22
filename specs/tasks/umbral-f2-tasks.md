@@ -33,7 +33,7 @@ has shown what the shared pieces look like.
 - **Done:** report and transcripts committed. Q-F2-05 is answered (`coder/acp-go-sdk`), and Analyze
   F-01 is confirmed with evidence.
 
-### [ ] T-F2-01 · Migration 0007: worktrees and the new thread, tool-call and block columns
+### [x] 2026-10-22 T-F2-01 · Migration 0007: worktrees and the new thread, tool-call and block columns
 - **What:** no table is rebuilt, because the migration runner applies each file in one transaction
   with foreign keys on (Analyze F-03). New states and flags are new columns whose values the writers
   enforce, as 0005 did (Data Model §2.5):
@@ -67,6 +67,8 @@ has shown what the shared pieces look like.
   - `TestMigration0007KeepsF1Rows_REQ_ORC_004` (a database holding F1 rows keeps them and passes
     `foreign_key_check`) is green;
   - `TestAQueuedTurnIsRecoveredStopped_REQ_ORC_002` is green;
+  - `TestMigration0007Constraints_REQ_WT_001` and `TestRetentionKeepsAThreadWithAWorktree_REQ_WT_001`
+    are green (delta `2026-10-orchestration-schema`);
   - `python3 tools/sdd_check.py` runs the new DDL;
   - `task ci` is green.
 
@@ -424,7 +426,7 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 
 | REQ | Tasks | Verification |
 |---|---|---|
-| REQ-WT-001 | T-F2-01, T-F2-02, T-F2-03 | `TestWorktreeCreateIsOutsideTheRepo_REQ_WT_001` |
+| REQ-WT-001 | T-F2-01, T-F2-02, T-F2-03 | `TestWorktreeCreateIsOutsideTheRepo_REQ_WT_001`, `TestMigration0007Constraints_REQ_WT_001`, `TestRetentionKeepsAThreadWithAWorktree_REQ_WT_001` |
 | REQ-WT-002 | T-F2-03 | `TestAThreadWritesOnlyInItsWorktree_REQ_WT_002` |
 | REQ-WT-003 | T-F2-02 | `TestWorktreeDiffHasStableHunks_REQ_WT_003` |
 | REQ-WT-004 | T-F2-02 | `TestWorktreeMergeSquashesIntoTheOriginBranch_REQ_WT_004`, `TestWorktreeMergeRefusesADirtyCopy_REQ_WT_004`, `TestWorktreeMergeRefusesAnotherBranch_REQ_WT_004`, `TestWorktreeMergeRefusesADetachedHead_REQ_WT_004`, `TestWorktreeMergeConflictLeavesBothSides_REQ_WT_004`, `TestARejectedCommitLeavesBothSides_REQ_WT_004` |
@@ -486,4 +488,5 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | 2026-10-22 | T-F2-00 | done | OpenCode 1.18.33 over ACP with `coder/acp-go-sdk` v0.13.5, against `gpt-oss:20b` (`docs/spikes/2026-10-acp-opencode.md`). With default permissions OpenCode asks the client nothing: it writes files and runs commands itself. With `ask` every write and command arrives as `session/request_permission`, with path, diff or command, and writes come through `fs/write_text_file`; commands still run in its own shell. Reads are never mediated. Cancel ends the turn `cancelled` in about 0.4 s. That evidence and the Analyze pass (22 findings, FIX FIRST) reshaped PRD F2 to 0.3. |
 | 2026-10-22 | — | revised | spec-guardian verify pass on PRD F2 0.3: FIX FIRST (N-01…N-10). Applied in PRD F2 0.4 and here: `tool_calls.decision`, the merge's `commit_failed`, the ACP manifest's isolation and project-config refusal, and a named test for every clause the pass found untested. |
 | 2026-10-22 | — | ratified | The Tech Lead ratified PRD F2 0.4, this file and constitution 1.3 (PR #32), and allowed per-task F2 deltas to be approved by the implementing agent. |
+| 2026-10-22 | T-F2-01 | done | Migration `0007_orchestration` adds `worktrees` and the F2 columns by `ALTER`, each with its `CHECK`: SQLite accepts one in `ADD COLUMN`, which corrects Data Model §2.5. Recovery stops a queued turn. Mutations removing a `CHECK` or adding a cascade to `worktrees.thread_id` turn the tests red. Delta `2026-10-orchestration-schema`, approved under the standing instruction. |
 | — | — | — | — |

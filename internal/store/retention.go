@@ -220,7 +220,8 @@ func (s *Store) purgeEphemeralThreads(ctx context.Context, cutoff int64) (int64,
 const idleThread = `t.ephemeral = 1 AND t.updated_at < ?
 		   AND t.state NOT IN ('running','awaiting_approval')
 		   AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.owner_thread_id = t.id AND s.state = 'alive')
-		   AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.thread_id = t.id AND b.state IN ('running','interactive'))`
+		   AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.thread_id = t.id AND b.state IN ('running','interactive'))
+		   AND NOT EXISTS (SELECT 1 FROM worktrees w WHERE w.thread_id = t.id)`
 
 func (s *Store) idleEphemeralThreads(ctx context.Context, cutoff int64, skipped map[string]bool) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT t.id FROM threads t WHERE `+idleThread+` ORDER BY t.id`, cutoff)

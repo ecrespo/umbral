@@ -48,6 +48,7 @@ func TestParsePrefix(t *testing.T) {
 	}{
 		{id: "blk_01J9Z3K8T2QH6W4V5X7Y8Z9A0B", want: "blk"},
 		{id: "tc_01J9Z3K8T2QH6W4V5X7Y8Z9A0B", want: "tc"},
+		{id: NewID(PrefixWorktree), want: "wtr"},
 		{id: "nounderscore", wantErr: true},
 		{id: "_leading", wantErr: true},
 		{id: "", wantErr: true},

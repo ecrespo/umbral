@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.23 |
-| **Date** | 2026-10-18 |
+| **Version** | 1.24 |
+| **Date** | 2026-10-22 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
 | **Related Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -116,6 +116,15 @@ name. Without it every page is a full scan and a sort of the table: 141 ms at 10
 against 0.18 ms with it. `id` is in the index because it is the tie-breaker the cursor pages
 on, and an index covering only the first column of the ordering still sorts. It is created by
 migration **0002**, not 0001; §5 says why.
+
+Migration **0007** (F2) records how an agent block was run. A command a hosted ACP agent runs
+through `terminal/create` is a block like any other agent block, with `via = 'acp'`; `origin`
+keeps its `CHECK` (REQ-ACP-005).
+
+```sql
+-- migration 0007 (T-F2-01)
+ALTER TABLE blocks ADD COLUMN via TEXT NOT NULL DEFAULT 'shell' CHECK (via IN ('shell','acp'));
+```
 
 `output_truncated` covers **both** caps: the 16 MiB raw chunk history of §2.3 and the 1 MiB
 `output_plain` transcript. A client that sees it `0` is promised the whole of what the
@@ -452,6 +461,36 @@ At most 64 rows have `enabled = 1`; the `context` layer enforces it, since a cou
 `CHECK`. A row and its directory are written through a staging directory and a rename, and §6
 step 9 removes whatever a crash leaves between them.
 
+### 2.4g `worktrees` (migration 0007)
+
+**Purpose:** a thread's isolated copy of a repository (PRD F2 REQ-WT-001…008). **Volume:** a
+few per thread, one active at a time.
+
+```sql
+CREATE TABLE worktrees (
+  id            TEXT PRIMARY KEY CHECK (id LIKE 'wtr\_%' ESCAPE '\'),
+  thread_id     TEXT NOT NULL REFERENCES threads(id),
+  repo_root     TEXT NOT NULL,              -- the main working copy's top level
+  repo_id       TEXT NOT NULL,              -- 16 hex of SHA-256 of the realpath of the common git dir
+  base_commit   TEXT NOT NULL,              -- the commit the worktree was created from
+  origin_branch TEXT NOT NULL,              -- the branch a merge squashes into (REQ-WT-004)
+  branch        TEXT NOT NULL,              -- umbral/<thread_id>
+  path          TEXT NOT NULL,              -- $XDG_DATA_HOME/umbral/worktrees/<repo_id>/<thread_id>
+  state         TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','merged','discarded','missing')),
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);
+CREATE INDEX idx_worktrees_thread ON worktrees(thread_id);
+CREATE UNIQUE INDEX idx_worktrees_active_thread ON worktrees(thread_id) WHERE state = 'active';
+CREATE UNIQUE INDEX idx_worktrees_active_path ON worktrees(path) WHERE state = 'active';
+```
+
+The prefix is `wtr_`, because `wt_` is already a wait's. `thread_id` has no cascade, on
+purpose: a worktree's branch and files are the user's unmerged work. A thread that has any
+worktree row, whatever its state, cannot be deleted. A row is kept as history after a merge or
+discard, so this holds even then. The retention job's purge of ephemeral threads skips such a
+thread (§4). An ephemeral `ask` thread never has a worktree.
+
 ### 2.5 `threads`
 
 ```sql
@@ -478,8 +517,9 @@ The attention columns of REQ-AGT-016 and REQ-NTF-002 arrive in migration **0005*
 block above. Migration 0001 created `threads` and is applied, and Art. 6 makes migrations
 forward-only: a column added to an applied file exists on no database that already ran it.
 `attention_state` takes a default rather than being `NOT NULL` without one, because
-`ALTER TABLE … ADD COLUMN` has to be able to fill the rows already there. SQLite cannot add a
-`CHECK` in an `ALTER`, so the constraint is enforced by the writer and stated here.
+`ALTER TABLE … ADD COLUMN` has to be able to fill the rows already there. Its values are enforced
+by the writer and stated here. SQLite does accept a `CHECK` in `ADD COLUMN`, and since 3.37 it
+tests the `CHECK` against the existing rows; migration 0007's columns carry theirs.
 
 ```sql
 -- migration 0005, alongside the agent tables (T-F1-01)
@@ -487,6 +527,23 @@ ALTER TABLE threads ADD COLUMN attention_state TEXT NOT NULL DEFAULT 'idle';  --
                              -- one of 'idle','working','blocked','done','unknown'
 ALTER TABLE threads ADD COLUMN seen_at INTEGER;  -- when a client last focused it, or a turn
                              -- ended while one viewed it; NULL = never
+```
+
+Migration **0007** (F2, T-F2-01) adds the orchestration columns. A thread's mode is `full-auto`
+while `full_auto = 1` and its worktree is `active`. Clearing the flag leaves `mode` as it was
+(REQ-ORC-004). `full-auto` is a separate flag because `mode`'s `CHECK` cannot be widened without
+rebuilding a table eleven others point at. A thread with `queued = 1` has a turn accepted over
+`[agents] max_concurrent_turns` and waiting for a slot (REQ-ORC-002).
+
+```sql
+-- migration 0007 (T-F2-01)
+ALTER TABLE threads ADD COLUMN full_auto INTEGER NOT NULL DEFAULT 0 CHECK (full_auto IN (0,1));
+ALTER TABLE threads ADD COLUMN queued INTEGER NOT NULL DEFAULT 0 CHECK (queued IN (0,1));
+ALTER TABLE threads ADD COLUMN worktree_id TEXT REFERENCES worktrees(id) ON DELETE SET NULL;
+ALTER TABLE threads ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL;  -- REQ-ORC-003
+ALTER TABLE threads ADD COLUMN agent TEXT;  -- an [[acp.agents]] name; NULL = Umbral's own agent
+ALTER TABLE threads ADD COLUMN egress_visibility TEXT NOT NULL DEFAULT 'observed'
+  CHECK (egress_visibility IN ('observed','unobserved'));  -- REQ-ACP-007
 ```
 
 ### 2.6 `messages`
@@ -527,6 +584,20 @@ CREATE TABLE tool_calls (
   ended_at       INTEGER
 );
 CREATE INDEX idx_tool_calls_thread ON tool_calls(thread_id, started_at);
+```
+
+Migration **0007** records who ran a call and how it was decided (REQ-ACP-007).
+- An ACP row has `via = 'acp'`. Its `message_id` is the turn's assistant message, the one being
+  streamed when the agent's report or request arrives, so the column stays `NOT NULL`.
+- `decision` is `unmediated` for a call the agent ran without asking. It is NULL only on rows
+  written before 0007.
+- Umbral writes a row of its own for each `fs/*` and `terminal/create` request it decides, so
+  that request's approval has a tool call to point at (REQ-ACP-004).
+
+```sql
+-- migration 0007 (T-F2-01)
+ALTER TABLE tool_calls ADD COLUMN via TEXT NOT NULL DEFAULT 'umbral' CHECK (via IN ('umbral','acp'));
+ALTER TABLE tool_calls ADD COLUMN decision TEXT CHECK (decision IN ('allow','deny','ask','unmediated'));
 ```
 
 ### 2.8 `approvals`
@@ -731,6 +802,7 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 | `0004_restore.sql` | F0 | `pane_history` (§2.4d), `panes.command_pending` and `workspaces.focused_tab_id`/`focused_at` (§2.4b) — everything a restart needs and nothing else (T-F0-18) |
 | `0005_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers`, `pane_state_reports`, `pane_metadata`, `trust_keys`, `rule_bundles`, `skills` and their indexes (§2.4c-2.4f, §2.6-2.13), plus the two `ALTER TABLE threads` statements of §2.5 |
 | `0006_rule_state.sql` | F1 | `rule_bundles.content`, `rule_rejections`, `rule_update_state` and its one row, `trust_key_events` and `idx_trust_key_events_at` (§2.4e) — the state signed rule bundles need (T-F1-30) |
+| `0007_orchestration.sql` | F2 | `worktrees` and its three indexes (§2.4g); `threads.full_auto`, `queued`, `worktree_id`, `workspace_id`, `agent`, `egress_visibility` (§2.5); `tool_calls.via`, `decision` (§2.7); `blocks.via` (§2.2). No table rebuilt (T-F2-01) |
 
 `threads` belongs to 0001 even though the agent arrives in F1: `sessions.owner_thread_id` and
 `blocks.thread_id` point at it, and with `foreign_keys=ON` SQLite rejects every insert into those
@@ -756,8 +828,9 @@ earlier drafts named.
    left `pending` by a daemon older than T-F0-21 are repaired too. Steps 1 and 2 share one
    transaction (delta `2026-09-recovery-integration`).
 2. `blocks.state IN ('running','interactive')` → `abandoned`.
-3. `threads.state IN ('running','awaiting_approval')` → `stopped`, with `attention_state = 'idle'`, as a
-   cancelled turn leaves it (delta `2026-10-thread-cancel`).
+3. `threads.state IN ('running','awaiting_approval')`, or `queued = 1`, → `stopped`, with
+   `attention_state = 'idle'` and `queued = 0`, as a cancelled turn leaves it (delta
+   `2026-10-thread-cancel`). A held turn dies with the process like a running one (REQ-ORC-002).
 4. `approvals.state = 'pending'` → `expired`.
 5. Structure: `workspaces`, `tabs` and `panes` that were not closed are reopened with their labels,
    cwd and `layout_json`; **every pane launches a fresh shell**, whatever it was running before
@@ -809,3 +882,4 @@ earlier drafts named.
 | 1.21 | 2026-10-18 | §2.12: `umbral-rules` rows, one per rule-update request and redirect hop, whose payload is the request URL (delta `2026-10-rule-overrides`, T-F1-29). No DDL change |
 | 1.22 | 2026-10-18 | §2.4e: migration `0006_rule_state` — `rule_bundles.content`, `rule_rejections`, `rule_update_state` (with `highest_version`, the floor a reset keeps), `trust_key_events`; §2.12: the `umbral-rules:rejected:<reason>` row; §5: the 0006 row (delta `2026-10-signed-rule-bundles`, T-F1-30) |
 | 1.23 | 2026-10-18 | delta `2026-10-skill-store` (T-F1-34): §6 step 9 settles a replace interrupted between its renames, and the skills directory sits beside the database |
+| 1.24 | 2026-10-22 | delta `2026-10-orchestration-schema` (T-F2-01): migration `0007_orchestration` — §2.4g `worktrees`, the F2 columns of §2.5, §2.7 and §2.2 with their `CHECK`s in the `ALTER` (§2.5 corrects the claim that SQLite cannot add one), §5's 0007 row, §6 step 3 recovers a queued turn |
