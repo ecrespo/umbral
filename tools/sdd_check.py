@@ -19,14 +19,15 @@ ART_REF = re.compile(r"Art\. ?\d+")
 DUPLICATES = []
 
 
-def defined(paths):
+def defined(paths, unique=True):
     reqs = {}
     for p in paths:
         src = p.relative_to(ROOT).as_posix()
         for rid, prio in REQ_DEF.findall(p.read_text(encoding="utf-8")):
-            if rid in reqs:
+            if unique and rid in reqs:
                 # Every PRD under specs/prd/ is read now, so one id defined twice would let the
                 # later file silently replace the earlier one's priority and wording.
+                # Active deltas are read with unique=False: two of them may modify one REQ.
                 DUPLICATES.append((rid, reqs[rid][1], src))
             reqs[rid] = (prio, src)
     return reqs
@@ -58,7 +59,7 @@ def tasks(path):
 def main():
     base = defined(sorted((ROOT / "specs/prd").glob("*.md")))
     delta_files = sorted(p for p in (ROOT / "changes").glob("*/delta-spec.md") if "_archive" not in p.parts)
-    delta = defined(delta_files)
+    delta = defined(delta_files, unique=False)
     all_defined = {**base, **delta}
     findings = []
 

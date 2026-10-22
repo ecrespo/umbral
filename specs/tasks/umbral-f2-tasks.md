@@ -49,7 +49,11 @@ has shown what the shared pieces look like.
     - `workspace_id` (nullable);
     - `agent` (an `[[acp.agents]]` name, or NULL);
     - `egress_visibility` (`observed`, `unobserved`; default `observed`);
-  - `tool_calls` gains `via` (`umbral`, `acp`; default `umbral`);
+  - an ACP `tool_calls` row's `message_id` is the turn's assistant message, the one being streamed
+    when the agent's report or request arrives (REQ-ACP-004), so the column stays `NOT NULL`;
+  - `tool_calls` gains `via` (`umbral`, `acp`; default `umbral`) and `decision` (`allow`, `deny`,
+    `ask`, `unmediated`; NULL on rows written before 0007), so an ACP call the agent ran without
+    asking is told apart from one the policy engine allowed (REQ-ACP-007);
   - `approvals.reason` stays as it is: an ACP approval uses `policy`, `destructive`, `tainted` or
     `outside_write_root` like any other;
   - `blocks` gains `via` (`shell`, `acp`; default `shell`), so `origin` keeps its `CHECK`;
@@ -75,24 +79,31 @@ has shown what the shared pieces look like.
   - **diff** from the base commit, untracked files included, split into hunks with stable ids;
   - **squash merge** into the origin branch, with REQ-WT-004's refusals (`dirty`, `other_branch`,
     `detached`) and its abort on a conflict. Commit hooks and signing run as the user's own
-    `git commit` would;
+    `git commit` would, with no terminal and `[worktrees] commit_timeout`; a rejected or timed-out
+    commit is `commit_failed` and leaves both sides as they were;
   - **discard**, only with confirmation;
   - **missing:** a worktree is marked `missing` at start or on access;
   - **refusals:** a non-git or bare repository, or a git older than 2.34;
   - the commands that read the repository (`status`, `diff`) run with the sanitised environment of
     REQ-CTX-003.
 - **REQ:** REQ-WT-001, REQ-WT-003, REQ-WT-004, REQ-WT-005, REQ-WT-006, REQ-WT-008
-- **Files:** `internal/worktrees/…`, `.go-arch-lint.yml`, `docs/ARCHITECTURE.md` §9,
-  `specs/technical/umbral-architecture.md` §5.2 (a `worktrees` row)
+- **Files:** `internal/worktrees/…`, `internal/config/…` (`[worktrees]`), `.go-arch-lint.yml`,
+  `docs/ARCHITECTURE.md` §9, `specs/technical/umbral-architecture.md` §5.1 and §5.2 (a `worktrees`
+  row)
 - **Depends on:** T-F2-01
 - **Done:** these tests are green, and `task ci` is green:
   - `TestWorktreeCreateIsOutsideTheRepo_REQ_WT_001`;
   - `TestWorktreeDiffHasStableHunks_REQ_WT_003`;
   - `TestWorktreeMergeSquashesIntoTheOriginBranch_REQ_WT_004`;
   - `TestWorktreeMergeRefusesADirtyCopy_REQ_WT_004`;
+  - `TestWorktreeMergeRefusesAnotherBranch_REQ_WT_004`;
+  - `TestWorktreeMergeRefusesADetachedHead_REQ_WT_004`;
   - `TestWorktreeMergeConflictLeavesBothSides_REQ_WT_004`;
+  - `TestARejectedCommitLeavesBothSides_REQ_WT_004` (a failing `pre-commit` hook, and a signing
+    step that would prompt);
   - `TestWorktreeDiscardNeedsConfirm_REQ_WT_005`;
   - `TestAMissingWorktreeIsMarked_REQ_WT_006`;
+  - `TestWorktreeRefusesANonGitDirectory_REQ_WT_008`;
   - `TestWorktreeRefusesABareRepo_REQ_WT_008`;
   - `TestWorktreeRefusesAnOldGit_REQ_WT_008`.
 
@@ -114,8 +125,9 @@ has shown what the shared pieces look like.
   - `specs/prd/umbral-f2.md` (traceability)
 - **Depends on:** T-F2-02
 - **Done:**
-  - `TestAThreadWritesOnlyInItsWorktree_REQ_WT_002` and
-    `TestCloseGroupNeverDropsAnUnmergedChange_REQ_WT_007` are green;
+  - `TestAThreadWritesOnlyInItsWorktree_REQ_WT_002`,
+    `TestCloseGroupNeverDropsAnUnmergedChange_REQ_WT_007` and
+    `TestCloseGroupReportsAMissingWorktree_REQ_WT_007` are green;
   - `task schema` is green.
 
 ### [ ] T-F2-04 · Parallel turns and per-provider queues
@@ -132,20 +144,24 @@ has shown what the shared pieces look like.
   - `internal/llmgw/router/…`
   - `internal/config/…`
   - `specs/technical/umbral-architecture.md` §5.1
-  - `specs/api/umbral-daemon-api-v1.md` (§5.20 `queued`, §7)
+  - `specs/api/umbral-daemon-api-v1.md` (§5.23 `thread.get`'s `queued`, §5.20 `thread.send`'s
+    `CONFLICT`, §7)
 - **Depends on:** T-F2-01
 - **Done:** these tests are green under `-race`:
   - `TestThreeThreadsRunConcurrently_REQ_ORC_001`;
   - `TestAFourthTurnIsQueued_REQ_ORC_002`;
+  - `TestASecondSendToAQueuedThreadConflicts_REQ_ORC_002`;
   - `TestCancellingAQueuedTurnDropsIt_REQ_ORC_002`;
-  - `TestLocalCallsQueuePerProvider_REQ_ORC_005`.
+  - `TestLocalCallsQueuePerProvider_REQ_ORC_005`;
+  - `TestQueueTimeIsNotFirstTokenTime_REQ_ORC_005`.
 
 ### [ ] T-F2-05 · `full-auto` inside an active worktree
 - **What:**
   - the policy engine gains `full-auto`: `WriteFS` inside the worktree and `Exec` with its cwd inside
     it are allowed; `Network`, the destructive list and taint still ask;
   - a thread without an active worktree is refused `full-auto` with `VALIDATION_ERROR`;
-  - a worktree that leaves `active` returns its thread to `normal`;
+  - a worktree that leaves `active` clears `full_auto`, leaving the thread's own mode;
+  - an ACP thread's permission requests are decided under it too (REQ-ACP-003);
   - `policy.explain` shows the step.
 - **REQ:** REQ-ORC-004
 - **Files:**
@@ -158,7 +174,7 @@ has shown what the shared pieces look like.
   - `TestFullAutoOnlyInsideAWorktree_REQ_ORC_004`;
   - `TestFullAutoStillAsksForNetworkAndDestructive_REQ_ORC_004`;
   - `TestFullAutoStillAsksWhenTainted_REQ_ORC_004`;
-  - `TestALeftWorktreeReturnsTheThreadToNormal_REQ_ORC_004`.
+  - `TestALeftWorktreeClearsFullAuto_REQ_ORC_004`.
 
 ### [ ] T-F2-06 · The agent panel shows every thread
 - **What:**
@@ -175,15 +191,19 @@ has shown what the shared pieces look like.
 - **What:**
   - the `internal/acp` module on `github.com/coder/acp-go-sdk`, with `.go-arch-lint.yml` rules;
   - **config:** `[[acp.agents]]` and `[acp]` in `config.toml`;
-  - **manifests:** the built-in OpenCode manifest, which generates the config that forces `ask`;
-    an entry without a manifest is refused (REQ-ACP-009);
-  - **launch:** the agent starts in the worktree, with MCP-style environment rules;
+  - **manifests:** the built-in OpenCode manifest, which generates the config that sets every
+    permission to `ask` and declares no MCP servers or plugins; an entry without a manifest is
+    refused, and so is a worktree holding a repository-level agent config (`project_config`)
+    (REQ-ACP-009);
+  - **launch:** the agent starts in the worktree (or the thread's directory without one), with its
+    own `HOME` and XDG directories under the runtime directory and an allowlisted environment;
   - **session:** `initialize`, then `session/new`;
   - **prompt:** `thread.send` sends `session/prompt`; message and thought chunks and tool calls map
     onto `thread.delta` and the persisted messages;
-  - **errors:** `agent_error` on exit, invalid ACP, or `silence_timeout` with no pending approval;
+  - **errors:** `agent_error` on exit, invalid ACP, or `silence_timeout` with no pending approval
+    and no outstanding agent request;
   - `stop_reason = agent_error` is added to API §6 and §7;
-  - DD-012 is revised: a hosted ACP thread is its pane's level-1 authority.
+  - DD-012 is revised: a hosted ACP thread is the level-1 authority of the pane that owns it.
 - **REQ:** REQ-ACP-001, REQ-ACP-002, REQ-ACP-006, REQ-ACP-009
 - **Files:**
   - `internal/acp/…`
@@ -197,30 +217,49 @@ has shown what the shared pieces look like.
 - **Depends on:** T-F2-03
 - **Done:** these tests are green with a fake ACP agent in Go, and `task schema` is green:
   - `TestAnACPAgentIsLaunchedInItsWorktree_REQ_ACP_001`;
+  - `TestAnACPThreadWithoutAWorktreeRunsInItsDirectory_REQ_ACP_001`;
   - `TestAnACPThreadStreamsLikeAnyOther_REQ_ACP_002`;
+  - `TestAnACPThreadIsItsPanesStateAuthority_REQ_ACP_002`;
   - `TestAnACPAgentCrashEndsTheTurn_REQ_ACP_006`;
   - `TestASilentACPAgentEndsTheTurn_REQ_ACP_006`;
+  - `TestAnAgentWaitingOnUmbralIsNotSilent_REQ_ACP_006`;
+  - `TestAPendingApprovalPausesTheSilenceTimer_REQ_ACP_006`;
   - `TestAnAgentWithoutAManifestIsRefused_REQ_ACP_009`;
-  - `TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009`.
+  - `TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009`;
+  - `TestTheOpenCodeManifestAsksForEveryPermission_REQ_ACP_009`;
+  - `TestARepositoryAgentConfigIsRefused_REQ_ACP_009`;
+  - `TestTheUsersGlobalAgentConfigIsNotRead_REQ_ACP_009`.
 
 ### [ ] T-F2-08 · ACP mediation: permissions, files, terminals
 - **What:**
-  - **permissions:** `session/request_permission` is decided by kind (`edit`/`delete` → `WriteFS`
-    on `locations`, `execute` → `Exec`, `fetch` → `Network`), through the policy engine and the
-    approval queue. Umbral answers `allow_once` or `reject_once`, never `allow_always`;
+  - **permissions:** `session/request_permission` is decided by kind (`edit`/`delete`/`move` →
+    `WriteFS` on `locations`, `execute` → `Exec`, `fetch` → `Network`, `read`/`search`/`think` →
+    `ReadOnly`, anything else → `Exec`), through the policy engine and the approval queue. Umbral
+    answers `allow_once` or `reject_once`, never `allow_always`;
   - **files:** `fs/read_text_file` and `fs/write_text_file` are performed by Umbral; a read outside
-    the write root asks;
+    the write root asks; a write an allowed permission already covered is not asked again;
+  - each `fs/*` and `terminal/create` request Umbral decides gets a `tool_calls` row of its own, so
+    its approval points at it;
   - **terminals:** `terminal/create` makes a thread-owned session per terminal, holding a block with
     `via = acp`, at most `max_terminals` per thread;
-  - every reported tool call is recorded in `tool_calls` with `via = acp`.
-- **REQ:** REQ-ACP-003, REQ-ACP-004, REQ-ACP-005
-- **Files:** `internal/acp/…`, `internal/sessions/…`, `specs/technical/umbral-architecture.md` §5.3b
-- **Depends on:** T-F2-07
+  - every reported tool call is recorded in `tool_calls` with `via = acp`, its mapped risk and its
+    `decision` (`unmediated` when the agent did not ask).
+- **REQ:** REQ-ACP-003, REQ-ACP-004, REQ-ACP-005, REQ-ACP-007 (the `tool_calls` rows), REQ-ORC-004 (ACP requests under `full-auto`)
+- **Files:** `internal/acp/…`, `internal/sessions/…`, `internal/agents/…`, `internal/store/…`,
+  `specs/technical/umbral-architecture.md` §5.3b
+- **Depends on:** T-F2-05, T-F2-07
 - **Done:** these tests are green:
   - `TestACPPermissionEntersTheApprovalQueue_REQ_ACP_003`;
   - `TestACPNeverSelectsAllowAlways_REQ_ACP_003`;
+  - `TestACPKindsMapToRisks_REQ_ACP_003` (table: every kind, `fetch` → `Network`, an unknown kind →
+    `Exec`);
   - `TestACPWriteOutsideTheWorktreeAsks_REQ_ACP_004`;
   - `TestACPReadOutsideTheWorktreeAsks_REQ_ACP_004`;
+  - `TestACPReadInsideTheWorktreeIsReadOnly_REQ_ACP_004`;
+  - `TestACPWriteCoveredByAPermissionIsNotAskedTwice_REQ_ACP_004`;
+  - `TestACPToolCallsAreRecordedWithTheirDecision_REQ_ACP_007`;
+  - `TestFullAutoDecidesACPPermissions_REQ_ORC_004` (an `edit` inside the worktree and an `execute`
+    without a cwd are allowed, a `fetch` still asks);
   - `TestACPTerminalIsAnAuditedBlock_REQ_ACP_005`;
   - `TestACPTerminalsAreCapped_REQ_ACP_005`.
 
@@ -243,7 +282,9 @@ has shown what the shared pieces look like.
   - `TestACPCancelStopsWithin500ms_REQ_ACP_008`;
   - `TestAnUnresponsiveACPAgentIsKilledAfter5s_REQ_ACP_008`;
   - `TestAnACPTurnHasATrace_REQ_ACP_007`;
-  - `TestAnACPThreadIsMarkedUnobserved_REQ_ACP_007`.
+  - `TestAnACPThreadIsMarkedUnobserved_REQ_ACP_007`;
+  - `TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007` (the `thread.create` reply and
+    `umb thread create`'s output).
 
 ### [ ] T-F2-10 · Third-party agent detection
 - **What:**
@@ -265,6 +306,7 @@ has shown what the shared pieces look like.
     - `TestAPaneRunningOpenCodeIsLabelled_REQ_XAG_001`;
     - `TestDetectionNeverSetsState_REQ_XAG_001`;
     - `TestALocalManifestOverridesByName_REQ_XAG_002`;
+    - `TestAnInvalidManifestIsSkippedAndReported_REQ_XAG_002`;
     - `TestAgentExplainNamesTheRule_REQ_XAG_003`;
   - `task schema` is green.
 
@@ -279,6 +321,7 @@ has shown what the shared pieces look like.
 - **REQ:** REQ-RTR-001, REQ-RTR-002, REQ-RTR-003
 - **Files:**
   - `internal/llmgw/router/…`
+  - `internal/config/…` (`breaker_failures`, `breaker_cooldown`, `[router] policy`)
   - `internal/api/models.go`
   - `specs/api/umbral-daemon-api-v1.md` (§5)
   - `specs/technical/umbral-architecture.md` (§5.1, the router)
@@ -287,6 +330,7 @@ has shown what the shared pieces look like.
   - these tests are green:
     - `TestACandidateWithoutToolsIsDropped_REQ_RTR_001`;
     - `TestABreakerOpensAndProbes_REQ_RTR_002`;
+    - `TestRouterPoliciesOrderTheCandidates_REQ_RTR_003` (table: `local-first`, `cost`, `quality`);
     - `TestModelRouteExplainsTheOrder_REQ_RTR_003`;
   - `task schema` is green.
 
@@ -383,31 +427,31 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | REQ-WT-001 | T-F2-01, T-F2-02, T-F2-03 | `TestWorktreeCreateIsOutsideTheRepo_REQ_WT_001` |
 | REQ-WT-002 | T-F2-03 | `TestAThreadWritesOnlyInItsWorktree_REQ_WT_002` |
 | REQ-WT-003 | T-F2-02 | `TestWorktreeDiffHasStableHunks_REQ_WT_003` |
-| REQ-WT-004 | T-F2-02 | `TestWorktreeMergeSquashesIntoTheOriginBranch_REQ_WT_004`, `TestWorktreeMergeRefusesADirtyCopy_REQ_WT_004`, `TestWorktreeMergeConflictLeavesBothSides_REQ_WT_004` |
+| REQ-WT-004 | T-F2-02 | `TestWorktreeMergeSquashesIntoTheOriginBranch_REQ_WT_004`, `TestWorktreeMergeRefusesADirtyCopy_REQ_WT_004`, `TestWorktreeMergeRefusesAnotherBranch_REQ_WT_004`, `TestWorktreeMergeRefusesADetachedHead_REQ_WT_004`, `TestWorktreeMergeConflictLeavesBothSides_REQ_WT_004`, `TestARejectedCommitLeavesBothSides_REQ_WT_004` |
 | REQ-WT-005 | T-F2-02 | `TestWorktreeDiscardNeedsConfirm_REQ_WT_005` |
 | REQ-WT-006 | T-F2-02 | `TestAMissingWorktreeIsMarked_REQ_WT_006` |
-| REQ-WT-007 | T-F2-03 | `TestCloseGroupNeverDropsAnUnmergedChange_REQ_WT_007` |
-| REQ-WT-008 | T-F2-02 | `TestWorktreeRefusesABareRepo_REQ_WT_008`, `TestWorktreeRefusesAnOldGit_REQ_WT_008` |
+| REQ-WT-007 | T-F2-03 | `TestCloseGroupNeverDropsAnUnmergedChange_REQ_WT_007`, `TestCloseGroupReportsAMissingWorktree_REQ_WT_007` |
+| REQ-WT-008 | T-F2-02 | `TestWorktreeRefusesANonGitDirectory_REQ_WT_008`, `TestWorktreeRefusesABareRepo_REQ_WT_008`, `TestWorktreeRefusesAnOldGit_REQ_WT_008` |
 | REQ-ORC-001 | T-F2-04 | `TestThreeThreadsRunConcurrently_REQ_ORC_001` |
-| REQ-ORC-002 | T-F2-01, T-F2-04 | `TestAFourthTurnIsQueued_REQ_ORC_002`, `TestCancellingAQueuedTurnDropsIt_REQ_ORC_002`, `TestAQueuedTurnIsRecoveredStopped_REQ_ORC_002` |
+| REQ-ORC-002 | T-F2-01, T-F2-04 | `TestAFourthTurnIsQueued_REQ_ORC_002`, `TestASecondSendToAQueuedThreadConflicts_REQ_ORC_002`, `TestCancellingAQueuedTurnDropsIt_REQ_ORC_002`, `TestAQueuedTurnIsRecoveredStopped_REQ_ORC_002` |
 | REQ-ORC-003 | T-F2-01, T-F2-06 | `TestAgentPanelListsEveryThread_REQ_ORC_003` |
-| REQ-ORC-004 | T-F2-01, T-F2-05 | `TestMigration0007KeepsF1Rows_REQ_ORC_004`, `TestFullAutoOnlyInsideAWorktree_REQ_ORC_004`, `TestFullAutoStillAsksForNetworkAndDestructive_REQ_ORC_004`, `TestFullAutoStillAsksWhenTainted_REQ_ORC_004`, `TestALeftWorktreeReturnsTheThreadToNormal_REQ_ORC_004` |
-| REQ-ORC-005 | T-F2-04 | `TestLocalCallsQueuePerProvider_REQ_ORC_005` |
-| REQ-ACP-001 | T-F2-07 | `TestAnACPAgentIsLaunchedInItsWorktree_REQ_ACP_001` |
-| REQ-ACP-002 | T-F2-07 | `TestAnACPThreadStreamsLikeAnyOther_REQ_ACP_002` |
-| REQ-ACP-003 | T-F2-08 | `TestACPPermissionEntersTheApprovalQueue_REQ_ACP_003`, `TestACPNeverSelectsAllowAlways_REQ_ACP_003` |
-| REQ-ACP-004 | T-F2-08 | `TestACPWriteOutsideTheWorktreeAsks_REQ_ACP_004`, `TestACPReadOutsideTheWorktreeAsks_REQ_ACP_004` |
+| REQ-ORC-004 | T-F2-01, T-F2-05, T-F2-08 | `TestMigration0007KeepsF1Rows_REQ_ORC_004`, `TestFullAutoOnlyInsideAWorktree_REQ_ORC_004`, `TestFullAutoStillAsksForNetworkAndDestructive_REQ_ORC_004`, `TestFullAutoStillAsksWhenTainted_REQ_ORC_004`, `TestALeftWorktreeClearsFullAuto_REQ_ORC_004`, `TestFullAutoDecidesACPPermissions_REQ_ORC_004` |
+| REQ-ORC-005 | T-F2-04 | `TestLocalCallsQueuePerProvider_REQ_ORC_005`, `TestQueueTimeIsNotFirstTokenTime_REQ_ORC_005` |
+| REQ-ACP-001 | T-F2-07 | `TestAnACPAgentIsLaunchedInItsWorktree_REQ_ACP_001`, `TestAnACPThreadWithoutAWorktreeRunsInItsDirectory_REQ_ACP_001` |
+| REQ-ACP-002 | T-F2-07 | `TestAnACPThreadStreamsLikeAnyOther_REQ_ACP_002`, `TestAnACPThreadIsItsPanesStateAuthority_REQ_ACP_002` |
+| REQ-ACP-003 | T-F2-08 | `TestACPPermissionEntersTheApprovalQueue_REQ_ACP_003`, `TestACPNeverSelectsAllowAlways_REQ_ACP_003`, `TestACPKindsMapToRisks_REQ_ACP_003` |
+| REQ-ACP-004 | T-F2-08 | `TestACPWriteOutsideTheWorktreeAsks_REQ_ACP_004`, `TestACPReadOutsideTheWorktreeAsks_REQ_ACP_004`, `TestACPReadInsideTheWorktreeIsReadOnly_REQ_ACP_004`, `TestACPWriteCoveredByAPermissionIsNotAskedTwice_REQ_ACP_004` |
 | REQ-ACP-005 | T-F2-01, T-F2-08 | `TestACPTerminalIsAnAuditedBlock_REQ_ACP_005`, `TestACPTerminalsAreCapped_REQ_ACP_005` |
-| REQ-ACP-006 | T-F2-07 | `TestAnACPAgentCrashEndsTheTurn_REQ_ACP_006`, `TestASilentACPAgentEndsTheTurn_REQ_ACP_006` |
-| REQ-ACP-007 | T-F2-01, T-F2-09 | `TestAnACPTurnHasATrace_REQ_ACP_007`, `TestAnACPThreadIsMarkedUnobserved_REQ_ACP_007` |
+| REQ-ACP-006 | T-F2-07 | `TestAnACPAgentCrashEndsTheTurn_REQ_ACP_006`, `TestASilentACPAgentEndsTheTurn_REQ_ACP_006`, `TestAnAgentWaitingOnUmbralIsNotSilent_REQ_ACP_006`, `TestAPendingApprovalPausesTheSilenceTimer_REQ_ACP_006` |
+| REQ-ACP-007 | T-F2-01, T-F2-08, T-F2-09 | `TestAnACPTurnHasATrace_REQ_ACP_007`, `TestAnACPThreadIsMarkedUnobserved_REQ_ACP_007`, `TestACPToolCallsAreRecordedWithTheirDecision_REQ_ACP_007`, `TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007` |
 | REQ-ACP-008 | T-F2-09 | `TestACPCancelStopsWithin500ms_REQ_ACP_008`, `TestAnUnresponsiveACPAgentIsKilledAfter5s_REQ_ACP_008` |
-| REQ-ACP-009 | T-F2-07 | `TestAnAgentWithoutAManifestIsRefused_REQ_ACP_009`, `TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009` |
+| REQ-ACP-009 | T-F2-07 | `TestAnAgentWithoutAManifestIsRefused_REQ_ACP_009`, `TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009`, `TestTheOpenCodeManifestAsksForEveryPermission_REQ_ACP_009`, `TestARepositoryAgentConfigIsRefused_REQ_ACP_009`, `TestTheUsersGlobalAgentConfigIsNotRead_REQ_ACP_009` |
 | REQ-XAG-001 | T-F2-10 | `TestAPaneRunningOpenCodeIsLabelled_REQ_XAG_001`, `TestDetectionNeverSetsState_REQ_XAG_001` |
-| REQ-XAG-002 | T-F2-10 | `TestALocalManifestOverridesByName_REQ_XAG_002` |
+| REQ-XAG-002 | T-F2-10 | `TestALocalManifestOverridesByName_REQ_XAG_002`, `TestAnInvalidManifestIsSkippedAndReported_REQ_XAG_002` |
 | REQ-XAG-003 | T-F2-10 | `TestAgentExplainNamesTheRule_REQ_XAG_003` |
 | REQ-RTR-001 | T-F2-11 | `TestACandidateWithoutToolsIsDropped_REQ_RTR_001` |
 | REQ-RTR-002 | T-F2-11 | `TestABreakerOpensAndProbes_REQ_RTR_002` |
-| REQ-RTR-003 | T-F2-11 | `TestModelRouteExplainsTheOrder_REQ_RTR_003` |
+| REQ-RTR-003 | T-F2-11 | `TestRouterPoliciesOrderTheCandidates_REQ_RTR_003`, `TestModelRouteExplainsTheOrder_REQ_RTR_003` |
 | REQ-FTU-001 | T-F2-20, T-F2-23 | deferred: named when the slice starts |
 | REQ-FTU-002 | T-F2-20 | deferred: named when the slice starts |
 | REQ-FTU-003 | T-F2-20 | deferred: named when the slice starts |
@@ -440,4 +484,5 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 |---|---|---|---|
 | 2026-10-22 | — | proposed | PRD F2 0.2 and this file drafted. The Tech Lead decided Q-F2-01…04 the same day. |
 | 2026-10-22 | T-F2-00 | done | OpenCode 1.18.33 over ACP with `coder/acp-go-sdk` v0.13.5, against `gpt-oss:20b` (`docs/spikes/2026-10-acp-opencode.md`). With default permissions OpenCode asks the client nothing: it writes files and runs commands itself. With `ask` every write and command arrives as `session/request_permission`, with path, diff or command, and writes come through `fs/write_text_file`; commands still run in its own shell. Reads are never mediated. Cancel ends the turn `cancelled` in about 0.4 s. That evidence and the Analyze pass (22 findings, FIX FIRST) reshaped PRD F2 to 0.3. |
+| 2026-10-22 | — | revised | spec-guardian verify pass on PRD F2 0.3: FIX FIRST (N-01…N-10). Applied in PRD F2 0.4 and here: `tool_calls.decision`, the merge's `commit_failed`, the ACP manifest's isolation and project-config refusal, and a named test for every clause the pass found untested. |
 | — | — | — | — |

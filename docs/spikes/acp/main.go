@@ -2,7 +2,12 @@
 // stdio with github.com/coder/acp-go-sdk, runs a few turns against a scratch repository and logs
 // every frame in both directions, so the F2 ACP tasks are written against observed behaviour.
 //
-// It is not product code. It lives in its own module so the SDK does not enter Umbral's go.mod
+// It is not product code, and it is not a security boundary: it grants every permission once and
+// runs whatever command the agent asks for, because observing that is the point. Run it only with
+// an isolated HOME and XDG directories over a scratch repository, as the spike report describes.
+// Umbral's own client decides each request with the policy engine instead (REQ-ACP-003..005).
+//
+// It lives in its own module so the SDK does not enter Umbral's go.mod
 // before Q-F2-05 is decided.
 //
 //	go run . -work /tmp/umb-acp/work -log transcript.jsonl -- opencode acp
@@ -76,8 +81,23 @@ func (t *term) Write(p []byte) (int, error) {
 	return t.out.Write(p)
 }
 
+// inside resolves symlinks on both sides, so a link in the work directory cannot lead out of it.
+// A path that does not exist yet is judged by its parent directory.
 func (c *client) inside(p string) error {
-	rel, err := filepath.Rel(c.work, filepath.Clean(p))
+	work, err := filepath.EvalSymlinks(c.work)
+	if err != nil {
+		return err
+	}
+	real, err := filepath.EvalSymlinks(filepath.Clean(p))
+	if errors.Is(err, os.ErrNotExist) {
+		var dir string
+		dir, err = filepath.EvalSymlinks(filepath.Dir(filepath.Clean(p)))
+		real = filepath.Join(dir, filepath.Base(p))
+	}
+	if err != nil {
+		return fmt.Errorf("outside the work directory: %s", p)
+	}
+	rel, err := filepath.Rel(work, real)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
 		return fmt.Errorf("outside the work directory: %s", p)
 	}
@@ -145,6 +165,9 @@ func (c *client) CreateTerminal(_ context.Context, p acp.CreateTerminalRequest) 
 	cmd := exec.Command(p.Command, p.Args...) //nolint:gosec // spike: the agent's own command, in a scratch directory
 	cmd.Dir = c.work
 	if p.Cwd != nil {
+		if err := c.inside(*p.Cwd); err != nil {
+			return acp.CreateTerminalResponse{}, err
+		}
 		cmd.Dir = *p.Cwd
 	}
 	t := &term{done: make(chan struct{}), cmd: cmd}

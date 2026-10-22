@@ -36,9 +36,10 @@ A new import cycle or a layer violation breaks CI.
 THE SYSTEM SHALL work end to end without network access, using at least one local provider
 (Ollama, llama.cpp or LM Studio). Every request that leaves the machine SHALL go through secret
 redaction and SHALL be recorded in `egress_log`. There SHALL be no remote telemetry unless the user
-enables it explicitly. An external agent Umbral hosts (ACP) makes its own model calls and reads files
-in its own process, where Umbral cannot observe them; THE SYSTEM SHALL disclose that on the agent's
-thread when it is created instead of recording it, and SHALL keep this article's full guarantee for
+enables it explicitly. An external agent Umbral hosts (ACP) makes its own network requests (model
+calls and anything else its process sends) and reads files in its own process, where Umbral cannot
+observe them; THE SYSTEM SHALL disclose that on the agent's thread when it is created instead of
+recording it, and SHALL keep this article's full guarantee for
 everything Umbral itself sends (amendment of 2026-10-22).
 *Rationale: this is the product's core promise against terminals that require a cloud account.*
 
@@ -126,7 +127,7 @@ THE TEAM SHALL follow these process rules:
 | 2026-09-20 | 5 | Secrets may come from an environment variable when the keyring is unavailable, the fallback is enabled explicitly and the state is reported as degraded | Headless Linux, SSH sessions and containers have no Secret Service; without this, remote providers are unusable there and the workaround would be plaintext configuration, which is worse | Ernesto Crespo |
 | 2026-09-20 | 5 | Rule material fetched over the network must carry a valid signature | The redaction rules and the destructive-pattern list are the product's security control; an unsigned update can silently disable it | Ernesto Crespo |
 | 2026-09-20 | 6 | Workspace, tab and pane identifiers are short addressable names (`w1`, `w1:t1`, `w1:p2`) rather than type-prefixed ULIDs | The collision risk ULIDs answer applies to identifiers that travel; these never leave the daemon that allocated them. The CLI is the addressing surface, and a 26-character id there is unusable. Raised as Analyze finding C-05; delta `2026-09-art6-structural-ids` | Ernesto Crespo |
-| 2026-10-22 | 4 | `egress_log` records what Umbral sends; a hosted external agent's own model calls and file reads are disclosed on its thread, not recorded | Umbral cannot observe traffic made inside another agent's process; the alternative was an unjustified exception in every F2 artifact (Analyze finding F-02, PRD F2 Q-F2-02) | Ernesto Crespo |
+| 2026-10-22 | 4 | `egress_log` records what Umbral sends; a hosted external agent's own network traffic and file reads are disclosed on its thread, not recorded | Umbral cannot observe traffic made inside another agent's process; the alternative was an unjustified exception in every F2 artifact (Analyze finding F-02, PRD F2 Q-F2-02) | Ernesto Crespo |
 | 2026-10-22 | Stack | `github.com/coder/acp-go-sdk` for ACP and `git` ≥ 2.34 for worktrees, from F2 | Chosen by spike T-F2-00 (`docs/spikes/2026-10-acp-opencode.md`); 2.34 is the oldest git of the supported platforms (Ubuntu 22.04), so F2a is tested against nothing older (PRD F2 Q-F2-05) | Ernesto Crespo |
 
 ## Constitution check (use in every artifact)
