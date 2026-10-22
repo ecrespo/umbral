@@ -1259,7 +1259,7 @@ enforces both rules, with `mustCases` pinned to the 20 MUST rows above.
 
 ### 9.4 The `umb` surface
 
-Commands: `umb status`, `umb block last`, `umb ai`, `umb api schema`, `umb limits`, `umb notify` (API Spec §5.35), `umb policy explain` (API Spec §5.36), `umb rules` (API Spec §5.34: `status`, `key list|add|remove|rotate`, `rollback`, `reset`), `umb wait ls` and `umb wait cancel WAIT_ID` (API Spec §5.33), `umb skill` (API Spec §5.37, below), `umb mcp` (API Spec §5.27, below), `umb version`,
+Commands: `umb status`, `umb block last`, `umb ai`, `umb api schema`, `umb limits`, `umb notify` (API Spec §5.35), `umb policy explain` (API Spec §5.36), `umb rules` (API Spec §5.34: `status`, `key list|add|remove|rotate`, `rollback`, `reset`), `umb wait ls` and `umb wait cancel WAIT_ID` (API Spec §5.33), `umb thread` (below), `umb skill` (API Spec §5.37, below), `umb mcp` (API Spec §5.27, below), `umb version`,
 `umb help`, and the workspace tree below. Flags shared by every command: `--socket PATH` (default: the runtime
 directory of API Spec §2), `--daemon-path PATH` (default: `PATH`, then the directory holding
 `umb`), `--no-autostart`, and `--json`, which every command but `umb ai` takes.
@@ -1315,6 +1315,22 @@ is exit 1 before anything is read or sent. There is no `--json`: the output is t
   ```
 
   Past the 64 MiB ceiling there is nothing to raise it to, and the second line says so instead.
+
+**`umb thread`** (REQ-CLI-009; delta `2026-10-cli-thread-wait`). One call per command, to the
+`thread.*` method of the same name, each printing the one value a script's next step needs.
+
+- `umb thread create [CWD] [--mode M] [--title T] [--model M]` prints the thread id; `CWD`
+  defaults to `.` and is made absolute; the flags are sent only when given.
+- `umb thread send THREAD TEXT… [--wait STATES] [--timeout D]` joins the text with spaces and
+  prints the turn id, or `<turn id> <final_state>` with `--wait`.
+- `umb thread wait THREAD --until STATES [--timeout D]` prints the state the wait answered, which
+  may lie outside `--until` (API Spec §5.29); a missing `--until` is exit 1 before connecting.
+- `umb thread get THREAD` prints the thread's id and attention state, then `role: content` per
+  message, oldest first, control runes escaped; `umb thread cancel THREAD` prints `cancelled THREAD`.
+- `STATES` is comma-separated. `--timeout` defaults to 10 minutes; the daemon checks its range
+  (API Spec §8), and the call is given that plus the usual 10 s.
+- `--json` prints the method's result. `TIMEOUT` is exit 1 naming `data.last_state`; every other
+  error is exit 1 too (REQ-CLI-004).
 
 **`umb skill`** (REQ-SKL-001, REQ-SKL-003; deltas `2026-09-skills-cli` and `2026-10-umb-skill`).
 `umb skill install PATH [--yes] [--replace]`, `list`, `show NAME [--body]`, `enable NAME`,
@@ -1534,5 +1550,6 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.51 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-skill-catalog` (T-F1-36): §3.2's `tools` row gains `skill_load`; §5.3's built-in destructive list gains `umb skill install|enable|remove` and `umb mcp add`; §5.3b gains `skill_load` and the per-turn catalog; the pending note keeps only §9.4's `umb mcp` |
 | 1.52 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-umb-mcp-panel` (T-F1-37): §9.4 writes `umb mcp` — always untrusted, `--env` references taken out before flag parsing, the command after `--`, the list format; §5.3e gains the extensions view; the pending-from-F1 note is closed |
 | 1.53 | 2026-10-18 | E. Crespo (assisted draft) | Delta `2026-10-duplicate-models`: §5.1's discovery stores one row per id, a provider's first entry for an id it lists twice |
+| 1.54 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-cli-thread-wait` (T-F1-38, proposed): §9.4 adds `umb thread` |
 | 1.55 | 2026-10-22 | E. Crespo (assisted draft) | Ratifies delta `2026-10-agent-pty-settle` (T-HRD-03): §5.3b says how a cancelled command's shell is settled before the agent's next command. 1.54 is delta `2026-10-cli-thread-wait`'s |
 

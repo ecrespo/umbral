@@ -16,12 +16,13 @@ const capabilityWaits = "waits"
 // hasWaits is the wait engine's availability.
 func hasWaits(cfg Config) bool { return cfg.Waits != nil }
 
-// waitMethods is §5.29 and §5.30. thread.wait is the interactive clients' (§2's cli row
-// does not name it); block.wait_output is block.*, which every kind may call.
+// waitMethods is §5.29 and §5.30. Every kind may call both: §2's cli row names thread.wait, so
+// a script drives a thread through `umb thread wait` (delta `2026-10-cli-thread-wait`), and
+// block.wait_output is block.*.
 func waitMethods() map[string]method {
 	return map[string]method{
 		"thread.wait": {
-			handle: handleThreadWait, kinds: interactiveClients, available: hasWaits,
+			handle: handleThreadWait, kinds: treeClients, available: hasWaits,
 			params: threadWaitParams{}, result: threadWaitResult{},
 		},
 		"block.wait_output": {

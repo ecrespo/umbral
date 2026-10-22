@@ -119,7 +119,7 @@ func TestCliMayManageMcpServers_REQ_CLI_008(t *testing.T) {
 	if len(svc.added) != 1 || svc.added[0].Trust != mcpdomain.TrustUntrusted {
 		t.Errorf("added %+v, want one untrusted server", svc.added)
 	}
-	for i, m := range []string{"thread.get", "approval.respond"} {
+	for i, m := range []string{"thread.list", "approval.respond"} {
 		if resp := c.call(10+i, m, map[string]any{}); resp.Error == nil || resp.Error.Code != codeMethodNotFound {
 			t.Errorf("%s from umb = %+v, want METHOD_NOT_FOUND", m, resp.Error)
 		}

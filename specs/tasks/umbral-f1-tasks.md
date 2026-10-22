@@ -459,6 +459,23 @@ default CI.
 - **Done:** `TestMcpCommandsMirrorTheMethods_REQ_CLI_008`, `TestCliMayManageMcpServers_REQ_CLI_008`
   and `TestAgentPanelShowsServersAndSkills_REQ_TUI_004` green.
 
+### [ ] T-F1-38 · `umb thread`: a script drives a thread and waits without polling
+- **What:**
+  - API §2's `cli` row gains `thread.wait` and `thread.get`; `thread.list`, `update`, `focus` and
+    `approval.*` stay interactive;
+  - `umb thread create|send|wait|get|cancel`, one call each, printing the thread id, the turn id
+    (and the final state with `--wait`), the state a wait answered, or the messages; `--json`;
+    `TIMEOUT` is exit 1 naming the last state.
+- **REQ:** REQ-CLI-009, REQ-AUT-001, REQ-AUT-004
+- **Files:** `cmd/umb/thread.go`, `cmd/umb/main.go`, `internal/api/threads.go`,
+  `internal/api/waits.go`, `specs/api/umbral-daemon-api-v1.md`, `specs/prd/umbral-mvp.md`,
+  `specs/technical/umbral-architecture.md`
+- **Depends on:** T-F1-19, T-F1-23
+- **Delta:** `changes/2026-10-cli-thread-wait/`
+- **Done:** `TestThreadCommandsDriveAThread_REQ_CLI_009`, `TestThreadWaitTimeoutExitsOne_REQ_CLI_009`
+  and `TestThreadWaitAndGetServeTheCLI_REQ_CLI_009` green; F1 criterion 4 performed by
+  `e2e/f1close/criteria.sh` with `umb` alone, against a real daemon.
+
 ## Traceability matrix (F1)
 
 | REQ | Tasks | Tests citing it |
@@ -545,6 +562,7 @@ default CI.
 | REQ-SKL-006 | T-F1-34 | TestARemoteSourceIsRefused_REQ_SKL_006 |
 | REQ-SKL-007 | T-F1-36 | TestASkillChangeReachesTheNextTurn_REQ_SKL_007 |
 | REQ-CLI-008 | T-F1-37 | TestMcpCommandsMirrorTheMethods_REQ_CLI_008, TestCliMayManageMcpServers_REQ_CLI_008, TestEnvIsTakenOutBeforeTheFlags_REQ_CLI_008 |
+| REQ-CLI-009 | T-F1-38 | TestThreadCommandsDriveAThread_REQ_CLI_009, TestThreadWaitTimeoutExitsOne_REQ_CLI_009, TestThreadWaitAndGetServeTheCLI_REQ_CLI_009 |
 | REQ-TUI-004 | T-F1-37 | TestAgentPanelShowsServersAndSkills_REQ_TUI_004, TestTheExtensionsViewStaysInItsRows_REQ_TUI_004, TestToEventMapsTheExtensionsNotifications_REQ_TUI_004 |
 
 **SHOULD/COULD covered or deferred:**

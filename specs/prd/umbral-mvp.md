@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.20 |
+| **Version** | 1.21 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-09-27 |
@@ -246,6 +246,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-CLI-006** · MUST · event — WHEN `umb layout export --json` runs, THE SYSTEM SHALL write the layout to stdout in the form `umb layout apply` consumes, and WHEN `umb layout apply --from <file>` runs, THE SYSTEM SHALL read the layout from that file, or from stdin WHERE the file is `-`, so that a script reproduces a tab in another workspace through a pipe and without a shared filesystem location.
 - **REQ-CLI-007** · MUST · event — WHEN `umb limits set --max-message <size>` runs, THE SYSTEM SHALL validate the size, persist it as `[api] max_message_bytes` and apply it to connections opened afterwards, leaving the file untouched on an invalid value; and WHEN any `umb` command receives `RESULT_TOO_LARGE`, it SHALL exit 1 naming the size, the limit and the command that raises it.
 - **REQ-CLI-008** · MUST · event — WHEN `umb mcp add`, `umb mcp list` or `umb mcp remove` runs, THE SYSTEM SHALL invoke the `mcp.server.*` method of the same name and print its result, in JSON with `--json`, with REQ-CLI-004's exit codes; a server added this way is always `untrusted`, and a plaintext `--env` value SHALL be refused before anything is sent.
+- **REQ-CLI-009** · MUST · event — WHEN `umb thread create`, `send`, `wait`, `get` or `cancel` runs, THE SYSTEM SHALL invoke the `thread.*` method of the same name and print the value the next step of a script needs — the thread id, the turn id and, with `--wait`, its final state, the state a wait answered, the messages — in JSON with `--json`, with REQ-CLI-004's exit codes, so that a script drives a thread and waits on it without polling (US-008); a wait that reaches its timeout SHALL exit `1` naming the state it last observed.
 - **REQ-TUI-001** · MUST · ubiquitous — THE SYSTEM SHALL provide in the TUI tabs, splits, jumping between blocks and an agent panel with pending approvals.
 - **REQ-TUI-002** · MUST · event — WHEN the user presses the mode shortcut (`ctrl+space` by default), the TUI SHALL toggle input between shell and agent.
 - **REQ-TUI-003** · MUST · event — WHEN the user picks "attach to agent" on a block, the TUI SHALL open the agent panel with `@block:<id>` preloaded in the input.
@@ -495,6 +496,7 @@ TUI as text:
 | 1.18 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-us003-e2e` (T-F1-21): §4.1 says how "the rate of invalid tool calls after repair" is counted — the calls the one repair did not fix, over every tool call, per model |
 | 1.19 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-retention` (T-F1-22): REQ-TERM-005 names its one retention exception, an ephemeral thread's agent blocks |
 | 1.20 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cost-cap`: REQ-AGT-008 stops a turn at the thread's cost cap too, checked before every priced call, and `thread.send` answers `BUDGET_EXCEEDED` past it |
+| 1.21 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-cli-thread-wait` (T-F1-38, proposed): REQ-CLI-009, `umb thread` over `thread.create`, `send`, `wait`, `get` and `cancel` |
 
 ## Approvals
 
