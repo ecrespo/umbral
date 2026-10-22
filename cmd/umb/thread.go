@@ -196,9 +196,10 @@ func splitStates(s string) []string {
 // drive the terminal, and with its extra lines indented so a line of model text cannot pass
 // for a message of its own. A script reads `--json`.
 func printThread(out *printer, result map[string]any) {
-	if thread, ok := result["thread"].(map[string]any); ok {
-		out.printf("%v  %v\n", thread["id"], thread["attention_state"])
-	}
+	// The result is the Thread itself, with its messages beside it (API §5.23).
+	id, _ := result["id"].(string)
+	state, _ := result["attention_state"].(string)
+	out.printf("%s  %s\n", printable(id), printable(state))
 	messages, _ := result["messages"].([]any)
 	for _, m := range messages {
 		obj, _ := m.(map[string]any)
