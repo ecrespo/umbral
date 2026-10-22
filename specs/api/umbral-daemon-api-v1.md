@@ -6,12 +6,13 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.14 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.41 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
 
 ---
+
 
 ## 1. Overview
 
@@ -23,11 +24,27 @@ The channel is bidirectional:
 - the client invokes **methods** (request/response);
 - the daemon emits **notifications** (no `id`) for output streams and events.
 
-Framing: JSON messages delimited by `\n` (NDJSON). A message is at most 4 MiB (4 194 304 bytes)
-including its delimiter. Past that limit the daemon replies `VALIDATION_ERROR` with `id: null` — it
-has not read the id — and closes the connection, because the framing cannot be recovered; before the
-handshake the reply is `UNAUTHORIZED` instead (§2). A client may see its own write fail with `EPIPE`
-or `ECONNRESET` and SHOULD read the reply first.
+Framing: JSON messages delimited by `\n` (NDJSON). A message is at most **the connection's frame
+limit** including its delimiter, in both directions. Before the handshake that limit is 4 MiB
+(4 194 304 bytes) and fixed. From a successful `system.hello` on, it is the limit the hello result
+announces in `max_message_bytes` (§5.1): the daemon's configured `[api] max_message_bytes`, between
+1 MiB and 64 MiB and 4 MiB by default, as it stood when the connection was greeted. A connection
+keeps that limit for its whole life; a change made with `limits.set` (§5.38) reaches only
+connections opened afterwards. The limit before the handshake does not follow the setting, so an
+unauthenticated peer cannot make the daemon reserve more than 4 MiB for it.
+
+- **Inbound.** Past the limit the daemon replies `VALIDATION_ERROR` with `id: null` — it has not
+  read the id — and closes the connection, because the framing cannot be recovered; before the
+  handshake the reply is `UNAUTHORIZED` instead (§2). A client may see its own write fail with
+  `EPIPE` or `ECONNRESET` and SHOULD read the reply first.
+- **Outbound.** THE SYSTEM SHALL NOT write a frame over the connection's limit (REQ-API-005). A
+  response that would exceed it is replaced by `RESULT_TOO_LARGE` (§3) under the request's id, with
+  `data.size_bytes` and `data.limit_bytes`, and the connection stays open: the framing was never
+  broken. A notification that would exceed it is replaced by `limits.notification_dropped` (§6)
+  under the **same** `seq`, so the loss is announced rather than left as a gap. `block.get` shortens
+  its output instead (§5.17). A client SHOULD read with the limit the hello announced; one that
+  ignores the field keeps reading at 4 MiB, and with a raised limit may have to refuse a large
+  frame.
 
 A notification carries a sequence number in its envelope, beside `jsonrpc`, `method` and
 `params`:
@@ -39,6 +56,26 @@ A notification carries a sequence number in its envelope, beside `jsonrpc`, `met
 §6 says what `seq` counts. A client that ignores the member behaves exactly as one written
 before it existed, which is why adding it left `protocol_version` at 1 (§9).
 
+**One deviation from JSON-RPC 2.0.** §4.1 of JSON-RPC says a server does not reply to a
+notification. The daemon does, in exactly two cases, both with `UNAUTHORIZED`, `id: null` and a
+close (REQ-SEC-018, §2):
+
+- a notification from a peer that has not completed the handshake. JSON-RPC's rule assumes a
+  session the peer is entitled to; this reply is the connection-level refusal of §2 step 3, not the
+  answer to a call;
+- a `system.hello` without an `id`, at any point in the connection.
+
+After the handshake, a notification to any other method keeps its JSON-RPC meaning and gets no
+reply.
+
+**Responses come in the order their answers are ready.** The daemon reads a connection's requests in
+order and does, in that order, everything a request must do before the next one is read. A wait —
+`thread.wait`, `block.wait_output`, `thread.send` with `wait` — then answers later, when it settles,
+and the daemon keeps reading and answering that connection's other requests meanwhile: the
+`approval.respond` that unblocks a wait may arrive on the same connection. A client matches a
+response to its request by `id`, as JSON-RPC 2.0 requires. Closing the connection ends its pending
+waits, and nothing is written for them.
+
 ## 2. Authentication and Authorization
 
 1. On installation the daemon creates `$XDG_RUNTIME_DIR/umbral/token` (32 random bytes in hex,
@@ -46,14 +83,27 @@ before it existed, which is why adding it left `protocol_version` at 1 (§9).
 2. The first call on every connection MUST be `system.hello` with that token (REQ-SEC-003).
 3. Any earlier call, or a call with an invalid token, receives `UNAUTHORIZED` and the connection is
    closed. A line that is not JSON, is not a JSON-RPC request, or is past the frame limit (§1)
-   counts as an earlier call: before the handshake it receives no protocol error in its place.
+   counts as an earlier call: before the handshake it receives no protocol error in its place. So
+   does a JSON-RPC notification, which is answered with `id: null` (§1, REQ-SEC-018).
+
+   3a. IF a connection has not completed `system.hello` within **5 s** of being accepted, THEN THE
+   SYSTEM SHALL reply `UNAUTHORIZED` with `id: null` and close it (REQ-SEC-017). The clock starts at
+   accept and nothing the peer sends moves it: not blank lines, not a partial line. A peer that
+   never speaks would otherwise hold a connection for the life of the daemon. It is a
+   constant, not a setting; the official client completes connect and handshake within its 2 s
+   dial timeout.
 4. The socket is created with permissions `0600` (REQ-SEC-007).
-5. THE SYSTEM SHALL compare the token before validating any other `system.hello` parameter.
-   REQ-SEC-003 admits no exception, so no validation error may answer first and leave the
-   connection open for another attempt.
+5. `system.hello` MUST carry a non-null `id`. IF it has none, or `"id": null`, THEN THE SYSTEM
+   SHALL reply `UNAUTHORIZED` with `id: null` and close the connection, **whatever its token**
+   (REQ-SEC-018). That check comes before the token comparison: an answer that cannot be delivered
+   is not a handshake, and a connection must not be authenticated without learning which daemon,
+   protocol and capabilities it is talking to. After it, THE SYSTEM SHALL compare the token before
+   validating any other `system.hello` parameter. REQ-SEC-003 admits no exception, so no
+   validation error may answer first and leave the connection open for another attempt.
 6. IF `system.hello` arrives on a connection that already completed the handshake, THEN THE SYSTEM
-   SHALL reply `UNAUTHORIZED` and close the connection. That check precedes the token comparison, so
-   an authenticated connection cannot be reused to test tokens.
+   SHALL reply `UNAUTHORIZED` and close the connection — with `id: null` if the repeated hello
+   carries no id (step 5). That check precedes the token comparison, so an authenticated
+   connection cannot be reused to test tokens.
 
 ### Runtime directory
 
@@ -76,7 +126,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `model.list` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove` |
 
 ### Handshake
 
@@ -88,8 +138,8 @@ before the daemon starts.
 ```json
 {"jsonrpc":"2.0","id":1,"result":{
   "daemon_version":"0.1.0","protocol_version":1,
-  "capabilities":["sessions","blocks","threads","mcp","models","workspaces","layouts","waits","integrations","notifications","policy_explain","wait_admin","rules"],
-  "connection_id":"con_01J9Z3K8T2QH6W4V5X7Y8Z9A0B"}}
+  "capabilities":["sessions","blocks","threads","mcp","models","workspaces","layouts","waits","integrations","notifications","policy_explain","wait_admin","rules","skills","limits","config"],
+  "connection_id":"con_01J9Z3K8T2QH6W4V5X7Y8Z9A0B","max_message_bytes":4194304}}
 ```
 
 - `protocol_version` is **required**. IF it is missing or not compatible → `UNSUPPORTED_PROTOCOL_VERSION`
@@ -97,11 +147,14 @@ before the daemon starts.
   compatible would silently pair this daemon with a client built for a version it never declared.
 - Each entry of `capabilities` names a method namespace (`sessions`, `blocks`, `threads`, `mcp`,
   `models`, `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`,
-  `wait_admin`, `rules`) whose methods the daemon **serves at that moment**. THE SYSTEM SHALL derive
+  `wait_admin`, `rules`, `skills`, `limits`, `config`) whose methods the daemon **serves at that moment**. THE SYSTEM SHALL derive
   the list from its method table rather than declaring it statically, SHALL advertise a namespace
   when at least one of its methods is served by this build, and SHALL NOT advertise one whose
   methods are all unserved: a client that branches on the advertisement must not be sent down a path
-  that cannot work.
+  that cannot work. `approval.*` belongs to the agent, so it is advertised under `threads`. `thread.wait` and
+  `block.wait_output` are advertised under `waits`, `pane.report_state` and
+  `pane.release_state` under `integrations`, and `notification.show` under `notifications`, which their prefixes would not give them: a
+  method may name its own namespace.
 - **Registered is not the same as served.** Every method of the protocol stays in the table whether
   or not this build has the module behind it, which is what lets an unserved one answer
   `NOT_IMPLEMENTED` instead of `METHOD_NOT_FOUND` (§9). So the list is derived from what the daemon
@@ -119,7 +172,7 @@ before the daemon starts.
 ## 3. General Conventions
 
 ### Identifiers
-- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`
+- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`, `trn_` for a turn (`turn_id`, T-F1-13), `wt_` for a wait (`wait_id`, T-F1-31), `skl_` for a skill (T-F1-34), and `key_` for a trust key — fixed by the binary's trust seed for the project's keys, so every install shows the same id, and minted at `rules.key.add` otherwise
   (Constitution Art. 6). Example: `blk_01J9Z3K8T2QH6W4V5X7Y8Z9A0B`.
 - **Structural identifiers** are the documented exception to that rule (Art. 6, amendment of
   2026-09-20): a workspace is `w<n>`, a tab `w<n>:t<m>` and a pane `w<n>:p<m>`, with `n` and `m`
@@ -141,9 +194,11 @@ before the daemon starts.
           "trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"}}}
 ```
 
-`trace_id` carries the OpenTelemetry trace id of the turn that produced the error. Until tracing
-exists (T-F1-18) THE SYSTEM SHALL put the `connection_id` there instead, and SHALL leave the field
-empty when the error precedes the handshake and there is no connection id yet. THE SYSTEM SHALL NOT
+`trace_id` carries the OpenTelemetry trace id of the turn that produced the error. When the failing
+work ran outside a turn THE SYSTEM SHALL put the `connection_id` there instead, and SHALL leave the
+field empty when the error precedes the handshake and there is no connection id yet. Requests are
+not traced, only turns are (Tech §7.3), and a turn's failure is a stop reason rather than an error
+response, so today every `INTERNAL_ERROR` carries the `connection_id`. THE SYSTEM SHALL NOT
 mint an identifier that correlates to nothing: an id appearing in no other log line is worse than an
 absent one. The field is present on `INTERNAL_ERROR` only (Art. 7).
 
@@ -155,7 +210,7 @@ absent one. The field is present on `INTERNAL_ERROR` only (Art. 7).
 | -32600 | `INVALID_REQUEST` | Message is not valid JSON-RPC |
 | -32601 | `METHOD_NOT_FOUND` | Method name this build does not know at all, or not allowed for the `client_kind` |
 | -32602 | `VALIDATION_ERROR` | Invalid parameters |
-| -32001 | `UNAUTHORIZED` | No `system.hello` or invalid token |
+| -32001 | `UNAUTHORIZED` | No `system.hello`, handshake deadline passed, `system.hello` without an id, or invalid token (§2) |
 | -32002 | `NOT_FOUND` | Unknown ID |
 | -32003 | `CONFLICT` | Incompatible state (e.g. `thread.send` while a turn is running) |
 | -32004 | `PERMISSION_DENIED` | `deny` policy |
@@ -165,9 +220,10 @@ absent one. The field is present on `INTERNAL_ERROR` only (Art. 7).
 | -32008 | `INPUT_LOCKED` | Input to a session locked by the agent |
 | -32009 | `CONFIG_INVALID` | Configuration rejected (e.g. plaintext secret) |
 | -32010 | `THREAD_BLOCKED` | `thread.send` with `wait` on a thread awaiting approval |
-| -32011 | `TIMEOUT` | A wait reached its deadline (includes the last observed state) |
+| -32011 | `TIMEOUT` | A wait reached its deadline. `data.last_state` is what it last observed: the pinned turn's state for a thread wait, the last line evaluated for `block.wait_output` (`""` when none was). Nothing was resent or retried (REQ-AUT-004) |
 | -32012 | `NOT_IMPLEMENTED` | A method this build knows by name but whose capability is switched off; see §9 |
 | -32013 | `CANCELLED` | The wait was cancelled with `wait.cancel` |
+| -32014 | `RESULT_TOO_LARGE` | The result would exceed this connection's frame limit (§1). `data.size_bytes` is the size it would have had and `data.limit_bytes` the limit, both numbers; the connection stays open (REQ-API-005) |
 | -32603 | `INTERNAL_ERROR` | Unexpected error (always with `trace_id`) |
 
 ### Cursor pagination
@@ -222,9 +278,22 @@ method and the ordering that produced it, so one handed to a different method is
 ```
 - `attention_state`: `blocked` | `working` | `done` | `idle` | `unknown`. `unknown` is the
   starting value and the one that survives until some source reports another: it is the absence of
-  a report, not a report of nothing. F0 has no producer at all — `pane_state_reports` arrives with
-  migration 0005 and threads with F1 — so every F0 pane is `unknown` with a `null` `state_source`
-- `state_source`: who owns the state — `umbral:agent` for Umbral's own agent, `umbral:shell` when it is derived from the block lifecycle, or the `source` of an external integration (REQ-INT-002). `null` while nothing has reported. The `umbral:shell` derivation is named here but specified nowhere: which block state maps to which attention state is deferred to the task that owns REQ-INT-002
+  a report, not a report of nothing.
+- `state_source`: who owns the state. Exactly one source decides, in DD-012's order (delta
+  `2026-10-integration-surface`):
+  1. `umbral:agent`, when the pane's live session is a thread's PTY; the state is that thread's
+     `attention_state` and `thread_id` names it. Nothing displaces it (REQ-INT-006).
+  2. The `source` of an external integration (§5.31, REQ-INT-002): the one that reported most
+     recently, among those that have not released the pane.
+  3. `umbral:shell`, derived from the block lifecycle of the pane's live session: its latest block
+     `running` or `interactive` is `working`; `finished` or `abandoned` is `idle`; no block yet,
+     with `integration: osc133`, is `idle` (a shell at its first prompt).
+  4. Otherwise `null` with `unknown`: no live session, or a session whose integration is `pending`
+     or `none` and that no one reports for.
+
+  A change of either field is announced as `pane.state_changed` (§6).
+- `thread_id`: the thread whose PTY the pane's live session is, `null` for any other pane
+- `metadata`: display only (§5.32, REQ-INT-004): `{title?, display_name?, state_labels?: {state: label}, tokens?: {name: value}}`, each member present only when some source set it and its TTL has not passed; `{}` when none has. When two sources set one member, the later write wins. It never feeds `attention_state`, `state_source`, the rollup or a wait
 - `command_pending`: the pane has a `command` that Umbral has not run. Set by `layout.apply` and
   by a restart, never by `pane.split` — a client asking for a command now is asking for it to run,
   while a layout and a restart replay an intention from another time, and REQ-TERM-011 forbids
@@ -256,6 +325,17 @@ method and the ordering that produced it, so one handed to a different method is
  "state":"finished","exit_code":1,"started_at":1757592001000,"ended_at":1757592005200,
  "duration_ms":4200,"output_bytes":1834,"output_truncated":false}
 ```
+- `output_truncated`: the **stored** capture was cut at 16 MiB raw or 1 MiB plain (Data Model §2.2).
+  Those bytes are gone.
+- **Purged output.** Data Model §4's retention removes a closed block's raw chunks after
+  `retention.raw_output_days` and its transcript after `retention.plain_output_days`. The block
+  stays, with its `output_bytes`; `block.get` then answers an empty `output_raw_b64` or
+  `output_plain`. `output_bytes > 0` with nothing returned is how a client tells purged output
+  from output that never existed, and `output_truncated` does not change.
+- `output_response_truncated_bytes` (optional, `block.get` only): how many bytes of the stored
+  output **this response** leaves out to fit the frame limit (§5.17). Absent when nothing was left
+  out. Raising the limit (§5.38) brings those bytes back; it cannot bring back what
+  `output_truncated` reports.
 - `origin`: `user` | `agent`
 - `state`: `running` | `interactive` | `finished` | `abandoned`
 - `abandoned` means the block ended without reporting how. There are two ways: the session
@@ -274,15 +354,17 @@ method and the ordering that produced it, so one handed to a different method is
 - `mode`: `ask` | `normal` | `auto-edit`
 - `state`: `idle` | `running` | `awaiting_approval` | `stopped`
 - `attention_state`: `blocked` | `working` | `done` | `idle` | `unknown` — what the sidebar rolls up and what waits observe. `done` is a finished turn no client has viewed yet (REQ-AGT-016)
+- `stalled`: `true` while the thread's running turn is marked stalled (REQ-AUT-008, §5.33); the mark is the daemon's and is not stored
 
 ### Message
 ```json
-{"id":"msg_…","thread_id":"thr_…","role":"assistant","content":"…",
+{"id":"msg_…","thread_id":"thr_…","turn_id":"trn_…","role":"assistant","content":"…",
  "attachments":[{"kind":"block","ref":"blk_…","bytes":1834,"truncated_bytes":0}],
  "created_at":1757592020000}
 ```
 - `role`: `user` | `assistant` | `tool` | `system_note`
 - `attachments[].kind`: `file` | `dir` | `block` | `stdin`
+- `attachments[].ref`: the path or block id the message named; `stdin` for a `stdin` attachment, whose data arrived inline (§5.20)
 
 ### ToolCall
 ```json
@@ -310,6 +392,12 @@ method and the ordering that produced it, so one handed to a different method is
  "price_in_micro_usd_per_mtok":0,"price_out_micro_usd_per_mtok":0,"health":"ok"}
 ```
 - `health`: `ok` | `degraded` | `down` | `unknown`
+- `reason` (absent when there is nothing to say): why the model is not `ok`. It is its provider's —
+  a credential reason of §5.28 (`keyring_unavailable`, `env_secret`, …), `discovery_failed` when the
+  provider did not answer its model list, `no_adapter` for a provider type this build cannot call
+  yet, `invalid_config` for an entry no adapter accepts, `offline` for a remote provider while
+  `router.offline = true`.
+- `caps.context_window` is 0 when the provider does not say; prices are 0 when it publishes none.
 
 ### McpServer
 ```json
@@ -320,15 +408,50 @@ method and the ordering that produced it, so one handed to a different method is
 - `trust`: `trusted` | `untrusted`
 - `state`: `connecting` | `connected` | `unavailable` | `disabled`
 
+### Skill
+```json
+{"id":"skl_…","name":"release-check","description":"Steps to cut a release.","version":"1.2",
+ "source":"/home/me/skills/release-check","sha256":"9f2c…","size_bytes":4210,"enabled":true,
+ "installed_at":1760800000000}
+```
+- `name`: 1–64 of `[a-z0-9-]`, not starting with `-`; unique, and how methods address a skill
+- `version`: `null` when the front matter has none
+- `source`: the path it was installed from, for display only — the stored copy is what is used
+- `sha256`: the bundle's digest (§5.37)
+
 ## 5. Methods
 
 ### 5.1 `system.hello`
 **Params:** `{token, client_kind, client_version, protocol_version}`. See §2 for what each one means
 and for the order they are validated in. REQ-SEC-003.
+**Result:** `{daemon_version, protocol_version, capabilities, connection_id, max_message_bytes}`.
+`max_message_bytes` is this connection's frame limit from now on, in both directions (§1).
 
 ### 5.2 `system.status`
-**Params:** `{}`. Returns `{daemon_version, uptime_ms, sessions_alive, threads_running, providers:[{id, health}], mcp:[{name, state}]}`.
+**Params:** `{}`. Returns `{daemon_version, uptime_ms, sessions_alive, threads_running, providers:[{id, health, reason?}], mcp:[{name, state}], frames}`.
+A provider's `reason` says why it is `down` or `degraded` — `keyring_unavailable`
+(REQ-SEC-008), `env_secret` (REQ-SEC-012) and the others of §5.28 — and is absent otherwise.
 Used by `umb status` (REQ-CLI-003).
+
+`frames` reports how close traffic has come to the frame limit **this daemon run** (REQ-OBS-005);
+a restart starts every counter again:
+
+```json
+"frames": {"limit_bytes":4194304, "largest_in_bytes":12288, "largest_out_bytes":3250000,
+           "refused_in":0, "refused_out":2, "near_limit_out":5}
+```
+
+- `limit_bytes`: the limit a new connection gets once greeted.
+- `largest_in_bytes` / `largest_out_bytes`: the largest frame read and written, the `\n` counted.
+- `refused_in`: inbound frames over the limit, each of which closed its connection.
+- `refused_out`: responses answered `RESULT_TOO_LARGE` plus notifications replaced by
+  `limits.notification_dropped`.
+- `near_limit_out`: frames written above 75 % of their connection's limit.
+
+THE SYSTEM SHALL log every refusal, and the run's first frame above 75 %, at `warn` with the method
+and the size and never the content (Art. 7). An inbound refusal is the exception that proves the
+rule: the line was never parsed, so it has no method to name, and its size is logged as
+`size_bytes_at_least`, one byte past the limit, because reading stopped there.
 
 ### 5.3 `session.snapshot` — REQ-API-001, REQ-API-002
 **Params:** `{}`.
@@ -337,6 +460,12 @@ Used by `umb status` (REQ-CLI-003).
 All three members of `focused` are nullable, and all three are null on a daemon that has nothing
 focused yet — the state every client meets on a fresh daemon, before the first `workspace.create`.
 Null means "nothing is focused", never "unknown".
+
+`focused.thread_id` is the thread a connection that still views one focused most recently with
+`thread.focus` (§5.23), and null while no connection views a thread. It lives for the daemon's
+run: a view ends with its connection, so a restart starts with none. `threads` holds what
+`thread.list` returns — the threads that are not ephemeral — each with its `attention_state`, which
+is the base `thread.attention_changed` updates (REQ-AGT-016).
 
 The `seq` is the envelope counter of §6, read **before** the tree: the daemon persists before it
 notifies (DD-007), so an event whose `seq` has been assigned is already stored, and reading the
@@ -443,7 +572,14 @@ Sends SIGHUP; after 3 s, SIGKILL.
 
 ### 5.17 `block.get` — REQ-CLI-002, REQ-BLK-007
 **Params:** `{block_id | "last", session_id?, include?:"none"|"plain"|"raw"}`.
-**Result:** `Block` plus `output_plain` or `output_raw_b64`.
+**Result:** `Block` plus `output_plain` or `output_raw_b64`, and `output_response_truncated_bytes`
+when the output was shortened.
+
+**It fits the frame limit instead of failing** (REQ-API-005). A result that would exceed the
+connection's limit keeps the block and shortens its one output field until the whole response fits:
+`output_raw_b64` on a 3-byte boundary before encoding, so it is a prefix of what a larger limit would
+return, and `output_plain` on a UTF-8 boundary, measured as encoded JSON. How many stored bytes were
+left out goes in `output_response_truncated_bytes` (§4). `output_truncated` keeps its meaning.
 
 The reserved id `"last"` means the most recent **closed** block: `finished` or `abandoned`,
 never one still running. With `session_id` it is that session's last closed block; without
@@ -486,25 +622,96 @@ is not already a valid expression. A malformed query returns `VALIDATION_ERROR`.
 
 **Result:** `{turn_id, message_id, final_state?}`. The content arrives through notifications; `final_state` is only present when `wait` was requested.
 
+With `wait`, the wait is validated before anything is sent: an invalid `until` or `timeout_ms` is
+`VALIDATION_ERROR` and nothing is persisted. It is pinned to the turn this send started — or, for a
+repeated `client_msg_id`, to the turn that id names — before the next request on the connection is
+read, and `final_state` is what §5.29 would have answered. `THREAD_BLOCKED` is checked before a
+repeated `client_msg_id` is looked up, so a retry against a paused thread is refused too. A daemon
+built without the wait engine answers a send that carries `wait` with `NOT_IMPLEMENTED` and sends
+nothing. An attachment names a `ref` (a path relative to the thread's
+cwd, or a block id), except `stdin`, which carries its data inline (REQ-CLI-001, delta
+`2026-10-umb-ai`): `{kind: "stdin", data_b64, truncated?: false}`. Only `stdin` carries
+`data_b64`, and it carries no `ref`; every other kind carries a `ref` and neither `data_b64` nor
+`truncated`. A message has at most one `stdin` attachment, of at most 1 MiB once decoded
+(§8); an empty `data_b64` is accepted. `truncated: true` says the client stopped reading
+stdin before its end, and the context tells the model the rest was never read. The data then
+goes through the 256 KiB cap of every attachment (REQ-CTX-005), and is recorded with
+`ref: "stdin"`. Any client kind that may call `thread.send` may send it.
+The message persisted, and `thread.get` returns, is the text with its attachments' content
+appended, which is what the model read (REQ-AGT-011).
+
 **Errors:**
 - `CONFLICT`: a turn is already running (not raised for a duplicate `client_msg_id`).
 - `THREAD_BLOCKED`: with `wait`, the thread is already awaiting approval; nothing is persisted or sent.
 - `TIMEOUT`: the wait expired; the message was already sent, so do not resend it blindly.
-- `BUDGET_EXCEEDED`.
-- `PROVIDER_UNAVAILABLE`.
-- `VALIDATION_ERROR`: unknown attachment, or `client_msg_id` that is not a ULID.
+- `BUDGET_EXCEEDED`: the thread has spent its token budget, or reached the cost cap
+  `router.max_cost_usd_per_thread` where one is set (REQ-AGT-008); nothing is persisted. Both are
+  checked with the conflict check, after `PROVIDER_UNAVAILABLE`.
+- `PROVIDER_UNAVAILABLE`: none of the thread's candidates — its model, or its class's — is known
+  to the catalog and not down; nothing is persisted. A candidate that fails once the turn runs
+  ends it with `stop_reason = provider_error` instead.
+- `VALIDATION_ERROR`: unknown attachment, `client_msg_id` that is not a ULID, `data_b64` or
+  `truncated` on a kind other than `stdin`, a `ref` on `stdin`, a second `stdin`, `stdin` data
+  over 1 MiB, or `data_b64` that is not base64.
 
 ### 5.21 `thread.cancel` — REQ-AGT-007 → `{stopped_at}`
+**Params:** `{thread_id}`.
+**Result:** `{stopped_at: int | null}`.
+
+- The running turn's context is cancelled: a model call ends, a pending approval becomes
+  `expired`, and `run_command` sends SIGTERM to the process groups the thread's shell launched
+  and SIGKILL 300 ms later, keeping the shell (§5.3b of the Tech Design).
+- The call returns once the turn has recorded its end, within 500 ms (REQ-AGT-007).
+  `stopped_at` is that moment. The turn ends with `thread.turn_finished`, whose
+  `stop_reason = cancelled`, and the thread is left `stopped` (§7).
+- A thread with no turn running is left as it is, and `stopped_at` is `null`. That cancel lost
+  the race with the turn's own end, which is not an error for a script that cancels
+  defensively (as `thread.wait` returns at once on a thread already in its target state,
+  §5.29). So is a cancel that found the turn already recording another end, and one whose end
+  could not be written (`storage_error`). The cancel takes the same per-thread lock as
+  `thread.send`, so a cancel issued after a send has answered always finds that send's turn.
+- 500 ms is a budget, not a deadline: the answer waits for the turn, bounded only by the
+  request.
+
+**Errors:** `NOT_FOUND` (an unknown thread), `VALIDATION_ERROR` (no `thread_id`).
 
 ### 5.22 `thread.update` — REQ-AGT-010
 **Params:** `{thread_id, mode?, model?, title?}`.
 - A `model` change applies from the next turn.
 - **Errors:** `CONFLICT` when changing `mode` during a turn.
 
-### 5.23 `thread.list` / `thread.get`
-`thread.get` accepts `{thread_id, include_messages?: bool, limit, cursor}`.
+### 5.23 `thread.list` / `get` / `focus`
+
+`list` params: `{}`. **Result:** `{items: Thread[]}`, the threads that are not ephemeral, most
+recently updated first.
+
+`get` params: `{thread_id, include_messages?, limit?, cursor?}`. **Result:** the `Thread`, and
+with `include_messages` a page of its `messages` (`limit` 1-1000, default 100), oldest first;
+`next_cursor` is the last message id of the page when more follow, and passing it as `cursor`
+returns the next page. An unknown thread is `NOT_FOUND`; a `cursor` that names no message of the
+thread is `VALIDATION_ERROR`.
+
+`focus` params: `{thread_id: string | null}`. **Result:** `{}`. The connection now views the
+thread, or no thread for `null` (REQ-AGT-016, delta `2026-10-attention-focus`):
+
+- Viewing is per connection, one thread at a time; a later `focus` replaces the connection's view,
+  and the view ends when the connection closes. A thread is **viewed** while at least one
+  connection views it.
+- Focusing a thread records `seen_at`, and moves a `done` thread to `idle` with
+  `thread.attention_changed`. A thread in any other attention state keeps it, and nothing is
+  announced.
+- A turn that ends while its thread is viewed ends `idle` instead of `done`, and records `seen_at`
+  (§7). Reading a thread — `thread.get`, `thread.list`, `session.snapshot` — is not viewing it, so
+  a script never clears the `done` a person has not seen.
+- `thread_id` is required, `null` included: a missing member is `VALIDATION_ERROR`, so a client
+  that forgot it is not read as unfocusing. An unknown thread is `NOT_FOUND`, and the
+  connection's view is left as it was.
+- `list` and `focus` are the interactive clients' (§2): `umb` drives threads but views none. `get` is
+  every kind's, so a script reads what a thread answered (`umb thread get`, REQ-CLI-009).
 
 ### 5.24 `approval.list` → `{items: Approval[]}` (only `pending` by default)
+**Params:** `{thread_id?, all?}`. `all` includes decided and expired approvals; `thread_id`
+narrows to one thread. Oldest first. Interactive clients only (§2).
 
 ### 5.25 `approval.respond` — REQ-AGT-004, REQ-AGT-005
 **Params:** `{approval_id, decision:"approve"|"deny", scope:"once"|"thread"|"always"}`.
@@ -512,25 +719,115 @@ is not already a valid expression. A malformed query returns `VALIDATION_ERROR`.
 Rules:
 - `scope = always` persists an `allow` or `deny` rule (table `policy_rules`).
 - Destructive patterns ignore `always` (REQ-SEC-005).
-- **Errors:** `NOT_FOUND`; `CONFLICT` if already decided.
+- `scope = thread` persists the rule for that thread only. The rule's pattern is the call's
+  target (`summary`: the command line, the path, the URL). A destructive command, and a target
+  holding `*` or `?` — which a rule's glob would read as a wider pattern — and a compound command
+  line — which the rules read one command at a time — are decided `once`
+  whatever the scope asked; the result's `decision_scope` says so.
+- The decision is persisted, then the paused turn resumes; a denial gives the model a
+  `denied_by_user` result and the turn goes on (REQ-AGT-005). A turn cancelled while it waits
+  leaves the approval `expired`.
+- **Errors:** `NOT_FOUND`; `CONFLICT` if already decided or expired; `VALIDATION_ERROR` for a
+  `decision` or `scope` outside the lists. Interactive clients only (§2).
 
 ### 5.26 `model.list` — REQ-LLM-002
 **Params:** `{refresh?: false}`. **Result:** `{items: Model[]}`.
 
-### 5.27 `mcp.server.list` / `mcp.server.add` / `mcp.server.remove` — REQ-MCP-001, REQ-MCP-002
-`add` params: `{name, transport, command?, args?, url?, env_refs?, trust?:"untrusted"}`.
-`env_refs` maps environment variable names to `keyring:<path>` references (column `mcp_servers.env_refs_json`); plaintext values are rejected with `CONFIG_INVALID` (REQ-SEC-004). When the keyring is unavailable and the fallback is enabled, an `env:<VAR>` reference is accepted instead and the daemon reports the degraded mode (REQ-SEC-012, Art. 5 amendment of 2026-09-20).
-Errors: `VALIDATION_ERROR`, `CONFIG_INVALID`.
+The catalog of every configured provider's models, ordered by id; a provider removed from
+`models.toml` takes its models with it. The daemon discovers them at start and after a
+`config.reload`, in the background, so an empty list right after start can mean discovery is still
+running. `refresh: true` discovers again before answering; a provider that does not answer is not an
+error of the call — its models come back `down` with `discovery_failed`. A provider down for its
+credential is never contacted, not even to list models (REQ-SEC-008), and neither is a remote
+provider while `router.offline = true` (REQ-LLM-004). Every discovery request to a host that is not
+loopback is recorded in `egress_log` before it is sent, like a model call (REQ-SEC-002). A provider
+that was never discovered has no models to list. Open to `umb` (§2). A daemon with no gateway
+answers `NOT_IMPLEMENTED`.
 
-### 5.28 `config.get` / `config.reload`
-- `config.reload` validates before applying.
-- **Errors:** `CONFIG_INVALID` with `details` per rejected entry (REQ-SEC-004).
+### 5.27 `mcp.server.list` / `mcp.server.add` / `mcp.server.remove` — REQ-MCP-001, REQ-MCP-002
+`mcp.server.list` params: `{}`. **Result:** `{items: McpServer[]}`, by name, each with its live
+state and the tools it offers, by the server's own names.
+
+`mcp.server.add` params: `{name, transport, command?, args?, url?, env_refs?, trust?:"untrusted"}`.
+**Result:** the `McpServer`, `connecting`. The server is persisted, then connected in the
+background; its tools reach the registry once it is `connected`, and a thread offers them from
+its next turn (REQ-MCP-002). `name` is 1-32 characters of `a-z` and `0-9`, so that
+`mcp_<name>_*` names one server's tools only. A `stdio` server needs `command` (with `args`) and
+takes no `url`; an `http` server needs an `http` or `https` `url` and takes no `command`, `args`
+or `env_refs`. A `url` with credentials in it, or one the redaction rules would change, is
+`CONFIG_INVALID`: it would be stored in clear (REQ-SEC-004).
+
+`mcp.server.remove` params: `{name}`. **Result:** `{}`. The server is disconnected, its tools
+leave the registry, and its row is deleted.
+`env_refs` maps environment variable names to `keyring:<path>` references (column `mcp_servers.env_refs_json`); plaintext values are rejected with `CONFIG_INVALID` (REQ-SEC-004). When the keyring is unavailable and the fallback is enabled, an `env:<VAR>` reference is accepted instead and the daemon reports the degraded mode (REQ-SEC-012, Art. 5 amendment of 2026-09-20).
+Errors: `VALIDATION_ERROR`, `CONFIG_INVALID`, `CONFLICT` (a name already taken, at `add`),
+`NOT_FOUND` (an unknown name, at `remove`). Interactive clients and the `cli` kind, which is
+`umb mcp` (§2, REQ-CLI-008). A server a `cli` client adds is always untrusted: `umb mcp add`
+sends `trust: "untrusted"`, and the daemon answers any other `trust` from a `cli` connection
+with `VALIDATION_ERROR`, adding nothing.
+
+### 5.28 `config.get` / `reload` — REQ-SEC-004, REQ-SEC-008, REQ-SEC-012
+`get` params: `{}`. `reload` params: `{}`. Interactive clients only (§2). Both return
+`{settings, providers, rejected}`:
+
+- `settings`: `{pane_history, max_message_bytes, allow_env, otel_endpoint?}`, as `config.toml`
+  sets them. `otel_endpoint` is the collector traces and metrics are exported to, absent when
+  nothing is exported. It is the one the daemon started with: the key needs a restart, so a
+  reload never changes it.
+- `providers`: one per entry of `models.toml` (Tech Design §5.1), `{id, type, base_url?,
+  credential?, health, reason?}`. `credential` is the reference the file writes —
+  `keyring:<path>` or `env:<VAR>` — and never a value. `health` is `unknown`, `degraded` or
+  `down`, with `reason` saying why: `keyring_unavailable` (REQ-SEC-008), `env_secret`
+  (REQ-SEC-012), `env_secret_not_allowed`, `secret_not_found`, `keyring_error`, or
+  `plaintext_secret` for an entry refused at start.
+- `rejected`: `[{provider_id, field, issue}]`, the entries refused at start. The daemon starts
+  without them rather than aborting; the issue names what to write instead and never repeats
+  the value it refused (REQ-SEC-004).
+
+`config.reload` re-reads `config.toml` and `models.toml`, validates both **before applying
+anything**, probes the keyring again and resolves every credential afresh. A malformed file, or
+any provider entry it would refuse, is `CONFIG_INVALID` with one `details` entry per problem — `providers.<id>.<field>` for an
+entry, the file's name for a file that does not parse — and
+the daemon keeps the configuration it had. It applies the providers, `models.toml`'s `[router]`
+table — the cost cap among it, from the next model call — and `[secrets] allow_env`;
+every other key still needs a restart, except the live `api.max_message_bytes`, which `limits.set`
+changes (§5.38).
 
 ### 5.29 `thread.wait` — REQ-AUT-001, REQ-AUT-004
 **Params:** `{thread_id, until: string[], timeout_ms}`.
-**Result:** `{thread_id, turn_id, state, waited_ms}`.
+**Result:** `{thread_id, turn_id: string | null, state, waited_ms}`.
 
 The daemon pins the turn in progress when the wait starts: a later turn does not satisfy it. If the thread is already in one of the target states, it returns immediately. On expiry it returns `TIMEOUT` with `data.last_state`.
+
+- **What a wait observes** is the thread's `attention_state` (§4) — `idle`, `working`, `blocked`
+  or `done` — or `stopped` for a stopped thread. `until` holds one or more of `idle`, `done`,
+  `blocked` and `stopped`; `working` is observed and reported but is not a target. An empty or
+  unknown `until`, and a `timeout_ms` outside §8's 1 s to 1 h, are `VALIDATION_ERROR`.
+- **The pinned turn** is the thread's turn in progress or, when none is running, its latest one.
+  A thread that never had a turn pins none: `turn_id` is `null`, and the wait answers at once with
+  the thread's state, whatever `until` says.
+- **Once the pinned turn has ended**, the only change left without a new turn is a client
+  viewing it, `done` to `idle` (§7). When that cannot reach a target, the wait answers at once with
+  the state the turn ended in rather than running to its deadline: a turn cancelled into `stopped`
+  answers `stopped` although `stopped` is not a target, and a turn that ended `done` answers `done`
+  unless `idle` is a target. A later turn ends the wait the same way, with the pinned turn's last
+  state. This is a result, not an error: the client compares `state` with its `until`.
+- **A pinned turn already replaced** — a later turn is what the daemon reads, before it has seen
+  the pinned turn end — answers with the pinned turn's own end, from its end event or from the
+  daemon's memory of the turns that ended during its run. When neither tells, as for a turn
+  that ended before the daemon started or one whose end could not be written, it answers
+  `unknown`, and a timeout reached first reports `unknown` as its `data.last_state`. A later turn's state never answers
+  for the pinned one.
+- Nothing moves `done` to `idle` until a client views the thread with `thread.focus` (§5.23,
+  REQ-AGT-016), so until then a wait for `idle` alone after a turn ends runs to its deadline. A
+  turn that ends while its thread is viewed ends `idle` directly.
+- `blocked` is reported when the pinned turn asks for an approval, even if the approval is
+  answered before the daemon reads the thread again.
+- The answer comes when the wait settles; the connection keeps serving meanwhile (§1). A wait
+  sent as a JSON-RPC notification has nobody to answer and ends at once; a `thread.send` sent so
+  has still sent its message.
+- **Errors:** `NOT_FOUND` (an unknown thread), `VALIDATION_ERROR`, `TIMEOUT`. Every client kind
+  (§2), so a script waits through `umb thread wait` (REQ-CLI-009). Advertised under `waits`.
 
 ### 5.30 `block.wait_output` — REQ-AUT-003
 **Params:** `{session_id | block_id, regex (RE2), lines?: 1-2000 (default 200), timeout_ms}` —
@@ -540,46 +837,140 @@ Matching includes output already on screen when the wait started.
 
 It evaluates the pane's recent output line by line, including what was already on screen when the call started. It does not interpret agent state.
 
+- **The window.** With `session_id`, the last `lines` lines of the pane's screen as plain text —
+  the screen as rendered, without the blank lines below the last one written — then the output
+  that follows, read through the same escape-sequence stripper as a block's `output_plain`.
+  Line numbers count from the first line of that window, from 1. When the daemon dropped output
+  on its way to the wait, it reads the screen again and numbering restarts from that new window.
+- **The line still being written** — a prompt waiting for input — is evaluated too, and can
+  match: `matched_line` is then the line as it stood, which may be the start of a longer one. A
+  line the wait finds half written — the cursor past its start, on the last row written — is
+  evaluated with its trailing blanks and continued by the output that follows rather than cut in
+  two. A cursor elsewhere, as a full-screen program leaves it, opens no line.
+- `lines` defaults to 200 only when absent; an explicit `0` is `VALIDATION_ERROR`.
+- Only a live session can be waited on: a session of an earlier daemon run is `NOT_FOUND`.
+- **With `block_id`:** a closed block's window is the last `lines` lines of its stored output,
+  and nothing follows it. A running block's window is its pane's, as with `session_id`, followed
+  while that block is open.
+- **`block_id` in the result** is the block named, or else the block that was running when the
+  line was read, or else the session's most recent block; `null` when the session has none.
+- A closed block, a session that exits or a block that ends without a match does not answer
+  early: the wait runs to its deadline. Nothing is resent or retried.
+- **Errors:** `NOT_FOUND` (an unknown session or block), `VALIDATION_ERROR` (an invalid RE2
+  expression, both or neither of the ids, `lines` or `timeout_ms` out of range), `TIMEOUT` with the
+  last line evaluated as `data.last_state`. Every client kind (§2's `block.*`). Advertised under
+  `waits`.
+
 ### 5.31 `pane.report_state` / `pane.release_state` — REQ-INT-002, REQ-INT-003, REQ-INT-005
 `report_state` params: `{pane_id, source, agent?, state:"idle"|"working"|"blocked"|"done", message?, seq?}`.
 
-- `source` identifies the reporter (1-80 chars, `[A-Za-z0-9:._-]`) and owns the pane's authority while it reports.
-- A `seq` lower than or equal to the last accepted one for that `source` returns `ok` and changes nothing.
-- Umbral's own agent always owns the panes of its threads; an external `source` cannot take that authority (`PERMISSION_DENIED`).
+- `source` identifies the reporter (1-80 chars, `[A-Za-z0-9:._-]`) and owns the pane's authority while it reports. Names starting `umbral:` are Umbral's own (§4) and are a `VALIDATION_ERROR`.
+- `agent?` is at most 80 characters and `message?` at most 240; both are stored as sent and shown by nothing yet; whatever displays them normalizes them first, as REQ-NTF-001 does.
+- A `seq` lower than or equal to the last accepted one for that `source` on that pane returns `{}` and changes nothing. A report without `seq` always applies and keeps the stored one, so a numbered report after it is still compared with the last number; a source that has sent no number yet has accepted none, so its first numbered report applies, `0` included. A `release_state` forgets the source's number.
+- Umbral's own agent always owns the panes of its threads; an external `source` cannot take that authority (`PERMISSION_DENIED`), and nothing is stored.
+- With several sources on one pane, the one that reported last decides; a release hands the pane to the most recent of the others.
+- `pane_id` may be an alias of a moved pane (REQ-WS-007): a hook keeps the `UMBRAL_PANE_ID` it was started with. A closed or unknown pane is `NOT_FOUND`.
+- Reports live until released or until the daemon restarts (Data Model §6 step 8); a closed pane's are never read again. A moved pane keeps its reports under its new id.
 
-`release_state` params: `{pane_id, source}` — the pane returns to Umbral's own detection.
+`release_state` params: `{pane_id, source}` — the pane returns to Umbral's own detection. Releasing a pane the source never reported for changes nothing and is not an error.
+
+Both answer `{}`. Every client kind may call them (§2: `umb` has `pane.*` but `pane.move`); the capability is `integrations`.
 
 ### 5.32 `pane.report_metadata` — REQ-INT-004
 **Params:** `{pane_id, source, title?, display_name?, state_labels?, tokens?: object, ttl_ms?: 1-86400000, seq?}`.
 
 Display only: it never alters waits, rollups or notifications. Normalization: control characters removed, whitespace collapsed, 80-character cap per value. Limits: at most 16 token keys per report and 32 live keys per pane; a `null` value clears the key.
 
-### 5.33 `wait.list` / `wait.cancel` — REQ-AUT-005, REQ-AUT-006, REQ-AUT-007
-`wait.list` result: `{items:[{wait_id, connection_id, target:{thread_id|block_id}, until:[…], age_ms, stalled:bool}]}`.
+- **Members.** `title` and `display_name` are strings; `state_labels` maps one of `idle`, `working`, `blocked`, `done`, `unknown` to a label; `tokens` maps a name of 1-26 characters of `[A-Za-z0-9._-]` to a value. A report needs at least one of the four. A member absent from the report stays as it was; a `null` member, or a value that normalizes to nothing, clears it. `state_labels: null` clears every label the source set and `tokens: null` every token, and either alone is a report. Each source owns its own keys: one source's `null` never clears another's, and where two sources set the same member the later write is shown.
+- **Normalization** removes control and format characters (an escape sequence loses its `ESC` and shows as text), collapses every run of whitespace to one space (a tab or a newline counts as whitespace, not as a control character), trims, and cuts at 80 characters.
+- **`ttl_ms`** applies to every key the report sets, which is no longer read once it passes; without it they live 24 hours from their last write, the most any key lives (Data Model §4), unless cleared first or the daemon restarts (Data Model §6 step 8). An expiry is not announced: a client sees it on its next read or the pane's next `pane.updated`.
+- **Limits** refuse the whole report with `VALIDATION_ERROR` and write nothing: more than 16 `tokens` in one report, or more than 32 live keys on the pane counting every source's.
+- **`seq`** follows §5.31's rule, kept per pane and source apart from the state reports' numbers.
+- **Who.** `source` follows §5.31, the reserved `umbral:` prefix included. A pane hosting a thread of Umbral's own agent accepts metadata (REQ-INT-006). An alias reaches a moved pane, whose metadata moves with it; a closed or unknown pane is `NOT_FOUND`.
+- **Result** `{}`. A written report is announced as `pane.updated` with the `Pane`, its `metadata` included — never `pane.state_changed` or `workspace.updated`.
 
-`wait.cancel` params: `{wait_id}`. It ends the wait with `CANCELLED` for whoever is waiting and does
-not touch the turn, the process or the pane being observed. Exceeding the concurrent-wait limit
-returns `VALIDATION_ERROR` naming the limit; exceeding the report rate returns `ok` with the report
-discarded. Neither closes the connection.
+### 5.33 `wait.list` / `wait.cancel` — REQ-AUT-005, REQ-AUT-006, REQ-AUT-007, REQ-AUT-008
 
-### 5.34 `rules.status` / `rules.key.add|list|remove|rotate` / `rules.rollback` / `rules.reset` — REQ-SEC-011, REQ-SEC-013, REQ-SEC-014, REQ-SEC-015, REQ-SEC-016
-`rules.status` result:
+`wait.list` params: `{}`. **Result:**
 ```json
-{"active_bundle":{"version":7,"sha256":"…","source":"remote","verified_with":"key_2026a"},
+{"items":[{"wait_id":"wt_01K5…","connection_id":"con_01K5…","target":{"thread_id":"thr_…"},
+  "until":["done","blocked"],"regex":null,"age_ms":4210,"stalled":false}]}
+```
+
+`wait.cancel` params: `{wait_id}`. **Result:** `{}`.
+
+Delta `2026-10-wait-monitoring` (T-F1-31):
+
+- **Every wait is registered** — `thread.wait`, `thread.send`'s `wait` and `block.wait_output` — from the moment it is validated until it answers, with an id `wt_` + ULID (§3).
+- **`wait.list`** returns every connection's open waits, oldest first. A thread wait's `target` is `{thread_id}` and its `until` the states it waits for. An output wait's `target` is `{block_id}` when it observes a block and `{session_id}` when it watches a session's output; its `until` is `[]` and `regex` is its pattern (`null` for a thread wait). `age_ms` counts from its start. `stalled` is the target thread's stall mark (below); an output wait's is `false`.
+- **`wait.cancel`** ends the wait: the waiting request answers `CANCELLED` (§3), and the turn, the process and the pane it observed are not touched — for `thread.send` the message stays sent. Any connection allowed to call it may cancel any wait. An unknown or already ended `wait_id` is `NOT_FOUND`, and so is a second cancel: a cancelled wait leaves the inventory at once. A cancelled `thread.send` answers `CANCELLED` without `turn_id` or `message_id`; the message is stored, and `thread.get` finds both.
+- **The limit.** A connection holding 32 open waits (§8), of any kind, gets `VALIDATION_ERROR` for the next — `"too many concurrent waits: the limit is 32 per connection"`, with `details: [{field: "timeout_ms", issue: "the connection already holds 32 waits"}]` — before anything is subscribed, sent or read. The connection is not closed, other connections are not affected, and a place frees when a wait ends.
+- **The report rate.** `pane.report_state` and `pane.report_metadata` share one sliding window per `source`: at most 10 kept reports in any second (§8). Validation and the pane's resolution run first, so a malformed report, an unknown pane and an agent's pane answer their errors; a report past the rate then answers its normal result and writes, announces and resolves nothing. A report counts when it is written: a discarded, refused or stale one does not. `pane.release_state` is not limited.
+- **Stalls.** A running turn with no activity — a model event, the start or end of a tool call, an answered approval, output from its own pane — for its window is marked stalled, announced once with `thread.stalled` (§6) and shown by `stalled` in `Thread` (§4) and here. It is never cancelled; the next activity clears the mark silently. A turn awaiting an approval is waiting for the user and does not stall, whatever its pane writes meanwhile. The windows are `[waits] stall_local_s` (120) when any candidate of the thread's model or class is a local provider, and `stall_remote_s` (30) otherwise.
+- **Who.** Both methods are advertised under `wait_admin`, and every client kind may call them (§2), so `umb wait ls` and `umb wait cancel WAIT_ID` work.
+
+### 5.34 `rules.status` / `rules.key.list` / `rules.key.add` / `rules.key.remove` / `rules.key.rotate` / `rules.rollback` / `rules.reset` — REQ-SEC-011, REQ-SEC-013, REQ-SEC-014, REQ-SEC-015, REQ-SEC-016
+`rules.status` params: `{}`. Result:
+```json
+{"active_bundle":{"version":7,"sha256":"…","source":"remote","verified_with":"key_01K5…"},
  "previous_bundle":{"version":6,"sha256":"…"},
  "local_override":true,
  "remote_updates":"enabled",
- "trust_keys":[{"id":"key_2026a","fingerprint":"SHA256:…","added_at":1758326400000}],
+ "trust_keys":[{"id":"key_01K5…","fingerprint":"SHA256:…","source":"builtin","added_at":1758326400000,"revoked_at":null}],
  "last_rejection":{"reason":"unknown_key","at":1758320000000}}
 ```
+- `active_bundle.verified_with` is `null` for the built-in rules (`source: "builtin"`, version 0). `previous_bundle` is the newest stored `remote` bundle that is not active, or `null`; `last_rejection` is `null` until a bundle is rejected. `local_override` says whether the override directory contributed any rule.
 - `remote_updates`: `enabled` | `disabled_by_config` | `disabled_fail_closed` (no valid key, or three consecutive failures — REQ-SEC-015).
+- `last_rejection.reason`: `unsigned` | `unknown_key` | `invalid_signature` | `invalid_bundle` | `downgrade` (delta `2026-10-signed-rule-bundles`, decision 2).
+
+Keys are named by fingerprint. `rules.key.list` params: `{}`; it answers `{trust_keys}`, the entries of `rules.status`.
+
+`rules.key.add` params: `{public_key, confirm_fingerprint}`. It answers `{key}`, one `trust_keys` entry.
 - `rules.key.add` and `rules.key.rotate` require `confirm_fingerprint` matching the key's SHA-256; otherwise `VALIDATION_ERROR`.
-- `rules.key.remove` on the last valid key requires `force: true`; otherwise `CONFLICT`.
+- A key with a `revoked_at` is not valid.
+- `rules.key.add` takes the public key as base64 of its 32 raw bytes; anything else is `VALIDATION_ERROR`.
+  - A fingerprint on the binary's seed `revoked` list is `CONFLICT`, whether or not the store holds it.
+  - Adding a fingerprint the store holds as revoked clears the revocation.
+  - Adding one it holds as valid, such as a key the seed inserted, changes no row but is still recorded.
+  - Any successful add leaves `disabled_fail_closed`, and it is the only thing that does: a newer binary's seed adds keys but does not reopen updates.
+- `trust_keys[].source` is `builtin` for any fingerprint the seed carries as current, retired or revoked, and `user` otherwise.
+
+`rules.key.remove` params: `{fingerprint, force?}`. It answers `{key, active_bundle}`: the revoked key and the bundle in force afterwards.
+- It revokes the key: it sets `revoked_at`, so a builtin key stays removed. It also discards the bundles the key verified and forgets downgrade rejections. The active bundle stays if it survives; otherwise the newest remaining `remote` bundle, or the built-in rules (version 0), becomes active. On the last valid key it requires `force: true`; otherwise `CONFLICT`. Removing the last valid key fails remote updates closed. An unknown fingerprint is `NOT_FOUND`; an already revoked one changes nothing.
+
+`rules.key.rotate` params: `{fingerprint, public_key, confirm_fingerprint}`. It answers `{added, revoked, active_bundle}`.
+- It adds the new key and revokes the old one, with `remove`'s consequences, in one step. It is for a user's own suspected compromise; the project's scheduled key rotation needs nothing from users.
+
+`rules.rollback` params: `{}`. `rules.reset` params: `{}`. Both answer `rules.status`'s result.
+- `rules.rollback` with no `previous_bundle` answers `CONFLICT`.
 - `rules.rollback` reinstalls `previous_bundle` and `rules.reset` returns to the rules built into the binary. Both work offline, need no valid key, and never touch the local override directory (REQ-SEC-016).
+- The bundle a rollback leaves is deleted, and the one a reset leaves stays for a later rollback. Neither is reinstalled by the next check: both are remembered as not to retry. Neither is a rejection.
+
+Every client kind may call them, under the `rules` capability. On the CLI they are `umb rules status`, `umb rules key list`, `umb rules key add PUBKEY --confirm FINGERPRINT`, `umb rules key remove FINGERPRINT [--force]`, `umb rules key rotate FINGERPRINT PUBKEY --confirm FINGERPRINT`, `umb rules rollback` and `umb rules reset`. Without `--confirm`, `add` and `rotate` print the key's fingerprint and exit 1 without calling the daemon.
 
 ### 5.35 `notification.show` — REQ-NTF-001, REQ-NTF-002
 **Params:** `{title, body?, source, sound?: "none"|"done"|"request"}`.
 **Result:** `{shown: bool, reason: "shown"|"disabled"|"rate_limited"|"no_client"}`.
+
+Delta `2026-10-notifications` (T-F1-27):
+
+- **Normalization.** Control and Unicode format characters are removed, whitespace runs collapse to one space, the ends are trimmed, and the title is cut at 80 characters and the body at 240, never refused.
+- **Validation.** These answer `VALIDATION_ERROR`, and nothing is counted against the source:
+  - a title that normalizes to nothing;
+  - a `source` outside §5.31's rule (1–80 characters of `[A-Za-z0-9:._-]`);
+  - a source with the reserved `umbral:` prefix;
+  - an unknown `sound`.
+  An absent `sound` is `none`. The daemon plays nothing; the sound is a hint for the client.
+- **Order of the checks.** `disabled` when `[notifications] enabled = false`, then `rate_limited`, then `no_client`, then `shown`. A request that reaches the rate check counts against its source whether or not a client receives it, since the limit is on what a source asks for. The window slides: at most 5 requests per source in any 60 s. A discarded request is never delivered later, and other sources are unaffected.
+- **The foreground client** is the authenticated interactive connection (`tui` or `desktop`) that last sent a request, whatever the request and whether or not it succeeded. Only it receives `notification.posted` (§6), so a user with two windows open is told once. A `cli` connection is never the foreground client. With no interactive connection the answer is `no_client`.
+- **Delivery never waits on the client.** Each interactive connection queues up to 16 notifications for its own writer. A foreground client whose queue is full has stopped reading and counts as absent: the answer is `no_client`. `shown` therefore means handed to the foreground connection, not seen by the user.
+- **Callers.** Every client kind may call it, under the `notifications` capability. A hook calls it as `umb notify TITLE --source S [--body B] [--sound …]`, which prints `shown` or `not shown: <reason>` and exits 0 either way. The daemon's own components use the same path, so the same normalization and limit apply to them.
+- **External `blocked` (decision 15 of `2026-10-integration-surface`).** A `pane.report_state` that makes a pane `blocked` raises a notification under the reporter's own `source`:
+  - title `<agent or source> needs you`;
+  - body the report's `message`, or `pane <id> is waiting for you`;
+  - sound `request`.
+- **A rejected rule bundle (delta `2026-10-signed-rule-bundles`)** raises `Rule update rejected` under the daemon's own source `umbral:rules`, its body naming the reason, sound `request`, with the same normalization, limit and foreground client.
+  A report that leaves the pane as it was, or a stale one, raises none, and neither do `done`, `working` or `idle`. A pane already `blocked` that another source's newer `blocked` report now decides is a new request, and raises one under that source.
 
 ### 5.36 `policy.explain` — REQ-SEC-009
 **Params:** `{thread_id?, mode?, tool, risk, target, tainted?: false}`.
@@ -587,14 +978,43 @@ discarded. Neither closes the connection.
 ```json
 {"decision":"ask",
  "deciding_rule":"destructive_pattern",
- "trace":[{"step":"destructive_pattern","matched":true,"detail":"rm -rf"},
-          {"step":"deny_rules","matched":false},
-          {"step":"taint","matched":false},
-          {"step":"mode","mode":"auto-edit","matched":false},
-          {"step":"allow_rules","matched":false,"note":"an allow rule exists but is overridden"},
-          {"step":"mode_default","decision":"ask"}]}
+ "reason":"destructive",
+ "allow_always":false,
+ "trace":[{"step":"exposure","matched":false,"decided":false},
+          {"step":"destructive_pattern","matched":true,"decided":true,"detail":"rm_recursive"},
+          {"step":"deny_rules","matched":false,"decided":false},
+          {"step":"taint","matched":false,"decided":false},
+          {"step":"mode","matched":false,"decided":false,"detail":"normal"},
+          {"step":"allow_rules","matched":true,"decided":false,"detail":"run_command rm *","note":"overridden by destructive_pattern"},
+          {"step":"mode_default","matched":true,"decided":false,"detail":"normal"}]}
 ```
-It is a read-only evaluation: it neither runs the tool nor creates approvals.
+It is a read-only evaluation: it neither runs the tool nor creates approvals, and it writes nothing.
+
+Delta `2026-10-policy-explain` (T-F1-28):
+
+- **What it evaluates with.** The engine a turn decides with, and the same destructive patterns.
+  - A `thread_id` lends the thread's mode, the write root found from its directory, and its own rules with the global ones.
+  - A `mode` overrides the thread's, to ask "what if".
+  - Without a thread only the global rules apply and there is no write root, so `auto-edit` cannot allow a write.
+- **What it refuses.** These are `VALIDATION_ERROR`:
+  - a request with neither `thread_id` nor `mode`;
+  - a `mode` other than `ask`, `normal` and `auto-edit`;
+  - a `risk` other than `ReadOnly`, `WriteFS`, `Exec` and `Network`;
+  - a `tool` that is empty or longer than 128 characters;
+  - a `risk` other than the one a registered tool declares, since no turn could form that action.
+
+  An unknown thread is `NOT_FOUND`. A tool that is not registered, such as one of an MCP server not connected yet, is evaluated with the `risk` given. `target` may be empty.
+- **The target is shaped as a turn shapes it.**
+  - For `ReadOnly` and `WriteFS`, the file tools' risks, the target is a path. It is made absolute against the thread's directory and its symlinks are resolved, as the built-in tools do, so a rule on the real path matches a relative target.
+  - Without a thread, a relative path stays as given.
+  - For `Exec` and `Network` the target is the command line or the URL, as given.
+  - `tainted` is the caller's: the thread's current taint belongs to a running turn, not to the thread.
+- **The trace.**
+  - It has seven entries in DD-006's order, preceded by `exposure` (delta `2026-09-policy-precedence`). Every entry is evaluated, and exactly one is `decided`.
+  - `detail` names what matched: the destructive pattern, the rule as `tool pattern`, or the mode.
+  - A step that matched and did not decide carries `note: "overridden by <step>"`. `mode_default` always matches.
+  - `reason` is absent for an allow. `allow_always: false` means an approval of this action is never remembered as `always`, which is the case for a destructive command.
+- **Callers.** Every client kind may call it, under `policy_explain`. On the CLI it is `umb policy explain --tool T --risk R (--mode M | --thread ID) [--tainted] [--] TARGET…`. The positionals are joined into the target with single spaces, and after `--` they may look like flags. A command that relies on shell quoting is passed as one quoted argument.
 
 ### 5.37 `api.schema` — REQ-API-004
 **Params:** `{}`. **Result:** `{schema}` — the protocol document built into the binary. Exposed on
@@ -625,6 +1045,83 @@ copy, and CI SHALL compare it against this specification. The comparison is bloc
 names, required parameters and error codes, and non-blocking for descriptions and added optional
 fields (REQ-API-004); `tools/api_schema_check.py` is the check and `task schema` runs it.
 
+### 5.38 `limits.get` / `set` — REQ-OBS-005, REQ-CLI-007
+Every client kind may call both (§2). The `limits` capability announces them.
+
+`get` params: `{}`. `set` params: `{max_message_bytes}`.
+
+- `limits.get` — **Result:** `{frames, configured_max_message_bytes}`: the
+  counters of §5.2 and the limit a new connection is greeted with, which is also what the settings
+  file holds.
+- `limits.set` — `max_message_bytes` is an integer, in bytes. **Result:**
+  `{max_message_bytes, applies_to: "new_connections"}`.
+  - THE SYSTEM SHALL validate the value first: outside 1 048 576–67 108 864 it is
+    `VALIDATION_ERROR` and the settings file is not touched.
+  - It then rewrites **that one line** of `$XDG_CONFIG_HOME/umbral/config.toml` atomically — a
+    temporary file in the same directory, then a rename — keeping every other line byte for byte,
+    and applies the value to connections opened afterwards. A live connection keeps its limit (§1).
+  - The file cases: an absent file is created with `[api]` and the key only; a file that does not
+    parse is `CONFIG_INVALID` and is not touched; the key written as a dotted key
+    (`api.max_message_bytes = …`) or inside an inline table (`api = {…}`) is `CONFIG_INVALID` naming
+    the line, because this is an edit to one key and not a TOML writer; a trailing comment on the
+    key's line is kept; a symlinked `config.toml` is resolved and its target rewritten, so the link
+    survives.
+  - A daemon with no settings file location answers `NOT_IMPLEMENTED` rather than raising a limit it
+    cannot persist.
+
+### 5.37 `skill.inspect` / `skill.install` / `skill.list` / `skill.get` / `skill.set_enabled` / `skill.remove` — REQ-SKL-001, REQ-SKL-002, REQ-SKL-006
+
+Skills are instruction bundles for Umbral's own agent (delta `2026-09-skills-cli`): a directory
+with a `SKILL.md` whose front matter gives `name`, `description` (1–1024 characters) and an
+optional `version`. Nothing in a skill is executed by these methods. Every client kind may call
+them (§2); they are advertised under `skills`.
+
+`skill.inspect` params: `{path}`. **Result:**
+```json
+{"name":"release-check","description":"Steps to cut a release.","version":"1.2",
+ "files":[{"path":"SKILL.md","size_bytes":4100},{"path":"scripts/check.sh","size_bytes":110}],
+ "size_bytes":4210,"sha256":"9f2c…"}
+```
+It checks the bundle and copies nothing.
+
+`skill.install` params: `{path, expected_sha256, replace?}`. **Result:** the `Skill`.
+
+`skill.list` params: `{}`. **Result:** `{items: Skill[]}`, by name.
+
+`skill.get` params: `{name, include?}`, `include` `none` (the default) or `body`. **Result:**
+`{skill: Skill, body}`, `body` SKILL.md after its front matter when asked and `null` otherwise.
+
+`skill.set_enabled` params: `{name, enabled}`. **Result:** the `Skill`.
+
+`skill.remove` params: `{name}`. **Result:** `{}`.
+
+- **The source.** `path` is classified before anything resolves it: one containing `://`,
+  starting `git@` or of scp-like form `user@host:path` is not local and is `VALIDATION_ERROR`
+  (REQ-SKL-006). A local `path` must be absolute — `umb` resolves it — and name a directory or a
+  `.tar.gz`/`.tgz` readable by the daemon's user. A tarball whose entries all sit under one top
+  directory holding `SKILL.md` is read as that directory.
+- **The checks.** A bundle breaking any is `VALIDATION_ERROR` naming the entry and the rule:
+  only regular files and directories (no symlink, hardlink, device, FIFO or socket); no absolute
+  path, no `..` and no backslash; no file and directory under one path; at most 1 MiB per file,
+  8 MiB per bundle and 256 entries, enforced on decompressed bytes as a tarball is read, and a
+  tarball's whole stream, headers included, bounded too; a `SKILL.md` at the root with valid
+  front matter. A directory's files are opened without following a link, so one swapped for a
+  symlink between the walk and the read is refused.
+- **The digest** is the SHA-256 of the files sorted by path, each written `path NUL size NUL
+  sha256(content) LF`. Directories are not part of it, and an empty directory is not installed.
+  The same files give the same digest from a directory and from a tarball.
+- **Install.** The bundle is checked again; a digest other than `expected_sha256` is `CONFLICT`,
+  so what is installed is exactly what was inspected. An installed `name` without `replace` is
+  `CONFLICT`. Files are copied with mode `0644` and directories `0755` — no exec, setuid, setgid
+  or sticky bit survives — through a staging directory renamed into place. A replace keeps the
+  skill's `id` and whether it is enabled. A skill installed while 64 are enabled is stored
+  disabled.
+- **Enabling** a 65th is `VALIDATION_ERROR`; disable one first. Setting the state a skill already
+  has is answered with the `Skill` and announces nothing.
+- **Errors.** An unknown `name` is `NOT_FOUND`. A refused install leaves the store and the stored
+  copies as they were (REQ-SKL-002).
+- **Announced** with `skill.changed` (§6) once stored.
+
 ## 6. Notifications (daemon → client)
 
 | Method | Payload | REQ |
@@ -647,13 +1144,16 @@ fields (REQ-API-004); `tools/api_schema_check.py` is the check and `task schema`
 | `mcp.server_state` | `{name, state, last_error}` | REQ-MCP-003 |
 | `workspace.created` / `.updated` / `.closed` / `.focused` | `Workspace` | REQ-WS-001, REQ-WS-006 |
 | `tab.created` / `.closed` / `.focused` | `Tab` | REQ-WS-001 |
-| `pane.created` / `.updated` / `.closed` / `.focused` | `Pane` | REQ-WS-003 |
+| `pane.created` / `.updated` / `.closed` / `.focused` | `Pane` — `.updated` also after a written `pane.report_metadata` (§5.32) | REQ-WS-003, REQ-INT-004 |
 | `pane.moved` | `{pane, previous_pane_id, previous_workspace_id, layout}` | REQ-WS-007 |
-| `pane.state_changed` | `{pane_id, attention_state, state_source}` | REQ-INT-002 |
+| `notification.posted` | `{title, body, source, sound}` — the normalized notification, sent to the foreground client only, never broadcast (§5.35) | REQ-NTF-001 |
+| `pane.state_changed` | `{pane_id, attention_state, state_source}` — after a pane's effective state or its source changes (§4), once what decided it is written: a report or release, a block starting or ending, a session's integration verdict or exit, a thread's attention. A workspace whose rollup moved with it gets `workspace.updated` | REQ-INT-002 |
 | `layout.updated` | `Layout` | REQ-WS-004 |
-| `thread.attention_changed` | `{thread_id, attention_state}` | REQ-AGT-016 |
-| `thread.stalled` | `{thread_id, turn_id, idle_ms, last_event}` | REQ-AUT-008 |
-| `rules.update_rejected` | `{reason, version, source}` | REQ-SEC-013 |
+| `thread.attention_changed` | `{thread_id, attention_state}` — after every change written: a turn starts (`working`), asks for an approval (`blocked`), is answered (`working`), ends (`done`, or `idle` when viewed or cancelled), or a `done` thread is focused (`idle`). Not sent for the changes Data Model §6 makes at start, before any client connects | REQ-AGT-016 |
+| `thread.stalled` | `{thread_id, turn_id, idle_ms, last_event}` — once per stall of a running turn (§5.33); `last_event` is the last activity seen: `turn_started`, `text`, `reasoning`, `tool_call`, `tool_result`, `output` or `approval` | REQ-AUT-008 |
+| `skill.changed` | `{name, change}` — `change` one of `installed`, `replaced`, `enabled`, `disabled`, `removed` — once the change is stored (§5.37) | REQ-SKL-007 |
+| `rules.update_rejected` | `{reason, version, source}` — `reason` as §5.34's `last_rejection`, `version` the bundle's own when its signature verified and 0 otherwise — unverified bytes are never parsed — `source` `"remote"`. Sent to every client once per bundle: a bundle already rejected is not announced again. The daemon also raises a user notification for it under its own source `umbral:rules` (§5.35) | REQ-SEC-013 |
+| `limits.notification_dropped` | `{method, size_bytes, limit_bytes}` — in place of a notification over the frame limit, under that notification's `seq` (§1) | REQ-API-005 |
 
 Every notification carries `seq` in its envelope (§1): a counter that increases by one per **event
 the daemon dispatches**, scoped to **one daemon run** and shared by every connection, so the same
@@ -686,7 +1186,7 @@ share the name; only the envelope one is the subject of REQ-API-002.
 `session.snapshot` reports the envelope `seq` it contains, and a client applies only the events
 above it — for the notifications that snapshot actually carries. §5.3 says which.
 
-`stop_reason`: `end_turn` | `cancelled` | `max_steps` | `budget` | `tool_error` | `provider_error`.
+`stop_reason`: `end_turn` | `cancelled` | `max_steps` | `budget` | `tool_error` | `provider_error` | `storage_error` | `context_overflow`. `storage_error`: a write failed, so the turn stopped without running or announcing what it could not record (Analyze C-01). `context_overflow`: what must be sent does not fit the model's window even compacted (REQ-CTX-004). Delta `2026-09-agent-runtime`.
 
 `session.unsubscribed`'s `reason`: `slow_client`.
 
@@ -704,8 +1204,8 @@ stateDiagram-v2
   idle --> running: thread.send
   running --> awaiting_approval: approval.requested
   awaiting_approval --> running: approval.respond
-  running --> idle: turn_finished end_turn
-  running --> stopped: cancel, max_steps, budget, tool_error
+  running --> idle: turn_finished, any stop_reason but cancelled
+  running --> stopped: thread.cancel
   awaiting_approval --> stopped: thread.cancel
   stopped --> running: thread.send
 ```
@@ -719,6 +1219,9 @@ stateDiagram-v2
   working --> done: turn finished, not yet viewed
   done --> idle: a client focuses it
   working --> idle: turn finished while being viewed
+  done --> working: turn starts
+  working --> idle: turn cancelled
+  blocked --> idle: turn cancelled
 ```
 
 ```mermaid
@@ -740,11 +1243,14 @@ stateDiagram-v2
 |---|---|
 | JSON message | 4 MiB including the `\n`; past it, `VALIDATION_ERROR` (before the handshake `UNAUTHORIZED`) and the connection is closed (§1) |
 | `session.input` | 64 KiB per message |
+| `stdin` attachment (§5.20) | 1 MiB once decoded, one per message |
 | Concurrent connections | 32 |
+| Handshake deadline | 5 s from accept; past it, `UNAUTHORIZED` with `id: null` and a close (§2 step 3a) |
+| Frame limit after the handshake | `[api] max_message_bytes`: 1 MiB to 64 MiB, 4 MiB by default, fixed per connection at `system.hello` and announced there; outbound frames over it become `RESULT_TOO_LARGE` or `limits.notification_dropped` (§1) |
 | `session.output` notifications | batched every 4 ms or 32 KiB, whichever comes first |
-| Concurrent waits per connection | 32; beyond that `thread.wait` and `block.wait_output` return `VALIDATION_ERROR` |
+| Concurrent waits per connection | 32 of any kind, `thread.send`'s `wait` included; beyond that the new wait is `VALIDATION_ERROR` naming the limit and the connection stays open (§5.33) |
 | Wait timeout | 1 s to 1 h; there is no wait without a deadline |
-| State/metadata reports | 10 per second per `source`; the excess returns `ok` and is discarded |
+| State/metadata reports | 10 kept per second per `source`, `pane.report_state` and `pane.report_metadata` together; the excess returns the normal result and is discarded (§5.33) |
 | Live metadata keys | 16 per report, 32 per pane |
 | Queue per slow client | 8 MiB; beyond that the daemon drops the subscription, announces it with `session.unsubscribed` (§6), and the client re-subscribes (receiving a new snapshot) |
 
@@ -755,8 +1261,8 @@ stateDiagram-v2
   for 6 months.
 - **Optional capabilities:** `system.hello` returns the namespaces the daemon **serves** at that
   moment (§2). The protocol's namespaces are `sessions`, `blocks`, `threads`, `mcp`, `models`,
-  `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`, `wait_admin`
-  and `rules`; `worktrees`, `graphics`, `plugins` and `federation` are reserved for later. The §2
+  `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`, `wait_admin`,
+  `rules`, `skills`, `limits` and `config`; `worktrees`, `graphics`, `plugins` and `federation` are reserved for later. The §2
   example shows the full list and is illustrative: what a given daemon returns is whatever it can
   actually do, which is narrower than what its method table holds whenever a module is absent.
 - **Which error a missing method gets.** A name this build does not know receives
@@ -811,3 +1317,30 @@ printf '%s\n' \
 | 1.12 | 2026-09-20 | delta `2026-09-restore-semantics`: §4's `Pane` gains `command_pending` (omitted when false) and §5.8 states that `layout.apply` returns a tree's commands as pending, never as launched. Additive within `protocol_version = 1` |
 | 1.13 | 2026-09-26 | delta `2026-09-cli-allowlist`: §2's `cli` row gains `workspace.*`, `tab.*`, `pane.*` except `pane.move`, and `layout.*` — the surface REQ-CLI-005 and REQ-CLI-006 give `umb`, which the row refused. `session.*` stays interactive-only. Additive within `protocol_version = 1` |
 | 1.14 | 2026-09-26 | delta `2026-09-oversized-message`: §1 says the 4 MiB limit counts the `\n`, and that past it the daemon replies `VALIDATION_ERROR` with a null id and closes; §2 step 3 names unparseable, non-JSON-RPC and oversized lines as earlier calls, which get `UNAUTHORIZED`; §8's row says both |
+| 1.15 | 2026-09-27 | delta `2026-09-handshake-hardening` (T-F1-32): §1 records the one deviation from JSON-RPC 2.0 §4.1 — an unauthenticated peer's notification and an id-less `system.hello` are answered; §2 step 3 names notifications among the earlier calls, new step 3a sets the 5 s handshake deadline, step 5 requires a non-null `id` on `system.hello` before the token is compared, and step 6's repeated hello is answered even without an id; §8 gains the deadline row. `protocol_version` unchanged: every conforming client already sends an id and completes the handshake in milliseconds |
+| 1.16 | 2026-09-27 | delta `2026-09-frame-limit-monitoring` (T-F1-33): §1 makes the frame limit per connection and two-way — 4 MiB and fixed before the handshake, the configured `[api] max_message_bytes` (1–64 MiB) after it — and says what the daemon writes instead of an oversized response or notification; §2's `cli` row gains `limits.get` and `limits.set` and the capability list gains `limits`; §3 adds `RESULT_TOO_LARGE` (-32014); §4 adds `output_response_truncated_bytes`; §5.1 documents the hello result with `max_message_bytes`; §5.2 adds `frames`; §5.17 shortens instead of failing; new §5.38 `limits.get`/`limits.set`; §6 adds `limits.notification_dropped`; §8 and §9 gain the limit row and the capability. Additive within `protocol_version = 1` |
+| 1.17 | 2026-09-27 | T-F1-02: §5.28 specifies `config.get` and `config.reload` — `{settings, providers, rejected}`, credentials as references only, the health reasons, and a reload that validates before applying and answers `CONFIG_INVALID` per entry; §5.2's providers gain `reason`; the capability lists of §2 and §9 gain `config`. Additive within `protocol_version = 1` Delta `2026-09-provider-config` (proposed). |
+| 1.18 | 2026-09-27 | T-F1-05: §4's Model gains `reason`, and says what 0 means for the context window and prices; §5.26 describes `model.list` — background discovery at start and on reload, `refresh`, a provider down for its credential or remote while offline never contacted, and discovery recorded in `egress_log`. Delta `2026-09-provider-config` (proposed). Additive within `protocol_version = 1` |
+| 1.19 | 2026-09-27 | T-F1-13: `thread.create`/`send`/`get`/`list`/`update` served; §5.23 gives `thread.list` and `thread.get` their parameters and results; §5.20 says what `wait` and inline attachments answer until their tasks; §3 adds the `trn_` prefix; §6 adds `storage_error` and `context_overflow`; §4's Message gains `turn_id`; §5.20 says when `PROVIDER_UNAVAILABLE` is answered. Additive within `protocol_version = 1`. Delta `2026-09-agent-runtime` (proposed). |
+| 1.20 | 2026-09-27 | T-F1-14: `approval.list` (`{thread_id?, all?}`) and `approval.respond` served, with `approval.requested`; §5.25 says what a `thread` scope remembers, which decisions are kept `once`, and what a cancel does to a pending approval. Additive within `protocol_version = 1`. Delta `2026-09-approvals` (proposed). |
+| 1.21 | 2026-09-27 | Ratifies deltas `2026-09-agent-runtime` and `2026-09-approvals` as written; §2 says `approval.*` is advertised under `threads`. No wire change. |
+| 1.22 | 2026-09-27 | §3 adds `key_`; §5.34: `trust_keys` entries gain `source` (`builtin`/`user`) and `revoked_at`; `rules.key.add` takes base64 and is the only way out of fail-closed; `remove` revokes and discards the bundles the key verified; `rotate` is add plus revoke; `rollback` with nothing to return to is `CONFLICT`; `source` covers the seed's retired and revoked keys; adding a seed-revoked fingerprint is `CONFLICT` and re-adding a valid one is a recorded no-op; the active bundle survives a revocation that did not verify it. Delta `2026-09-rule-signing-custody`. Additive within `protocol_version = 1` |
+| 1.23 | 2026-10-01 | Additive within `protocol_version = 1`. §5.21 `thread.cancel` written (T-F1-16, delta `2026-10-thread-cancel`): `{thread_id}` → `{stopped_at}`, returning once the turn has ended, the thread left `stopped`, and `null` when no turn was running |
+| 1.24 | 2026-10-01 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-thread-cancel`: in §7 only a cancel leads to `stopped`; every other end of a turn leads to `idle` (attention `done`), its `stop_reason` saying how it ended |
+| 1.25 | 2026-10-01 | Additive within `protocol_version = 1`. §5.27 written (T-F1-17, delta `2026-10-mcp-client`): `list` `{}` → `{items}`, `add` → the `McpServer` `connecting`, `remove` `{name}` → `{}`, and `CONFLICT`/`NOT_FOUND`; interactive clients only until T-F1-37 |
+| 1.26 | 2026-10-03 | Additive within `protocol_version = 1`. T-F1-23, delta `2026-10-wait-engine` (proposed): §1 says waits answer out of order and end with their connection; §3's `TIMEOUT` carries `data.last_state`; §5.20's `wait` is served — validated before sending, pinned to its own turn, `THREAD_BLOCKED` before a repeated `client_msg_id`; §5.29 and §5.30 say what a wait observes, what it pins, how an ended or replaced turn settles it (`unknown` when its end is no longer known), the output window, line numbers, the line being written and continued, `lines`, live sessions only and `block_id`; a wait sent as a notification ends at once |
+| 1.27 | 2026-10-03 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-wait-engine` as written, decisions 3, 3a, 7 and 8 with their proposed options: §2 says `thread.wait` and `block.wait_output` are advertised under `waits` |
+| 1.28 | 2026-10-03 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-otel` (T-F1-18): §5.28's `settings` gains `otel_endpoint?`; §1 says an `INTERNAL_ERROR` carries the `connection_id` when the failing work ran outside a turn, which today is every case |
+| 1.29 | 2026-10-04 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-umb-ai` (T-F1-19): §5.20 serves the inline `stdin` attachment — `data_b64`, `truncated?`, one per message, 1 MiB — and its `VALIDATION_ERROR` reasons; §4's Message records it as `ref: "stdin"`; §8 lists the limit |
+| 1.30 | 2026-10-04 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-retention` (T-F1-22): §4's Block says what retention leaves of a purged output — an empty `output_raw_b64`/`output_plain` with `output_bytes` kept |
+| 1.31 | 2026-10-04 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-cost-cap`: §5.20's `BUDGET_EXCEEDED` covers the cost cap too; §5.28's reload applies `models.toml`'s `[router]` table |
+| 1.32 | 2026-10-17 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-attention-focus` (T-F1-24): §5.23 adds `thread.focus` — views per connection, a viewed turn ends `idle`, reading is not viewing, interactive clients only; §5.3's `threads` and `focused.thread_id` are filled; §5.29 names `thread.focus`; §6 says when `thread.attention_changed` is sent; §7's attention diagram gains `done → working` and the cancel edges |
+| 1.33 | 2026-10-17 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-integration-surface` (T-F1-25): §4 `Pane` says who decides `attention_state` in DD-012's order and maps `umbral:shell` from the block lifecycle, and `thread_id` names the thread whose PTY the pane is; §5.31 gives the bounds, the reserved `umbral:` prefix, the `seq` rule with and without numbers, several sources, aliases, lifetime and the `{}` answer; §6 says when `pane.state_changed` is sent; §2 advertises both methods under `integrations` |
+| 1.34 | 2026-10-18 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-display-metadata` (T-F1-26): §5.32 gives `pane.report_metadata`'s key shapes, absent versus `null`, normalization, limits that refuse a report whole, the 24 h default expiry, the metadata `seq` and who may report; §4 `Pane` says what `metadata` holds; §6 sends `pane.updated` after a written metadata report |
+| 1.35 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-notifications` (T-F1-27): §5.35 gives `notification.show`'s normalization, validation, the order of its checks, the sliding per-source window, the foreground client and decision 15's `blocked` notification; §6 adds `notification.posted`, sent to the foreground client only; §2 advertises the method under `notifications` and adds it to the `cli` row |
+| 1.36 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-policy-explain` (T-F1-28): §5.36's example matches the trace the daemon returns (`decided`, `detail`, `note`, `reason`, `allow_always`, the `exposure` step), and the section says what a thread lends, what is refused (a risk the registered tool does not declare among it), how the target is shaped as a turn shapes it, and who may call; §2's `cli` row gains `policy.explain` |
+| 1.37 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-signed-rule-bundles` (T-F1-30): §5.34 names each `rules.*` method with its params and result, keys addressed by fingerprint, the rejection reasons, what rollback and reset leave behind, and the CLI; §6's `rules.update_rejected` says what it carries — the version only of a bundle that verified — that a repeat is not announced, and that a user notification under `umbral:rules` accompanies it (§5.35); §2's `cli` row gains `rules.*` |
+| 1.38 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-10-wait-monitoring` (T-F1-31): §5.33 gives `wait.list`'s result and `wait.cancel`'s, wait ids, output-wait targets, the per-connection limit counting every kind, the report rate's shared window and the stall rules; §4 `Thread` gains `stalled`; §6 `thread.stalled` names `last_event`'s values; §8 sharpens both limits; §2's `cli` row gains `wait.list` and `wait.cancel` |
+| 1.39 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-09-skills-cli` written by T-F1-34 (with delta `2026-10-skill-store`): §4 `Skill`; §5.37 `skill.inspect`, `install`, `list`, `get`, `set_enabled` and `remove` with their checks, digest and errors; §6 `skill.changed`; §2's `cli` row gains `skill.*` and the `skills` capability; §3 the `skl_` prefix; §9 the namespace |
+| 1.40 | 2026-10-18 | Additive within `protocol_version = 1`. Delta `2026-09-cli-mcp` written by T-F1-37 (with delta `2026-10-umb-mcp-panel`): §2's `cli` row gains `mcp.server.list`, `add` and `remove`; §5.27 says so, that `umb mcp add` sends `trust: "untrusted"` and that the daemon refuses any other `trust` from a `cli` connection; the pending-from-F1 note is gone, every ratified F1 delta now being written |
+| 1.41 | 2026-10-22 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-cli-thread-wait` (T-F1-38): §2's `cli` row gains `thread.get` and `thread.wait`, and §5.23 and §5.29 say so |

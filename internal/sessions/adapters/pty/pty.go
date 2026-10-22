@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	creack "github.com/creack/pty"
@@ -59,6 +60,8 @@ type session struct {
 	waitOnce sync.Once
 	waitErr  error
 	exitCode int
+	// exited is set once the child has been reaped, after which its pid is not ours.
+	exited atomic.Bool
 }
 
 // Read returns PTY output. On Linux, reading a PTY whose child has exited yields EIO
@@ -99,6 +102,7 @@ func (s *session) Resize(size domain.Size) error {
 func (s *session) Wait() (int, error) {
 	s.waitOnce.Do(func() {
 		err := s.cmd.Wait()
+		s.exited.Store(true)
 		var exitErr *exec.ExitError
 		switch {
 		case err == nil:
@@ -126,6 +130,13 @@ func (s *session) Signal(sig ports.SignalKind) error {
 		return errors.New("pty: the process is not running")
 	}
 
+	switch sig {
+	case ports.SignalTermForeground:
+		return s.signalForeground(syscall.SIGTERM)
+	case ports.SignalKillForeground:
+		return s.signalForeground(syscall.SIGKILL)
+	}
+
 	var signal syscall.Signal
 	switch sig {
 	case ports.SignalHangup:
@@ -143,6 +154,39 @@ func (s *session) Signal(sig ports.SignalKind) error {
 			return nil
 		}
 		return fmt.Errorf("pty: signal %v: %w", signal, err)
+	}
+	return nil
+}
+
+// signalForeground signals what the shell is running without touching the shell: the
+// process group of every child of the shell — the command in the foreground, whose processes
+// are all the shell's children, and a job put in the background (`sleep 60 & wait`) that a
+// builtin is waiting on. With SIGTERM the shell also gets SIGINT, which an interactive shell
+// turns into abandoning a loop of builtins and printing a new prompt. A shell that has
+// already exited is left alone: its pid may belong to someone else by now.
+func (s *session) signalForeground(signal syscall.Signal) error {
+	if s.cmd.Process == nil || s.exited.Load() {
+		return nil
+	}
+	shell := s.cmd.Process.Pid
+	groups := map[int]bool{}
+	for _, child := range childrenOf(shell) {
+		if pgid, err := syscall.Getpgid(child); err == nil && pgid != shell {
+			groups[pgid] = true
+		} else if err == nil {
+			// A child in the shell's own group (no job control): only it.
+			_ = syscall.Kill(child, signal)
+		}
+	}
+	for pgid := range groups {
+		if err := syscall.Kill(-pgid, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("pty: signal group %d: %w", pgid, err)
+		}
+	}
+	if signal == syscall.SIGTERM {
+		if err := syscall.Kill(shell, syscall.SIGINT); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("pty: interrupt the shell: %w", err)
+		}
 	}
 	return nil
 }

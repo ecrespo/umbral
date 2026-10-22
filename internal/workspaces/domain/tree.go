@@ -12,10 +12,8 @@ const (
 	AttentionWorking AttentionState = "working"
 	AttentionDone    AttentionState = "done"
 	AttentionIdle    AttentionState = "idle"
-	// AttentionUnknown is the absence of a report, not a report of nothing. It is the
-	// state every pane starts in and the only one F0 produces: `pane_state_reports` is
-	// migration 0005 and threads are F1, so nothing reports yet (delta
-	// `2026-09-pane-attention-state`).
+	// AttentionUnknown is the absence of a report, not a report of nothing: a pane with no
+	// live session, or one whose shell never spoke OSC 133, and nothing else to go by.
 	AttentionUnknown AttentionState = "unknown"
 )
 
@@ -115,12 +113,14 @@ type Pane struct {
 	// and they stay resolvable for the life of the terminal (REQ-WS-007). The current id is
 	// included, so a client can render the whole set without appending it.
 	Aliases []string
-	// AttentionState is `unknown` in F0 and StateSource is empty with it: nothing reports
-	// a pane state until migration 0005 brings `pane_state_reports`.
+	// AttentionState and StateSource are what ResolveAttention decides (DD-012), and
+	// ThreadID the own-agent thread whose PTY the live session is, "" for none.
 	AttentionState AttentionState
 	StateSource    string
-	CreatedAt      time.Time
-	ClosedAt       *time.Time
+	// Metadata is display only (REQ-INT-004): nothing above reads it.
+	Metadata  Metadata
+	CreatedAt time.Time
+	ClosedAt  *time.Time
 }
 
 // CreateWorkspaceParams is what `workspace.create` takes (API Spec §5.4).

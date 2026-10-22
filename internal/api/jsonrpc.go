@@ -15,9 +15,11 @@ const jsonrpcVersion = "2.0"
 // Within a major version the contract stays compatible (Art. 8).
 const ProtocolVersion = 1
 
-// MaxMessageBytes is the framing limit from API Spec §1. A longer line is rejected
-// rather than buffered: an unbounded reader on a local socket is a denial-of-service
-// waiting to happen.
+// MaxMessageBytes is the framing limit of API Spec §1 **before the handshake**, in both
+// directions. It is fixed: the configured limit (`[api] max_message_bytes`, up to 64 MiB)
+// applies only once `system.hello` succeeds, so an unauthenticated peer cannot make the
+// daemon reserve more than this per connection. A longer line is rejected rather than
+// buffered: an unbounded reader on a local socket is a denial-of-service waiting to happen.
 const MaxMessageBytes = 4 << 20 // 4 MiB
 
 // request is an incoming JSON-RPC message. A request without an id is a notification
@@ -32,12 +34,21 @@ type request struct {
 // isNotification reports whether the client expects no reply.
 func (r request) isNotification() bool { return len(r.ID) == 0 }
 
+// hasID reports whether the request carries an id a reply can be matched against: present
+// and not null. JSON-RPC allows a null id but discourages it, and the daemon itself uses
+// null only for "undetermined" (REQ-SEC-018).
+func (r request) hasID() bool { return len(r.ID) != 0 && string(r.ID) != jsonNull }
+
 // response is an outgoing reply. Exactly one of Result and Error is set.
 type response struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
 	Result  any             `json:"result,omitempty"`
 	Error   *wireError      `json:"error,omitempty"`
+
+	// method is what the response answers. It is never sent; it names the method in the
+	// log line when the response is over the frame limit (REQ-OBS-005).
+	method string
 }
 
 // notification is a daemon-to-client message (API Spec §6). It carries no id.
@@ -73,6 +84,12 @@ type errorData struct {
 	// Supported lists the protocol versions this daemon accepts. It is only set on
 	// UNSUPPORTED_PROTOCOL_VERSION, where API Spec §2 requires it.
 	Supported []int `json:"supported,omitempty"`
+	// SizeBytes and LimitBytes are set only on RESULT_TOO_LARGE: the size the result would
+	// have had and this connection's limit, as numbers a client can act on (REQ-API-005).
+	SizeBytes  *int64 `json:"size_bytes,omitempty"`
+	LimitBytes *int64 `json:"limit_bytes,omitempty"`
+	// LastState is set only on TIMEOUT: what the wait last observed (REQ-AUT-004).
+	LastState *string `json:"last_state,omitempty"`
 }
 
 // ErrorField explains which field of the request was wrong.
@@ -95,6 +112,9 @@ type helloResult struct {
 	ProtocolVersion int      `json:"protocol_version"`
 	Capabilities    []string `json:"capabilities"`
 	ConnectionID    string   `json:"connection_id"`
+	// MaxMessageBytes is this connection's frame limit from here on, in both directions
+	// (API Spec §5.1). A client reads with it; one that ignores it keeps reading at 4 MiB.
+	MaxMessageBytes int64 `json:"max_message_bytes"`
 }
 
 // StatusResult is the payload of system.status (API Spec §5.2), used by `umb status`.
@@ -105,12 +125,18 @@ type StatusResult struct {
 	ThreadsRunning int              `json:"threads_running"`
 	Providers      []ProviderStatus `json:"providers"`
 	MCP            []MCPStatus      `json:"mcp"`
+	// Frames is how close traffic has come to the frame limit this run (REQ-OBS-005). The
+	// daemon fills it; a StatusFunc leaves it alone.
+	Frames Frames `json:"frames"`
 }
 
 // ProviderStatus is one model provider's health in system.status.
 type ProviderStatus struct {
 	ID     string `json:"id"`
 	Health string `json:"health"`
+	// Reason says why Health is down or degraded — `keyring_unavailable`, `env_secret` —
+	// and is absent otherwise (REQ-SEC-008, REQ-SEC-012).
+	Reason string `json:"reason,omitempty"`
 }
 
 // MCPStatus is one MCP server's state in system.status.

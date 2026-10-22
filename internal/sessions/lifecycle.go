@@ -33,13 +33,13 @@ import (
 // carry `env: {"PATH": "/opt/toolchain/bin"}` beside `command: ["mytool"]`, and the
 // daemon's PATH is not where that layout said to look. The environment is assembled here,
 // so this is where the answer lives.
-func (s *Service) launch(params domain.CreateParams) (program string, args, env []string, cleanup func() error, err error) {
+func (s *Service) launch(id string, params domain.CreateParams) (program string, args, env []string, cleanup func() error, err error) {
 	if len(params.Command) == 0 {
-		args, env, cleanup, err = s.bootstrap(params)
+		args, env, cleanup, err = s.bootstrap(id, params)
 		return params.Shell, args, env, cleanup, err
 	}
 
-	env = environ(params.Env)
+	env = environ(params.Env, s.umbralEnv(id, params.Pane))
 	program, err = lookPath(params.Command[0], env)
 	if err != nil {
 		return "", nil, nil, nil, err
@@ -98,8 +98,8 @@ func pathFrom(env []string) string {
 // A shell with no bootstrap is not an error. The session starts without integration and
 // REQ-BLK-003 marks it `integration: none` after five seconds, which is the degraded mode
 // DD-002 describes.
-func (s *Service) bootstrap(params domain.CreateParams) (args, env []string, cleanup func() error, err error) {
-	env = environ(params.Env)
+func (s *Service) bootstrap(id string, params domain.CreateParams) (args, env []string, cleanup func() error, err error) {
+	env = environ(params.Env, s.umbralEnv(id, params.Pane))
 
 	if !params.ShellIntegration || s.cfg.Bootstrap == nil {
 		return nil, env, nil, nil
@@ -120,16 +120,55 @@ func (s *Service) bootstrap(params domain.CreateParams) (args, env []string, cle
 var paneTerminal = []string{"TERM=xterm-256color", "COLORTERM=truecolor"}
 
 // environ builds the child's environment: the daemon's own, then the pane's terminal, then
-// the caller's overrides, then the marker that tells a bootstrap it is running under Umbral.
-// Later entries win (os/exec keeps the last value of a duplicated key), so the daemon's own
-// TERM — none under systemd or launchd, `screen` inside tmux — never reaches a pane, while a
-// layout that declares one keeps it.
-func environ(overrides map[string]string) []string {
-	env := append(append([]string{}, os.Environ()...), paneTerminal...)
-	for key, value := range overrides {
-		env = append(env, key+"="+value)
+// the caller's overrides, then Umbral's own variables. Later entries win (os/exec keeps the
+// last value of a duplicated key), so the daemon's own TERM — none under systemd or launchd,
+// `screen` inside tmux — never reaches a pane, while a layout that declares one keeps it.
+//
+// Umbral's variables are not merely appended last: every inherited or declared one is dropped
+// first (REQ-INT-001, Tech Design §5.2b). A daemon autostarted by `umb` inside another
+// daemon's pane inherits that pane's UMBRAL_PANE_ID, and a layout can declare any of them; a
+// session with no pane would otherwise keep either, and a hook in it would report for a pane
+// it is not in.
+func environ(overrides map[string]string, umbral []string) []string {
+	env := []string{}
+	for _, entry := range os.Environ() {
+		if name, _, _ := strings.Cut(entry, "="); !umbralOwned[name] {
+			env = append(env, entry)
+		}
 	}
-	return append(env, "UMBRAL_SESSION=1")
+	env = append(env, paneTerminal...)
+	for key, value := range overrides {
+		if !umbralOwned[key] {
+			env = append(env, key+"="+value)
+		}
+	}
+	return append(env, umbral...)
+}
+
+// umbralOwned is every variable only Umbral sets in a pane.
+var umbralOwned = map[string]bool{
+	"UMBRAL_SESSION": true, "UMBRAL_ENV": true, "UMBRAL_SESSION_ID": true,
+	"UMBRAL_SOCKET_PATH": true, "UMBRAL_BIN_PATH": true,
+	"UMBRAL_WORKSPACE_ID": true, "UMBRAL_TAB_ID": true, "UMBRAL_PANE_ID": true,
+}
+
+// umbralEnv is REQ-INT-001's variables for one session, leaving out the ones with no value: a
+// thread's PTY is in no pane. UMBRAL_SESSION=1 is the marker every session carried before
+// REQ-INT-001, kept so that nothing that tested for it breaks.
+func (s *Service) umbralEnv(id string, pane domain.PaneLocation) []string {
+	env := []string{"UMBRAL_SESSION=1", "UMBRAL_ENV=1", "UMBRAL_SESSION_ID=" + id}
+	for _, v := range []struct{ name, value string }{
+		{"UMBRAL_SOCKET_PATH", s.cfg.SocketPath},
+		{"UMBRAL_BIN_PATH", s.cfg.BinPath},
+		{"UMBRAL_WORKSPACE_ID", pane.WorkspaceID},
+		{"UMBRAL_TAB_ID", pane.TabID},
+		{"UMBRAL_PANE_ID", pane.PaneID},
+	} {
+		if v.value != "" {
+			env = append(env, v.name+"="+v.value)
+		}
+	}
+	return env
 }
 
 // replyTarget carries the emulator's answers to device queries back to the PTY.
@@ -173,12 +212,12 @@ func (r *replyTarget) write(data []byte) {
 // persistCreate writes the session row before the PTY is announced (DD-007).
 func (s *Service) persistCreate(ctx context.Context, session domain.Session) error {
 	_, err := s.cfg.Store.DB().ExecContext(ctx, `
-		INSERT INTO sessions(id, shell, cwd, cols, rows, state, integration, input_owner, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO sessions(id, shell, cwd, cols, rows, state, integration, input_owner, owner_thread_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.Shell, session.CWD,
 		session.Size.Cols, session.Size.Rows,
 		string(session.State), string(session.Integration), string(session.InputOwner),
-		session.CreatedAt.UTC().UnixMilli())
+		nullable(session.OwnerThreadID), session.CreatedAt.UTC().UnixMilli())
 	if err != nil {
 		return fmt.Errorf("sessions: persist %s: %w", session.ID, err)
 	}
@@ -309,11 +348,12 @@ func scanSession(row rowScanner) (domain.Session, error) {
 		state, integration, inputOwner       string
 		cols, rows                           int64
 		exitCode                             sql.NullInt64
+		owner                                sql.NullString
 		createdAtMillis, exitedAtMillisValue sql.NullInt64
 	)
 
 	err := row.Scan(&session.ID, &session.Shell, &session.CWD, &cols, &rows,
-		&state, &integration, &inputOwner, &exitCode, &createdAtMillis, &exitedAtMillisValue)
+		&state, &integration, &inputOwner, &owner, &exitCode, &createdAtMillis, &exitedAtMillisValue)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return domain.Session{}, fmt.Errorf("%w: %s", domain.ErrNotFound, session.ID)
@@ -326,6 +366,7 @@ func scanSession(row rowScanner) (domain.Session, error) {
 	session.State = domain.State(state)
 	session.Integration = domain.Integration(integration)
 	session.InputOwner = domain.InputOwner(inputOwner)
+	session.OwnerThreadID = owner.String
 	session.CreatedAt = time.UnixMilli(createdAtMillis.Int64).UTC()
 	if exitCode.Valid {
 		code := int(exitCode.Int64)

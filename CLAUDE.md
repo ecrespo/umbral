@@ -88,14 +88,23 @@ including across the API (Art. 6).
   - `test-author`: Go tests from the EARS criteria, using the exact names in the
     traceability matrix. Writes `_test.go` files only.
 - **Not created yet**, although earlier notes described them: the project skills
-  (`/implement-task`, `/spec-delta`, `/sdd-analyze`, `/checkpoint`), the session-start and
-  post-edit hooks, `.claude/settings.json` with its permissions, and `.mcp.json`. Do not
-  try to invoke them; create them first or work without them. Verified again on 2026-09-20:
-  `.claude/` holds `agents/` and nothing else.
+  `/implement-task`, `/spec-delta`, `/sdd-analyze` and `/checkpoint`, the session-start and
+  post-edit hooks, and permissions in `.claude/settings.json`. Do not try to invoke them;
+  create them first or work without them.
+- **Knowledge layers** (2026-10-18):
+  - **CodeGraph** keeps the structure index in `.codegraph/`. The database is local and
+    rebuilt with `codegraph init -i .`.
+  - **Graphify** writes `graphify-out/`, which is not committed. Rebuild it with
+    `graphify extract . --backend ollama --model gpt-oss:20b`, or `graphify update .` for the
+    code alone.
+  - **lat.md** lives in `lat.md/`, and `lat check` is its gate. Its hooks are in
+    `.claude/settings.json`, its skill in `.claude/skills/lat-md/`, and its MCP server in the
+    untracked `.mcp.json`.
 - **Migrations:** `0001_terminal`, `0002_block_index`, `0003_structure` and `0004_restore`
-  are applied. `0005_agent` (T-F1-01) is not written yet. Migrations are forward-only
-  (Art. 6), so an applied file is never edited; that is why the agent subdomain is `0004`
-  and not the `0002` some older drafts name.
+  are applied, `0005_agent` (T-F1-01) adds the agent subdomain and `0006_rule_state` (T-F1-30)
+  the state of signed rule bundles. Migrations are forward-only
+  (Art. 6), so an applied file is never edited; that is why the agent subdomain is `0005`
+  and not the `0002` or `0004` older drafts name.
 - **Recommended flow:** start each task in Plan Mode, get the plan approved, implement it,
   then run `spec-guardian` before writing the commit.
 - **Before claiming a task is done**, verify against the filesystem rather than against

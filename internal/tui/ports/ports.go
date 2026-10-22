@@ -4,6 +4,7 @@ package ports
 
 import (
 	"context"
+	"errors"
 
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 )
@@ -62,9 +63,71 @@ type Daemon interface {
 	Resize(ctx context.Context, sessionID string, size sessdomain.Size) error
 	// Blocks lists a session's blocks, newest first.
 	Blocks(ctx context.Context, sessionID string, limit int) ([]sessdomain.Block, error)
+
+	// CreateThread starts an agent thread working in cwd, in the default mode
+	// (`thread.create`).
+	CreateThread(ctx context.Context, cwd string) (threadID string, err error)
+	// Send sends a message to a thread, with its attachments (`thread.send`). The adapter
+	// gives every call a fresh client_msg_id (REQ-AGT-015); the panel never retries a send,
+	// so there is no second call that would need the first one's.
+	Send(ctx context.Context, threadID, text string, attachments []Attachment) (turnID string, err error)
+	// Respond answers an approval: decision `approve` or `deny`, scope `once`, `thread` or
+	// `always` (`approval.respond`).
+	Respond(ctx context.Context, approvalID, decision, scope string) error
+	// Cancel stops a thread's running turn (`thread.cancel`). stopped is false when there
+	// was no turn to stop: the daemon answered `stopped_at: null`.
+	Cancel(ctx context.Context, threadID string) (stopped bool, err error)
+	// Focus tells the daemon this client views threadID, or no thread when it is ""
+	// (`thread.focus`, REQ-AGT-016).
+	Focus(ctx context.Context, threadID string) error
+	// Approvals lists the approvals still pending, of every thread, oldest first
+	// (`approval.list`).
+	Approvals(ctx context.Context) ([]Approval, error)
+	// McpServers lists the configured MCP servers with their live state (`mcp.server.list`),
+	// and Skills the installed skills (`skill.list`). A daemon without that module answers an
+	// empty list, not an error: having no MCP client or skill store is a configuration.
+	McpServers(ctx context.Context) ([]McpServer, error)
+	Skills(ctx context.Context) ([]Skill, error)
 	// Events is closed when the connection ends; the model then shows a disconnected
 	// state instead of a frozen screen.
 	Events() <-chan Event
+}
+
+// ErrApprovalGone is Respond's error for an approval that was already decided or has
+// expired (`CONFLICT`, `NOT_FOUND`): there is nothing left to answer.
+var ErrApprovalGone = errors.New("the approval was already decided or has expired")
+
+// Attachment is one of thread.send's attachments: kind `file`, `dir` or `block`, and the
+// path or block id it names (REQ-CTX-002).
+type Attachment struct {
+	Kind string
+	Ref  string
+}
+
+// Approval is a tool call waiting for the user (API §4's Approval, the fields the panel
+// shows).
+type Approval struct {
+	ID       string
+	ThreadID string
+	Tool     string
+	Risk     string
+	Reason   string
+	Summary  string
+	Diff     string
+}
+
+// McpServer is an MCP server as the panel shows it (API §4's McpServer): LastError is ""
+// when there is none.
+type McpServer struct {
+	Name      string
+	State     string
+	LastError string
+}
+
+// Skill is an installed skill as the panel shows it (API §4's Skill).
+type Skill struct {
+	Name    string
+	Enabled bool
 }
 
 // EventKind says what an Event carries.
@@ -88,6 +151,24 @@ const (
 	EventUnsubscribed
 	// EventDisconnected is the stream ending. Err says why.
 	EventDisconnected
+	// EventThreadDelta is a chunk of a thread's answer (`thread.delta`); Reasoning marks
+	// the model's thinking rather than its answer.
+	EventThreadDelta
+	// EventToolCall is a tool call's status change (`thread.tool_call`).
+	EventToolCall
+	// EventApprovalRequested is a turn paused on the user (`approval.requested`).
+	EventApprovalRequested
+	// EventTurnFinished is a turn's end (`thread.turn_finished`).
+	EventTurnFinished
+	// EventNotification is a notification for the user (`notification.posted`, API Spec
+	// §5.35): Title, Text as its body, and Sound.
+	EventNotification
+	// EventMcpServerState is an MCP server's state change (`mcp.server_state`), and
+	// EventSkillChanged a skill installed, replaced, enabled, disabled or removed
+	// (`skill.changed`). Both carry nothing: the panel lists again, which the daemon answers
+	// from what it stored before it published (DD-007).
+	EventMcpServerState
+	EventSkillChanged
 )
 
 // Event is one thing that happened, flattened so the model does not decode JSON.
@@ -103,4 +184,25 @@ type Event struct {
 	Seq uint64
 	// Err is why the connection ended, for EventDisconnected.
 	Err error
+	// CWD is where a closed block's command ran, for EventBlockClosed.
+	CWD string
+
+	// ThreadID names the thread of the agent events.
+	ThreadID string
+	// Text and Reasoning are a delta's, for EventThreadDelta.
+	Text      string
+	Reasoning bool
+	// ToolCallID, Tool and Status are a tool call's, for EventToolCall.
+	ToolCallID string
+	Tool       string
+	Status     string
+	// Skill is the skill a `skill_load` call names, from its args, for EventToolCall.
+	Skill string
+	// Approval is what is asked, for EventApprovalRequested.
+	Approval Approval
+	// StopReason is how the turn ended, for EventTurnFinished.
+	StopReason string
+	// Title and Sound are a notification's, for EventNotification; its body is in Text.
+	Title string
+	Sound string
 }

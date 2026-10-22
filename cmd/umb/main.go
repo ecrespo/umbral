@@ -54,10 +54,16 @@ func main() {
 	// turns that default off (os/signal, "SIGPIPE"); nothing needs to read the channel.
 	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(runIO(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
+// run is runIO with nothing on stdin. Only `umb ai` and `umb skill install`'s confirmation
+// read the stdin they are given; `umb layout apply --from -` reads the process's own.
 func run(args []string, stdout, stderr io.Writer) int {
+	return runIO(args, strings.NewReader(""), stdout, stderr)
+}
+
+func runIO(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	out, errOut := newPrinter(stdout), newPrinter(stderr)
 	if len(args) == 0 {
 		usage(errOut)
@@ -76,6 +82,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return finish(cmdBlock(ctx, args[1:], out, errOut), out, stderr)
 	case "api":
 		return finish(cmdAPI(args[1:], out, errOut), out, stderr)
+	case "ai":
+		return finish(cmdAI(ctx, args[1:], stdin, out, errOut), out, stderr)
+	case "limits":
+		return finish(cmdLimits(ctx, args[1:], out, errOut), out, stderr)
+	case "notify":
+		return finish(cmdNotify(ctx, args[1:], out, errOut), out, stderr)
+	case "policy":
+		return finish(cmdPolicy(ctx, args[1:], out, errOut), out, stderr)
+	case "rules":
+		return finish(cmdRules(ctx, args[1:], out, errOut), out, stderr)
+	case "skill":
+		return finish(cmdSkill(ctx, args[1:], stdin, out, errOut), out, stderr)
+	case "mcp":
+		return finish(cmdMcp(ctx, args[1:], out, errOut), out, stderr)
+	case "wait":
+		return finish(cmdWait(ctx, args[1:], out, errOut), out, stderr)
+	case "thread":
+		return finish(cmdThread(ctx, args[1:], out, errOut), out, stderr)
 	case famWorkspace, famTab, famPane, famLayout:
 		return finish(cmdTree(ctx, args[0], args[1:], out, errOut), out, stderr)
 	case "version", "--version", "-version":
@@ -97,7 +121,38 @@ func usage(p *printer) {
 Usage:
   umb status [--json]            the daemon's health, providers and MCP servers
   umb block last [--json]        the last closed block of this session (REQ-CLI-002)
+  umb ai PROMPT [--model M] [--timeout D]
+                                 ask the agent, read-only, with stdin attached
+                                 (REQ-CLI-001), e.g. go test 2>&1 | umb ai "why?"
   umb api schema --json          the protocol this binary speaks (REQ-API-004)
+  umb limits [--json]            the frame limit and how close traffic comes to it
+  umb limits set --max-message SIZE
+                                 raise or lower it for new connections, e.g. 8MiB
+  umb notify TITLE --source S [--body B] [--sound none|done|request]
+                                 show the user a notification (REQ-NTF-001)
+  umb policy explain --tool T --risk R (--mode M | --thread ID) [--tainted] [--] TARGET
+                                 what the policy decides for an action, and why
+                                 (REQ-SEC-009), e.g. --tool run_command --risk Exec -- rm -rf x;
+                                 quote a command that needs shell quoting as one argument
+  umb rules status|rollback|reset
+  umb rules key list|add|remove|rotate
+                                 signed rule bundles and their trust store (REQ-SEC-014);
+                                 add and rotate need --confirm with the key's fingerprint
+  umb skill install PATH [--yes] [--replace]
+                                 show a skill's manifest and digest, confirm, install that
+                                 digest (REQ-SKL-001); --yes when there is no terminal
+  umb skill list|show NAME [--body]|enable NAME|disable NAME|remove NAME
+                                 the installed skills for Umbral's agent (REQ-SKL-003)
+  umb mcp add NAME (--stdio [--env NAME=keyring:PATH|env:VAR]… -- COMMAND [ARGS…] | --http URL)
+  umb mcp list|remove NAME       MCP servers for the agent, always untrusted (REQ-CLI-008)
+  umb wait ls [--json]           every open wait: target, age, whether its thread stalled
+  umb wait cancel WAIT_ID        end one wait; the turn or command it watched goes on
+                                 (REQ-AUT-006, REQ-AUT-007)
+  umb thread create [CWD] [--mode M] [--title T] [--model M]
+  umb thread send THREAD TEXT [--wait STATES] [--timeout D]
+  umb thread wait THREAD --until STATES [--timeout D]
+  umb thread get|cancel THREAD   drive a thread from a script, waiting without polling
+                                 (REQ-CLI-009); STATES is idle,done,blocked,stopped
   umb workspace create|list|focus|rename|close
   umb tab create|list|focus|rename|close
   umb pane split|list|get|focus|rename|close
@@ -163,11 +218,13 @@ type statusResult struct {
 	Providers      []struct {
 		ID     string `json:"id"`
 		Health string `json:"health"`
+		Reason string `json:"reason,omitempty"`
 	} `json:"providers"`
 	MCP []struct {
 		Name  string `json:"name"`
 		State string `json:"state"`
 	} `json:"mcp"`
+	Frames *framesResult `json:"frames,omitempty"`
 }
 
 func cmdStatus(ctx context.Context, args []string, stdout, stderr *printer) int {
@@ -190,8 +247,7 @@ func cmdStatus(ctx context.Context, args []string, stdout, stderr *printer) int 
 
 	var result statusResult
 	if err := c.Call(callCtx, "system.status", nil, &result); err != nil {
-		stderr.printf("umb: %v\n", err)
-		return exitFailure
+		return callFailed(stderr, "", err)
 	}
 
 	if f.asJSON {
@@ -205,7 +261,11 @@ func cmdStatus(ctx context.Context, args []string, stdout, stderr *printer) int 
 	if len(result.Providers) > 0 {
 		names := make([]string, 0, len(result.Providers))
 		for _, p := range result.Providers {
-			names = append(names, p.ID+" ("+p.Health+")")
+			state := p.Health
+			if p.Reason != "" {
+				state += ": " + p.Reason
+			}
+			names = append(names, p.ID+" ("+state+")")
 		}
 		stdout.printf("providers: %s\n", strings.Join(names, ", "))
 	}
@@ -215,6 +275,10 @@ func cmdStatus(ctx context.Context, args []string, stdout, stderr *printer) int 
 			names = append(names, m.Name+" ("+m.State+")")
 		}
 		stdout.printf("mcp: %s\n", strings.Join(names, ", "))
+	}
+	// Absent from a daemon older than REQ-OBS-005, which is not the same as all zeros.
+	if result.Frames != nil {
+		stdout.println(result.Frames.line())
 	}
 	return exitOK
 }
@@ -294,8 +358,7 @@ func cmdBlockLast(ctx context.Context, args []string, stdout, stderr *printer) i
 				"per command; check `umb status` if you expected some.")
 			return exitFailure
 		}
-		stderr.printf("umb: %v\n", err)
-		return exitFailure
+		return callFailed(stderr, "", err)
 	}
 
 	if f.asJSON {

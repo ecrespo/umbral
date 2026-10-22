@@ -18,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
@@ -27,6 +28,13 @@ import (
 	"github.com/ecrespo/umbral/internal/api"
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/config"
+	"github.com/ecrespo/umbral/internal/llmgw/adapters/egresslog"
+	"github.com/ecrespo/umbral/internal/llmgw/adapters/modelstore"
+	"github.com/ecrespo/umbral/internal/llmgw/adapters/usagelog"
+	"github.com/ecrespo/umbral/internal/notify"
+	"github.com/ecrespo/umbral/internal/obs"
+	"github.com/ecrespo/umbral/internal/security/adapters/keyring"
+	secports "github.com/ecrespo/umbral/internal/security/ports"
 	"github.com/ecrespo/umbral/internal/sessions"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/blockstore"
 	"github.com/ecrespo/umbral/internal/sessions/adapters/ghostty"
@@ -78,7 +86,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+	// Every line logged inside a turn carries its trace id (Art. 7, Tech §7.1).
+	logger := slog.New(obs.LogHandler(slog.NewJSONHandler(stderr, nil)))
 
 	socket, err := resolveSocketPath(*socketPath)
 	if err != nil {
@@ -99,6 +108,27 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		logger.Error("the settings file cannot be read; refusing to start with defaults "+
 			"the user did not ask for", slog.Any("error", err))
+		return exitConfig
+	}
+
+	// The rule set in force (REQ-SEC-010): the built-in rules with the override directory on
+	// top. An invalid file is warned about and skipped; it never stops the daemon or empties
+	// the set.
+	activeRules := loadRules(logger, settingsPath)
+	redact := func(s string) string { return activeRules.Redact(s).Text }
+
+	// The providers, with the same rule: a models file the schema refuses stops the daemon.
+	// A plaintext key refuses only its own entry (REQ-SEC-004), and a keyring this machine
+	// cannot reach disables only the providers that need it (REQ-SEC-008).
+	modelsPath, err := config.ModelsPath()
+	if err != nil {
+		logger.Error("cannot locate the models file", slog.Any("error", err))
+		return exitCantCreate
+	}
+	providers, err := loadProviders(ctx, logger, settingsPath, modelsPath, settings, keyring.New())
+	if err != nil {
+		logger.Error("the models file cannot be read; refusing to start with providers "+
+			"the user did not configure", slog.Any("error", err))
 		return exitConfig
 	}
 
@@ -200,7 +230,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		slog.Int("schema_version", schemaVersion),
 		slog.Int64("sessions_recovered", report.SessionsExited),
 		slog.Int64("blocks_abandoned", report.BlocksAbandoned),
-		slog.Int64("integration_settled", report.IntegrationSettled))
+		slog.Int64("integration_settled", report.IntegrationSettled),
+		slog.Int64("threads_stopped", report.ThreadsStopped),
+		slog.Int64("approvals_expired", report.ApprovalsExpired),
+		slog.Int64("pane_reports_cleared", report.PaneReportsCleared))
 
 	if *oneShot {
 		return 0
@@ -234,6 +267,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		// PTY reads, so one shared between sessions would mix their streams.
 		NewScanner: func() sessports.Scanner { return shellinteg.NewScanner() },
 		Logger:     logger,
+		SocketPath: socket,
+		BinPath:    findUmb(logger),
 	})
 	if err != nil {
 		logger.Error("cannot build the sessions module", slog.Any("error", err))
@@ -300,21 +335,160 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			slog.Any("error", err))
 	}
 
+	// The model catalog (REQ-LLM-002). Discovery runs in the background: a provider that is
+	// slow or down must not hold up the socket.
+	modelStore, err := modelstore.New(db)
+	if err != nil {
+		logger.Error("cannot build the model store", slog.Any("error", err))
+		return exitCantCreate
+	}
+	egress, err := egresslog.New(db)
+	if err != nil {
+		logger.Error("cannot build the egress log", slog.Any("error", err))
+		return exitCantCreate
+	}
+	usage, err := usagelog.New(db)
+	if err != nil {
+		logger.Error("cannot build the usage log", slog.Any("error", err))
+		return exitCantCreate
+	}
+	// Traces and metrics (T-F1-18). Spans are made whether or not they are exported: their
+	// trace ids join a turn's log lines. Export needs `[otel] endpoint`, which is local.
+	metrics := obs.NewMetrics()
+	gauges := &liveGauges{}
+	telemetry, err := obs.NewTelemetry(ctx, obs.TelemetryConfig{
+		Endpoint: settings.OTelEndpoint, Version: buildVersion(), Logger: logger, Metrics: metrics,
+		WaitsActive: gauges.waitsActive, FramesRefused: gauges.framesRefused,
+	})
+	if err != nil {
+		logger.Error("cannot build the telemetry", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer func() {
+		// What is pending goes to the collector before the daemon exits, within a bound: a
+		// collector that is down must not hold the shutdown.
+		flush, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := telemetry.Shutdown(flush); err != nil {
+			logger.Warn("telemetry did not flush", slog.Any("error", err))
+		}
+	}()
+
+	// Signed rule updates (REQ-SEC-011): off unless `[update] rules_check` says otherwise, and
+	// every request recorded in egress_log.
+	// Subscribed before the manager starts: a rejection at the first check reaches the user
+	// once the notification sink below exists.
+	ruleRejections := eventBus.Subscribe(secports.KindRuleUpdateRejected)
+	ruleManager, err := startRules(ctx, logger, db, settings, egress, redact, activeRules, eventBus, metrics)
+	if err != nil {
+		logger.Error("cannot start the rule manager", slog.Any("error", err))
+		return exitCantCreate
+	}
+
+	models, err := newGateway(ctx, logger, modelStore, egress, usage, modelTracer{telemetry}, redact)
+	if err != nil {
+		logger.Error("cannot build the model gateway", slog.Any("error", err))
+		return exitCantCreate
+	}
+	providers.observe(models.configure)
+
+	// The skill store (T-F1-34), its leftovers settled before anyone can install, and before
+	// the agent runtime, whose turns list its catalog and whose skill_load reads it (T-F1-36).
+	skillStore, err := newSkills(ctx, db, eventBus, logger)
+	if err != nil {
+		logger.Error("cannot build the skill store", slog.Any("error", err))
+		return exitCantCreate
+	}
+
+	// The agent runtime (T-F1-13). Its turns run on the daemon's context; closing it waits
+	// for each to record how it ended.
+	runtime, tools, err := newRuntime(ctx, agentDeps{
+		logger: logger, db: db, bus: eventBus, gateway: models, egress: egress,
+		terminal: sessionService, blocks: blockReader, metrics: metrics, tracer: agentTracer{telemetry},
+		maxCost: providers.MaxCostMicroUSD, redact: redact, policy: activeRules.Policy, skills: skillStore,
+		stallLocal:  time.Duration(settings.Stall.LocalS) * time.Second,
+		stallRemote: time.Duration(settings.Stall.RemoteS) * time.Second,
+	})
+	if err != nil {
+		logger.Error("cannot build the agent runtime", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer runtime.Close()
+	// Output from a thread's own pane keeps its turn from being marked stalled (T-F1-31).
+	go followThreadOutput(ctx, eventBus.Subscribe(sessports.KindBlockStarted), eventBus.Subscribe(sessports.KindSessionOutput), runtime)
+
+	// policy.explain (T-F1-28) reads the same threads and rules a turn decides with.
+	explainer, err := newExplainer(db, tools, activeRules.Policy)
+	if err != nil {
+		logger.Error("cannot build policy.explain", slog.Any("error", err))
+		return exitCantCreate
+	}
+
+	// The MCP client (T-F1-17): every configured server is connected in the background and
+	// its tools join the registry the runtime offers from.
+	mcpClient, err := newMCP(ctx, logger, db, eventBus, egress, tools, providers, redact)
+	if err != nil {
+		logger.Error("cannot build the MCP client", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer mcpClient.Close()
+
+	// The wait engine (T-F1-23): thread.wait, block.wait_output and thread.send's wait.
+	waitEngine, err := newWaits(eventBus, runtime, sessionService, blockReader)
+	if err != nil {
+		logger.Error("cannot build the wait engine", slog.Any("error", err))
+		return exitCantCreate
+	}
+	gauges.waits.Store(waitEngine)
+
+	// The notification sink (T-F1-27). Its deliverer is the API server, built below.
+	notifications, err := notify.New(notify.Config{Enabled: settings.NotificationsEnabled})
+	if err != nil {
+		logger.Error("cannot build the notification sink", slog.Any("error", err))
+		return exitCantCreate
+	}
+
+	go notifyRuleRejections(ctx, ruleRejections, notifications, logger)
+
+	// The integration surface (T-F1-25): external state reports and `pane.state_changed`.
+	paneStates, err := newIntegrations(ctx, db, eventBus, workspaceService,
+		blockedNotifier{sink: notifications, logger: logger}, metrics.ReportRateLimited, logger)
+	if err != nil {
+		logger.Error("cannot build the integration surface", slog.Any("error", err))
+		return exitCantCreate
+	}
+
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
 		TokenPath:     tokenPath,
 		DaemonVersion: buildVersion(),
-		Status:        statusFromStore(db),
+		Status:        withMCP(withProviders(statusFromStore(db), providers), mcpClient),
+		Configuration: providers,
+		Models:        models,
+		Threads:       runtime,
+		MCP:           mcpClient,
+		Waits:         waitEngine,
 		Sessions:      sessionService,
 		Blocks:        blockReader,
 		Workspaces:    workspaceService,
+		Integrations:  paneStates,
+		Notifications: notifications,
+		PolicyExplain: explainer,
+		Rules:         ruleManager,
+		Skills:        skillStore,
 		Bus:           eventBus,
 		Logger:        logger,
+		// The first live setting: `limits.set` rewrites it in this file and applies it to
+		// new connections without a restart (REQ-CLI-007, Tech Design §5.1).
+		MaxMessageBytes: settings.MaxMessageBytes,
+		SettingsPath:    settingsPath,
 	})
 	if err != nil {
 		logger.Error("cannot open the socket", slog.Any("error", err))
 		return exitCantCreate
 	}
+	gauges.server.Store(server)
+	notifications.SetDeliverer(server)
 	defer func() {
 		if err := server.Close(); err != nil {
 			logger.Error("cannot close the socket", slog.Any("error", err))
@@ -332,6 +506,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		workspaceService.RunCapture(ctx)
 	}()
 	defer func() { <-captureDone }()
+
+	// Data Model §4's maintenance job: once now, then daily.
+	// Its own context, cancelled on the way out: Serve can return without ctx ending, and the
+	// wait below must not outlive the daemon.
+	retentionCtx, stopRetention := context.WithCancel(ctx)
+	retentionDone := make(chan struct{})
+	go func() {
+		defer close(retentionDone)
+		runRetention(retentionCtx, db, storeRetention(settings.Retention), retentionInterval, logger)
+	}()
+	defer func() {
+		stopRetention()
+		<-retentionDone
+	}()
 
 	logger.Info("umbrald listening",
 		slog.String("socket", server.SocketPath()),
@@ -374,6 +562,18 @@ func statusFromStore(db *store.Store) api.StatusFunc {
 	}
 }
 
+// withProviders adds the providers' health and reasons to system.status (REQ-SEC-008).
+func withProviders(status api.StatusFunc, providers *providerConfig) api.StatusFunc {
+	return func(ctx context.Context) (api.StatusResult, error) {
+		result, err := status(ctx)
+		if err != nil {
+			return result, err
+		}
+		result.Providers = providers.Statuses()
+		return result, nil
+	}
+}
+
 // buildVersion reports the linker-provided version, falling back to the VCS revision
 // that the Go toolchain stamps into the binary.
 func buildVersion() string {
@@ -405,4 +605,36 @@ func (r screenReader) Screen(ctx context.Context, sessionID string) (wsports.Scr
 	// The cursor's row is the closest thing the snapshot has to "how many lines this is",
 	// and Data Model §2.4d stores `rows` beside the screen so a reader knows what it got.
 	return wsports.Screen{Data: snapshot.Data, Rows: int(snapshot.CursorY) + 1}, nil
+}
+
+// findUmb locates the `umb` every pane is told about as UMBRAL_BIN_PATH (REQ-INT-001): the one
+// beside this binary first, because it is the same release as the daemon a hook will talk
+// to, then PATH. Neither is fatal: the pane is told nothing, and a hook falls back to its own
+// PATH.
+func findUmb(logger *slog.Logger) string {
+	self, err := os.Executable()
+	if err != nil {
+		self = ""
+	}
+	bin := findUmbFrom(self, exec.LookPath)
+	if bin == "" {
+		logger.Warn("umb is neither beside umbrald nor on PATH; panes get no UMBRAL_BIN_PATH")
+	}
+	return bin
+}
+
+// findUmbFrom is findUmb's search, given this binary's path and a PATH lookup.
+func findUmbFrom(self string, lookPath func(string) (string, error)) string {
+	if self != "" {
+		sibling := filepath.Join(filepath.Dir(self), "umb")
+		if info, err := os.Stat(sibling); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return sibling
+		}
+	}
+	if bin, err := lookPath("umb"); err == nil {
+		if abs, err := filepath.Abs(bin); err == nil {
+			return abs
+		}
+	}
+	return ""
 }

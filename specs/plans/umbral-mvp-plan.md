@@ -6,13 +6,13 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.9 |
-| **Date** | 2026-09-26 |
+| **Version** | 1.14 |
+| **Date** | 2026-10-22 |
 | **PRD** | `specs/prd/umbral-mvp.md` |
 | **Tech Design** | `specs/technical/umbral-architecture.md` |
 | **Data Model** | `specs/data-model/umbral-schema.md` |
 | **API Spec** | `specs/api/umbral-daemon-api-v1.md` |
-| **Tasks** | `specs/tasks/umbral-f0-tasks.md`, `specs/tasks/umbral-f1-tasks.md` |
+| **Tasks** | `specs/tasks/umbral-f0-tasks.md`, `specs/tasks/umbral-f1-tasks.md`, `specs/tasks/umbral-hardening-tasks.md` |
 
 ---
 
@@ -25,7 +25,7 @@ There are two MVP phases in sequence (F0 Core → F1 Agentic) plus a hardening p
   - F1: the US-003 scenario works offline.
 - F2 and F3 are described at the end only as a horizon; they will get their own PRDs/deltas.
 
-**Total estimated duration:** 13-16 weeks for one person part-time, plus supervised coding agents.
+**Total estimated duration:** 15-18 weeks for one person part-time, plus supervised coding agents.
 **Team:** 1 Tech Lead/backend (Go), supported by coding agents using the tasks in `specs/tasks/`.
 **Release 0.1 target:** end of F1 + hardening.
 
@@ -142,46 +142,53 @@ The six exit criteria, and what closed each:
 
 ---
 
-### Phase F1: Agent, models, MCP and security
+### Phase F1: Agent, models, MCP and security — **closed 2026-10-22**
 
-**Duration:** 7-8 weeks.
+**Duration:** 9-10 weeks (7-8 before the four deltas of 2026-09-26 added eleven days of work).
 **Goal:** US-003 scenario offline with approval; `umb ai` CLI; MCP; egress audit; a thread that another agent or a script can drive.
 
 | ID | Task | Estimate | Dependency | Status |
 |---|---|---|---|---|
-| T-F1-01 | Migration 0005 (agent, models, audit, MCP) | 1d | F0 | ☐ |
-| T-F1-02 | Keyring and config loader that rejects plaintext secrets | 1d | T-F1-01 | ☐ |
-| T-F1-03 | Policy engine (pure function) | 2d | T-F1-01 | ☐ |
-| T-F1-04 | Secret redaction | 1.5d | T-F1-01 | ☐ |
-| T-F1-05 | `llmgw`: ports, catalog, openai-compat adapters through Fantasy | 3d | T-F1-02 | ☐ |
-| T-F1-06 | Native Ollama adapter | 1.5d | T-F1-05 | ☐ |
-| T-F1-07 | Router, fallback, `usage`, redaction and egress hooks | 2d | T-F1-04, T-F1-06 | ☐ |
-| T-F1-08 | HF router and OmniRoute presets | 0.5d | T-F1-05 | ☐ |
-| T-F1-09 | Tool registry + built-in file/search/network tools | 3d | T-F1-03 | ☐ |
-| T-F1-10 | `run_command` in the thread PTY as an agent block | 1.5d | T-F1-09 | ☐ |
-| T-F1-11 | Context: rules, attachments, git | 2d | T-F1-01 | ☐ |
-| T-F1-12 | Token budget and compaction | 2d | T-F1-11 | ☐ |
-| T-F1-13 | Agent runtime and `thread.*` methods | 4d | T-F1-07, T-F1-10, T-F1-12 | ☐ |
-| T-F1-14 | Approval flow | 2d | T-F1-13 | ☐ |
-| T-F1-15 | Repair of invalid arguments + metric | 1d | T-F1-13 | ☐ |
-| T-F1-16 | Cancellation < 500 ms | 1d | T-F1-13 | ☐ |
-| T-F1-17 | MCP client | 3d | T-F1-09 | ☐ |
-| T-F1-18 | OTel observability | 1.5d | T-F1-13 | ☐ |
-| T-F1-19 | `umb ai` with stdin | 1d | T-F1-13 | ☐ |
-| T-F1-20 | TUI: agent panel, mode toggle, approvals, attach block | 4d | T-F1-14 | ☐ |
-| T-F1-21 | Live US-003 E2E (20 runs) and report | 1.5d | T-F1-20 | ☐ |
-| T-F1-23 | Wait engine (`thread.wait`, `send --wait`, `block.wait_output`) | 2.5d | T-F1-13 | ☐ |
-| T-F1-24 | Attention state (`done`/seen) and thread resume after restart | 1.5d | T-F1-13 | ☐ |
-| T-F1-25 | Integration surface: env, `report_state`, authority | 2d | T-F1-13 | ☐ |
-| T-F1-26 | Display metadata and tokens | 1d | T-F1-25 | ☐ |
-| T-F1-27 | Notifications with normalization and rate limit | 1d | T-F1-24 | ☐ |
-| T-F1-28 | `policy.explain` | 1d | T-F1-03 | ☐ |
-| T-F1-29 | Rule overrides and optional updates | 1.5d | T-F1-04 | ☐ |
-| T-F1-30 | Signed rule bundles, trust store and offline recovery | 2.5d | T-F1-29 | ☐ |
-| T-F1-31 | Wait monitoring: inventory, cancellation and stall detection | 2d | T-F1-23 | ☐ |
-| T-F1-22 | Hardening: retention job, recovery verification, user docs | 2d | T-F1-21 | ☐ |
+| T-F1-32 | The handshake has a deadline and always answers (REQ-SEC-017/018) | 0.5d | F0 | ✅ 2026-09-27 |
+| T-F1-33 | The frame limit enforced outbound, watched, adjustable from the CLI | 3.5d | T-F1-32 | ✅ 2026-09-27 |
+| T-F1-01 | Migration 0005 (agent, models, audit, MCP, skills) | 1d | T-F1-32, T-F1-33 | ✅ 2026-09-27 |
+| T-F1-02 | Keyring and config loader that rejects plaintext secrets | 1d | T-F1-01 | ✅ 2026-09-27 |
+| T-F1-03 | Policy engine (pure function) | 2d | T-F1-01 | ✅ 2026-09-27 |
+| T-F1-04 | Secret redaction | 1.5d | T-F1-01 | ✅ 2026-09-27 |
+| T-F1-05 | `llmgw`: ports, catalog, openai-compat adapters through Fantasy | 3d | T-F1-02 | ✅ 2026-09-27 |
+| T-F1-06 | Native Ollama adapter | 1.5d | T-F1-05 | ✅ 2026-09-27 |
+| T-F1-07 | Router, fallback, `usage`, redaction and egress hooks | 2d | T-F1-04, T-F1-06 | ✅ 2026-09-27 |
+| T-F1-08 | HF router and OmniRoute presets | 0.5d | T-F1-05 | ✅ 2026-09-27 |
+| T-F1-09 | Tool registry + built-in file/search/network tools | 3d | T-F1-03 | ✅ 2026-09-27 |
+| T-F1-10 | `run_command` in the thread PTY as an agent block | 1.5d | T-F1-09 | ✅ 2026-09-27 |
+| T-F1-11 | Context: rules, attachments, git | 2d | T-F1-01 | ✅ 2026-09-27 |
+| T-F1-12 | Token budget and compaction | 2d | T-F1-11 | ✅ 2026-09-27 |
+| T-F1-13 | Agent runtime and `thread.*` methods | 4d | T-F1-07, T-F1-10, T-F1-12 | ✅ 2026-09-27 |
+| T-F1-14 | Approval flow | 2d | T-F1-13 | ✅ 2026-09-27 |
+| T-F1-15 | Repair of invalid arguments + metric | 1d | T-F1-13 | ✅ 2026-10-01 |
+| T-F1-16 | Cancellation < 500 ms | 1d | T-F1-13 | ✅ 2026-10-01 |
+| T-F1-17 | MCP client | 3d | T-F1-09 | ✅ 2026-10-01 |
+| T-F1-18 | OTel observability | 1.5d | T-F1-13 | ✅ 2026-10-03 |
+| T-F1-19 | `umb ai` with stdin | 1d | T-F1-13 | ✅ 2026-10-04 |
+| T-F1-20 | TUI: agent panel, mode toggle, approvals, attach block | 4d | T-F1-14 | ✅ 2026-10-18 — merged 2026-10-03; QA walk moved to `T-REL-02` |
+| T-F1-21 | Live US-003 E2E (20 runs) and report | 1.5d | T-F1-20 | ✅ 2026-10-04 — 16/20 offline, 0 egress |
+| T-F1-23 | Wait engine (`thread.wait`, `send --wait`, `block.wait_output`) | 2.5d | T-F1-13 | ✅ 2026-10-03 |
+| T-F1-24 | Attention state (`done`/seen) and thread resume after restart | 1.5d | T-F1-13 | ✅ 2026-10-17 |
+| T-F1-25 | Integration surface: env, `report_state`, authority | 2d | T-F1-13 | ✅ 2026-10-17 |
+| T-F1-26 | Display metadata and tokens | 1d | T-F1-25 | ✅ 2026-10-18 |
+| T-F1-27 | Notifications with normalization and rate limit | 1d | T-F1-24 | ✅ 2026-10-18 |
+| T-F1-28 | `policy.explain` | 1d | T-F1-03 | ✅ 2026-10-18 |
+| T-F1-29 | Rule overrides and optional updates | 1.5d | T-F1-04 | ✅ 2026-10-18 |
+| T-F1-30 | Signed rule bundles, trust store and offline recovery | 2.5d | T-F1-29 | ✅ 2026-10-18 |
+| T-F1-31 | Wait monitoring: inventory, cancellation and stall detection | 2d | T-F1-23 | ✅ 2026-10-18 |
+| T-F1-34 | Skill store and `skill.*` methods | 3d | T-F1-01 | ✅ 2026-10-18 |
+| T-F1-35 | `umb skill` | 1d | T-F1-34 | ✅ 2026-10-18 |
+| T-F1-36 | The agent sees skills, loads them on demand, as untrusted content | 1.5d | T-F1-09, T-F1-11, T-F1-12, T-F1-14, T-F1-34 | ✅ 2026-10-18 |
+| T-F1-37 | `umb mcp`, and the agent panel's extensions view | 1.5d | T-F1-17, T-F1-20, T-F1-35 | ✅ 2026-10-18 |
+| T-F1-38 | `umb thread`: a script drives a thread and waits without polling | 1d | T-F1-23 | ✅ 2026-10-22 |
+| T-F1-22 | Hardening: retention job, recovery verification, user docs | 2d | T-F1-21 | ✅ 2026-10-04 |
 
-**F1 "Done" criteria:**
+**F1 "Done" criteria** — all five met on 2026-10-22, measured on the closing tree (`docs/checkpoints/2026-10-22-f1-closed.md`; delta `2026-10-f1-close`):
 - Every PRD MUST with a green test (matrices in the tasks files).
 - US-003 ≥ 70 % success over 20 offline runs with `gpt-oss:20b`.
 - 0 remote requests without an `egress_log` entry in the E2E suite.
@@ -194,6 +201,9 @@ The six exit criteria, and what closed each:
 
 Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), T-PKG-02
 (`.desktop` for 0.1, regenerating checksums) and T-PKG-03 (installation in the `.deb`).
+F1's close (delta `2026-10-f1-close`) added T-REL-02 (the walk of `docs/qa/f1-tui.md`, a release
+gate that goes before T-REL-01), T-HRD-01 (the project's rule-signing key), T-HRD-02 (the seven
+questions the ratified F1 deltas left open) and T-HRD-03 (three known defects).
 
 - `.deb` and tar.gz for Linux, tar.gz for macOS.
 - `systemd --user` unit and `launchd` plist.
@@ -224,7 +234,7 @@ Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), 
 |---|---|---|
 | Q-01 negative (no VT snapshot) | Fallback: replay the last N lines of the raw buffer | result of spike T-F0-04 |
 | Building libghostty with Zig in CI | CI image with pinned Zig; artifact cache | T-F0-01 failure |
-| Local models below 70 % on US-003 | Try Qwen3-Coder; tune system prompts; revisit the threshold through a Delta | T-F1-21 report |
+| Local models below 70 % on US-003 | Try Qwen3-Coder; tune system prompts; revisit the threshold through a Delta | T-F1-21 report — not triggered: 16/20 on 2026-10-04 |
 
 ## Constitution check
 
@@ -246,3 +256,8 @@ Tasks in `specs/tasks/umbral-hardening-tasks.md`: T-PKG-01 (kit and checksums), 
 | 1.7 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-defer-tui-week`: F0's third exit criterion, the TUI's week as the main terminal, becomes a release 0.1 gate; F0 closes on the other five and REQ-BLK-003. `T-F0-23` and `T-F0-24` added and closed |
 | 1.8 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-25` (REQ-TERM-013, delta `2026-09-pane-term`) and `T-F0-26` added: the GitHub CI of `develop` had been red on both OSes for eight runs |
 | 1.9 | 2026-09-26 | E. Crespo (assisted draft) | `T-F0-26` closed on the runners and `T-F0-27` added (delta `2026-09-oversized-message`); **F0 closed**, with the checkpoint `docs/checkpoints/2026-09-26-f0-closed.md` |
+| 1.10 | 2026-09-26 | E. Crespo (assisted draft) | Four F1 deltas ratified: `T-F1-32` and `T-F1-33` go before `T-F1-01`; `T-F1-34` to `T-F1-37` add skills and `umb mcp`. F1 grows from 31 tasks and 57 days to 37 and 68 |
+| 1.11 | 2026-10-04 | E. Crespo (assisted draft) | Progress synced: T-F1-18, T-F1-19, T-F1-21 and T-F1-23 done, T-F1-20 merged with its QA walk pending; the US-003 risk did not trigger (16/20, delta `2026-10-us003-e2e`) |
+| 1.12 | 2026-10-04 | E. Crespo (assisted draft) | T-F1-22 done (delta `2026-10-retention`) |
+| 1.13 | 2026-10-17 | E. Crespo (assisted draft) | T-F1-24 done (delta `2026-10-attention-focus`) |
+| 1.14 | 2026-10-22 | E. Crespo (assisted draft) | T-F1-25 … T-F1-38 done (T-F1-38, `umb thread`, from delta `2026-10-cli-thread-wait`, so criterion 4 is met by a script using `umb` alone); deltas `2026-10-cli-thread-wait` and `2026-10-agent-pty-settle` ratified on 2026-10-22; the nine deltas of T-F1-27 … T-F1-37 ratified; **F1 closed** on its five criteria (delta `2026-10-f1-close`), with T-F1-20's QA walk moved to `T-REL-02` and T-HRD-01 … 03 added to the Hardening phase |

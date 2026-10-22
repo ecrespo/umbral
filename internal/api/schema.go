@@ -201,6 +201,8 @@ var notificationShapes = map[string]any{
 	"session.integration":  sessionIntegrationPayload{},
 	"session.input_owner":  sessionInputOwnerPayload{},
 	"session.unsubscribed": sessionUnsubscribedPayload{},
+	// Emitted by the encoder in place of a notification over the frame limit (REQ-API-005).
+	methodNotificationDropped: notificationDroppedPayload{},
 
 	"block.started": Block{},
 	"block.updated": blockUpdatedPayload{},
@@ -220,6 +222,20 @@ var notificationShapes = map[string]any{
 	"pane.focused":      Pane{},
 	"pane.moved":        paneMovedPayload{},
 	"layout.updated":    Layout{},
+
+	"thread.delta":             threadDeltaPayload{},
+	"thread.tool_call":         ToolCall{},
+	"thread.turn_finished":     turnFinishedPayload{},
+	"context.compacted":        contextCompactedPayload{},
+	"thread.attention_changed": attentionChangedPayload{},
+	"thread.stalled":           threadStalledPayload{},
+	"skill.changed":            skillChangedPayload{},
+	"approval.requested":       Approval{},
+	"mcp.server_state":         mcpServerStatePayload{},
+	"pane.state_changed":       paneStateChangedPayload{},
+	"rules.update_rejected":    ruleUpdateRejectedPayload{},
+	// Sent to the foreground client only, not broadcast (§5.35).
+	"notification.posted": notificationPostedPayload{},
 }
 
 func schemaNotifications() []SchemaNotification {

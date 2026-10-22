@@ -187,6 +187,19 @@ func (p *PlainText) String() string {
 	return string(p.out) + string(tail)
 }
 
+// TakeCommitted hands over the lines committed since the last call and forgets them, keeping
+// the line being written and the stripper's state. A reader that follows output for longer
+// than a block — block.wait_output (REQ-AUT-003) — uses it so the cap never fills.
+func (p *PlainText) TakeCommitted() string {
+	committed := string(p.out)
+	p.out = p.out[:0]
+	p.truncated = false
+	return committed
+}
+
+// Current is the line still being written, which a carriage return may yet erase.
+func (p *PlainText) Current() string { return string(p.line) }
+
 // Truncated reports whether the cap discarded text.
 func (p *PlainText) Truncated() bool { return p.truncated }
 

@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/ecrespo/umbral/actions/workflows/ci.yml"><img src="https://github.com/ecrespo/umbral/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/status-pre--alpha%20(specification)-orange" alt="status">
+  <img src="https://img.shields.io/badge/status-pre--alpha%20(F0%20done)-orange" alt="status">
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="license">
   <img src="https://img.shields.io/badge/Go-%E2%89%A51.25-00ADD8" alt="Go">
 </p>
@@ -22,20 +22,29 @@
 
 ## Status
 
-🚧 **Phase F0 complete.** The quality gate passes with no critical findings and every change
-proposal is ratified and archived. Alongside the full SDD package (constitution, PRD with EARS, API, technical
-design, data model, plan, tasks and Analyze), `umbrald` already exists: it owns durable PTY sessions
-with a libghostty emulator, streams them over a 0600 JSON-RPC socket, records a block per command
-from the shell integration, and searches 100,000 blocks in a few milliseconds against a 200 ms budget. Tasks
-[`T-F0-01` … `T-F0-18`](specs/tasks/umbral-f0-tasks.md) are done, so `umb status` and
-`umb block last --json` work from any terminal. `umbral-tui` — tabs, a split and a block
-list — passes its tests and its
-[manual checklist](docs/qa/f0-tui.md), walked end to end on a real terminal. Three of the four performance NFRs are
-gates rather than prose: CI fails on a regression and proves, on the same run, that it
-still would. `umbrald` also owns the workspace tree — workspaces, tabs and panes addressed
-as `w1`, `w1:t2` and `w1:p3`, with a pane keeping its shell and its old name when it moves —
-and a tab's layout exports as a portable tree that rebuilds anywhere, panes, working
-directories and launch commands included. Next: structure restore after a restart.
+🚧 **Phase F0 is closed (2026-09-26); F1, the agent, is next.** The terminal core is built and
+verified against a running daemon, and the full SDD package (constitution, PRD with EARS, API,
+technical design, data model, plan, tasks and Analyze) stays the current truth.
+
+**What works today** — tasks [`T-F0-01` … `T-F0-27`](specs/tasks/umbral-f0-tasks.md):
+
+- **`umbrald`** owns durable PTY sessions with a libghostty emulator and streams them over a 0600
+  JSON-RPC socket. Every pane gets `TERM=xterm-256color`, whatever terminal the daemon started from.
+- **Blocks:** one per command from the shell integration (bash, zsh, fish), searched across
+  100,000 blocks in a few milliseconds against a 200 ms budget.
+- **The workspace tree:** workspaces, tabs and panes addressed as `w1`, `w1:t2` and `w1:p3`, and
+  portable layouts that rebuild anywhere, panes, working directories and launch commands included.
+  After a `kill -9` the tree comes back, and a stored command is typed at the prompt, never run.
+- **`umb`** drives all of it from a script: `umb status`, `umb block …`, `umb workspace`, `tab`,
+  `pane` and `layout`, and `umb api schema --json` publishes the protocol.
+- **`umbral-tui`** — tabs, splits and a block list — passes its tests and its
+  [manual checklist](docs/qa/f0-tui.md). A week of it as the main terminal is the release 0.1 gate.
+- **Gates, not prose:** three of the four performance NFRs fail CI on a regression, and CI is green
+  on Linux and macOS.
+
+**Next, in F1:** first a handshake deadline (`T-F1-32`) and a frame limit the daemon enforces in
+both directions, watches and lets `umb limits` adjust (`T-F1-33`); then the permissioned agent, the
+model gateway, MCP servers managed with `umb mcp`, and skills installed with `umb skill`.
 
 ## What Umbral will be
 
@@ -45,7 +54,10 @@ directories and launch commands included. Next: structure restore after a restar
   - **blocks** per command (output, exit code, cwd, duration) with search.
 - **An agent that asks first:**
   - reads blocks, files, git and project rules (`AGENTS.md`, `CLAUDE.md`…);
-  - proposes and applies changes with explicit approval, in `ask` / `normal` / `auto-edit` modes.
+  - proposes and applies changes with explicit approval, in `ask` / `normal` / `auto-edit` modes;
+  - is extended with MCP servers (`umb mcp`) and **skills** (`umb skill`): local `SKILL.md` bundles
+    whose descriptions it always sees and whose bodies it loads only when a task needs them, as
+    untrusted content that can never widen a permission.
 - **Truly local-first:**
   - works offline with Ollama, llama.cpp or LM Studio;
   - whatever leaves the machine is redacted and logged.
@@ -68,30 +80,49 @@ flowchart LR
   end
   subgraph D["umbrald"]
     API["api JSON-RPC"]
+    BUS(("bus"))
+    WSP["workspaces"]
     SES["sessions: PTY + VT + blocks"]
     AGT["agents"]
+    CTX["context + skills"]
+    TOOLS["tools"]
+    MCPC["mcp client"]
     GW["llmgw"]
     SEC["security"]
+    STORE[("store: SQLite WAL + FTS5")]
   end
   LOC["Ollama / llama.cpp / LM Studio"]
   REM["OpenRouter / HF / OmniRoute"]
+  EXT["MCP servers"]
+  SKL["skill bundles (SKILL.md)"]
   TUI --> API
   CLI --> API
   GUI --> API
-  API --> SES
-  API --> AGT
+  API --> BUS
+  BUS --> WSP
+  BUS --> SES
+  BUS --> AGT
+  WSP --> SES
+  AGT --> CTX
+  AGT --> TOOLS
   AGT --> SEC
   AGT --> GW
+  TOOLS --> MCPC
+  MCPC --> EXT
+  CTX --> SKL
   GW --> LOC
   GW --> REM
+  SES --> STORE
+  WSP --> STORE
+  AGT --> STORE
 ```
 
 ## Roadmap
 
 | Phase | Content | Status |
 |---|---|---|
-| F0 Core | daemon, PTY, libghostty, blocks, search, workspaces and layouts, snapshot, TUI, `umb block` | ⏳ next |
-| F1 Agentic (MVP) | permissioned agent, model gateway, MCP, redaction, waits, integrations, notifications, OTel | 📋 specified |
+| F0 Core | daemon, PTY, libghostty, blocks, search, workspaces and layouts, restore, snapshot, TUI, `umb` for blocks and the workspace tree | ✅ closed 2026-09-26 |
+| F1 Agentic (MVP) | handshake deadline and frame limit (`umb limits`), permissioned agent, model gateway, MCP (`umb mcp`), skills (`umb skill`), redaction, waits, integrations, notifications, OTel | ⏳ next |
 | F2 ADE | Wails v3 GUI, Full Terminal Use, Active AI, ACP, worktrees, SSH, Windows | 🔭 horizon |
 | F3 Platform | background agents, MCP/ACP server, WASM plugins | 🔭 horizon |
 
@@ -103,7 +134,8 @@ flowchart LR
 | [`docs/adr/`](docs/adr/) | architectural style (ADR-0001) and orchestration surface (ADR-0002) |
 | [`specs/constitution.md`](specs/constitution.md) | non-negotiable principles |
 | [`specs/`](specs/README.md) | PRD, API, technical design, data model, plan, tasks and Analyze |
-| [`changes/_archive/`](changes/_archive/) | the ten folded change proposals, kept as history |
+| [`changes/_archive/`](changes/_archive/) | the twenty-nine folded change proposals, kept as history |
+| [`docs/checkpoints/`](docs/checkpoints/) | verified state at each milestone, including the [F0 closure](docs/checkpoints/2026-09-26-f0-closed.md) |
 | [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) | how to start development with Claude Code |
 | [`assets/branding/umbral-icons/`](assets/branding/umbral-icons/README.md) | icons for Linux, Windows and macOS |
 

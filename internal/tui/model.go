@@ -37,6 +37,8 @@ const (
 type Model struct {
 	daemon  ports.Daemon
 	screens ports.ScreenFactory
+	// focus orders the panel's thread.focus calls (commands.go).
+	focus *focusOrder
 
 	tabs    []*tab
 	current int
@@ -45,6 +47,9 @@ type Model struct {
 
 	// showBlocks toggles the block list column.
 	showBlocks bool
+
+	// agent is the agent panel (agent.go).
+	agent agentPanel
 
 	// status is the one-line message under the panes: what just happened, or what went
 	// wrong. Empty means the key hints are shown instead.
@@ -67,8 +72,11 @@ type tab struct {
 // pane is one session, its screen, and the block list that belongs to it.
 type pane struct {
 	sessionID string
-	screen    ports.Screen
-	size      sessdomain.Size
+	// cwd is where a thread created from this pane works: the directory of the pane's
+	// last command, or the session's starting one before it has run any.
+	cwd    string
+	screen ports.Screen
+	size   sessdomain.Size
 
 	blocks   []sessdomain.Block
 	selected int
@@ -98,6 +106,7 @@ func New(daemon ports.Daemon, screens ports.ScreenFactory) *Model {
 	return &Model{
 		daemon:  daemon,
 		screens: screens,
+		focus:   &focusOrder{},
 		// A sensible size until the terminal reports its own, so the first session is
 		// created with something valid rather than 0x0.
 		width:  80,
@@ -107,7 +116,7 @@ func New(daemon ports.Daemon, screens ports.ScreenFactory) *Model {
 
 // Init opens the first session and starts listening for daemon events.
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.openTabCmd(), m.waitForEvent())
+	return tea.Batch(m.openTabCmd(), m.waitForEvent(), m.loadApprovalsCmd(), m.loadExtensionsCmd())
 }
 
 // Update is the single place the model changes.
@@ -138,6 +147,44 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errorMsg:
 		m.status = msg.err.Error()
+		return m, nil
+
+	case threadCreatedMsg:
+		return m, m.threadCreated(msg)
+
+	case threadFailedMsg:
+		m.agentFailed(msg.err)
+		return m, nil
+
+	case sentMsg:
+		if msg.err != nil {
+			m.agentFailed(msg.err)
+		}
+		return m, nil
+
+	case cancelledMsg:
+		m.cancelled(msg)
+		return m, nil
+
+	case respondFailedMsg:
+		m.respondFailed(msg)
+		return m, nil
+
+	case approvalsLoadedMsg:
+		return m, m.approvalsLoaded(msg)
+
+	case serversLoadedMsg:
+		m.serversLoaded(msg)
+		return m, nil
+
+	case skillsLoadedMsg:
+		m.skillsLoaded(msg)
+		return m, nil
+
+	case tea.PasteMsg:
+		if m.agent.mode {
+			m.paste(msg.Content)
+		}
 		return m, nil
 	}
 	return m, nil
@@ -224,9 +271,13 @@ func (m *Model) paneByID(sessionID string) *pane {
 // is open. The daemon is told this through `session.resize`, so what the shell believes
 // about its terminal matches what the user sees.
 func (m *Model) paneSize(paneCount int) sessdomain.Size {
+	// Each column beside the panes takes its width and the one-column separator before it.
 	width := m.width
 	if m.showBlocks {
-		width -= blockListWidth
+		width -= blockListWidth + 1
+	}
+	if m.agent.open {
+		width -= m.agentPanelWidth() + 1
 	}
 	if paneCount > 1 {
 		// One column of separator between the panes.
@@ -319,6 +370,9 @@ func (m *Model) renderBody() string {
 	if m.showBlocks {
 		columns = append(columns, m.renderBlockList())
 	}
+	if m.agent.open {
+		columns = append(columns, m.renderAgentPanel(m.height-2))
+	}
 	return joinColumns(columns, m.height-2)
 }
 
@@ -365,8 +419,14 @@ func (m *Model) renderStatus() string {
 	if m.status != "" {
 		return m.status
 	}
+	if m.agent.mode {
+		return "agent mode · enter send · ctrl+c stop the turn · esc close · ctrl+space back to the shell"
+	}
+	if len(m.agent.approvals) > 0 {
+		return "the agent is waiting for an approval: ctrl+space, then ctrl+y or ctrl+x"
+	}
 	return "ctrl+t new tab · ctrl+n next tab · ctrl+s split · ctrl+o next pane · " +
-		"ctrl+b blocks · ctrl+p/ctrl+g prev/next block · ctrl+q quit"
+		"ctrl+b blocks · ctrl+p/ctrl+g prev/next block · alt+a attach the block · ctrl+space agent · ctrl+q quit"
 }
 
 // joinColumns places rendered columns side by side, separated by a single space, and pads

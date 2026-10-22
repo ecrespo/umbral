@@ -5,15 +5,24 @@ import (
 	"fmt"
 
 	wsdomain "github.com/ecrespo/umbral/internal/workspaces/domain"
+
+	waitsdomain "github.com/ecrespo/umbral/internal/waits/domain"
 )
 
 // The `domain_code` strings of API Spec §3, named because more than one module maps its
 // sentinels onto them and a typo in one place would ship a code no client recognises.
 const (
-	domainNotFound        = "NOT_FOUND"
-	domainValidationError = "VALIDATION_ERROR"
-	domainConflict        = "CONFLICT"
-	domainInputLocked     = "INPUT_LOCKED"
+	domainNotFound            = "NOT_FOUND"
+	domainValidationError     = "VALIDATION_ERROR"
+	domainPermissionDenied    = "PERMISSION_DENIED"
+	domainConflict            = "CONFLICT"
+	domainThreadBlocked       = "THREAD_BLOCKED"
+	domainTimeout             = "TIMEOUT"
+	domainConfigInvalid       = "CONFIG_INVALID"
+	domainBudgetExceeded      = "BUDGET_EXCEEDED"
+	domainProviderUnavailable = "PROVIDER_UNAVAILABLE"
+	domainInputLocked         = "INPUT_LOCKED"
+	domainCancelled           = "CANCELLED"
 )
 
 // Domain error codes from API Spec §3. The JSON-RPC numbers are part of the contract,
@@ -37,7 +46,11 @@ const (
 	codeTimeout                    = -32011
 	codeNotImplemented             = -32012
 	codeCancelled                  = -32013
+	codeResultTooLarge             = -32014
 )
+
+// domainResultTooLarge is REQ-API-005's code: a result that does not fit the frame limit.
+const domainResultTooLarge = "RESULT_TOO_LARGE"
 
 // errorCodes is the whole §3 table, in one place a generated schema can read.
 //
@@ -56,16 +69,17 @@ var errorCodes = map[string]int{
 	"UNAUTHORIZED":                 codeUnauthorized,
 	"NOT_FOUND":                    codeNotFound,
 	"CONFLICT":                     codeConflict,
-	"PERMISSION_DENIED":            codePermissionDenied,
-	"PROVIDER_UNAVAILABLE":         codeProviderUnavailable,
-	"BUDGET_EXCEEDED":              codeBudgetExceeded,
+	domainPermissionDenied:         codePermissionDenied,
+	domainProviderUnavailable:      codeProviderUnavailable,
+	domainBudgetExceeded:           codeBudgetExceeded,
 	"UNSUPPORTED_PROTOCOL_VERSION": codeUnsupportedProtocolVersion,
 	domainInputLocked:              codeInputLocked,
-	"CONFIG_INVALID":               codeConfigInvalid,
-	"THREAD_BLOCKED":               codeThreadBlocked,
-	"TIMEOUT":                      codeTimeout,
+	domainConfigInvalid:            codeConfigInvalid,
+	domainThreadBlocked:            codeThreadBlocked,
+	domainTimeout:                  codeTimeout,
 	"NOT_IMPLEMENTED":              codeNotImplemented,
-	"CANCELLED":                    codeCancelled,
+	domainCancelled:                codeCancelled,
+	domainResultTooLarge:           codeResultTooLarge,
 }
 
 // Sentinel errors the modules return. api is the only package that knows which JSON-RPC
@@ -106,6 +120,15 @@ type apiError struct {
 func (e *apiError) Error() string { return e.message }
 func (e *apiError) Unwrap() error { return e.err }
 
+// ErrorDetails returns the details an error built by this package carries, nil otherwise.
+func ErrorDetails(err error) []ErrorField {
+	var e *apiError
+	if errors.As(err, &e) {
+		return e.details
+	}
+	return nil
+}
+
 // ValidationError reports invalid parameters, naming the offending fields.
 func ValidationError(message string, details ...ErrorField) error {
 	return &apiError{err: errValidation, message: message, details: details}
@@ -135,6 +158,14 @@ func unsupportedProtocolError(got int) error {
 var moduleErrors = []func(error) (int, string, bool){
 	sessionDomainError,
 	workspaceDomainError,
+	agentsDomainError,
+	mcpDomainError,
+	waitsDomainError,
+	integrationsDomainError,
+	notifyDomainError,
+	policyDomainError,
+	rulesDomainError,
+	skillsDomainError,
 }
 
 // workspaceDomainError maps the workspace tree's sentinels onto the §5.4 table.
@@ -179,11 +210,11 @@ func toWire(err error, traceID string) *wireError {
 	case errors.Is(err, ErrNotImplemented):
 		code, domainCode = codeNotImplemented, "NOT_IMPLEMENTED"
 	case errors.Is(err, ErrThreadBlocked):
-		code, domainCode = codeThreadBlocked, "THREAD_BLOCKED"
+		code, domainCode = codeThreadBlocked, domainThreadBlocked
 	case errors.Is(err, ErrTimeout):
-		code, domainCode = codeTimeout, "TIMEOUT"
+		code, domainCode = codeTimeout, domainTimeout
 	case errors.Is(err, ErrCancelled):
-		code, domainCode = codeCancelled, "CANCELLED"
+		code, domainCode = codeCancelled, domainCancelled
 	case errors.Is(err, ErrUnsupportedProtocol):
 		code, domainCode = codeUnsupportedProtocolVersion, "UNSUPPORTED_PROTOCOL_VERSION"
 	case errors.Is(err, ErrNotFound):
@@ -191,15 +222,15 @@ func toWire(err error, traceID string) *wireError {
 	case errors.Is(err, ErrConflict):
 		code, domainCode = codeConflict, domainConflict
 	case errors.Is(err, ErrPermissionDenied):
-		code, domainCode = codePermissionDenied, "PERMISSION_DENIED"
+		code, domainCode = codePermissionDenied, domainPermissionDenied
 	case errors.Is(err, ErrProviderUnavailable):
-		code, domainCode = codeProviderUnavailable, "PROVIDER_UNAVAILABLE"
+		code, domainCode = codeProviderUnavailable, domainProviderUnavailable
 	case errors.Is(err, ErrBudgetExceeded):
-		code, domainCode = codeBudgetExceeded, "BUDGET_EXCEEDED"
+		code, domainCode = codeBudgetExceeded, domainBudgetExceeded
 	case errors.Is(err, ErrInputLocked):
 		code, domainCode = codeInputLocked, domainInputLocked
 	case errors.Is(err, ErrConfigInvalid):
-		code, domainCode = codeConfigInvalid, "CONFIG_INVALID"
+		code, domainCode = codeConfigInvalid, domainConfigInvalid
 	default:
 		code, domainCode = codeInternalError, "INTERNAL_ERROR"
 	}
@@ -214,6 +245,16 @@ func finishWire(err error, code int, domainCode, traceID string) *wireError {
 	if errors.As(err, &detailed) {
 		data.Details = detailed.details
 		data.Supported = detailed.supported
+	}
+	// The wait limit names the field a client tunes and the limit itself (delta
+	// `2026-10-wait-monitoring`, decision 2), without the engine's own prefix.
+	if errors.Is(err, waitsdomain.ErrLimit) {
+		data.Details = []ErrorField{{Field: "timeout_ms", Issue: fmt.Sprintf("the connection already holds %d waits", waitsdomain.MaxPerConnection)}}
+		return &wireError{Code: code, Message: waitsdomain.LimitMessage, Data: data}
+	}
+	var timedOut *waitsdomain.TimeoutError
+	if code == codeTimeout && errors.As(err, &timedOut) {
+		data.LastState = &timedOut.LastState
 	}
 
 	message := err.Error()

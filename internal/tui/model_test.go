@@ -22,6 +22,25 @@ type fakeDaemon struct {
 	input    [][]byte
 	resizes  []sessdomain.Size
 	events   chan ports.Event
+
+	// The agent panel's calls (agent_test.go).
+	threads []string
+	sent    []sentMessage
+	answers []approvalAnswer
+	cancels []string
+	// pending is what approval.list answers; idle makes a cancel find no turn to stop;
+	// holdCreate keeps thread.create from answering until it is closed.
+	pending    []ports.Approval
+	idle       bool
+	holdCreate chan struct{}
+	respondErr error
+	// focuses are the panel's thread.focus calls, "" for none.
+	focuses []string
+	// servers and skills are what mcp.server.list and skill.list answer; listed counts
+	// both calls.
+	servers []ports.McpServer
+	skills  []ports.Skill
+	listed  int
 }
 
 func newFakeDaemon() *fakeDaemon {
@@ -37,6 +56,7 @@ func (f *fakeDaemon) CreateSession(_ context.Context, size sessdomain.Size) (ses
 	f.sessions++
 	return sessdomain.Session{
 		ID:    sessionID(f.sessions),
+		CWD:   "/work",
 		Size:  size,
 		State: sessdomain.StateAlive,
 	}, nil
@@ -497,5 +517,20 @@ func TestHeldOutputBelowTheSnapshotSeqIsDiscarded(t *testing.T) {
 
 	if strings.Contains(string(h.screen.written), "already-on-screen") {
 		t.Error("a held chunk below the snapshot's seq was applied; it is on the screen twice")
+	}
+}
+
+// TestAPostedNotificationIsShown_REQ_NTF_001: a notification the daemon hands this client
+// reaches the user on the status line, title and body.
+func TestAPostedNotificationIsShown_REQ_NTF_001(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.openSession()
+	h.step(daemonEventMsg{event: ports.Event{
+		Kind: ports.EventNotification, Title: "claude needs you", Text: "approve the edit?", Sound: "request",
+	}})
+	if got := h.m.Status(); !strings.Contains(got, "claude needs you") || !strings.Contains(got, "approve the edit?") {
+		t.Errorf("status = %q, want the notification's title and body", got)
 	}
 }

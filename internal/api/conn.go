@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -9,7 +10,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/ecrespo/umbral/internal/config"
 )
 
 // method is one dispatchable JSON-RPC method.
@@ -40,7 +46,18 @@ type method struct {
 	// TestEveryMethodDeclaresItsShapes_REQ_API_004 fails the build when one is missing.
 	params any
 	result any
+	// capability overrides the namespace the method is advertised under, for a method
+	// whose prefix names another one: thread.wait and block.wait_output are `waits`.
+	capability string
 }
+
+// deferred is an answer that comes later. A handler returns one when it has done, in
+// order with the requests around it, everything that must happen before the next request
+// is read — validating, subscribing, pinning, sending — and what is left is a wait. The
+// connection keeps serving while it runs: the approval.respond that unblocks a wait may
+// arrive on the same connection. The wait gets a context that ends with the connection,
+// and its answer is written whenever it comes; JSON-RPC matches it by its id.
+type deferred func(ctx context.Context) (any, error)
 
 // served reports whether this build can actually run the method.
 func (m method) served(cfg Config) bool {
@@ -87,13 +104,30 @@ type conn struct {
 	// writeMu serialises writes: replies come from the read loop, notifications will
 	// come from the bus goroutine in T-F0-06.
 	writeMu sync.Mutex
-	encoder *json.Encoder
+
+	// limit is this connection's frame limit in both directions (API Spec §1): the fixed
+	// MaxMessageBytes until `system.hello` succeeds, then the daemon's configured limit as it
+	// stood at that moment, for the rest of the connection. It is atomic because every
+	// writer goroutine reads it; only the read goroutine stores it.
+	limit atomic.Int64
 
 	// authenticated and clientKind are written by system.hello and read afterwards.
 	// Both stay on the read goroutine, so they need no lock.
 	authenticated bool
 	clientKind    ClientKind
 	connectionID  string
+	// interactive and lastRequest choose the foreground client of `notification.show`
+	// (API Spec §5.35): an interactive connection's latest request takes a number from
+	// Server.activity. Both are atomic because the notify module reads them from whichever
+	// goroutine asked for the notification.
+	interactive atomic.Bool
+	lastRequest atomic.Uint64
+	// posted queues `notification.posted` for this connection's own writer, so a client
+	// that stops reading holds up neither the sink nor the source that asked.
+	posted chan postedNotification
+	// viewing says this connection called thread.focus, so its view is forgotten when it
+	// closes (REQ-AGT-016). It stays on the read goroutine.
+	viewing bool
 
 	// subsMu guards subs, which the read goroutine writes and the dispatch goroutine
 	// reads on every output chunk.
@@ -108,6 +142,9 @@ type conn struct {
 
 	closed    chan struct{}
 	closeOnce sync.Once
+	// pending counts the deferred answers still running; serve waits for them once the
+	// connection is closed, so none outlives it.
+	pending sync.WaitGroup
 }
 
 // closedCh is closed when the connection goes away, which is how each subscription's
@@ -194,31 +231,73 @@ func (c *conn) closeSubscriptions() {
 }
 
 func (s *Server) newConn(netConn net.Conn) *conn {
-	scanner := bufio.NewScanner(netConn)
-	// NDJSON with the 4 MiB ceiling of API Spec §1. Without this the scanner stops at
-	// 64 KiB and a large paste would look like a protocol error.
-	scanner.Buffer(make([]byte, 0, 64<<10), MaxMessageBytes)
-
-	return &conn{
+	c := &conn{
 		server:  s,
 		subs:    make(map[string]*subscription),
 		closed:  make(chan struct{}),
+		posted:  make(chan postedNotification, postedQueue),
 		netConn: netConn,
-		reader:  scanner,
 		logger:  s.cfg.Logger,
-		encoder: json.NewEncoder(netConn),
 	}
+	c.limit.Store(MaxMessageBytes)
+
+	// NDJSON under the connection's own limit (API Spec §1). The scanner's buffer may grow
+	// to the 64 MiB ceiling, but splitLine refuses a line past the limit in force, so before
+	// the handshake it never grows past 4 MiB: the configured limit is not the peer's to
+	// claim until it has authenticated.
+	scanner := bufio.NewScanner(netConn)
+	scanner.Buffer(make([]byte, 0, 64<<10), config.MaxMaxMessageBytes+1)
+	scanner.Split(c.splitLine)
+	c.reader = scanner
+	return c
+}
+
+// splitLine is bufio.ScanLines held to the connection's frame limit, which counts the `\n`.
+// A line past it is bufio.ErrTooLong, the error the scanner itself gives past its buffer,
+// so the read loop has one refusal path however the line came to be too long.
+func (c *conn) splitLine(data []byte, atEOF bool) (int, []byte, error) {
+	limit := int(c.limit.Load())
+	if i := bytes.IndexByte(data, '\n'); i >= 0 {
+		if i+1 > limit {
+			return 0, nil, bufio.ErrTooLong
+		}
+		return i + 1, bytes.TrimSuffix(data[:i], []byte("\r")), nil
+	}
+	if len(data) >= limit {
+		return 0, nil, bufio.ErrTooLong
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), bytes.TrimSuffix(data, []byte("\r")), nil
+	}
+	return 0, nil, nil
 }
 
 // serve reads NDJSON messages until the peer disconnects or the daemon shuts down.
 func (c *conn) serve(ctx context.Context) {
+	defer c.pending.Wait()
 	defer func() { _ = c.close() }()
+	defer func() {
+		if c.viewing && c.server.cfg.Threads != nil {
+			c.server.cfg.Threads.Unfocus(c.connectionID)
+		}
+	}()
+
+	// REQ-SEC-017: the handshake has a deadline from accept. It is a read deadline on the
+	// socket rather than a timer beside the loop because the loop is where the handshake
+	// state lives: a timer would race a hello arriving at the same instant, and a read
+	// deadline cannot. It is absolute, so blank lines, a partial line or anything else the
+	// peer sends in the meantime does not move it. `handleHello` clears it on success.
+	if err := c.netConn.SetReadDeadline(time.Now().Add(c.server.cfg.handshakeTimeout)); err != nil {
+		c.logger.Debug("set the handshake deadline", slog.Any("error", err))
+		return
+	}
 
 	for c.reader.Scan() {
 		if ctx.Err() != nil {
 			return
 		}
 		line := c.reader.Bytes()
+		raise(&c.server.frames.largestIn, int64(len(line))+1)
 		if len(line) == 0 {
 			continue
 		}
@@ -228,7 +307,19 @@ func (c *conn) serve(ctx context.Context) {
 	}
 
 	if err := c.reader.Err(); err != nil && !errors.Is(err, net.ErrClosed) {
+		if !c.authenticated && errors.Is(err, os.ErrDeadlineExceeded) {
+			c.writeError(nil, fmt.Errorf("%w: system.hello was not completed within %v",
+				ErrUnauthorized, c.server.cfg.handshakeTimeout))
+			return
+		}
 		if errors.Is(err, bufio.ErrTooLong) {
+			// No method: the line was never parsed, so its id and method are unknown. The
+			// size is a lower bound for the same reason — reading stopped at the limit.
+			c.server.frames.refusedIn.Add(1)
+			c.logger.Warn("an incoming frame was over the limit; closing the connection",
+				slog.Int64("size_bytes_at_least", c.limit.Load()+1),
+				slog.Int64("limit_bytes", c.limit.Load()),
+				slog.Bool("authenticated", c.authenticated))
 			// The peer is out of contract; tell it why before hanging up, which the lost
 			// framing forces: the rest of the line is still arriving, and reading on would
 			// parse its tail as a message (API Spec §1). The id was never read, so it is
@@ -239,7 +330,7 @@ func (c *conn) serve(ctx context.Context) {
 				return
 			}
 			c.writeError(nil, ValidationError(
-				fmt.Sprintf("message exceeds the %d byte limit", MaxMessageBytes)))
+				fmt.Sprintf("message exceeds the %d byte limit", c.limit.Load())))
 			return
 		}
 		c.logger.Debug("connection read ended", slog.Any("error", err))
@@ -281,14 +372,31 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 		return false
 	}
 
+	// REQ-SEC-018: a system.hello must be answerable, so one without an id, or with a null
+	// one, is refused at any point in the connection and before any token is compared — no
+	// path may let a peer probe tokens, nor authenticate a connection that learned nothing
+	// about the daemon (API Spec §2 step 5).
+	if req.Method == methodHello && !req.hasID() {
+		return c.refuse(fmt.Errorf("%w: system.hello must carry a non-null id", ErrUnauthorized))
+	}
+
 	m, known := c.server.methods[req.Method]
 
 	// API Spec §2 step 3: anything before a successful system.hello is UNAUTHORIZED and
 	// the connection is closed. That check comes before "does this method exist", so an
 	// unauthenticated peer cannot probe the method table.
+	//
+	// A notification is answered too, which is API Spec §1's one deviation from JSON-RPC
+	// 2.0 §4.1 (REQ-SEC-018): the rule against answering a notification assumes a session
+	// the peer is entitled to, and this reply is the connection-level refusal, not the
+	// answer to a call.
 	if !c.authenticated && (!known || !m.beforeHello) {
-		c.reply(req, nil, fmt.Errorf("%w: the first call must be system.hello", ErrUnauthorized))
-		return true
+		return c.refuseBeforeHello(invalidRequestID(req.ID))
+	}
+	// Every request an interactive client sends after its handshake makes it the foreground
+	// client of `notification.show`, whether or not the method exists (API Spec §5.35).
+	if c.authenticated && c.interactive.Load() {
+		c.lastRequest.Store(c.server.activity.Add(1))
 	}
 	if !known || (c.authenticated && !m.allows(c.clientKind)) {
 		c.reply(req, nil, fmt.Errorf("%w: %s", ErrMethodNotFound, req.Method))
@@ -305,6 +413,15 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 	}
 
 	result, err := m.handle(ctx, c, req.Params)
+	if c.interactive.Load() && req.Method == "system.hello" {
+		c.lastRequest.Store(c.server.activity.Add(1))
+	}
+	if later, ok := result.(deferred); ok && err == nil {
+		// A deferred handler schedules nothing for after its reply: the reply comes later.
+		c.afterReply = nil
+		c.answerLater(ctx, req, m, later)
+		return false
+	}
 	if err == nil && c.server.observeResult != nil {
 		c.server.observeResult(req.Method, m.result, result)
 	}
@@ -322,6 +439,41 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 	return false
 }
 
+// answerLater runs a deferred answer beside the read loop and writes it when it comes. A
+// connection that closes first ends the wait and leaves nothing to write.
+func (c *conn) answerLater(ctx context.Context, req request, m method, later deferred) {
+	ctx, cancel := context.WithCancel(ctx)
+	if req.isNotification() {
+		// Nobody can be answered: end the wait at once, releasing what it holds. A
+		// thread.send sent this way has still sent its message.
+		cancel()
+		_, _ = later(ctx)
+		return
+	}
+	c.pending.Add(1)
+	go func() {
+		defer c.pending.Done()
+		defer cancel()
+		go func() {
+			select {
+			case <-c.closed:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		result, err := later(ctx)
+		// A wait cut short by the connection closing or the daemon stopping has nobody
+		// left to answer, and its context error is no fault to report (API §1).
+		if ctx.Err() != nil {
+			return
+		}
+		if err == nil && c.server.observeResult != nil {
+			c.server.observeResult(req.Method, m.result, result)
+		}
+		c.reply(req, result, err)
+	}()
+}
+
 // refuseBeforeHello answers a line that is not a valid request, on a connection that has
 // not completed the handshake. API Spec §2 step 3 makes anything but a valid system.hello
 // UNAUTHORIZED and closes the connection, and step 5 admits no protocol error in its place:
@@ -329,6 +481,12 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 // on the same connection (REQ-SEC-003).
 func (c *conn) refuseBeforeHello(id json.RawMessage) (closeConn bool) {
 	c.writeError(id, fmt.Errorf("%w: the first call must be system.hello", ErrUnauthorized))
+	return true
+}
+
+// refuse answers UNAUTHORIZED with a null id and asks for the connection to be closed.
+func (c *conn) refuse(err error) (closeConn bool) {
+	c.writeError(nullID, err)
 	return true
 }
 
@@ -344,7 +502,7 @@ func (c *conn) reply(req request, result any, err error) {
 		c.writeError(req.ID, err)
 		return
 	}
-	c.writeRaw(response{JSONRPC: jsonrpcVersion, ID: req.ID, Result: result})
+	c.writeRaw(response{JSONRPC: jsonrpcVersion, ID: req.ID, Result: result, method: req.Method})
 }
 
 // nullID is the literal JSON null. JSON-RPC 2.0 §5 requires an explicit null id when the
@@ -367,11 +525,16 @@ func (c *conn) writeError(id json.RawMessage, err error) {
 	c.writeRaw(response{JSONRPC: jsonrpcVersion, ID: id, Error: wire})
 }
 
-// writeRaw serialises one message onto the socket.
+// writeRaw serialises one message onto the socket, held to the frame limit (see frame).
 func (c *conn) writeRaw(msg any) {
+	line, err := c.frame(msg)
+	if err != nil {
+		c.logger.Error("encode an outgoing message", slog.Any("error", err))
+		return
+	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	if err := c.encoder.Encode(msg); err != nil {
+	if _, err := c.netConn.Write(line); err != nil {
 		c.logger.Debug("write failed", slog.Any("error", err))
 	}
 }

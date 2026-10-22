@@ -1,0 +1,560 @@
+package api
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	agentsdomain "github.com/ecrespo/umbral/internal/agents/domain"
+	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
+	"github.com/ecrespo/umbral/internal/bus"
+)
+
+type fakeThreads struct {
+	thread     agentsdomain.Thread
+	messages   []agentsdomain.Message
+	sent       []agentsports.SendParams
+	sendErr    error
+	updated    agentsdomain.UpdateParams
+	approval   agentsdomain.Approval
+	answered   []agentsdomain.Response
+	respondErr error
+	cancelled  []string
+	stoppedAt  *int64
+
+	focusMu sync.Mutex
+	// focuses are the thread.focus calls, "viewer → thread", and unfocused the viewers
+	// forgotten.
+	focuses   []string
+	unfocused chan string
+	focused   string
+	focusErr  error
+}
+
+func (f *fakeThreads) Focus(_ context.Context, viewer, threadID string) error {
+	if threadID != "" && threadID != f.thread.ID {
+		return fmt.Errorf("%w: %s", agentsdomain.ErrNotFound, threadID)
+	}
+	f.focusMu.Lock()
+	defer f.focusMu.Unlock()
+	f.focuses = append(f.focuses, viewer+" → "+threadID)
+	return f.focusErr
+}
+
+func (f *fakeThreads) Unfocus(viewer string) {
+	if f.unfocused != nil {
+		f.unfocused <- viewer
+	}
+}
+
+func (f *fakeThreads) Focused() string { return f.focused }
+
+func (f *fakeThreads) focusCalls() []string {
+	f.focusMu.Lock()
+	defer f.focusMu.Unlock()
+	return append([]string(nil), f.focuses...)
+}
+
+func (f *fakeThreads) Cancel(_ context.Context, id string) (*int64, error) {
+	if id != f.thread.ID {
+		return nil, fmt.Errorf("%w: %s", agentsdomain.ErrNotFound, id)
+	}
+	f.cancelled = append(f.cancelled, id)
+	return f.stoppedAt, nil
+}
+
+func (f *fakeThreads) Approvals(context.Context, string, bool) ([]agentsdomain.Approval, error) {
+	return []agentsdomain.Approval{f.approval}, nil
+}
+
+func (f *fakeThreads) Respond(_ context.Context, r agentsdomain.Response) (agentsdomain.Approval, error) {
+	if err := r.Validate(); err != nil {
+		return agentsdomain.Approval{}, err
+	}
+	if r.ApprovalID != f.approval.ID {
+		return agentsdomain.Approval{}, agentsdomain.ErrNotFound
+	}
+	if f.respondErr != nil {
+		return agentsdomain.Approval{}, f.respondErr
+	}
+	f.answered = append(f.answered, r)
+	a := f.approval
+	a.State, a.Scope = agentsdomain.ApprovalApproved, r.Scope
+	return a, nil
+}
+
+func (f *fakeThreads) Create(_ context.Context, p agentsdomain.CreateParams) (agentsdomain.Thread, error) {
+	if _, err := p.Validate(); err != nil {
+		return agentsdomain.Thread{}, err
+	}
+	return f.thread, nil
+}
+
+func (f *fakeThreads) Send(_ context.Context, p agentsports.SendParams) (agentsports.SendResult, error) {
+	f.sent = append(f.sent, p)
+	if f.sendErr != nil {
+		return agentsports.SendResult{}, f.sendErr
+	}
+	return agentsports.SendResult{TurnID: "trn_1", MessageID: "msg_1"}, nil
+}
+
+func (f *fakeThreads) Get(_ context.Context, id string) (agentsdomain.Thread, error) {
+	if id != f.thread.ID {
+		return agentsdomain.Thread{}, fmt.Errorf("%w: %s", agentsdomain.ErrNotFound, id)
+	}
+	return f.thread, nil
+}
+
+func (f *fakeThreads) List(context.Context) ([]agentsdomain.Thread, error) {
+	return []agentsdomain.Thread{f.thread}, nil
+}
+
+func (f *fakeThreads) Update(_ context.Context, _ string, p agentsdomain.UpdateParams) (agentsdomain.Thread, error) {
+	f.updated = p
+	return f.thread, nil
+}
+
+func (f *fakeThreads) Messages(context.Context, string) ([]agentsdomain.Message, error) {
+	return f.messages, nil
+}
+
+func threadRig(t *testing.T) (*fakeThreads, *client, *bus.Bus) {
+	t.Helper()
+	svc := &fakeThreads{thread: agentsdomain.Thread{
+		ID: "thr_1", Mode: "normal", ModelClass: "code", Cwd: "/w", State: agentsdomain.StateIdle,
+		AttentionState: "idle", MaxSteps: 50, BudgetTokens: 400000, CreatedAt: 1, UpdatedAt: 2,
+	}}
+	for i := range 5 {
+		svc.messages = append(svc.messages, agentsdomain.Message{ID: fmt.Sprint("msg_", i), ThreadID: "thr_1", TurnID: "trn_1", Role: agentsdomain.RoleUser, Content: fmt.Sprint("m", i)})
+	}
+	b := bus.New()
+	s := testServerWithConfig(t, Config{Threads: svc, Bus: b})
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	go s.Notify(ctx)
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+	return svc, c, b
+}
+
+// TestUmbReachesTheThreadMethodsItDrives_REQ_API_001: §2's cli row gives `umb` thread.create,
+// thread.send, thread.cancel and thread.get; list, update and focus are the interactive clients'.
+func TestUmbReachesTheThreadMethodsItDrives_REQ_API_001(t *testing.T) {
+	t.Parallel()
+	svc := &fakeThreads{thread: agentsdomain.Thread{ID: "thr_1", Mode: "normal", ModelClass: "code", Cwd: "/w"}}
+	s := testServerWithConfig(t, Config{Threads: svc, Bus: bus.New()})
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientCLI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+	if resp := c.call(2, "thread.create", map[string]any{"cwd": "/w"}); resp.Error != nil {
+		t.Fatalf("thread.create from umb = %+v", resp.Error)
+	}
+	if resp := c.call(3, "thread.send", map[string]any{"thread_id": "thr_1", "text": "x"}); resp.Error != nil {
+		t.Fatalf("thread.send from umb = %+v", resp.Error)
+	}
+	if resp := c.call(9, "thread.cancel", map[string]any{"thread_id": "thr_1"}); resp.Error != nil {
+		t.Fatalf("thread.cancel from umb = %+v", resp.Error)
+	}
+	// thread.get is umb's since delta `2026-10-cli-thread-wait` (REQ-CLI-009): reading what a
+	// thread answered changes nothing.
+	if resp := c.call(8, "thread.get", map[string]any{"thread_id": "thr_1"}); resp.Error != nil {
+		t.Fatalf("thread.get from umb = %+v", resp.Error)
+	}
+	for i, m := range []string{"thread.list", "thread.update", "thread.focus"} {
+		if resp := c.call(4+i, m, map[string]any{"thread_id": "thr_1", "mode": "auto-edit"}); resp.Error == nil || resp.Error.Code != codeMethodNotFound {
+			t.Errorf("%s from umb = %+v, want METHOD_NOT_FOUND", m, resp.Error)
+		}
+	}
+	if svc.updated.Mode != nil {
+		t.Fatal("umb changed a thread's mode")
+	}
+}
+
+// TestThreadMethodsReachTheWire_REQ_AGT_001: thread.* answers API §4's shapes to an
+// interactive client and maps the runtime's errors onto §3.
+func TestThreadMethodsReachTheWire_REQ_AGT_001(t *testing.T) {
+	t.Parallel()
+	svc, c, _ := threadRig(t)
+
+	resp := c.call(2, "thread.create", map[string]any{"cwd": "/w"})
+	raw, _ := json.Marshal(resp.Result)
+	if resp.Error != nil || !strings.Contains(string(raw), `"id":"thr_1"`) || !strings.Contains(string(raw), `"model":null`) {
+		t.Fatalf("thread.create = %s %+v", raw, resp.Error)
+	}
+	if resp := c.call(3, "thread.create", map[string]any{}); resp.Error == nil || resp.Error.Code != codeValidationError {
+		t.Fatalf("thread.create without cwd = %+v", resp.Error)
+	}
+
+	resp = c.call(4, "thread.send", map[string]any{
+		"thread_id": "thr_1", "text": "fix it",
+		"client_msg_id": "01J9Z3K8T2QH6W4V5X7Y8Z9A0B", "attachments": []map[string]any{{"kind": "block", "ref": "blk_1"}},
+	})
+	raw, _ = json.Marshal(resp.Result)
+	if resp.Error != nil || !strings.Contains(string(raw), `"turn_id":"trn_1"`) || !strings.Contains(string(raw), `"message_id":"msg_1"`) {
+		t.Fatalf("thread.send = %s %+v", raw, resp.Error)
+	}
+	if p := svc.sent[0]; p.ClientMsgID != "01J9Z3K8T2QH6W4V5X7Y8Z9A0B" || p.Attachments[0].Ref != "blk_1" || p.Text != "fix it" {
+		t.Fatalf("the runtime got %+v", p)
+	}
+	if resp := c.call(5, "thread.send", map[string]any{"thread_id": "thr_1", "text": "x", "wait": map[string]any{"until": []string{"idle"}}}); resp.Error == nil || resp.Error.Code != codeNotImplemented {
+		t.Fatalf("thread.send with wait = %+v, want NOT_IMPLEMENTED", resp.Error)
+	}
+	if len(svc.sent) != 1 {
+		t.Fatal("a send with a wait reached the runtime")
+	}
+	for code, err := range map[int]error{
+		codeConflict:            agentsdomain.ErrConflict,
+		codeBudgetExceeded:      agentsdomain.ErrBudgetExceeded,
+		codeNotFound:            agentsdomain.ErrNotFound,
+		codeProviderUnavailable: agentsdomain.ErrProviderUnavailable,
+	} {
+		svc.sendErr = err
+		if resp := c.call(6, "thread.send", map[string]any{"thread_id": "thr_1", "text": "x"}); resp.Error == nil || resp.Error.Code != code {
+			t.Errorf("%v = %+v, want %d", err, resp.Error, code)
+		}
+	}
+
+	resp = c.call(7, "thread.get", map[string]any{"thread_id": "thr_1", "include_messages": true, "limit": 2})
+	var page struct {
+		ID         string    `json:"id"`
+		Messages   []Message `json:"messages"`
+		NextCursor *string   `json:"next_cursor"`
+	}
+	decodeResult(t, resp, &page)
+	if page.ID != "thr_1" || len(page.Messages) != 2 || page.NextCursor == nil || *page.NextCursor != "msg_1" {
+		t.Fatalf("thread.get page = %+v", page)
+	}
+	resp = c.call(8, "thread.get", map[string]any{"thread_id": "thr_1", "include_messages": true, "cursor": "msg_3"})
+	page.NextCursor, page.Messages = nil, nil
+	decodeResult(t, resp, &page)
+	if len(page.Messages) != 1 || page.Messages[0].ID != "msg_4" || page.NextCursor != nil {
+		t.Fatalf("the last page = %+v", page)
+	}
+	if resp := c.call(9, "thread.get", map[string]any{"thread_id": "thr_x"}); resp.Error == nil || resp.Error.Code != codeNotFound {
+		t.Fatalf("unknown thread = %+v", resp.Error)
+	}
+
+	if resp := c.call(10, "thread.list", nil); resp.Error != nil {
+		t.Fatalf("thread.list = %+v", resp.Error)
+	}
+	if resp := c.call(11, "thread.update", map[string]any{"thread_id": "thr_1", "model": "ollama/b"}); resp.Error != nil ||
+		svc.updated.Model == nil || *svc.updated.Model != "ollama/b" || svc.updated.Mode != nil {
+		t.Fatalf("thread.update = %+v, runtime got %+v", resp.Error, svc.updated)
+	}
+}
+
+// TestThreadNotificationsReachTheWire_REQ_AGT_001: the runtime's events arrive as §6's
+// thread.delta, thread.tool_call, thread.turn_finished and context.compacted.
+func TestThreadNotificationsReachTheWire_REQ_AGT_001(t *testing.T) {
+	t.Parallel()
+	_, c, b := threadRig(t)
+	// A call first, so the connection is registered before the events go out.
+	if resp := c.call(2, "thread.list", nil); resp.Error != nil {
+		t.Fatal(resp.Error)
+	}
+	b.Publish(agentsports.ThreadDelta{ThreadID: "thr_1", TurnID: "trn_1", Kind: "text", Text: "hel"})
+	b.Publish(agentsports.ThreadToolCall{Call: agentsdomain.ToolCall{
+		ID: "tc_1", ThreadID: "thr_1", MessageID: "msg_2",
+		Tool: "read_file", Risk: "ReadOnly", Args: json.RawMessage(`{"path":"a"}`), Status: agentsdomain.ToolOK, StartedAt: 3,
+	}})
+	b.Publish(agentsports.ContextCompacted{ThreadID: "thr_1", BeforeTokens: 900, AfterTokens: 300})
+	b.Publish(agentsports.TurnFinished{
+		ThreadID: "thr_1", TurnID: "trn_1", StopReason: agentsdomain.StopEndTurn,
+		Usage: agentsdomain.Usage{InTokens: 10, OutTokens: 2, CostMicroUSD: 5},
+	})
+
+	want := []struct{ method, contains string }{
+		{"thread.delta", `"text":"hel"`},
+		{"thread.tool_call", `"args":{"path":"a"}`},
+		{"context.compacted", `"before_tokens":900`},
+		{"thread.turn_finished", `"usage":{"in_tokens":10,"out_tokens":2,"cost_micro_usd":5}`},
+	}
+	for _, w := range want {
+		method, _, params := c.readNotification(t)
+		if method != w.method || !strings.Contains(string(params), w.contains) {
+			t.Fatalf("got %s %s, want %s with %s", method, params, w.method, w.contains)
+		}
+	}
+}
+
+// TestThreadsWithoutARuntimeAreNotImplemented_REQ_API_003: a daemon with no runtime wired
+// answers NOT_IMPLEMENTED and does not advertise `threads`.
+func TestThreadsWithoutARuntimeAreNotImplemented_REQ_API_003(t *testing.T) {
+	t.Parallel()
+	s := testServerWithConfig(t, Config{})
+	c := dial(t, s)
+	resp := c.hello(s.Token(), ClientTUI)
+	if raw, _ := json.Marshal(resp.Result); strings.Contains(string(raw), `"threads"`) {
+		t.Fatalf("hello advertises threads with no runtime: %s", raw)
+	}
+	if resp := c.call(2, "thread.list", nil); resp.Error == nil || resp.Error.Code != codeNotImplemented {
+		t.Fatalf("thread.list = %+v", resp.Error)
+	}
+}
+
+// TestApprovalMethodsReachTheWire_REQ_AGT_004: approval.list and approval.respond answer §4's
+// Approval to an interactive client, `umb` reaches neither, and approval.requested carries
+// the approval with its diff (REQ-AGT-012).
+func TestApprovalMethodsReachTheWire_REQ_AGT_004(t *testing.T) {
+	t.Parallel()
+	svc, c, b := threadRig(t)
+	svc.approval = agentsdomain.Approval{
+		ID: "apr_1", ThreadID: "thr_1", ToolCallID: "tc_1", Tool: "write_file", Risk: "WriteFS",
+		Reason: "policy", Summary: "/w/a.go", Diff: "--- a\n+++ b", State: agentsdomain.ApprovalPending, CreatedAt: 9,
+	}
+
+	resp := c.call(2, "approval.list", nil)
+	raw, _ := json.Marshal(resp.Result)
+	if resp.Error != nil || !strings.Contains(string(raw), `"id":"apr_1"`) || !strings.Contains(string(raw), `"decision_scope":null`) {
+		t.Fatalf("approval.list = %s %+v", raw, resp.Error)
+	}
+	resp = c.call(3, "approval.respond", map[string]any{"approval_id": "apr_1", "decision": "approve", "scope": "thread"})
+	raw, _ = json.Marshal(resp.Result)
+	if resp.Error != nil || !strings.Contains(string(raw), `"state":"approved"`) || len(svc.answered) != 1 || !svc.answered[0].Approve {
+		t.Fatalf("approval.respond = %s %+v", raw, resp.Error)
+	}
+	for i, bad := range []map[string]any{
+		{"approval_id": "apr_1", "decision": "maybe", "scope": "once"},
+		{"approval_id": "apr_1", "decision": "deny", "scope": "forever"},
+		{"decision": "deny", "scope": "once"},
+	} {
+		if resp := c.call(4+i, "approval.respond", bad); resp.Error == nil || resp.Error.Code != codeValidationError {
+			t.Errorf("%v = %+v, want VALIDATION_ERROR", bad, resp.Error)
+		}
+	}
+	if resp := c.call(8, "approval.respond", map[string]any{"approval_id": "apr_x", "decision": "deny", "scope": "once"}); resp.Error == nil || resp.Error.Code != codeNotFound {
+		t.Errorf("unknown approval = %+v", resp.Error)
+	}
+	svc.respondErr = agentsdomain.ErrConflict
+	if resp := c.call(9, "approval.respond", map[string]any{"approval_id": "apr_1", "decision": "deny", "scope": "once"}); resp.Error == nil || resp.Error.Code != codeConflict {
+		t.Errorf("an approval already decided or expired = %+v, want CONFLICT", resp.Error)
+	}
+
+	b.Publish(agentsports.ApprovalRequested{Approval: svc.approval})
+	for {
+		method, _, params := c.readNotification(t)
+		if method != "approval.requested" {
+			continue
+		}
+		if !strings.Contains(string(params), `"diff":"--- a`) || !strings.Contains(string(params), `"tool_call_id":"tc_1"`) {
+			t.Fatalf("approval.requested %s", params)
+		}
+		break
+	}
+}
+
+// TestUmbCannotAnswerApprovals_REQ_API_001: §2's cli row names no approval.*.
+func TestUmbCannotAnswerApprovals_REQ_API_001(t *testing.T) {
+	t.Parallel()
+	svc := &fakeThreads{approval: agentsdomain.Approval{ID: "apr_1"}}
+	s := testServerWithConfig(t, Config{Threads: svc, Bus: bus.New()})
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientCLI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+	if resp := c.call(2, "approval.respond", map[string]any{"approval_id": "apr_1", "decision": "approve", "scope": "always"}); resp.Error == nil || resp.Error.Code != codeMethodNotFound {
+		t.Fatalf("approval.respond from umb = %+v", resp.Error)
+	}
+	if len(svc.answered) != 0 {
+		t.Fatal("umb answered an approval")
+	}
+}
+
+// TestThreadCancelReachesTheWire_REQ_AGT_007: thread.cancel answers {stopped_at} — the moment
+// the turn ended, or null when none was running — and maps a missing or unknown thread onto §3.
+func TestThreadCancelReachesTheWire_REQ_AGT_007(t *testing.T) {
+	t.Parallel()
+	svc, c, _ := threadRig(t)
+
+	at := int64(1234)
+	svc.stoppedAt = &at
+	resp := c.call(2, "thread.cancel", map[string]any{"thread_id": "thr_1"})
+	if raw, _ := json.Marshal(resp.Result); resp.Error != nil || string(raw) != `{"stopped_at":1234}` {
+		t.Fatalf("thread.cancel = %s %+v", raw, resp.Error)
+	}
+	svc.stoppedAt = nil
+	resp = c.call(3, "thread.cancel", map[string]any{"thread_id": "thr_1"})
+	if raw, _ := json.Marshal(resp.Result); resp.Error != nil || string(raw) != `{"stopped_at":null}` {
+		t.Fatalf("thread.cancel with no turn = %s %+v", raw, resp.Error)
+	}
+	if resp := c.call(4, "thread.cancel", map[string]any{}); resp.Error == nil || resp.Error.Code != codeValidationError {
+		t.Fatalf("no thread_id = %+v", resp.Error)
+	}
+	if resp := c.call(5, "thread.cancel", map[string]any{"thread_id": "thr_x"}); resp.Error == nil || resp.Error.Code != codeNotFound {
+		t.Fatalf("an unknown thread = %+v", resp.Error)
+	}
+	if len(svc.cancelled) != 2 {
+		t.Fatalf("the runtime saw %d cancels, want 2", len(svc.cancelled))
+	}
+}
+
+// TestThreadSendTakesStdinInline_REQ_CLI_001: `umb ai` sends what it read from stdin inline,
+// as a `stdin` attachment whose `data_b64` the daemon decodes and hands the runtime. Only a
+// `stdin` attachment carries data, it carries nothing else, there is at most one, and its
+// data is at most 1 MiB once decoded; anything else is refused before the runtime sees it.
+func TestThreadSendTakesStdinInline_REQ_CLI_001(t *testing.T) {
+	t.Parallel()
+	svc := &fakeThreads{thread: agentsdomain.Thread{ID: "thr_1", Mode: "ask", ModelClass: "code", Cwd: "/w"}}
+	s := testServerWithConfig(t, Config{Threads: svc, Bus: bus.New()})
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientCLI); resp.Error != nil {
+		t.Fatalf("handshake: %+v", resp.Error)
+	}
+
+	data := "panic: boom\n\tmain.go:12\n"
+	resp := c.call(2, "thread.send", map[string]any{
+		"thread_id": "thr_1", "text": "why?",
+		"attachments": []map[string]any{{"kind": "stdin", "data_b64": base64.StdEncoding.EncodeToString([]byte(data)), "truncated": true}},
+	})
+	if resp.Error != nil {
+		t.Fatalf("thread.send with stdin = %+v", resp.Error)
+	}
+	if len(svc.sent) != 1 || len(svc.sent[0].Attachments) != 1 {
+		t.Fatalf("the runtime got %+v", svc.sent)
+	}
+	if a := svc.sent[0].Attachments[0]; a.Kind != "stdin" || string(a.Data) != data || !a.Truncated || a.Ref != "" {
+		t.Fatalf("the runtime got the attachment %+v", a)
+	}
+
+	// Empty stdin is still an attachment the client chose to send.
+	if resp := c.call(3, "thread.send", map[string]any{
+		"thread_id": "thr_1", "text": "why?", "attachments": []map[string]any{{"kind": "stdin", "data_b64": ""}},
+	}); resp.Error != nil || len(svc.sent) != 2 || svc.sent[1].Attachments[0].Data == nil {
+		t.Fatalf("an empty stdin = %+v, the runtime got %+v", resp.Error, svc.sent[len(svc.sent)-1])
+	}
+
+	tooBig := base64.StdEncoding.EncodeToString(make([]byte, agentsports.MaxStdinBytes+1))
+	b64 := base64.StdEncoding.EncodeToString([]byte("x"))
+	for name, atts := range map[string][]map[string]any{
+		"data on a file":       {{"kind": "file", "ref": "a.txt", "data_b64": b64}},
+		"a ref on stdin":       {{"kind": "stdin", "ref": "x", "data_b64": b64}},
+		"stdin without data":   {{"kind": "stdin"}},
+		"not base64":           {{"kind": "stdin", "data_b64": "%%%"}},
+		"over 1 MiB":           {{"kind": "stdin", "data_b64": tooBig}},
+		"two stdins":           {{"kind": "stdin", "data_b64": b64}, {"kind": "stdin", "data_b64": b64}},
+		"truncated on a file":  {{"kind": "file", "ref": "a.txt", "truncated": true}},
+		"a file without a ref": {{"kind": "file"}},
+	} {
+		before := len(svc.sent)
+		resp := c.call(4, "thread.send", map[string]any{"thread_id": "thr_1", "text": "x", "attachments": atts})
+		if resp.Error == nil || resp.Error.Code != codeValidationError {
+			t.Errorf("%s = %+v, want VALIDATION_ERROR", name, resp.Error)
+		}
+		if len(svc.sent) != before {
+			t.Errorf("%s reached the runtime", name)
+		}
+	}
+	// At exactly 1 MiB it is accepted: the limit is inclusive.
+	exact := base64.StdEncoding.EncodeToString(make([]byte, agentsports.MaxStdinBytes))
+	if resp := c.call(5, "thread.send", map[string]any{
+		"thread_id": "thr_1", "text": "x", "attachments": []map[string]any{{"kind": "stdin", "data_b64": exact}},
+	}); resp.Error != nil {
+		t.Fatalf("1 MiB of stdin = %+v", resp.Error)
+	}
+}
+
+// TestThreadFocusReachesTheWire_REQ_AGT_016: thread.focus names the connection as the viewer,
+// takes null for "no thread", maps an unknown thread to NOT_FOUND, is an interactive client's
+// only, and a closed connection stops viewing (API §5.23). thread.attention_changed reaches
+// the wire as §6's `{thread_id, attention_state}`.
+func TestThreadFocusReachesTheWire_REQ_AGT_016(t *testing.T) {
+	t.Parallel()
+	svc := &fakeThreads{thread: agentsdomain.Thread{ID: "thr_1", Mode: "normal", ModelClass: "code", Cwd: "/w"}, unfocused: make(chan string, 1)}
+	b := bus.New()
+	s := testServerWithConfig(t, Config{Threads: svc, Bus: b})
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	go s.Notify(ctx)
+	c := dial(t, s)
+	hello := c.hello(s.Token(), ClientTUI)
+	var h struct {
+		ConnectionID string `json:"connection_id"`
+	}
+	decodeResult(t, hello, &h)
+
+	if resp := c.call(2, "thread.focus", map[string]any{"thread_id": "thr_1"}); resp.Error != nil {
+		t.Fatalf("thread.focus = %+v", resp.Error)
+	}
+	if resp := c.call(3, "thread.focus", map[string]any{"thread_id": nil}); resp.Error != nil {
+		t.Fatalf("thread.focus null = %+v", resp.Error)
+	}
+	if resp := c.call(4, "thread.focus", map[string]any{"thread_id": "thr_x"}); resp.Error == nil || resp.Error.Code != codeNotFound {
+		t.Fatalf("thread.focus on an unknown thread = %+v, want NOT_FOUND", resp.Error)
+	}
+	if resp := c.call(5, "thread.focus", map[string]any{}); resp.Error == nil || resp.Error.Code != codeValidationError {
+		t.Fatalf("thread.focus without thread_id = %+v, want VALIDATION_ERROR", resp.Error)
+	}
+	if got := svc.focusCalls(); len(got) != 2 || got[0] != h.ConnectionID+" → thr_1" || got[1] != h.ConnectionID+" → " {
+		t.Fatalf("the runtime got %q", got)
+	}
+
+	b.Publish(agentsports.ThreadAttentionChanged{ThreadID: "thr_1", AttentionState: "idle"})
+	method, _, params := c.readNotification(t)
+	if method != "thread.attention_changed" || string(params) != `{"thread_id":"thr_1","attention_state":"idle"}` {
+		t.Fatalf("got %s %s", method, params)
+	}
+
+	umb := dial(t, s)
+	if resp := umb.hello(s.Token(), ClientCLI); resp.Error != nil {
+		t.Fatal(resp.Error)
+	}
+	if resp := umb.call(2, "thread.focus", map[string]any{"thread_id": "thr_1"}); resp.Error == nil || resp.Error.Code != codeMethodNotFound {
+		t.Fatalf("thread.focus from umb = %+v, want METHOD_NOT_FOUND", resp.Error)
+	}
+
+	_ = c.conn.Close()
+	select {
+	case viewer := <-svc.unfocused:
+		if viewer != h.ConnectionID {
+			t.Fatalf("unfocused %q, want the closed connection %s", viewer, h.ConnectionID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a closed connection still views its thread")
+	}
+}
+
+// TestSnapshotCarriesTheThreads_REQ_AGT_016: with the runtime wired, session.snapshot lists
+// the threads with their attention state and names the focused thread (API §5.3).
+func TestSnapshotCarriesTheThreads_REQ_AGT_016(t *testing.T) {
+	t.Parallel()
+	svc := &fakeThreads{thread: agentsdomain.Thread{ID: "thr_1", Mode: "normal", ModelClass: "code", Cwd: "/w", AttentionState: "done"}, focused: "thr_1"}
+	s := testServerWithConfig(t, Config{Threads: svc, Workspaces: &fakeTree{tree: sampleTree()}, Bus: bus.New()})
+	c := dialTree(t, s)
+	got := resultOf(t, c.call(2, "session.snapshot", nil))
+	if !strings.Contains(string(got["threads"]), `"id":"thr_1"`) || !strings.Contains(string(got["threads"]), `"attention_state":"done"`) {
+		t.Fatalf("threads = %s", got["threads"])
+	}
+	if focused := field(t, got, "focused"); string(focused["thread_id"]) != `"thr_1"` {
+		t.Fatalf("focused.thread_id = %s, want thr_1", focused["thread_id"])
+	}
+}
+
+// TestAFailedFocusIsStillForgottenOnClose_REQ_AGT_016: the runtime records a view before it
+// marks the thread seen, so a focus that fails may still have left one. The connection's close
+// forgets it all the same.
+func TestAFailedFocusIsStillForgottenOnClose_REQ_AGT_016(t *testing.T) {
+	t.Parallel()
+	svc := &fakeThreads{thread: agentsdomain.Thread{ID: "thr_1"}, unfocused: make(chan string, 1), focusErr: fmt.Errorf("disk full")}
+	s := testServerWithConfig(t, Config{Threads: svc, Bus: bus.New()})
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatal(resp.Error)
+	}
+	if resp := c.call(2, "thread.focus", map[string]any{"thread_id": "thr_1"}); resp.Error == nil {
+		t.Fatal("a failing focus answered no error")
+	}
+	_ = c.conn.Close()
+	select {
+	case <-svc.unfocused:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a connection whose focus failed was never unfocused")
+	}
+}

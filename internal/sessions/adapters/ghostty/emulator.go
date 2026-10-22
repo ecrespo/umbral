@@ -94,6 +94,16 @@ func (e *Emulator) PlainText() (string, error) {
 	return PlainText(e.term)
 }
 
+// OpenLine is the cursor's row up to the cursor when that row is the last one written.
+func (e *Emulator) OpenLine() (string, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.term == nil {
+		return "", fmt.Errorf("ghostty: read a closed emulator")
+	}
+	return OpenLine(e.term)
+}
+
 // Cursor reports the cursor's cell.
 func (e *Emulator) Cursor() (x, y uint16, err error) {
 	e.mu.Lock()

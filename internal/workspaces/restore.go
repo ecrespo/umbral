@@ -76,6 +76,7 @@ func (s *Service) restorePane(ctx context.Context, pane domain.Pane) (domain.Pan
 
 	params := sessdomain.CreateParams{
 		Shell: s.shell, CWD: pane.CWD, Env: pane.Env, Size: defaultPaneSize,
+		Pane: location(pane),
 		// A shell, never the stored command, and integration on: the pane is running a
 		// shell now, so the block lifecycle applies to it — and the prompt marker is what
 		// tells the session when it is safe to type the pending command.

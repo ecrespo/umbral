@@ -291,3 +291,20 @@ func TestRecorderIgnoresOutputWithNoOpenBlock(t *testing.T) {
 		t.Errorf("a stray end marker produced %v, want nothing", actions)
 	}
 }
+
+// TestAClaimMarksTheNextBlockOnly_REQ_AGT_003: a claim gives the next block to start origin
+// agent and the thread's id, and only that block.
+func TestAClaimMarksTheNextBlockOnly_REQ_AGT_003(t *testing.T) {
+	r := NewRecorder(RecorderConfig{SessionID: "ses_1", NewID: func() string { return "blk" }})
+	r.Claim("thr_1")
+	actions := r.Feed([]Event{{Kind: EventCommandLine, Text: "ls"}, {Kind: EventCommandStart}})
+	if len(actions) != 1 || actions[0].Block.Origin != OriginAgent || actions[0].Block.ThreadID != "thr_1" {
+		t.Fatalf("claimed block = %+v", actions)
+	}
+	code := 0
+	actions = r.Feed([]Event{{Kind: EventCommandEnd, ExitCode: &code}, {Kind: EventCommandStart}})
+	last := actions[len(actions)-1].Block
+	if last.Origin != OriginUser || last.ThreadID != "" {
+		t.Errorf("the next block = %+v, want the user's", last)
+	}
+}

@@ -136,6 +136,100 @@ func TestFrameLimitIsEnforced(t *testing.T) {
 	}
 }
 
+// TestTheClientReadsWithTheLimitTheHandshakeAnnounced: a daemon whose limit was raised with
+// `umb limits set` greets new connections with it (API Spec §1, §5.1), and a client that
+// kept reading at 4 MiB would refuse the very answers the user raised the limit to get. The
+// announcement is capped at the 64 MiB ceiling, so a daemon gone wrong still cannot make the
+// client allocate without bound, and a daemon that announces nothing is read at 4 MiB.
+func TestTheClientReadsWithTheLimitTheHandshakeAnnounced_REQ_CLI_007(t *testing.T) {
+	t.Parallel()
+
+	const big = 5 << 20
+	for _, tc := range []struct {
+		name      string
+		announced any // nil: the field is absent
+		wantLimit int
+		wantOK    bool
+	}{
+		{"8 MiB announced: a 5 MiB answer is read", 8 << 20, 8 << 20, true},
+		{"nothing announced: 4 MiB, the answer is refused", nil, maxMessageBytes, false},
+		{"past the ceiling: capped at 64 MiB", 1 << 30, 64 << 20, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			socket := fakeServer(t, func(method string, id json.RawMessage, enc *json.Encoder) {
+				if method == "system.hello" {
+					reply := helloReply(id)
+					if tc.announced != nil {
+						reply["result"].(map[string]any)["max_message_bytes"] = tc.announced
+					}
+					_ = enc.Encode(reply)
+					return
+				}
+				_ = enc.Encode(map[string]any{
+					"jsonrpc": "2.0", "id": id,
+					"result": map[string]any{"blob": strings.Repeat("x", big)},
+				})
+			})
+
+			c, err := Dial(context.Background(), socket)
+			if err != nil {
+				t.Fatalf("Dial: %v", err)
+			}
+			defer func() { _ = c.Close() }()
+			if c.MaxMessageBytes != tc.wantLimit {
+				t.Errorf("MaxMessageBytes = %d, want %d", c.MaxMessageBytes, tc.wantLimit)
+			}
+
+			var out map[string]any
+			err = c.Call(context.Background(), "block.get", nil, &out)
+			if tc.wantOK && err != nil {
+				t.Errorf("a 5 MiB answer under a raised limit: %v", err)
+			}
+			if !tc.wantOK && err == nil {
+				t.Error("a 5 MiB answer was read under the 4 MiB default")
+			}
+		})
+	}
+}
+
+// TestResultTooLargeCarriesItsSizes: `umb` builds its hint from these two numbers, so they
+// must survive the trip from the wire into the Go error (REQ-API-005, REQ-CLI-007).
+func TestResultTooLargeCarriesItsSizes_REQ_API_005(t *testing.T) {
+	t.Parallel()
+
+	socket := fakeServer(t, func(method string, id json.RawMessage, enc *json.Encoder) {
+		if method == "system.hello" {
+			_ = enc.Encode(helloReply(id))
+			return
+		}
+		_ = enc.Encode(map[string]any{
+			"jsonrpc": "2.0", "id": id,
+			"error": map[string]any{
+				"code": -32014, "message": "too large",
+				"data": map[string]any{
+					"domain_code": "RESULT_TOO_LARGE", "size_bytes": 5557452, "limit_bytes": 4194304,
+				},
+			},
+		})
+	})
+	c, err := Dial(context.Background(), socket)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer func() { _ = c.Close() }()
+
+	err = c.Call(context.Background(), "block.get", nil, nil)
+	var rpcErr *Error
+	if !errors.As(err, &rpcErr) || rpcErr.DomainCode != "RESULT_TOO_LARGE" {
+		t.Fatalf("error = %v, want a RESULT_TOO_LARGE *Error", err)
+	}
+	if rpcErr.SizeBytes != 5557452 || rpcErr.LimitBytes != 4194304 {
+		t.Errorf("sizes = %d / %d, want 5557452 / 4194304", rpcErr.SizeBytes, rpcErr.LimitBytes)
+	}
+}
+
 func helloReply(id json.RawMessage) map[string]any {
 	return map[string]any{
 		"jsonrpc": "2.0", "id": id,

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,7 +23,72 @@ type Settings struct {
 	// the file says otherwise, and off is the default the requirement itself states:
 	// pane output can contain secrets, so this is a thing a user opts into knowingly.
 	PaneHistory bool
+	// MaxMessageBytes is the frame limit a connection gets once it has completed the
+	// handshake (`[api] max_message_bytes`, API Spec §1 and §8). DefaultMaxMessageBytes
+	// unless the file says otherwise. It is the first live key: `limits.set` rewrites it and
+	// the daemon applies it to new connections without a restart.
+	MaxMessageBytes int
+	// AllowEnvSecrets is `[secrets] allow_env`: whether `env:<VAR>` may stand in for a
+	// keyring the machine does not have (REQ-SEC-012). Off by default, since the environment
+	// is the weaker store — every child process inherits it.
+	AllowEnvSecrets bool
+	// OTelEndpoint is `[otel] endpoint`: the base URL of an OTLP/HTTP collector on this
+	// machine that traces and metrics are exported to (REQ-OBS-003). Empty, the default,
+	// exports nothing: there is no telemetry the user has not asked for (Art. 4).
+	OTelEndpoint string
+	// Retention is `[retention]`: Data Model §4's configurable windows, which the daily
+	// maintenance job applies (T-F1-22).
+	Retention Retention
+	// NotificationsEnabled is `[notifications] enabled`: on unless the file says false, in
+	// which case every notification answers `disabled` (REQ-NTF-001). Read at start.
+	NotificationsEnabled bool
+	// RulesCheck is `[update] rules_check`: whether the daemon fetches signed rule bundles
+	// (REQ-SEC-011, DD-016). Off by default, and off means no request leaves the machine.
+	RulesCheck bool
+	// RulesURL is `[update] rules_url`, where bundles come from; the signature is the same
+	// URL plus `.sig`. DefaultRulesURL unless the file says otherwise.
+	RulesURL string
+	// Stall is `[waits]`: how long a running turn may go without activity before it is
+	// marked stalled (REQ-AUT-008). Read at start.
+	Stall Stall
 }
+
+// Stall is the stall windows, in seconds (delta `2026-10-wait-monitoring`, decision 8).
+type Stall struct {
+	LocalS  int // `stall_local_s`: a turn whose model has a local candidate
+	RemoteS int // `stall_remote_s`: every other turn
+}
+
+// DefaultStall is Tech Design §4's defaults.
+func DefaultStall() Stall { return Stall{LocalS: 120, RemoteS: 30} }
+
+// The bounds of a stall window, in seconds.
+const (
+	MinStallSeconds = 5
+	MaxStallSeconds = 3600
+)
+
+// DefaultRulesURL is Tech Design §4's default: the project's latest release asset.
+const DefaultRulesURL = "https://github.com/ecrespo/umbral/releases/latest/download/rules.json"
+
+// Retention is Data Model §4's configurable retention windows, in days.
+type Retention struct {
+	RawOutputDays       int // `raw_output_days`: a closed block's raw chunks
+	PlainOutputDays     int // `plain_output_days`: a closed block's transcript
+	ClosedStructureDays int // `closed_structure_days`: closed workspaces, tabs and panes
+	AuditDays           int // `audit_days`: egress_log and usage
+}
+
+// DefaultRetention is Data Model §4's defaults.
+func DefaultRetention() Retention {
+	return Retention{RawOutputDays: 30, PlainOutputDays: 180, ClosedStructureDays: 30, AuditDays: 365}
+}
+
+// The bounds of a retention window, in days: at least one, at most ten years.
+const (
+	MinRetentionDays = 1
+	MaxRetentionDays = 3650
+)
 
 // SettingsFileName is the file's name inside the configuration directory.
 const SettingsFileName = "config.toml"
@@ -65,7 +132,10 @@ func SettingsPath() (string, error) {
 //
 // An unknown key is a warning, so a file written for a later version still starts this one.
 func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
-	settings := Settings{}
+	settings := Settings{
+		MaxMessageBytes: DefaultMaxMessageBytes, Retention: DefaultRetention(), NotificationsEnabled: true,
+		RulesURL: DefaultRulesURL, Stall: DefaultStall(),
+	}
 
 	raw, err := os.ReadFile(path) // #nosec G304 -- the path is the daemon's own config location
 	if errors.Is(err, os.ErrNotExist) {
@@ -77,7 +147,7 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 
 	values, err := parseTOMLSubset(string(raw))
 	if err != nil {
-		return settings, fmt.Errorf("config: %s: %w", path, err)
+		return settings, fmt.Errorf("%w: %s: %w", ErrSettingsInvalid, path, err)
 	}
 
 	for key, value := range values {
@@ -86,9 +156,78 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 			on, err := strconv.ParseBool(value)
 			if err != nil {
 				return Settings{}, fmt.Errorf(
-					"config: %s: experimental.pane_history is %q, want true or false", path, value)
+					"%w: %s: experimental.pane_history is %q, want true or false",
+					ErrSettingsInvalid, path, value)
 			}
 			settings.PaneHistory = on
+		case "secrets.allow_env":
+			on, err := strconv.ParseBool(value)
+			if err != nil {
+				return Settings{}, fmt.Errorf("%w: %s: secrets.allow_env is %q, want true or false",
+					ErrSettingsInvalid, path, value)
+			}
+			settings.AllowEnvSecrets = on
+		case "notifications.enabled":
+			on, err := strconv.ParseBool(value)
+			if err != nil {
+				return Settings{}, fmt.Errorf("%w: %s: notifications.enabled is %q, want true or false",
+					ErrSettingsInvalid, path, value)
+			}
+			settings.NotificationsEnabled = on
+		case "update.rules_check":
+			on, err := strconv.ParseBool(value)
+			if err != nil {
+				return Settings{}, fmt.Errorf("%w: %s: update.rules_check is %q, want true or false",
+					ErrSettingsInvalid, path, value)
+			}
+			settings.RulesCheck = on
+		case "update.rules_url":
+			u, err := parseRulesURL(value)
+			if err != nil {
+				return Settings{}, fmt.Errorf("%w: %s: update.rules_url: %w", ErrSettingsInvalid, path, err)
+			}
+			settings.RulesURL = u
+		case "otel.endpoint":
+			endpoint, err := parseOTelEndpoint(value)
+			if err != nil {
+				return Settings{}, fmt.Errorf("%w: %s: otel.endpoint: %w", ErrSettingsInvalid, path, err)
+			}
+			settings.OTelEndpoint = endpoint
+		case "retention.raw_output_days", "retention.plain_output_days",
+			"retention.closed_structure_days", "retention.audit_days":
+			days, err := strconv.Atoi(value)
+			if err != nil || days < MinRetentionDays || days > MaxRetentionDays {
+				return Settings{}, fmt.Errorf("%w: %s: %s is %q, want whole days from %d to %d",
+					ErrSettingsInvalid, path, key, value, MinRetentionDays, MaxRetentionDays)
+			}
+			switch key {
+			case "retention.raw_output_days":
+				settings.Retention.RawOutputDays = days
+			case "retention.plain_output_days":
+				settings.Retention.PlainOutputDays = days
+			case "retention.closed_structure_days":
+				settings.Retention.ClosedStructureDays = days
+			default:
+				settings.Retention.AuditDays = days
+			}
+		case "waits.stall_local_s", "waits.stall_remote_s":
+			secs, err := strconv.Atoi(value)
+			if err != nil || secs < MinStallSeconds || secs > MaxStallSeconds {
+				return Settings{}, fmt.Errorf("%w: %s: %s is %q, want whole seconds from %d to %d",
+					ErrSettingsInvalid, path, key, value, MinStallSeconds, MaxStallSeconds)
+			}
+			if key == "waits.stall_local_s" {
+				settings.Stall.LocalS = secs
+			} else {
+				settings.Stall.RemoteS = secs
+			}
+		case apiSection + "." + maxMessageKey:
+			n, err := parseMaxMessageBytes(value)
+			if err != nil {
+				return Settings{}, fmt.Errorf("%w: %s: %s.%s: %w",
+					ErrSettingsInvalid, path, apiSection, maxMessageKey, err)
+			}
+			settings.MaxMessageBytes = n
 		default:
 			if logger != nil {
 				logger.Warn("unknown setting ignored",
@@ -97,6 +236,40 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 		}
 	}
 	return settings, nil
+}
+
+// parseRulesURL checks `[update] rules_url`: an https URL with a host and no credentials. The
+// signature makes a bundle trustworthy, not the transport; https keeps what is fetched from
+// being read on the way. The error never repeats the value, which may hold a credential.
+func parseRulesURL(value string) (string, error) {
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return "", errors.New("want an https:// URL such as " + DefaultRulesURL)
+	}
+	if u.User != nil {
+		return "", errors.New("want a URL with no credentials in it")
+	}
+	return u.String(), nil
+}
+
+// parseOTelEndpoint checks `[otel] endpoint`: an http or https base URL — no path, query,
+// fragment or credentials — whose host is `localhost` or a loopback address. A collector
+// elsewhere would make the telemetry an egress Art. 4 requires to be recorded and redacted;
+// F1 exports to a local collector only, which forwards wherever the user configures it to.
+// The error never repeats the value, which may hold a credential.
+func parseOTelEndpoint(value string) (string, error) {
+	u, err := url.Parse(value)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", errors.New("want an http:// or https:// URL such as http://127.0.0.1:4318")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Trim(u.Path, "/") != "" {
+		return "", errors.New("want the collector's base URL, with no path, query or credentials")
+	}
+	host := u.Hostname()
+	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return "", errors.New("the collector must be on this machine: localhost or a loopback address")
+	}
+	return strings.TrimSuffix(u.String(), "/"), nil
 }
 
 // parseTOMLSubset reads the part of TOML this file uses: comments, `[section]` headers and
@@ -137,14 +310,30 @@ func parseTOMLSubset(text string) (map[string]string, error) {
 			return nil, fmt.Errorf("line %d: a value with no key", lineNo)
 		}
 
-		// Trim an inline comment, then quotes. Good enough for the subset and honest about
-		// its limits: a `#` inside a quoted string would be cut, and F0 has no string
-		// setting for that to matter to.
+		// A quoted value ends at its closing quote, and only a comment may follow it; an
+		// unquoted one ends at an inline comment. `[api] max_message_bytes = "8MiB"  # why`
+		// is why the difference matters: reading past the quote made the comment part of
+		// the size. Escapes inside quotes are not part of the subset.
 		value = strings.TrimSpace(value)
-		if i := strings.Index(value, "#"); i >= 0 && !strings.HasPrefix(value, `"`) {
+		if strings.HasPrefix(value, `"`) {
+			end := strings.Index(value[1:], `"`)
+			if end < 0 {
+				return nil, fmt.Errorf("line %d: %q has an unterminated string", lineNo, key)
+			}
+			if rest := strings.TrimSpace(value[end+2:]); rest != "" && !strings.HasPrefix(rest, "#") {
+				return nil, fmt.Errorf("line %d: %q has text after its value", lineNo, key)
+			}
+			value = value[1 : end+1]
+		} else if i := strings.Index(value, "#"); i >= 0 {
 			value = strings.TrimSpace(value[:i])
 		}
-		value = strings.Trim(value, `"`)
+		// Inline tables and arrays are outside the subset. Read as a plain value, an
+		// `api = { max_message_bytes = … }` became an unknown key `api` and the daemon
+		// started with the default, which is the silent fallback this parser refuses.
+		if strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[") {
+			return nil, fmt.Errorf("line %d: %q is an inline table or array, which this file "+
+				"does not support; write it as a [section] with one key per line", lineNo, key)
+		}
 		if value == "" {
 			return nil, fmt.Errorf("line %d: %q has no value", lineNo, key)
 		}

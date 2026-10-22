@@ -14,6 +14,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	ctxports "github.com/ecrespo/umbral/internal/context/ports"
+	intports "github.com/ecrespo/umbral/internal/integrations/ports"
+	ntfports "github.com/ecrespo/umbral/internal/notify/ports"
+	secports "github.com/ecrespo/umbral/internal/security/ports"
+
+	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
+	mcpports "github.com/ecrespo/umbral/internal/mcp/ports"
+	waitsports "github.com/ecrespo/umbral/internal/waits/ports"
+
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/config"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
@@ -59,9 +68,11 @@ func (k ClientKind) valid() bool {
 const capabilityWorkspaces = "workspaces"
 
 var capabilityOf = map[string]string{
-	"session":   "sessions",
-	"block":     "blocks",
-	"thread":    "threads",
+	"session": "sessions",
+	"block":   "blocks",
+	"thread":  "threads",
+	// §2 has no `approvals` namespace: answering an approval is part of running a thread.
+	"approval":  "threads",
 	"model":     "models",
 	"workspace": capabilityWorkspaces,
 	"tab":       capabilityWorkspaces,
@@ -69,6 +80,7 @@ var capabilityOf = map[string]string{
 	"layout":    "layouts",
 	"wait":      "waits",
 	"rule":      "rules",
+	"skill":     "skills",
 }
 
 // capabilities reports the namespaces this daemon actually serves, which is what the
@@ -99,6 +111,9 @@ func (s *Server) capabilities() []string {
 		namespace := prefix
 		if mapped, ok := capabilityOf[prefix]; ok {
 			namespace = mapped
+		}
+		if m.capability != "" {
+			namespace = m.capability
 		}
 		seen[namespace] = struct{}{}
 	}
@@ -134,9 +149,60 @@ type Config struct {
 	// and pane.* methods answering METHOD_NOT_FOUND, which is what the daemon does before
 	// T-F0-14 is wired in.
 	Workspaces wsports.Workspaces
-	Bus        *bus.Bus
-	Logger     *slog.Logger
+	// Configuration serves config.get and config.reload. A nil value leaves them answering
+	// NOT_IMPLEMENTED.
+	Configuration ConfigService
+	// Models serves model.list. A nil value leaves it answering NOT_IMPLEMENTED.
+	Models ModelService
+	// Threads is the agent runtime's inbound port, served as thread.*. A nil value leaves
+	// those methods answering NOT_IMPLEMENTED.
+	Threads agentsports.Threads
+	// MCP is the MCP client's inbound port, served as mcp.server.*. A nil value leaves those
+	// methods answering NOT_IMPLEMENTED.
+	MCP mcpports.Servers
+	// Waits is the wait engine, served as thread.wait, block.wait_output and the wait
+	// inside thread.send. A nil value leaves them answering NOT_IMPLEMENTED.
+	Waits waitsports.Waits
+	// Integrations is the integration surface, served as pane.report_state and
+	// pane.release_state. A nil value leaves them answering NOT_IMPLEMENTED.
+	Integrations intports.Integrations
+	// Notifications is the notification sink, served as notification.show. A nil value
+	// leaves it answering NOT_IMPLEMENTED.
+	Notifications ntfports.Notifier
+	// PolicyExplain is policy.explain (REQ-SEC-009). A nil value leaves it answering
+	// NOT_IMPLEMENTED.
+	PolicyExplain secports.Explainer
+	// Rules is rules.* (REQ-SEC-011, REQ-SEC-013 to REQ-SEC-016). A nil value leaves them
+	// answering NOT_IMPLEMENTED.
+	Rules secports.RulesService
+	// Skills is skill.* (REQ-SKL-001, REQ-SKL-002, REQ-SKL-006). A nil value leaves them
+	// answering NOT_IMPLEMENTED.
+	Skills ctxports.Skills
+	Bus    *bus.Bus
+	Logger *slog.Logger
+
+	// MaxMessageBytes is the frame limit a connection gets once it completes the handshake
+	// (`[api] max_message_bytes`, API Spec §1). Zero means config.DefaultMaxMessageBytes.
+	// `limits.set` changes it for later connections.
+	MaxMessageBytes int
+	// SettingsPath is the settings file `limits.set` rewrites (REQ-CLI-007). Empty leaves
+	// `limits.set` answering NOT_IMPLEMENTED: a daemon that cannot persist the limit must
+	// not pretend to have raised it.
+	SettingsPath string
+
+	// handshakeTimeout replaces HandshakeTimeout. It is unexported because nothing
+	// legitimate needs another value (REQ-SEC-017): it exists so a test can measure the
+	// deadline on the real clock in milliseconds rather than seconds. Zero means
+	// HandshakeTimeout.
+	handshakeTimeout time.Duration
 }
+
+// HandshakeTimeout is how long a connection has, from accept, to complete `system.hello`
+// (REQ-SEC-017, API Spec §2 step 3a). Past it the daemon answers UNAUTHORIZED and closes,
+// so a peer that never speaks cannot hold a connection — a file descriptor and a goroutine —
+// for the life of the daemon. It is two and a half times the official client's whole DialTimeout, which covers
+// connect and handshake together, and it is a constant rather than a setting.
+const HandshakeTimeout = 5 * time.Second
 
 // Server accepts client connections on the Unix socket and dispatches JSON-RPC methods.
 type Server struct {
@@ -156,6 +222,10 @@ type Server struct {
 
 	mu    sync.Mutex
 	conns map[*conn]struct{}
+	// activity numbers interactive requests, so the foreground client is the connection
+	// holding the highest one. A counter rather than a clock: two requests in the same
+	// millisecond still have an order.
+	activity atomic.Uint64
 
 	// events is the dispatcher's bus subscription. `Listen` takes it and `Notify` drains
 	// it, because `Notify` runs on a goroutine of its own and nothing orders that goroutine
@@ -165,6 +235,15 @@ type Server struct {
 
 	// observeResult is nil except under test; see resultObserver.
 	observeResult resultObserver
+
+	// maxMessageBytes is the limit the next connection will be greeted with. `limits.set`
+	// stores it; each handshake reads it once, so a live connection keeps its own.
+	maxMessageBytes atomic.Int64
+	// frames counts how close traffic comes to the limit this run (REQ-OBS-005).
+	frames frameStats
+	// settingsMu serialises `limits.set`, so two clients raising the limit at once write
+	// the file one after the other and the daemon keeps the value the file ends with.
+	settingsMu sync.Mutex
 }
 
 // nextSeq hands out the next notification number. Every notification the daemon emits goes
@@ -187,6 +266,15 @@ func Listen(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	if cfg.Bus == nil {
 		cfg.Bus = bus.New()
+	}
+	if cfg.MaxMessageBytes == 0 {
+		cfg.MaxMessageBytes = config.DefaultMaxMessageBytes
+	}
+	if err := config.ValidMaxMessageBytes(cfg.MaxMessageBytes); err != nil {
+		return nil, fmt.Errorf("api: %w", err)
+	}
+	if cfg.handshakeTimeout == 0 {
+		cfg.handshakeTimeout = HandshakeTimeout
 	}
 
 	token, err := LoadOrCreateToken(cfg.TokenPath)
@@ -227,6 +315,7 @@ func Listen(ctx context.Context, cfg Config) (*Server, error) {
 		conns:     make(map[*conn]struct{}),
 		events:    cfg.Bus.SubscribeBuffered(dispatchBuffer, dispatchedKinds...),
 	}
+	s.maxMessageBytes.Store(int64(cfg.MaxMessageBytes))
 	s.methods = s.registry()
 	return s, nil
 }

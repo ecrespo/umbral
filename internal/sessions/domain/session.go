@@ -8,6 +8,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -130,6 +131,13 @@ func (s Session) CanAcceptInputFrom(writer InputOwner) error {
 	return nil
 }
 
+// PaneLocation is the workspace, tab and pane a session is launched in.
+type PaneLocation struct {
+	WorkspaceID string
+	TabID       string
+	PaneID      string
+}
+
 // CreateParams is a validated `session.create` request (API Spec §5.3).
 type CreateParams struct {
 	Shell string
@@ -146,6 +154,13 @@ type CreateParams struct {
 	// failure, and REQ-BLK-003 already describes the resulting `integration: none`.
 	Command          []string
 	ShellIntegration bool
+	// Pane is where the session is launched, for REQ-INT-001's UMBRAL_WORKSPACE_ID,
+	// UMBRAL_TAB_ID and UMBRAL_PANE_ID. A thread's PTY belongs to no pane and leaves it
+	// empty, and those three variables are then absent.
+	Pane PaneLocation
+	// OwnerThreadID makes the session a thread's PTY (REQ-AGT-003): its input belongs to the
+	// agent from the start, and `sessions.owner_thread_id` records whose it is.
+	OwnerThreadID string
 	// TypeAtPrompt is written into the session once its shell shows a prompt, without a
 	// trailing newline, so it sits on the command line as if the user had typed it.
 	//
@@ -199,6 +214,34 @@ func (p CreateParams) Validate() error {
 	}
 	if len(p.Command) > 0 && p.Command[0] == "" {
 		return fmt.Errorf("%w: command names no program", ErrValidation)
+	}
+	if p.OwnerThreadID != "" && !strings.HasPrefix(p.OwnerThreadID, "thr_") {
+		return fmt.Errorf("%w: owner thread %q is not a thread id", ErrValidation, p.OwnerThreadID)
+	}
+	return nil
+}
+
+// AgentRun is one command the agent ran in its thread's PTY (REQ-AGT-003): the block that
+// recorded it, closed, and the plain text of its output.
+type AgentRun struct {
+	Block  Block
+	Output string
+	// Persisted is false when the block's row could not be written or closed: the command
+	// ran and its result is real, but Block.ID names no row, and a caller must not store a
+	// reference to it (Analyze C-01).
+	Persisted bool
+}
+
+// ValidateAgentCommand checks a command the agent asks to run. It must be one line: the
+// shell would start one block per line, and only the first would be the one waited for.
+func ValidateAgentCommand(command string) error {
+	switch {
+	case strings.TrimSpace(command) == "":
+		return fmt.Errorf("%w: the command is empty", ErrValidation)
+	case strings.ContainsAny(command, "\r\n"):
+		return fmt.Errorf("%w: the command is more than one line; join the lines with && or ;", ErrValidation)
+	case len(command)+1 > MaxInputBytes:
+		return fmt.Errorf("%w: the command is %d bytes, at most %d are allowed", ErrValidation, len(command), MaxInputBytes-1)
 	}
 	return nil
 }

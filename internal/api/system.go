@@ -9,6 +9,10 @@ import (
 	"github.com/ecrespo/umbral/internal/store"
 )
 
+// methodHello is the handshake, the one method the connection code names: it is the only
+// call reachable unauthenticated and the only one that must carry an id (REQ-SEC-018).
+const methodHello = "system.hello"
+
 // interactiveClients are the kinds allowed to drive a terminal.
 var interactiveClients = []ClientKind{ClientTUI, ClientDesktop}
 
@@ -28,8 +32,33 @@ var treeClients = []ClientKind{ClientTUI, ClientDesktop, ClientCLI}
 // later should not be two sources of the same truth.
 func (s *Server) registry() map[string]method {
 	table := map[string]method{
-		"system.hello":  {handle: handleHello, beforeHello: true, params: helloParams{}, result: helloResult{}},
+		methodHello:     {handle: handleHello, beforeHello: true, params: helloParams{}, result: helloResult{}},
 		"system.status": {handle: handleStatus, params: emptyResult{}, result: StatusResult{}},
+
+		// The configuration and its providers (API Spec §5.28). Interactive clients only:
+		// §2 gives `umb` limits.* and not config.*.
+		"config.get": {
+			handle: handleConfigGet, kinds: interactiveClients, available: configWired,
+			params: emptyResult{}, result: ConfigView{},
+		},
+		"config.reload": {
+			handle: handleConfigReload, kinds: interactiveClients, available: configWired,
+			params: emptyResult{}, result: ConfigView{},
+		},
+
+		// The model catalog (API Spec §5.26); `umb` may list it too (§2).
+		"model.list": {
+			handle: handleModelList, available: modelsWired,
+			params: listModelsParams{}, result: modelsResult{},
+		},
+
+		// The frame limit's two narrow methods (REQ-OBS-005, REQ-CLI-007). Every client kind
+		// may call them, `umb` included: raising the limit is what its hint tells a user to do.
+		"limits.get": {handle: handleLimitsGet, params: emptyResult{}, result: limitsResult{}},
+		"limits.set": {
+			handle: handleLimitsSet, available: settingsWritable,
+			params: setLimitsParams{}, result: setLimitsResult{},
+		},
 
 		// api.schema prints the protocol this binary was built with (API Spec §5.37).
 		// It needs no module behind it and is granted to every client kind: a client
@@ -59,6 +88,48 @@ func (s *Server) registry() map[string]method {
 
 	for name, m := range workspaceMethods() {
 		m.available = hasWorkspaces
+		table[name] = m
+	}
+	for name, m := range approvalMethods() {
+		m.available = hasThreads
+		table[name] = m
+	}
+	for name, m := range threadMethods() {
+		m.available = hasThreads
+		table[name] = m
+	}
+	for name, m := range mcpMethods() {
+		m.available = hasMCP
+		table[name] = m
+	}
+	for name, m := range waitMethods() {
+		if m.capability == "" { // wait.list and wait.cancel are `wait_admin`
+			m.capability = capabilityWaits
+		}
+		table[name] = m
+	}
+	for name, m := range notificationMethods() {
+		m.available = hasNotifications
+		m.capability = capabilityNotifications
+		table[name] = m
+	}
+	for name, m := range policyMethods() {
+		m.available = hasPolicyExplain
+		m.capability = capabilityPolicyExplain
+		table[name] = m
+	}
+	for name, m := range rulesMethods() {
+		m.available = hasRules
+		m.capability = capabilityRules
+		table[name] = m
+	}
+	for name, m := range skillMethods() {
+		m.available = hasSkills
+		table[name] = m
+	}
+	for name, m := range integrationMethods() {
+		m.available = hasIntegrations
+		m.capability = capabilityIntegrations
 		table[name] = m
 	}
 	return table
@@ -140,8 +211,23 @@ func handleHello(_ context.Context, c *conn, raw json.RawMessage) (any, error) {
 			ErrorField{Field: "client_kind", Issue: "must be tui, cli or desktop"})
 	}
 
+	// The handshake deadline (REQ-SEC-017) has done its job; an authenticated connection
+	// may stay silent for as long as it likes.
+	if err := c.netConn.SetReadDeadline(time.Time{}); err != nil {
+		// Refused rather than INTERNAL_ERROR, so the connection closes now instead of
+		// lingering unauthenticated until the deadline it could not clear.
+		return nil, fmt.Errorf("%w: could not clear the handshake deadline: %w", ErrUnauthorized, err)
+	}
+	// From here on the connection's frame limit is the configured one, as it stands now
+	// (API Spec §1): a later `limits.set` reaches new connections only.
+	limit := c.server.maxMessageBytes.Load()
+	c.limit.Store(limit)
 	c.authenticated = true
 	c.clientKind = kind
+	c.interactive.Store(isInteractive(kind))
+	if isInteractive(kind) {
+		go c.writePosted()
+	}
 	c.connectionID = store.NewID(store.PrefixConnection)
 
 	return helloResult{
@@ -149,6 +235,7 @@ func handleHello(_ context.Context, c *conn, raw json.RawMessage) (any, error) {
 		ProtocolVersion: ProtocolVersion,
 		Capabilities:    c.server.capabilities(),
 		ConnectionID:    c.connectionID,
+		MaxMessageBytes: limit,
 	}, nil
 }
 
@@ -177,5 +264,6 @@ func handleStatus(ctx context.Context, c *conn, _ json.RawMessage) (any, error) 
 		}
 		status = reported
 	}
+	status.Frames = c.server.framesNow()
 	return status, nil
 }

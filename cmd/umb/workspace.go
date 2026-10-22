@@ -41,6 +41,7 @@ const (
 	subApply  = "apply"
 
 	keyLabel = "label"
+	keyTitle = "title"
 )
 
 // treeCommand is one subcommand of a family: the positional arguments it takes, and how its
@@ -76,7 +77,7 @@ func treeFamilies() map[string]map[string]treeCommand {
 		}
 	}
 
-	return map[string]map[string]treeCommand{
+	families := map[string]map[string]treeCommand{
 		famWorkspace: {
 			subCreate: {
 				args:  []string{"cwd?"},
@@ -192,6 +193,10 @@ func treeFamilies() map[string]map[string]treeCommand {
 			},
 		},
 	}
+	for name, command := range paneStateCommands() {
+		families[famPane][name] = command
+	}
+	return families
 }
 
 // fromKey carries --from from the flag set to layoutApplyParams. It is not a parameter of
@@ -264,8 +269,7 @@ func cmdTree(ctx context.Context, family string, args []string, stdout, stderr *
 
 	var raw json.RawMessage
 	if err := c.Call(callCtx, method, params, &raw); err != nil {
-		stderr.printf("umb: %s: %v\n", method, describeError(err))
-		return exitFailure
+		return callFailed(stderr, method+": ", err)
 	}
 
 	if f.asJSON {

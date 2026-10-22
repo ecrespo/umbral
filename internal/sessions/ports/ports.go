@@ -86,6 +86,13 @@ const (
 	SignalHangup SignalKind = iota
 	// SignalKill is the deadline enforcement three seconds later.
 	SignalKill
+	// SignalTermForeground sends SIGTERM to what the shell is running — the process group of
+	// every child of the shell, the foreground command and background jobs alike — and SIGINT
+	// to the shell, which ends a loop of builtins without ending the shell. It is the first
+	// half of the agent's cancel (REQ-AGT-007, Tech §3 step 3).
+	SignalTermForeground
+	// SignalKillForeground is the second half, 300 ms later: SIGKILL to the same groups.
+	SignalKillForeground
 )
 
 // PTYFactory opens a PTY running the given command. It is a function rather than an
@@ -120,6 +127,10 @@ type Emulator interface {
 	// Cursor reports the cursor's cell, which `session.subscribe` returns alongside the
 	// snapshot so a client can place its own cursor without parsing the VT it just got.
 	Cursor() (x, y uint16, err error)
+	// OpenLine is the text of the cursor's row up to the cursor, trailing blanks kept, when
+	// that row is the last one written and the cursor is past its first column: a line still
+	// being written, such as a prompt. It is "" otherwise (block.wait_output, REQ-AUT-003).
+	OpenLine() (string, error)
 	// Close releases the emulator.
 	Close() error
 }
@@ -211,4 +222,10 @@ type BlockReader interface {
 	Raw(ctx context.Context, id string, limit int) (data []byte, truncated bool, err error)
 	// Search runs the FTS5 query (REQ-BLK-006).
 	Search(ctx context.Context, query domain.SearchQuery) (domain.SearchPage, error)
+}
+
+// AgentTerminal runs the agent's commands in its thread's PTY (REQ-AGT-003): the tools
+// module's run_command reaches the sessions module through it and nothing else.
+type AgentTerminal interface {
+	RunForThread(ctx context.Context, threadID, cwd, command string) (domain.AgentRun, error)
 }

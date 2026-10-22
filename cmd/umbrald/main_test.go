@@ -44,7 +44,12 @@ func TestRunRejectsUnknownFlag(t *testing.T) {
 
 // TestRunOpensTheDatabaseAndRecovers is the composition-root smoke test: the daemon
 // creates its database, migrates it and runs recovery without a pre-existing file.
+//
+// Every XDG directory is the test's own: `-db` moves the database, but the instance lock
+// and the socket live in the runtime directory, and with the developer's own daemon up the
+// real one made this run exit as "another umbrald already owns this installation".
 func TestRunOpensTheDatabaseAndRecovers(t *testing.T) {
+	isolatedRuntime(t)
 	var stdout, stderr bytes.Buffer
 
 	dbPath := filepath.Join(t.TempDir(), "nested", "umbral.db")

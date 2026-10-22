@@ -1,9 +1,11 @@
 package integration_test
 
 import (
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +33,13 @@ type harness struct {
 	shell string
 }
 
+// The socket and the `umb` binary every pane is told about (REQ-INT-001). Nothing listens
+// there: these tests read the variables back, and never call through them.
+const (
+	testSocketPath = "/nonexistent/umbral/umbral.sock"
+	testBinPath    = "/nonexistent/bin/umb"
+)
+
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	return newHarnessForShell(t, "bash")
@@ -41,7 +50,7 @@ func newHarness(t *testing.T) *harness {
 // A missing shell is a skip rather than a failure because REQ-BLK-005 covers three shells
 // and a developer's machine rarely has all three; CI installs them all, so the coverage is
 // not lost where it counts.
-func newHarnessForShell(t *testing.T, name string) *harness {
+func newHarnessForShell(t *testing.T, name string, options ...func(*sessions.Config)) *harness {
 	t.Helper()
 
 	shell, err := exec.LookPath(name)
@@ -64,7 +73,7 @@ func newHarnessForShell(t *testing.T, name string) *harness {
 	}
 	t.Cleanup(func() { _ = blocks.Close() })
 
-	service, err := sessions.New(sessions.Config{
+	cfg := sessions.Config{
 		Store:  db,
 		Bus:    eventBus,
 		NewPTY: pty.Open,
@@ -76,7 +85,13 @@ func newHarnessForShell(t *testing.T, name string) *harness {
 		Blocks:     blocks,
 		NewScanner: func() ports.Scanner { return shellinteg.NewScanner() },
 		Host:       "test-host",
-	})
+		SocketPath: testSocketPath,
+		BinPath:    testBinPath,
+	}
+	for _, option := range options {
+		option(&cfg)
+	}
+	service, err := sessions.New(cfg)
 	if err != nil {
 		t.Fatalf("sessions.New: %v", err)
 	}
@@ -397,5 +412,93 @@ func TestOperationsOnAnUnknownSession(t *testing.T) {
 	}
 	if _, err := h.Get(t.Context(), missing); err == nil {
 		t.Error("Get on an unknown session succeeded")
+	}
+}
+
+// TestScreenTextIsThePlainScreenWithItsSeq: block.wait_output's starting point (REQ-AUT-003)
+// is the screen without escape sequences, paired with the sequence number it is current as of.
+func TestScreenTextIsThePlainScreenWithItsSeq(t *testing.T) {
+	h := newHarness(t)
+	session := h.create(t, domain.CreateParams{ShellIntegration: false})
+	if err := h.Input(t.Context(), session.ID, []byte("printf '\\033[1mbold-%s\\033[0m\\n' $((6*7))\n"), domain.InputOwnerHuman); err != nil {
+		t.Fatal(err)
+	}
+	if !waitForScreen(t, h, session.ID, "bold-42") {
+		t.Fatal("the command never printed")
+	}
+	// The snapshot can show `bold-42` before the shell has moved past it; the line is only
+	// complete, and followed by "\n" in the screen's text, once the next one has started.
+	var (
+		text string
+		seq  uint64
+		err  error
+	)
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if text, seq, _, err = h.ScreenText(t.Context(), session.ID); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(text, "bold-42\n") {
+			break
+		}
+	}
+	if !strings.Contains(text, "bold-42\n") || strings.Contains(text, "\x1b") || seq == 0 {
+		t.Fatalf("ScreenText = %q, seq %d", text, seq)
+	}
+	if _, _, _, err := h.ScreenText(t.Context(), "ses_nope"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("unknown session: %v", err)
+	}
+}
+
+// TestScreenTextReportsTheOpenLine: a prompt the shell printed without a newline is the open
+// line, trailing space kept; once a newline follows there is none.
+func TestScreenTextReportsTheOpenLine(t *testing.T) {
+	h := newHarness(t)
+	session := h.create(t, domain.CreateParams{ShellIntegration: false})
+	if err := h.Input(t.Context(), session.ID, []byte("for i in $(seq 1 60); do echo row-$i; done; printf 'Pass%s: ' word; read x\n"), domain.InputOwnerHuman); err != nil {
+		t.Fatal(err)
+	}
+	var open string
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if _, _, open, _ = h.ScreenText(t.Context(), session.ID); open == "Password: " {
+			break
+		}
+	}
+	if open != "Password: " {
+		t.Fatalf("open line %q, want %q", open, "Password: ")
+	}
+	if err := h.Input(t.Context(), session.ID, []byte("x\n"), domain.InputOwnerHuman); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	text, _, open, err := h.ScreenText(t.Context(), session.ID)
+	if err != nil || strings.Contains(open, "Password") {
+		t.Fatalf("after the answer: open %q, err %v, screen %q", open, err, text)
+	}
+}
+
+// TestShutdownPersistsEveryExit_REQ_TERM_005: Shutdown returns only once every session it
+// hung up has its exit in the database. It used to signal and return, so the daemon closed
+// the store while the sessions were still exiting and every one of them logged `persist the
+// session exit: sql: database is closed` (29 of them at the end of the 2026-10-18 US-003 run).
+func TestShutdownPersistsEveryExit_REQ_TERM_005(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	ids := []string{
+		h.create(t, domain.CreateParams{ShellIntegration: false}).ID,
+		h.create(t, domain.CreateParams{ShellIntegration: false}).ID,
+	}
+
+	h.Shutdown()
+
+	for _, id := range ids {
+		var state string
+		if err := h.store.DB().QueryRowContext(t.Context(),
+			"SELECT state FROM sessions WHERE id = ?", id).Scan(&state); err != nil {
+			t.Fatalf("read session %s: %v", id, err)
+		}
+		if state != string(domain.StateExited) {
+			t.Errorf("session %s is %q in the database when Shutdown returns, want exited", id, state)
+		}
 	}
 }

@@ -391,8 +391,33 @@ func (s *Store) AttachSession(ctx context.Context, paneID, sessionID string) err
 	return mustAffect(res, domain.ErrNotFound, "pane", paneID)
 }
 
+// paneColumns reads a pane and, after its own columns, everything DD-012 decides its
+// attention state from: the thread its live session belongs to and that thread's state, the
+// latest external report, whether the session is alive, its OSC 133 verdict and its latest
+// block. The integrations module writes a pane's reports with strictly increasing
+// `updated_at`, so the latest is never a tie; rowid only keeps the order total.
 const paneColumns = `p.id, p.tab_id, t.workspace_id, p.session_id, p.label, p.cwd,
-	p.command_json, p.command_pending, p.env_json, p.order_index, p.created_at, p.closed_at`
+	p.command_json, p.command_pending, p.env_json, p.order_index, p.created_at, p.closed_at,
+	(SELECT s.owner_thread_id FROM sessions s
+	  WHERE s.id = p.session_id AND s.state = 'alive'),
+	(SELECT th.attention_state FROM sessions s JOIN threads th ON th.id = s.owner_thread_id
+	  WHERE s.id = p.session_id AND s.state = 'alive'),
+	(SELECT r.source FROM pane_state_reports r WHERE r.pane_id = p.id
+	  ORDER BY r.updated_at DESC, r.rowid DESC LIMIT 1),
+	(SELECT r.state FROM pane_state_reports r WHERE r.pane_id = p.id
+	  ORDER BY r.updated_at DESC, r.rowid DESC LIMIT 1),
+	(SELECT s.state = 'alive' FROM sessions s WHERE s.id = p.session_id),
+	(SELECT s.integration FROM sessions s WHERE s.id = p.session_id),
+	(SELECT b.state FROM blocks b WHERE b.session_id = p.session_id
+	  ORDER BY b.started_at DESC, b.rowid DESC LIMIT 1),
+	(SELECT json_group_array(json_array(m.key, m.value) ORDER BY m.updated_at, m.rowid)
+	   FROM pane_metadata m
+	  WHERE m.pane_id = p.id AND m.key <> '` + domain.MetaKeySeq + `'
+	    AND (m.expires_at IS NULL OR m.expires_at > ` + nowMillisSQL + `))`
+
+// nowMillisSQL is SQLite's clock in epoch milliseconds, for the metadata a TTL has expired:
+// such a row is never read, whether or not anything has deleted it yet (API Spec §5.32).
+const nowMillisSQL = `CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)`
 
 func scanPane(row scanner) (domain.Pane, error) {
 	var (
@@ -403,9 +428,15 @@ func scanPane(row scanner) (domain.Pane, error) {
 		env      string
 		created  int64
 		closedAt sql.NullInt64
+
+		owner, ownerState, reportSource, reportState sql.NullString
+		live                                         sql.NullBool
+		integration, blockState                      sql.NullString
+		metadata                                     sql.NullString
 	)
 	if err := row.Scan(&pane.ID, &pane.TabID, &pane.WorkspaceID, &session, &label, &pane.CWD,
-		&command, &pane.CommandPending, &env, &pane.OrderIndex, &created, &closedAt); err != nil {
+		&command, &pane.CommandPending, &env, &pane.OrderIndex, &created, &closedAt,
+		&owner, &ownerState, &reportSource, &reportState, &live, &integration, &blockState, &metadata); err != nil {
 		return domain.Pane{}, fmt.Errorf("treestore: read pane: %w", err)
 	}
 	pane.SessionID = session.String
@@ -421,9 +452,23 @@ func scanPane(row scanner) (domain.Pane, error) {
 	}
 	pane.CreatedAt = epoch(created)
 	pane.ClosedAt = epochPtr(closedAt)
-	// F0 has no producer of a pane state: `pane_state_reports` is migration 0005 and
-	// threads are F1 (delta `2026-09-pane-attention-state`).
-	pane.AttentionState = domain.AttentionUnknown
+	pane.ThreadID = owner.String
+	if metadata.Valid {
+		var rows [][2]string
+		if err := json.Unmarshal([]byte(metadata.String), &rows); err != nil {
+			return domain.Pane{}, fmt.Errorf("treestore: stored pane metadata is not readable: %w", err)
+		}
+		pane.Metadata = domain.MetadataFromKeys(rows)
+	}
+	pane.AttentionState, pane.StateSource = domain.ResolveAttention(domain.StateInputs{
+		OwnerThreadID:   owner.String,
+		ThreadAttention: domain.AttentionState(ownerState.String),
+		ReportSource:    reportSource.String,
+		ReportState:     domain.AttentionState(reportState.String),
+		Live:            live.Bool,
+		Integration:     integration.String,
+		BlockState:      blockState.String,
+	})
 	return pane, nil
 }
 

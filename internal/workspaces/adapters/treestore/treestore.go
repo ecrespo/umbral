@@ -76,11 +76,13 @@ func epochPtr(ms sql.NullInt64) *time.Time {
 //
 // REQ-WS-002 requires identifiers unique and stable while the object exists, and the Art. 6
 // amendment adds that one is never reused while its object lives. Allocation is therefore
-// "one past the highest number this scope has ever handed out", computed inside the same
-// transaction as the insert so two concurrent creates cannot pick the same number.
+// "one past the highest number this scope still holds", computed inside the same transaction
+// as the insert so two concurrent creates cannot pick the same number.
 //
-// Closed rows are kept for 30 days (Data Model §7) rather than deleted, so a closed
-// workspace's number stays taken for as long as anything could still refer to it.
+// Closed rows are kept for 30 days (Data Model §4) and then deleted by the retention job, after
+// which their numbers can be handed out again. A pane alias is the exception: it lives as long
+// as its terminal, so nextPaneOrdinal counts the aliases too and a moved pane's old identifier
+// is never reissued, even in a workspace that reused a purged number.
 
 // nextWorkspaceOrdinal returns the number for a new workspace.
 //

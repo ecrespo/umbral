@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -233,6 +234,13 @@ func startDaemon(t *testing.T, bin, runtime string, extraEnv ...string) {
 // its stop still leaves nothing behind.
 func startStoppableDaemon(t *testing.T, bin, runtime string, extraEnv ...string) (stop func(sig os.Signal)) {
 	t.Helper()
+	return startDaemonLoggingTo(t, bin, runtime, os.Stderr, extraEnv...)
+}
+
+// startDaemonLoggingTo is startStoppableDaemon with the daemon's log sent to logs, for a test
+// that has to read what the daemon wrote — or prove what it did not.
+func startDaemonLoggingTo(t *testing.T, bin, runtime string, logs io.Writer, extraEnv ...string) (stop func(sig os.Signal)) {
+	t.Helper()
 
 	// Tied to the test's context, which Go cancels just before the cleanups run, and
 	// cancelled with SIGINT rather than SIGKILL so the daemon closes its database instead
@@ -250,7 +258,7 @@ func startStoppableDaemon(t *testing.T, bin, runtime string, extraEnv ...string)
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 	cmd.WaitDelay = 10 * time.Second
 	cmd.Env = append(os.Environ(), extraEnv...)
-	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	cmd.Stdout, cmd.Stderr = logs, logs
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start umbrald: %v", err)
 	}

@@ -4,6 +4,13 @@ import (
 	"context"
 	"log/slog"
 
+	intports "github.com/ecrespo/umbral/internal/integrations/ports"
+
+	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
+	ctxports "github.com/ecrespo/umbral/internal/context/ports"
+	mcpports "github.com/ecrespo/umbral/internal/mcp/ports"
+	secports "github.com/ecrespo/umbral/internal/security/ports"
+
 	"github.com/ecrespo/umbral/internal/bus"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
 	wsports "github.com/ecrespo/umbral/internal/workspaces/ports"
@@ -48,6 +55,17 @@ var dispatchedKinds = []bus.Kind{
 	wsports.KindPaneFocused,
 	wsports.KindPaneMoved,
 	wsports.KindLayoutUpdated,
+	agentsports.KindThreadDelta,
+	agentsports.KindThreadToolCall,
+	agentsports.KindThreadTurnFinished,
+	agentsports.KindContextCompacted,
+	agentsports.KindApprovalRequested,
+	agentsports.KindAttentionChanged,
+	agentsports.KindThreadStalled,
+	ctxports.KindSkillChanged,
+	mcpports.KindServerState,
+	intports.KindPaneStateChanged,
+	secports.KindRuleUpdateRejected,
 }
 
 // Notify forwards module events to connected clients as JSON-RPC notifications
@@ -145,6 +163,34 @@ func toNotification(event bus.Event) (string, any) {
 			PreviousWorkspaceID: e.PreviousWorkspaceID,
 			Layout:              toWireLayout(e.Layout),
 		}
+
+	case agentsports.ThreadDelta:
+		return "thread.delta", threadDeltaPayload{ThreadID: e.ThreadID, TurnID: e.TurnID, Kind: e.Kind, Text: e.Text}
+	case agentsports.ThreadToolCall:
+		return "thread.tool_call", toWireToolCall(e.Call)
+	case agentsports.TurnFinished:
+		return "thread.turn_finished", turnFinishedPayload{
+			ThreadID: e.ThreadID, TurnID: e.TurnID, StopReason: string(e.StopReason),
+			Usage: turnUsage{InTokens: e.Usage.InTokens, OutTokens: e.Usage.OutTokens, CostMicroUSD: e.Usage.CostMicroUSD},
+		}
+	case agentsports.ApprovalRequested:
+		return "approval.requested", toWireApproval(e.Approval)
+	case agentsports.ThreadAttentionChanged:
+		return "thread.attention_changed", attentionChangedPayload{ThreadID: e.ThreadID, AttentionState: e.AttentionState}
+	case ctxports.SkillChanged:
+		return "skill.changed", skillChangedPayload{Name: e.Name, Change: e.Change}
+	case agentsports.ThreadStalled:
+		return "thread.stalled", threadStalledPayload{ThreadID: e.ThreadID, TurnID: e.TurnID, IdleMS: e.IdleMS, LastEvent: e.LastEvent}
+	case agentsports.ContextCompacted:
+		return "context.compacted", contextCompactedPayload{ThreadID: e.ThreadID, BeforeTokens: e.BeforeTokens, AfterTokens: e.AfterTokens}
+	case mcpports.ServerState:
+		return "mcp.server_state", mcpServerStatePayload{Name: e.Name, State: string(e.State), LastError: emptyAsNull(e.LastError)}
+	case intports.PaneStateChanged:
+		return "pane.state_changed", paneStateChangedPayload{
+			PaneID: e.PaneID, AttentionState: string(e.AttentionState), StateSource: emptyAsNull(e.StateSource),
+		}
+	case secports.RuleUpdateRejected:
+		return "rules.update_rejected", ruleUpdateRejectedPayload{Reason: string(e.Reason), Version: e.Version, Source: e.Source}
 
 	default:
 		return "", nil

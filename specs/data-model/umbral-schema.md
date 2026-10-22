@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.8 |
-| **Date** | 2026-09-11 |
+| **Version** | 1.23 |
+| **Date** | 2026-10-18 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
 | **Related Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -273,6 +273,38 @@ CREATE INDEX idx_pane_metadata_expiry ON pane_metadata(expires_at) WHERE expires
 At most 32 live keys per pane; the `store` layer rejects the excess. Metadata is not restored after
 a restart (REQ-INT-004).
 
+How `pane_state_reports` is written (delta `2026-10-integration-surface`, T-F1-25):
+
+- **`seq`** is the last number the source sent for the pane. `-1` means the source has sent none
+  yet: an unnumbered report stores it, a later unnumbered one keeps whatever is stored, and the
+  first numbered one applies even at `0`. A source never sends a negative `seq`, so `-1` is
+  unambiguous; the column has no `CHECK`, and no migration was needed.
+- **`updated_at`** is strictly increasing per pane: a write gets the current time, or one past the
+  pane's newest report when that is not later. The latest report is therefore never a tie.
+- **A move renames the rows.** `pane.move` changes `panes.id`; the reports and metadata are updated
+  to the new id in the same transaction, with the foreign-key check deferred to the commit
+  (`PRAGMA defer_foreign_keys`). Before T-F1-25 a move of a pane with a report failed.
+- **A closed pane's rows stay** until restart step 8 (§6) clears them, and are never read again.
+
+How `pane_metadata` is written (delta `2026-10-display-metadata`, T-F1-26):
+
+- **Keys.** `title`, `display_name`, `label:<state>` for each of the five attention states, and
+  `token:<name>` with a name of 1–26 characters of `[A-Za-z0-9._-]`, so every key fits the 32 of
+  the `CHECK`. The tree reads the live rows back into API §4's `metadata`; when two sources set
+  one member, the later write wins.
+- **`#seq`.** A reserved row per pane and source holds the last metadata `seq`, counted apart
+  from `pane_state_reports.seq`, with `-1` for unnumbered. It is never displayed, counts toward
+  no limit, has no `expires_at`, and moves and is cleared with the pane's other rows. It needed
+  no migration.
+- **`updated_at`** is strictly increasing per pane, as for `pane_state_reports`.
+- **Expiry.** Every displayed row has an `expires_at`: the report's `ttl_ms`, or 24 h after the
+  write when the report gives none (§4's cap). An expired row is never read, whether or not it
+  has been deleted yet; each write deletes the pane's expired rows, and nothing announces an
+  expiry.
+- **The 32** counts the pane's live rows across every source after the report, a key two sources
+  both set counting twice, `#seq` rows excluded. A report that would exceed it, or that carries
+  more than 16 tokens, writes nothing.
+
 ### 2.4d `pane_history` (migration 0004, optional content)
 
 **Purpose:** recent screen replay after a restart, disabled by default because pane output can
@@ -290,7 +322,7 @@ CREATE TABLE pane_history (
 Rows are written only while `[experimental] pane_history = true`. Turning the setting off deletes
 the table's contents at the next start.
 
-### 2.4e `rule_bundles` and `trust_keys` (migration 0005)
+### 2.4e `rule_bundles` and `trust_keys` (migration 0005), and the update state (migration 0006)
 
 **Purpose:** provenance of the redaction rules and destructive patterns, and the trust store used to
 verify them (REQ-SEC-011 to REQ-SEC-016). Private keys never live here: the store holds public keys
@@ -317,8 +349,108 @@ CREATE UNIQUE INDEX idx_rule_bundles_active ON rule_bundles(active) WHERE active
 ```
 
 Umbral keeps the active bundle and the previous one so `rules.rollback` works offline; older ones
-are pruned. A `remote` bundle without `verified_with` cannot exist: the DDL allows it, and the
+are pruned.
+
+The trust store and the bundle history change in these ways (delta `2026-09-rule-signing-custody`):
+
+- **Seeding:** `trust_keys` is seeded from the binary and matched by `fingerprint`. On start,
+  each key the build embeds and the table lacks is inserted with the id the seed fixes (`key_` +
+  ULID). Each key the build lists as revoked gets `revoked_at` if it has none. Keys the build
+  lists as retired are never inserted.
+- **Removal:** `rules.key.remove` sets `revoked_at` instead of deleting the row, so a seed key
+  the user removed is not brought back. A "valid" key is one with no `revoked_at`.
+- **Adding:**
+  - `rules.key.add` of a fingerprint on the seed's `revoked` list is refused.
+  - Otherwise, adding a revoked fingerprint clears `revoked_at`, and adding a valid one changes
+    no row.
+  - Both are recorded with their timestamp, and both reopen updates that were failed closed.
+- **Revocation:**
+  - Revoking a key deletes the `rule_bundles` rows it verified.
+  - The active row stays active if it survives. Otherwise the newest remaining `remote` row, or
+    `builtin`, becomes active. A `local` row is never chosen.
+  - The next newest remaining `remote` row is the previous bundle.
+  - The floor a new bundle must exceed is the higher of the active row's `version` and
+    `rule_update_state.highest_version` (migration 0006), so a `rules.reset` does not reopen older
+    signed bundles. A revocation lowers `highest_version` to the highest surviving row's.
+
+Migration `0006_rule_state` adds what T-F1-30 needs to apply, reject and roll back bundles offline
+(delta `2026-10-signed-rule-bundles`). 0005 is applied and forward-only, so the bundle's bytes
+arrive by `ALTER TABLE`:
+
+```sql
+ALTER TABLE rule_bundles ADD COLUMN content BLOB;  -- the bundle's exact bytes; NULL only for builtin
+
+CREATE TABLE rule_rejections (
+  sha256  TEXT PRIMARY KEY CHECK (length(sha256) = 64),
+  reason  TEXT NOT NULL CHECK (reason IN ('unsigned','unknown_key','invalid_signature','invalid_bundle','downgrade','rolled_back','reset')),
+  version INTEGER,
+  at      INTEGER NOT NULL
+);
+
+CREATE TABLE rule_update_state (
+  id                    INTEGER PRIMARY KEY CHECK (id = 1),
+  consecutive_failures  INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+  fail_closed           INTEGER NOT NULL DEFAULT 0 CHECK (fail_closed IN (0,1)),
+  ever_had_valid_key    INTEGER NOT NULL DEFAULT 0 CHECK (ever_had_valid_key IN (0,1)),
+  highest_version       INTEGER NOT NULL DEFAULT 0 CHECK (highest_version >= 0),
+  last_rejection_reason TEXT,
+  last_rejection_at     INTEGER
+);
+INSERT INTO rule_update_state (id) VALUES (1);
+
+CREATE TABLE trust_key_events (
+  id          INTEGER PRIMARY KEY,
+  key_id      TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  action      TEXT NOT NULL CHECK (action IN ('seeded','seed_revoked','added','readded','unchanged','revoked')),
+  at          INTEGER NOT NULL
+);
+CREATE INDEX idx_trust_key_events_at ON trust_key_events(at);
+```
+
+- **`content`** is required for every `remote` row; a stored bundle is checked against its
+  `sha256` at start and a mismatch falls back to the built-in rules. The `builtin` row's `sha256`
+  is the digest of the built-in rules' canonical JSON, rewritten when they change.
+- **`rule_rejections`** holds a bundle never to retry: one rejected under REQ-SEC-013's reasons,
+  one `rules.rollback` left (`rolled_back`) or one `rules.reset` left (`reset`). `version` is the bundle's own only when its signature verified, and NULL otherwise: unverified bytes are never parsed. A rollback onto a
+  digest clears its row; revoking a key deletes the `downgrade` rows so a bundle refused only for
+  its version may be offered again.
+- **`rule_update_state`** counts consecutive rejections; the third sets `fail_closed`, a bundle
+  applied resets the count, and only a `rules.key.add` clears the latch (REQ-SEC-015). The trust
+  store ending up without a valid key sets it too, but only once `ever_had_valid_key` is 1, so a
+  fresh install with no key takes the first key a seed brings. `highest_version` is the highest
+  version ever applied; only a revocation lowers it.
+- **`trust_key_events`** records every trust-store change with its timestamp (REQ-SEC-014): a
+  seeded key, a seed revocation, an add, a re-add of a revoked key, an add of a key already valid
+  (`unchanged`) and a revocation. A rotation is `added` then `revoked`.
+- **Built-in rules:** the `builtin` row has version 0 and is rewritten when a binary carries
+  different rules. Remote versions start at 1. A `remote` bundle without `verified_with` cannot exist: the DDL allows it, and the
 `store` layer rejects it.
+
+### 2.4f `skills` (migration 0005)
+
+**Purpose:** the skills installed for Umbral's agent (REQ-SKL-001 to REQ-SKL-007, delta
+`2026-09-skills-cli`). The bundle itself lives in `$XDG_DATA_HOME/umbral/skills/<name>/`; this row
+is its record. The shape is `mcp_servers`': a prefixed ULID `id` and a unique `name` that the API
+and `umb` address it by, so Art. 6 holds without an amendment.
+
+```sql
+CREATE TABLE skills (
+  id           TEXT PRIMARY KEY CHECK (id LIKE 'skl\_%' ESCAPE '\'),
+  name         TEXT NOT NULL UNIQUE CHECK (length(name) BETWEEN 1 AND 64 AND name GLOB '[a-z0-9]*' AND name NOT GLOB '*[^a-z0-9-]*'),
+  description  TEXT NOT NULL CHECK (length(description) BETWEEN 1 AND 1024),
+  version      TEXT CHECK (version IS NULL OR length(version) <= 64),
+  source       TEXT NOT NULL,              -- the path it was installed from, display only
+  sha256       TEXT NOT NULL,
+  size_bytes   INTEGER NOT NULL CHECK (size_bytes BETWEEN 1 AND 8388608),
+  enabled      INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+  installed_at INTEGER NOT NULL
+);
+```
+
+At most 64 rows have `enabled = 1`; the `context` layer enforces it, since a count cannot be a
+`CHECK`. A row and its directory are written through a staging directory and a rename, and §6
+step 9 removes whatever a crash leaves between them.
 
 ### 2.5 `threads`
 
@@ -353,7 +485,8 @@ forward-only: a column added to an applied file exists on no database that alrea
 -- migration 0005, alongside the agent tables (T-F1-01)
 ALTER TABLE threads ADD COLUMN attention_state TEXT NOT NULL DEFAULT 'idle';  -- REQ-AGT-016
                              -- one of 'idle','working','blocked','done','unknown'
-ALTER TABLE threads ADD COLUMN seen_at INTEGER;  -- when a client last focused it; NULL = never
+ALTER TABLE threads ADD COLUMN seen_at INTEGER;  -- when a client last focused it, or a turn
+                             -- ended while one viewed it; NULL = never
 ```
 
 ### 2.6 `messages`
@@ -388,7 +521,7 @@ CREATE TABLE tool_calls (
   args_json      TEXT NOT NULL,
   status         TEXT NOT NULL CHECK (status IN ('pending','ok','error','denied_by_user','denied_by_policy','invalid_args')),
   result_summary TEXT,
-  result_json    TEXT,
+  result_json    TEXT,                        -- {"text", "tainted"}: what the model reads back (T-F1-13)
   block_id       TEXT REFERENCES blocks(id),
   started_at     INTEGER NOT NULL,
   ended_at       INTEGER
@@ -486,14 +619,23 @@ CREATE TABLE egress_log (
 CREATE INDEX idx_egress_created ON egress_log(created_at DESC);
 ```
 
-Insert-only table: no `UPDATE` or `DELETE` except for retention.
+Insert-only table: no `UPDATE` or `DELETE` except for retention. `provider` is the provider id
+of a model call, or the tool `fetch_url` for its requests (Art. 4; delta
+`2026-09-builtin-tools`), whose payload is the request URL, or `mcp:<name>` for a request to an
+MCP server off this machine, whose payload is the request body, or its URL when it has none
+(delta `2026-10-mcp-client`), or `umbral-rules` for a rule-update request — the configured URL,
+its `.sig` and every redirect hop — whose payload is the request URL (delta
+`2026-10-rule-overrides`). A bundle rejected under REQ-SEC-013 writes one more row, `provider =
+'umbral-rules:rejected:<reason>'` with the URL's host, the bundle's size as `bytes` and its
+digest as `payload_sha256`, in the same transaction as its `rule_rejections` row (delta
+`2026-10-signed-rule-bundles`).
 
 ### 2.13 `mcp_servers`
 
 ```sql
 CREATE TABLE mcp_servers (
   id            TEXT PRIMARY KEY CHECK (id LIKE 'mcp\_%' ESCAPE '\'),
-  name          TEXT NOT NULL UNIQUE CHECK (name GLOB '[a-z0-9_-]*'),
+  name          TEXT NOT NULL UNIQUE CHECK (name GLOB '[a-z0-9_-]*'),  -- the application takes [a-z0-9]{1,32}
   transport     TEXT NOT NULL CHECK (transport IN ('stdio','http')),
   command       TEXT,
   args_json     TEXT NOT NULL DEFAULT '[]',
@@ -534,18 +676,43 @@ CREATE TABLE mcp_servers (
 
 | Data | Default retention | Configurable |
 |---|---|---|
-| `block_chunks` | 30 days | `retention.raw_output_days` |
-| `blocks.output_plain` | 180 days | `retention.plain_output_days` |
+| `block_chunks` | 30 days after the block closed | `retention.raw_output_days` |
+| `blocks.output_plain` | 180 days after the block closed | `retention.plain_output_days` |
 | Non-ephemeral threads | indefinite | manual deletion |
 | Ephemeral threads (`umb ai`) | 24 h | — |
 | `pane_history` | until the pane closes; cleared when the setting is disabled | `[experimental] pane_history` |
 | `pane_metadata` | per-key TTL, at most 24 h | per report |
-| Closed workspaces, tabs and panes | 30 days | yes |
+| Closed workspaces, tabs and panes | 30 days | `retention.closed_structure_days` |
 | `pane_aliases` | deleted with their pane (cascade); an alias never outlives its terminal | no |
 | `egress_log`, `usage` | 365 days | `retention.audit_days` |
 
 A daily maintenance job applies retention and runs `PRAGMA optimize` and
-`INSERT INTO blocks_fts(blocks_fts) VALUES('optimize')`.
+`INSERT INTO blocks_fts(blocks_fts) VALUES('optimize')` (`store.ApplyRetention`, T-F1-22, delta
+`2026-10-retention`):
+
+- **When.** Once when the daemon starts, beside it rather than before it serves, then every 24 h.
+  A failed run is logged and the next one tries again; a stopping daemon cancels it.
+- **Batches.** At most 500 rows per transaction — raw chunks counted as rows — so a turn
+  persisting meanwhile never waits long. The FTS optimize and the age scans over `blocks` are
+  bounded by the history's size, not by what is purged.
+- **Blocks.** Only `finished` and `abandoned` blocks lose output, aged from `ended_at`, else
+  `started_at`. The row and its `output_bytes` stay; clearing `output_plain` takes it out of
+  `blocks_fts` through the update trigger, and the command stays searchable.
+- **Ephemeral threads.** Purged 24 h after `updated_at` when not `running` nor
+  `awaiting_approval`, owning no `alive` session and no open block — checked again inside the
+  thread's own transaction. In that transaction: its approvals, its tool calls, its closed agent
+  blocks (REQ-TERM-005's exception), `owner_thread_id = NULL` on its exited sessions, then the
+  thread, which cascades its messages and rules. `usage` rows keep their audit with a NULL
+  thread. A thread that cannot be deleted is skipped and the job goes on.
+- **Closed structure.** Workspaces, then tabs, then panes past the window; what they hold
+  cascades. A purged number may be reissued (REQ-WS-002); a moved pane's alias never is, since
+  the pane allocator counts `pane_aliases` (REQ-WS-007).
+- **Pane metadata** past its `expires_at`, or 24 h after `updated_at`. A source's `#seq` row is
+  exempt from the age purge: forgetting it would let a replayed old report be accepted again
+  (delta `2026-10-display-metadata`).
+- **Audit.** `egress_log` and `usage` past `retention.audit_days`, by `created_at`.
+- Running blocks and threads with a turn are never touched. Non-ephemeral threads have no
+  deletion method yet.
 
 ## 5. Migrations
 
@@ -562,7 +729,8 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 | `0002_block_index.sql` | F0 | `idx_blocks_started` (§2.2) |
 | `0003_structure.sql` | F0 | `workspaces`, `tabs`, `panes`, `pane_aliases` and their indexes (§2.4b) |
 | `0004_restore.sql` | F0 | `pane_history` (§2.4d), `panes.command_pending` and `workspaces.focused_tab_id`/`focused_at` (§2.4b) — everything a restart needs and nothing else (T-F0-18) |
-| `0005_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers`, `pane_state_reports`, `pane_metadata`, `trust_keys`, `rule_bundles` and their indexes (§2.4c-2.4e, §2.6-2.13), plus the two `ALTER TABLE threads` statements of §2.5 |
+| `0005_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers`, `pane_state_reports`, `pane_metadata`, `trust_keys`, `rule_bundles`, `skills` and their indexes (§2.4c-2.4f, §2.6-2.13), plus the two `ALTER TABLE threads` statements of §2.5 |
+| `0006_rule_state.sql` | F1 | `rule_bundles.content`, `rule_rejections`, `rule_update_state` and its one row, `trust_key_events` and `idx_trust_key_events_at` (§2.4e) — the state signed rule bundles need (T-F1-30) |
 
 `threads` belongs to 0001 even though the agent arrives in F1: `sessions.owner_thread_id` and
 `blocks.thread_id` point at it, and with `foreign_keys=ON` SQLite rejects every insert into those
@@ -588,7 +756,8 @@ earlier drafts named.
    left `pending` by a daemon older than T-F0-21 are repaired too. Steps 1 and 2 share one
    transaction (delta `2026-09-recovery-integration`).
 2. `blocks.state IN ('running','interactive')` → `abandoned`.
-3. `threads.state IN ('running','awaiting_approval')` → `stopped`.
+3. `threads.state IN ('running','awaiting_approval')` → `stopped`, with `attention_state = 'idle'`, as a
+   cancelled turn leaves it (delta `2026-10-thread-cancel`).
 4. `approvals.state = 'pending'` → `expired`.
 5. Structure: `workspaces`, `tabs` and `panes` that were not closed are reopened with their labels,
    cwd and `layout_json`; **every pane launches a fresh shell**, whatever it was running before
@@ -603,6 +772,14 @@ earlier drafts named.
    accept `thread.send` again without losing context (REQ-AGT-017).
 8. `pane_state_reports` and `pane_metadata` are cleared: external authority and display metadata do
    not survive a restart (REQ-INT-002, REQ-INT-004).
+9. Skills: every `skills/.staging-*` directory is removed, and every `skills/<name>/` directory
+   with no `skills` row. A crash between the copy and the row, in either direction, leaves
+   nothing behind (REQ-SKL-002, delta `2026-09-skills-cli`). A replace sets the old copy aside as
+   `skills/.old-<name>`: when a row records `<name>`, the copy at `<name>` is kept only if its
+   digest is the row's, and the old copy is removed; otherwise `<name>` is removed and the old
+   copy renamed back. Every other `.old-*` is removed. The directory is `skills/` beside the
+   database and carries a `.umbral-skills` marker: a non-empty directory without it is refused at
+   start rather than swept (delta `2026-10-skill-store`).
 
 ## Change History
 
@@ -617,3 +794,18 @@ earlier drafts named.
 | 1.6 | 2026-09-20 | delta `2026-09-art6-structural-ids`: `workspaces`, `tabs`, `panes` and `pane_aliases` enforce the structural identifier grammar with a `CHECK` (C-05) |
 | 1.7 | 2026-09-20 | delta `2026-09-restore-semantics`: §6 step 5 stops launching a restored pane's stored command; `panes.command_pending` and `workspaces.focused_tab_id`/`focused_at` in §2.4b; `pane_history` (§2.4d) moves to migration `0004_restore` and the agent subdomain to `0005_agent`, superseding the note in 1.4 |
 | 1.8 | 2026-09-26 | delta `2026-09-recovery-integration`: §6 step 1 settles every `pending` integration once no session is alive — `osc133` for a session with blocks, `none` otherwise — so a crash inside a session's five-second window — and any row an older daemon left `pending` — ends on the verdict REQ-BLK-003 requires |
+| 1.9 | 2026-09-26 | delta `2026-09-skills-cli`: §2.4f `skills` in migration 0005, keyed like `mcp_servers`; §5's 0005 row names it; §6 step 9 sweeps orphaned skill directories |
+| 1.10 | 2026-09-27 | T-F1-09: §2.12 says `egress_log.provider` may name the tool `fetch_url`, whose requests leave the machine too. No DDL change. Delta `2026-09-builtin-tools` (proposed). |
+| 1.11 | 2026-09-27 | Ratifies delta `2026-09-builtin-tools`; §2.12 no longer calls it proposed. |
+| 1.12 | 2026-09-27 | T-F1-13: `tool_calls.result_json` holds `{"text", "tainted"}`. No DDL change. Delta `2026-09-agent-runtime` (proposed). |
+| 1.13 | 2026-09-27 | Ratifies delta `2026-09-agent-runtime` (§2.6's `result_json`). No DDL change. |
+| 1.14 | 2026-09-27 | §2.4e: `trust_keys` is seeded from the binary by fingerprint, removal is revocation, a re-add clears it, revocation discards the bundles a key verified, and `builtin` is version 0. No DDL change. Delta `2026-09-rule-signing-custody`. |
+| 1.15 | 2026-10-01 | §6 step 3 also sets `attention_state = idle` on the threads it stops (delta `2026-10-thread-cancel`, T-F1-16) |
+| 1.16 | 2026-10-01 | §2.12 `egress_log.provider` also takes `mcp:<name>`; §2.13 notes that the application narrows `name` to `[a-z0-9]{1,32}` (delta `2026-10-mcp-client`, T-F1-17); the CHECK is unchanged, migrations being forward-only |
+| 1.17 | 2026-10-04 | §4: the retention keys as `config.toml` names them (`closed_structure_days` added), and how the daily job runs, batches and purges (delta `2026-10-retention`, T-F1-22) |
+| 1.18 | 2026-10-17 | §2.5: `seen_at` is also written by a turn that ends while a client views its thread; neither write moves `updated_at` (delta `2026-10-attention-focus`, T-F1-24). No DDL change |
+| 1.19 | 2026-10-17 | §2.4c: how `pane_state_reports` is written — `seq = -1` for unnumbered, strictly increasing `updated_at` per pane, rows renamed with a moved pane (delta `2026-10-integration-surface`, T-F1-25). No DDL change |
+| 1.20 | 2026-10-18 | §2.4c: how `pane_metadata` is written — the key names, the reserved `#seq` row, strictly increasing `updated_at`, expiry read and defaulted to 24 h, how the 32 is counted; §4: the age purge keeps `#seq` rows (delta `2026-10-display-metadata`, T-F1-26). No DDL change |
+| 1.21 | 2026-10-18 | §2.12: `umbral-rules` rows, one per rule-update request and redirect hop, whose payload is the request URL (delta `2026-10-rule-overrides`, T-F1-29). No DDL change |
+| 1.22 | 2026-10-18 | §2.4e: migration `0006_rule_state` — `rule_bundles.content`, `rule_rejections`, `rule_update_state` (with `highest_version`, the floor a reset keeps), `trust_key_events`; §2.12: the `umbral-rules:rejected:<reason>` row; §5: the 0006 row (delta `2026-10-signed-rule-bundles`, T-F1-30) |
+| 1.23 | 2026-10-18 | delta `2026-10-skill-store` (T-F1-34): §6 step 9 settles a replace interrupted between its renames, and the skills directory sits beside the database |

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,4 +124,142 @@ func write(t *testing.T, body string) string {
 		t.Fatalf("write the settings file: %v", err)
 	}
 	return path
+}
+
+// TestTheOTelEndpointMustBeLocal: `[otel] endpoint` names an OTLP/HTTP collector on this
+// machine. Anything else stops the daemon rather than send telemetry off it (Art. 4); unset,
+// nothing is exported.
+func TestTheOTelEndpointMustBeLocal(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, write(t, ""))
+	if err != nil || settings.OTelEndpoint != "" {
+		t.Fatalf("no file: endpoint %q, %v", settings.OTelEndpoint, err)
+	}
+	for _, ok := range []string{
+		"http://127.0.0.1:4318", "http://localhost:4318", "http://[::1]:4318", "https://127.0.0.2:4318/",
+	} {
+		settings, err := LoadSettings(nil, write(t, "[otel]\nendpoint = \""+ok+"\"  # a local collector\n"))
+		if err != nil || settings.OTelEndpoint != strings.TrimSuffix(ok, "/") {
+			t.Errorf("%s: endpoint %q, %v", ok, settings.OTelEndpoint, err)
+		}
+	}
+	for _, bad := range []string{
+		"http://collector.example.com:4318", "http://10.0.0.2:4318", "http://0.0.0.0:4318",
+		"127.0.0.1:4318", "grpc://127.0.0.1:4317", "http://127.0.0.1:4318/v1/traces",
+		"http://user:pw@127.0.0.1:4318", "http://127.0.0.1:4318?x=1", "http://localhost.example.com",
+	} {
+		_, err := LoadSettings(nil, write(t, "[otel]\nendpoint = \""+bad+"\"\n"))
+		if !errors.Is(err, ErrSettingsInvalid) || !strings.Contains(err.Error(), "otel.endpoint") {
+			t.Errorf("%s was accepted, or refused without naming the key: %v", bad, err)
+		}
+		if strings.Contains(bad, "pw@") && strings.Contains(fmt.Sprint(err), "pw") {
+			t.Errorf("the refusal repeats the credential: %v", err)
+		}
+	}
+}
+
+// TestRetentionWindowsAreConfigurable: `[retention]` sets Data Model §4's
+// configurable windows, in whole days from 1 to 3650; without it the defaults apply, and a
+// value outside the range stops the daemon naming the key, as any malformed setting does.
+func TestRetentionWindowsAreConfigurable(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, write(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := settings.Retention, DefaultRetention(); got != want || want != (Retention{RawOutputDays: 30, PlainOutputDays: 180, ClosedStructureDays: 30, AuditDays: 365}) {
+		t.Fatalf("defaults %+v, want Data Model §4's", got)
+	}
+
+	settings, err = LoadSettings(nil, write(t, "[retention]\nraw_output_days = 7\nplain_output_days = 90 # shorter\nclosed_structure_days = 1\naudit_days = 3650\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Retention{RawOutputDays: 7, PlainOutputDays: 90, ClosedStructureDays: 1, AuditDays: 3650}); settings.Retention != want {
+		t.Fatalf("retention %+v, want %+v", settings.Retention, want)
+	}
+
+	for _, bad := range []string{"raw_output_days = 0", "plain_output_days = -1", "audit_days = 3651", "closed_structure_days = 99999", "raw_output_days = 1.5", "audit_days = 30d"} {
+		_, err := LoadSettings(nil, write(t, "[retention]\n"+bad+"\n"))
+		key := "retention." + strings.Fields(bad)[0]
+		if !errors.Is(err, ErrSettingsInvalid) || !strings.Contains(err.Error(), key) {
+			t.Errorf("%q: %v, want ErrSettingsInvalid naming %s", bad, err, key)
+		}
+	}
+}
+
+// TestStallWindowsAreConfigurable_REQ_AUT_008: `[waits]` sets the stall windows in whole
+// seconds from 5 to 3600, 120 for a local model and 30 for a remote one by default; a value
+// outside the range stops the daemon naming the key.
+func TestStallWindowsAreConfigurable_REQ_AUT_008(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, write(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Stall{LocalS: 120, RemoteS: 30}); settings.Stall != want {
+		t.Fatalf("defaults %+v, want %+v", settings.Stall, want)
+	}
+	settings, err = LoadSettings(nil, write(t, "[waits]\nstall_local_s = 3600\nstall_remote_s = 5\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Stall{LocalS: 3600, RemoteS: 5}); settings.Stall != want {
+		t.Fatalf("stall %+v, want %+v", settings.Stall, want)
+	}
+	for _, bad := range []string{"stall_local_s = 4", "stall_remote_s = 3601", "stall_local_s = 1.5", "stall_remote_s = 30s"} {
+		_, err := LoadSettings(nil, write(t, "[waits]\n"+bad+"\n"))
+		key := "waits." + strings.Fields(bad)[0]
+		if !errors.Is(err, ErrSettingsInvalid) || !strings.Contains(err.Error(), key) {
+			t.Errorf("%q: %v, want ErrSettingsInvalid naming %s", bad, err, key)
+		}
+	}
+}
+
+// TestNotificationsAreOnUnlessTurnedOff_REQ_NTF_001: `[notifications] enabled` defaults to
+// true, so REQ-NTF-001's `disabled` reason is something a user asks for; false turns them off,
+// and anything else stops the daemon like every other malformed boolean.
+func TestNotificationsAreOnUnlessTurnedOff_REQ_NTF_001(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, filepath.Join(t.TempDir(), "config.toml"))
+	if err != nil || !settings.NotificationsEnabled {
+		t.Fatalf("no settings file: enabled=%v err=%v, want on", settings.NotificationsEnabled, err)
+	}
+	settings, err = LoadSettings(nil, write(t, "[notifications]\nenabled = false\n"))
+	if err != nil || settings.NotificationsEnabled {
+		t.Fatalf("enabled = false: enabled=%v err=%v, want off", settings.NotificationsEnabled, err)
+	}
+	if _, err := LoadSettings(nil, write(t, "[notifications]\nenabled = sometimes\n")); !errors.Is(err, ErrSettingsInvalid) {
+		t.Fatalf("a malformed value = %v, want ErrSettingsInvalid", err)
+	}
+}
+
+// TestRuleUpdatesAreOffUnlessAsked_REQ_SEC_011: `[update] rules_check` is off by default, so
+// nothing leaves the machine for rules (Art. 4); `rules_url` defaults to the project's latest
+// release and, when given, must be an https URL with no credentials.
+func TestRuleUpdatesAreOffUnlessAsked_REQ_SEC_011(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, filepath.Join(t.TempDir(), "config.toml"))
+	if err != nil || settings.RulesCheck || settings.RulesURL != DefaultRulesURL {
+		t.Fatalf("no settings file: check=%v url=%q err=%v, want off and the default URL", settings.RulesCheck, settings.RulesURL, err)
+	}
+	settings, err = LoadSettings(nil, write(t, "[update]\nrules_check = true\nrules_url = \"https://rules.example.org/rules.json\"\n"))
+	if err != nil || !settings.RulesCheck || settings.RulesURL != "https://rules.example.org/rules.json" {
+		t.Fatalf("turned on: check=%v url=%q err=%v", settings.RulesCheck, settings.RulesURL, err)
+	}
+	for name, body := range map[string]string{
+		"a malformed switch": "[update]\nrules_check = maybe\n",
+		"plain http":         "[update]\nrules_url = \"http://rules.example.org/rules.json\"\n",
+		"credentials":        "[update]\nrules_url = \"https://u:p@rules.example.org/rules.json\"\n",
+		"not a URL":          "[update]\nrules_url = \"rules.json\"\n",
+	} {
+		if _, err := LoadSettings(nil, write(t, body)); !errors.Is(err, ErrSettingsInvalid) {
+			t.Errorf("%s: %v, want ErrSettingsInvalid", name, err)
+		}
+	}
 }

@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ecrespo/umbral/internal/bus"
@@ -48,11 +49,22 @@ type Config struct {
 	// DefaultShell and DefaultCWD fill in the optional create parameters (API Spec §5.3).
 	DefaultShell string
 	DefaultCWD   string
+	// SocketPath and BinPath are the daemon's socket and the `umb` binary, which every
+	// session is told as UMBRAL_SOCKET_PATH and UMBRAL_BIN_PATH (REQ-INT-001) so an
+	// integration's hook can call back without guessing. An empty one is left out.
+	SocketPath string
+	BinPath    string
+	// AgentInterruptEvery is how often a cancelled agent command's shell is interrupted again
+	// while it holds the PTY in silence (stopAgent). Zero is agentInterruptEvery; tests shorten
+	// it to make the race between a late interrupt and the next command frequent.
+	AgentInterruptEvery time.Duration
 }
 
 // Service implements ports.Sessions.
 type Service struct {
-	cfg Config
+	// threadMu serialises finding or creating a thread's PTY (REQ-AGT-003).
+	threadMu sync.Mutex
+	cfg      Config
 
 	mu   sync.RWMutex
 	live map[string]*liveSession
@@ -98,6 +110,33 @@ type liveSession struct {
 
 	done     chan struct{}
 	doneOnce sync.Once
+
+	// agent is the command the agent is waiting on in this session (REQ-AGT-003), guarded by
+	// mu; nil when none is.
+	agent *agentRun
+	// interrupted is set when stopAgent has interrupted the shell, and cleared by the next
+	// agent command, which then types an empty line first (RunForThread).
+	interrupted atomic.Bool
+}
+
+// agentRun is one command the agent typed and is waiting for. claimed turns true once the
+// drain goroutine has told the recorder the next block is the agent's; blockID is that block
+// once it opens; the closed block arrives on done.
+type agentRun struct {
+	threadID string
+	claimed  bool
+	blockID  string
+	done     chan domain.AgentRun
+	// unsaved is set when the block's row failed to be written or closed.
+	unsaved bool
+	// abandoned is a cancelled run whose block did not close in time. It keeps the PTY busy
+	// until that block closes or the shell shows its next prompt, so its late block cannot
+	// be taken for the next run's.
+	abandoned bool
+	// cancelled is a run whose caller gave up. Its command is signalled once the shell has
+	// started it (its block is open), never before: an interrupt that reaches a shell still
+	// reading the line is lost, and the command then runs unstopped.
+	cancelled bool
 }
 
 // New builds a service. It does not start anything: sessions come into being through Create.
@@ -111,6 +150,9 @@ func New(cfg Config) (*Service, error) {
 		return nil, errors.New("sessions: a PTY factory is required")
 	case cfg.NewEmu == nil:
 		return nil, errors.New("sessions: an Emulator factory is required")
+	}
+	if cfg.AgentInterruptEvery <= 0 {
+		cfg.AgentInterruptEvery = agentInterruptEvery
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
@@ -142,7 +184,9 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 		return domain.Session{}, err
 	}
 
-	program, args, env, cleanup, err := s.launch(params)
+	// The id is chosen before the launch because the child is told it (REQ-INT-001).
+	id := store.NewID(store.PrefixSession)
+	program, args, env, cleanup, err := s.launch(id, params)
 	if err != nil {
 		return domain.Session{}, err
 	}
@@ -180,7 +224,7 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 	}
 
 	session := domain.Session{
-		ID: store.NewID(store.PrefixSession),
+		ID: id,
 		// The program actually running, which for a pane with a command is that command
 		// and not the shell nobody started. `session.list` is how a client sees it.
 		Shell:       program,
@@ -190,6 +234,9 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 		Integration: domain.IntegrationPending,
 		InputOwner:  domain.InputOwnerHuman,
 		CreatedAt:   time.Now(),
+	}
+	if params.OwnerThreadID != "" {
+		session.OwnerThreadID, session.InputOwner = params.OwnerThreadID, domain.InputOwnerAgent
 	}
 
 	if err := s.persistCreate(ctx, session); err != nil {
@@ -240,7 +287,7 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 // List reports every session the daemon knows, live or historical.
 func (s *Service) List(ctx context.Context) ([]domain.Session, error) {
 	rows, err := s.cfg.Store.DB().QueryContext(ctx, `
-		SELECT id, shell, cwd, cols, rows, state, integration, input_owner,
+		SELECT id, shell, cwd, cols, rows, state, integration, input_owner, owner_thread_id,
 		       exit_code, created_at, exited_at
 		FROM sessions ORDER BY created_at DESC`)
 	if err != nil {
@@ -270,7 +317,7 @@ func (s *Service) Get(ctx context.Context, id string) (domain.Session, error) {
 	}
 
 	row := s.cfg.Store.DB().QueryRowContext(ctx, `
-		SELECT id, shell, cwd, cols, rows, state, integration, input_owner,
+		SELECT id, shell, cwd, cols, rows, state, integration, input_owner, owner_thread_id,
 		       exit_code, created_at, exited_at
 		FROM sessions WHERE id = ?`, id)
 	session, err := scanSession(row)
@@ -400,6 +447,31 @@ func (s *Service) Snapshot(_ context.Context, id string) (ports.Snapshot, error)
 	return ports.Snapshot{Data: data, CursorX: cursorX, CursorY: cursorY, Seq: seq}, nil
 }
 
+// ScreenText renders the session's screen as plain text, with the sequence number it is
+// current as of and the line still being written at the cursor ("" when there is none), all
+// read under the same lock as Snapshot: output after it is exactly what carries a higher
+// sequence number (block.wait_output, REQ-AUT-003).
+func (s *Service) ScreenText(_ context.Context, id string) (text string, seq uint64, open string, err error) {
+	live := s.lookup(id)
+	if live == nil {
+		return "", 0, "", fmt.Errorf("%w: %s", domain.ErrNotFound, id)
+	}
+
+	live.snapshotMu.Lock()
+	defer live.snapshotMu.Unlock()
+
+	if text, err = live.emu.PlainText(); err != nil {
+		return "", 0, "", err
+	}
+	if open, err = live.emu.OpenLine(); err != nil {
+		return "", 0, "", err
+	}
+	live.mu.RLock()
+	seq = live.seq
+	live.mu.RUnlock()
+	return text, seq, open, nil
+}
+
 // Close asks the shell to exit, then insists (API Spec §5.9).
 func (s *Service) Close(_ context.Context, id string) error {
 	live := s.lookup(id)
@@ -423,8 +495,15 @@ func (s *Service) Close(_ context.Context, id string) error {
 	return nil
 }
 
-// Shutdown closes every live PTY. The daemon calls it on the way out so no shell is
-// orphaned; the rows are repaired on the next start by store.Recover.
+// shutdownGrace bounds how long Shutdown waits for the hung-up shells to be recorded as
+// exited. A process that ignores SIGHUP and keeps the PTY's other end open is left to
+// store.Recover rather than holding the daemon's exit.
+const shutdownGrace = 5 * time.Second
+
+// Shutdown closes every live PTY and waits, up to shutdownGrace, until each session's exit is
+// persisted. The daemon calls it on the way out, before the store closes, so no shell is
+// orphaned and no exit is written to a closed database; a row the wait gives up on is
+// repaired on the next start by store.Recover.
 func (s *Service) Shutdown() {
 	s.mu.Lock()
 	live := make([]*liveSession, 0, len(s.live))
@@ -436,6 +515,18 @@ func (s *Service) Shutdown() {
 	for _, l := range live {
 		_ = l.pty.Signal(ports.SignalHangup)
 		_ = l.pty.Close()
+	}
+
+	deadline := time.NewTimer(shutdownGrace)
+	defer deadline.Stop()
+	for i, l := range live {
+		select {
+		case <-l.done:
+		case <-deadline.C:
+			s.cfg.Logger.Warn("shutdown: sessions still exiting",
+				slog.Int("sessions", len(live)-i), slog.Duration("waited", shutdownGrace))
+			return
+		}
 	}
 }
 

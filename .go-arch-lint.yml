@@ -14,6 +14,12 @@
 version: 3
 workdir: .
 
+# e2e/us003/fixture is a module of its own, not Umbral's code: the Go repository with a broken
+# test that the live US-003 run copies and asks the agent to fix (T-F1-21). It imports nothing
+# of Umbral's and nothing of Umbral's imports it, so no component applies to it.
+exclude:
+  - e2e/us003/fixture
+
 components:
   # --- composition root -------------------------------------------------------
   cmd: { in: cmd/** }
@@ -22,6 +28,11 @@ components:
   # shell holds the integration bootstrap scripts and the embed directive that reaches
   # them. It is a leaf: no package dependencies, so no module can hide logic in it.
   shellscripts: { in: shell }
+
+  # --- operator tools ------------------------------------------------------------
+  # tools/rulesign signs rule bundles offline. It may reach the security domain only, so its
+  # `verify` is the daemon's own verification function and nothing else (T-F1-30).
+  rulesign-tool: { in: tools/rulesign }
 
   # --- module application cores ------------------------------------------------
   # The service that orchestrates a module's own ports. Tech Design §5.1 lists domain,
@@ -35,6 +46,31 @@ components:
   # and outside adapters, which must stay replaceable.
   workspaces-service: { in: internal/workspaces }
 
+  # The model gateway's core — the catalog, and from T-F1-07 the router — for the same
+  # reason: it orchestrates llmgw's ports and belongs in neither domain nor adapters.
+  llmgw-service: { in: internal/llmgw }
+
+  # The agent runtime (T-F1-13), for the same reason: it orchestrates the module's ports and
+  # the other modules' ports (Tech Design §5.2: agents -> ports of sessions, tools, context,
+  # llmgw, security, store), and belongs in neither domain nor adapters.
+  agents-service: { in: internal/agents }
+
+  # The MCP client (T-F1-17), for the same reason: the manager orchestrates the module's own
+  # ports — the store, the SDK connector, the secrets, and the sink its tools go to.
+  mcp-service: { in: internal/mcp }
+
+  waits-service: { in: internal/waits }
+
+  # The integration surface (T-F1-25): external state reports and `pane.state_changed`.
+  integrations-service: { in: internal/integrations }
+
+  # The notification sink (T-F1-27): normalization, rate limit, typed reasons.
+  notify-service: { in: internal/notify }
+
+  # policy.explain (T-F1-28): it gathers a thread's mode, write root and rules through a
+  # port of its own and asks the pure engine, so it belongs in neither domain nor adapters.
+  security-service: { in: internal/security }
+
   # The tree's integration tests wire the real store to the service, which is the job
   # Art. 3 reserves for a composition root — the same exception sessions-integration has.
   workspaces-integration: { in: internal/workspaces/integration }
@@ -44,11 +80,17 @@ components:
   # than excluding _test.go from them.
   sessions-integration: { in: internal/sessions/integration }
 
+  # The same exception for the integration surface, whose tests run over the real tree.
+  integrations-integration: { in: internal/integrations/integration }
+
   # --- cross-cutting modules (no hexagonal split) -----------------------------
   bus:    { in: internal/bus }
   api:    { in: internal/api }
   store:  { in: internal/store }
   config: { in: internal/config }
+  # The daemon's counters (T-F1-15); modules count through a port of their own and
+  # cmd/umbrald hands them this implementation, so nothing imports obs but the root.
+  obs:    { in: internal/obs }
   client: { in: internal/client }
   tui:          { in: internal/tui }
   tui-ports:    { in: internal/tui/ports }
@@ -82,6 +124,19 @@ components:
   security-domain:   { in: internal/security/domain }
   security-ports:    { in: internal/security/ports }
   security-adapters: { in: internal/security/adapters/** }
+
+  mcp-domain:   { in: internal/mcp/domain }
+  mcp-ports:    { in: internal/mcp/ports }
+  mcp-adapters: { in: internal/mcp/adapters/** }
+
+  waits-domain: { in: internal/waits/domain }
+  waits-ports:  { in: internal/waits/ports }
+
+  integrations-domain:   { in: internal/integrations/domain }
+  integrations-ports:    { in: internal/integrations/ports }
+  integrations-adapters: { in: internal/integrations/adapters/** }
+  notify-domain:         { in: internal/notify/domain }
+  notify-ports:          { in: internal/notify/ports }
 deps:
   # --- domain: the standard library and other domains, nothing else -----------
   sessions-domain:
@@ -133,6 +188,13 @@ deps:
       - context-domain
       - llmgw-domain
 
+  # The MCP domain imports nothing but the standard library. The allowance is unused: go-arch-lint
+  # requires one, and another domain is the narrowest, as workspaces-domain's is.
+  mcp-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - llmgw-domain
+
   # --- ports: domain types only; no infrastructure, no external libraries -----
   sessions-ports:
     anyVendorDeps: false
@@ -147,6 +209,7 @@ deps:
   agents-ports:
     anyVendorDeps: false
     mayDependOn:
+      - bus
       - sessions-domain
       - agents-domain
       - tools-domain
@@ -165,6 +228,9 @@ deps:
   context-ports:
     anyVendorDeps: false
     mayDependOn:
+      # skill.changed is a bus event the API forwards (T-F1-34), as security-ports'
+      # events are.
+      - bus
       - sessions-domain
       - agents-domain
       - tools-domain
@@ -183,12 +249,20 @@ deps:
   security-ports:
     anyVendorDeps: false
     mayDependOn:
+      - bus
       - sessions-domain
       - agents-domain
       - tools-domain
       - context-domain
       - llmgw-domain
       - security-domain
+
+  mcp-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - bus
+      - mcp-domain
+      - llmgw-domain
 
   # --- adapters: its own ports, infrastructure and external libraries ---------
   # sessions and llmgw never reach the agent runtime (Tech Design §5.2).
@@ -213,6 +287,8 @@ deps:
   llmgw-adapters:
     anyVendorDeps: true
     mayDependOn:
+      # adapters/fantasyconv is what the adapters built on Fantasy share (T-F1-05).
+      - llmgw-adapters
       - llmgw-ports
       - store
       - bus
@@ -225,6 +301,10 @@ deps:
   tools-adapters:
     anyVendorDeps: true
     mayDependOn:
+      # mcptools offers an MCP server's tools in the mcp module's own types (T-F1-17).
+      - mcp-domain
+      # the registry's tests assemble the built-ins (T-F1-09).
+      - tools-adapters
       - tools-ports
       - sessions-ports
       - security-ports
@@ -259,6 +339,16 @@ deps:
       - context-domain
       - llmgw-domain
       - security-domain
+
+  # The store over `mcp_servers`, and the SDK connector with its test server (T-F1-17).
+  mcp-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - mcp-adapters
+      - mcp-ports
+      - mcp-domain
+      - store
+      - llmgw-domain
 
   # agents is the only module allowed to reach the other modules' ports.
   agents-adapters:
@@ -321,8 +411,24 @@ deps:
       - config
       - sessions-ports
       - sessions-domain
+      - agents-ports
+      - agents-domain
+      - security-domain
       - workspaces-ports
       - workspaces-domain
+      - mcp-ports
+      - mcp-domain
+      - waits-ports
+      - waits-domain
+      - integrations-ports
+      - integrations-domain
+      # policy.explain (T-F1-28).
+      - security-ports
+      - notify-ports
+      - notify-domain
+      # skill.* (T-F1-34).
+      - context-ports
+      - context-domain
   client:
     anyVendorDeps: true
     mayDependOn:
@@ -355,6 +461,26 @@ deps:
       - llmgw-domain
       - security-domain
 
+  agents-service:
+    anyVendorDeps: true
+    mayDependOn:
+      - agents-ports
+      - agents-domain
+      - tools-ports
+      - tools-domain
+      - context-ports
+      - context-domain
+      - llmgw-domain
+      - security-domain
+      - bus
+
+  mcp-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - mcp-ports
+      - mcp-domain
+      - bus
+
   sessions-service:
     anyVendorDeps: true
     mayDependOn:
@@ -373,12 +499,22 @@ deps:
       - store
       - bus
 
+  # OpenTelemetry since T-F1-18, and no other module: the modules trace and count through
+  # ports of their own, which cmd/umbrald gives obs's implementation. The `bus` allowance is
+  # unused, as workspaces-domain's is: go-arch-lint requires one, and `bus` is the narrowest
+  # a sink can be given — the one Tech Design §5.2 gives `notify`.
+  obs:
+    anyVendorDeps: true
+    mayDependOn:
+      - bus
+
   # --- composition root: the only place that wires modules together (Art. 3) ---
   cmd:
     anyVendorDeps: true
     mayDependOn:
       - api
       - bus
+      - obs
       - store
       - config
       - client
@@ -387,6 +523,13 @@ deps:
       - tui-adapters
       - sessions-service
       - workspaces-service
+      - llmgw-service
+      - agents-service
+      - mcp-service
+      - waits-service
+      - integrations-service
+      - notify-service
+      - security-service
       - shellscripts
       - sessions-ports
       - sessions-adapters
@@ -394,6 +537,13 @@ deps:
       - workspaces-adapters
       - agents-ports
       - agents-adapters
+      - mcp-ports
+      - mcp-adapters
+      - waits-ports
+      - integrations-ports
+      - integrations-adapters
+      - notify-ports
+      - notify-domain
       - tools-ports
       - tools-adapters
       - context-ports
@@ -409,6 +559,7 @@ deps:
       - context-domain
       - llmgw-domain
       - security-domain
+      - mcp-domain
 
 
   # --- the workspace tree (Tech Design §5.2) ----------------------------------
@@ -449,6 +600,12 @@ deps:
       - sessions-domain
       - bus
 
+  llmgw-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - llmgw-ports
+      - llmgw-domain
+
   workspaces-integration:
     anyVendorDeps: true
     mayDependOn:
@@ -459,3 +616,113 @@ deps:
       - sessions-domain
       - store
       - bus
+
+  # --- the wait engine (Tech Design §5.2, DD-011) -----------------------------
+  # `waits` -> ports of `agents` and `sessions`, plus `bus`; never `api`. It reads a
+  # thread's status and a pane's screen through its own ports, which `cmd` implements over
+  # the runtime and the terminal, and follows both through their published events. It has
+  # no adapters and no store of its own: a wait lives only as long as its call. The domain
+  # reuses the sessions domain's escape-sequence stripper, so a pane's output is read the
+  # way a block's is.
+  waits-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+
+  waits-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - waits-domain
+      - sessions-domain
+
+  waits-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - waits-ports
+      - waits-domain
+      - agents-ports
+      - agents-domain
+      - sessions-ports
+      - sessions-domain
+      - bus
+
+  # --- the integration surface (Tech Design §5.2, T-F1-25) --------------------
+  # `integrations` -> ports of `workspaces` and `store`, plus `bus`; never `agents` or `api`.
+  # It reads a pane's effective state through the tree, which resolves DD-012's precedence,
+  # and learns of the changes its own reports did not make through events `cmd` subscribes
+  # it to. The domain uses its allowance for the display metadata keys (T-F1-26), which the
+  # tree reads back and so are declared once, in workspaces-domain.
+  integrations-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - workspaces-domain
+
+  integrations-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - integrations-domain
+      - workspaces-domain
+      # The published event carries a bus.Kind, as workspaces-ports' do.
+      - bus
+
+  integrations-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - integrations-ports
+      - integrations-domain
+      - store
+
+  integrations-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - integrations-ports
+      - integrations-domain
+      - workspaces-ports
+      - workspaces-domain
+      - bus
+
+  integrations-integration:
+    anyVendorDeps: true
+    mayDependOn:
+      - integrations-service
+      - integrations-ports
+      - integrations-domain
+      - integrations-adapters
+      - workspaces-service
+      - workspaces-ports
+      - workspaces-domain
+      - workspaces-adapters
+      - sessions-domain
+      - store
+      - bus
+
+  # --- the notification sink (Tech Design §5.2, T-F1-27) ------------------------
+  # `notify` -> `bus` and the standard library only; it is a sink and imports no other module.
+  # Its deliverer is the API server and its callers reach it through cmd, so nothing here
+  # names another module. The `bus` allowance is unused, as obs's is.
+  notify-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - bus
+
+  notify-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - notify-domain
+
+  notify-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - notify-ports
+      - notify-domain
+      - bus
+  security-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - security-ports
+      - security-domain
+      - llmgw-domain
+  rulesign-tool:
+    anyVendorDeps: false
+    mayDependOn:
+      - security-domain

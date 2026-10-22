@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"sync"
+
 	tea "charm.land/bubbletea/v2"
 
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
@@ -138,5 +140,134 @@ func (m *Model) resizeSessionCmd(sessionID string, size sessdomain.Size) tea.Cmd
 			return errorMsg{err: err}
 		}
 		return nil
+	}
+}
+
+// createThreadCmd starts the panel's thread in the focused pane's directory.
+func (m *Model) createThreadCmd(cwd string) tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		id, err := daemon.CreateThread(ctx, cwd)
+		if err != nil {
+			return threadFailedMsg{err: err}
+		}
+		return threadCreatedMsg{threadID: id}
+	}
+}
+
+// focusOrder keeps thread.focus calls in the order the panel made them. Bubble Tea runs
+// commands concurrently, so a focus made before an unfocus could otherwise reach the daemon
+// after it and leave a view the panel no longer has.
+type focusOrder struct {
+	mu sync.Mutex
+	// made numbers the calls as they are made; sent is the newest one sent.
+	made, sent uint64
+}
+
+// focusCmd tells the daemon which thread this client views, "" for none. The calls are sent
+// one at a time, and one that finds a newer call already sent sends nothing. A failure is not
+// reported: a failed focus leaves the thread `done`, which an unviewed thread shows anyway,
+// and a failed unfocus leaves the view until the next one or until the TUI disconnects.
+func (m *Model) focusCmd(threadID string) tea.Cmd {
+	daemon, order := m.daemon, m.focus
+	order.mu.Lock()
+	order.made++
+	n := order.made
+	order.mu.Unlock()
+	return func() tea.Msg {
+		order.mu.Lock()
+		defer order.mu.Unlock()
+		if n < order.sent {
+			return nil
+		}
+		order.sent = n
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		_ = daemon.Focus(ctx, threadID)
+		return nil
+	}
+}
+
+// sendCmd sends a message to the panel's thread.
+func (m *Model) sendCmd(threadID string, out outgoing) tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		_, err := daemon.Send(ctx, threadID, out.text, out.attachments)
+		return sentMsg{err: err}
+	}
+}
+
+// respondCmd answers an approval.
+func (m *Model) respondCmd(apr ports.Approval, decision, scope string) tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		if err := daemon.Respond(ctx, apr.ID, decision, scope); err != nil {
+			return respondFailedMsg{approval: apr, err: err}
+		}
+		return nil
+	}
+}
+
+// cancelCmd stops a thread's running turn.
+func (m *Model) cancelCmd(threadID string) tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		stopped, err := daemon.Cancel(ctx, threadID)
+		if err != nil {
+			return errorMsg{err: err}
+		}
+		return cancelledMsg{threadID: threadID, stopped: stopped}
+	}
+}
+
+// loadApprovalsCmd lists the approvals already pending when the TUI starts.
+func (m *Model) loadApprovalsCmd() tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		list, err := daemon.Approvals(ctx)
+		return approvalsLoadedMsg{approvals: list, err: err}
+	}
+}
+
+// loadExtensionsCmd lists both of the extensions view's lists, which every opening of the
+// panel does: removing a server publishes nothing (Tech §5.3e).
+func (m *Model) loadExtensionsCmd() tea.Cmd { return tea.Batch(m.loadServersCmd(), m.loadSkillsCmd()) }
+
+// loadServersCmd and loadSkillsCmd list the extensions view's MCP servers and skills.
+func (m *Model) loadServersCmd() tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		list, err := daemon.McpServers(ctx)
+		return serversLoadedMsg{servers: list, err: err}
+	}
+}
+
+func (m *Model) loadSkillsCmd() tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		list, err := daemon.Skills(ctx)
+		return skillsLoadedMsg{skills: list, err: err}
 	}
 }

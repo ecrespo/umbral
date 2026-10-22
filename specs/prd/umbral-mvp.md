@@ -6,10 +6,10 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.12 |
+| **Version** | 1.21 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
-| **Last updated** | 2026-09-26 |
+| **Last updated** | 2026-09-27 |
 | **Source** | `docs/ARCHITECTURE.md` v0.1 |
 
 ---
@@ -81,6 +81,11 @@ unified memory. The Go ecosystem already provides the building blocks:
 | Tool reliability | Rate of invalid tool calls after repair, per supported local model | < 5 % | end of F1 |
 | Verifiable privacy | Remote requests without an `egress_log` entry | 0 | continuous |
 
+"After repair" in the tool-reliability goal counts the invalid calls the one repair of
+REQ-AGT-006 did not fix — each turn it ends `tool_error` holds one — over every tool call, per
+local model (delta `2026-10-us003-e2e`). The rate before repair, over the same calls, and the
+share of repairs that failed are reported beside it; neither is the target.
+
 ### 4.2 User Goals
 
 | User goal | Indicator |
@@ -103,7 +108,8 @@ unified memory. The Go ecosystem already provides the building blocks:
 - [ ] Context: rules files, `@` attachments, git and compaction.
 - [ ] Model gateway: Ollama, llama.cpp, LM Studio, OpenRouter and generic OpenAI-compatible; presets for the Hugging Face router and OmniRoute.
 - [ ] MCP client (stdio and streamable HTTP).
-- [ ] `umb` CLI (`ai`, `block`, `status`).
+- [ ] Skills for Umbral's agent: text bundles installed locally with `umb skill`, loaded on demand.
+- [ ] `umb` CLI (`ai`, `block`, `status`, the workspace tree, `limits`, `skill`, `mcp`).
 - [ ] Secret redaction with signed rule updates, key management and recovery.
 - [ ] `egress_log`, keyring with an opt-in environment fallback, and an authenticated socket.
 - [ ] Wait monitoring: inventory, safe cancellation and stalled-turn detection.
@@ -141,7 +147,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-TERM-002** · MUST · ubiquitous — THE SYSTEM SHALL process PTY output with the VT emulator and pass 100 % of the MUST cases of the conformance suite (alt-screen, truecolor, bracketed paste, resize and reflow).
 - **REQ-TERM-003** · MUST · state — WHILE a session is alive, THE SYSTEM SHALL keep the PTY and screen state even when no client is connected.
 - **REQ-TERM-004** · MUST · event — WHEN a client subscribes to an existing session, THE SYSTEM SHALL send a screen snapshot and up to 10,000 lines of scrollback before the first live chunk.
-- **REQ-TERM-005** · MUST · unwanted — IF the shell process exits, THEN THE SYSTEM SHALL emit `session.exited` with the exit code and keep the session's blocks in the database.
+- **REQ-TERM-005** · MUST · unwanted — IF the shell process exits, THEN THE SYSTEM SHALL emit `session.exited` with the exit code and keep the session's blocks in the database. Retention (Data Model §4) is the one exception: an ephemeral thread's agent blocks are deleted with the thread, since the schema cannot hold an agent block without its thread; the session itself stays (delta `2026-10-retention`).
 - **REQ-TERM-006** · MUST · ubiquitous — THE SYSTEM SHALL forward PTY output to subscribed clients adding under 5 ms p95 of latency, measured inside the daemon.
 - **REQ-TERM-007** · MUST · event — WHEN a client invokes `session.resize`, THE SYSTEM SHALL apply the new size to the PTY and the emulator, and notify `session.resized` to every subscribed client.
 - **REQ-TERM-008** · MUST · unwanted — IF a client sends input to a session whose input lock belongs to the agent, THEN THE SYSTEM SHALL reject it with `INPUT_LOCKED` without writing it to the PTY.
@@ -169,25 +175,25 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-AGT-003** · MUST · event — WHEN the agent runs `run_command`, THE SYSTEM SHALL execute it in a PTY dedicated to the thread and record it as a block with `origin = agent`.
 - **REQ-AGT-004** · MUST · event — WHEN the policy engine returns `ask` for a tool, THE SYSTEM SHALL emit `approval.requested` and pause the turn until it receives `approval.respond`.
 - **REQ-AGT-005** · MUST · unwanted — IF the user denies an approval, THEN THE SYSTEM SHALL return a `denied_by_user` tool result to the model and continue the turn without running the tool.
-- **REQ-AGT-006** · MUST · unwanted — IF the arguments of a tool call do not validate against its schema, THEN THE SYSTEM SHALL retry once with a repair message and, if it fails again, end the turn with `stop_reason = tool_error`.
+- **REQ-AGT-006** · MUST · unwanted — IF the arguments of a tool call do not validate against its schema, THEN THE SYSTEM SHALL retry once with a repair message and, if it fails again, end the turn with `stop_reason = tool_error`. An invalid call is one whose tool does not exist, whose input is not JSON, or whose input fails the schema; the retry is the model's next step, one per invalid call (delta `2026-10-tool-call-repair`).
 - **REQ-AGT-007** · MUST · event — WHEN the user invokes `thread.cancel`, THE SYSTEM SHALL stop the turn and terminate the processes it launched in under 500 ms.
-- **REQ-AGT-008** · MUST · unwanted — IF a turn reaches `max_steps` (50 by default) or the thread's token budget, THEN THE SYSTEM SHALL stop it with `stop_reason = max_steps` or `budget`.
+- **REQ-AGT-008** · MUST · unwanted — IF a turn reaches `max_steps` (50 by default), the thread's token budget, or the thread's cost cap `router.max_cost_usd_per_thread` where one is set, THEN THE SYSTEM SHALL stop it with `stop_reason = max_steps` or `budget`. The cost cap is checked before every priced call against what the thread has spent, earlier turns included, so a thread overshoots it by one call at most; a `thread.send` to a thread that has reached it answers `BUDGET_EXCEEDED` (delta `2026-10-cost-cap`).
 - **REQ-AGT-009** · MUST · state — WHILE a thread is in `ask` mode, THE SYSTEM SHALL expose only `ReadOnly` tools to the model.
 - **REQ-AGT-010** · MUST · event — WHEN the user changes a thread's model, THE SYSTEM SHALL use the new model from the next turn on, keeping the full history.
-- **REQ-AGT-011** · MUST · ubiquitous — THE SYSTEM SHALL persist every message, tool call, result and approval decision of a thread before sending it to the client.
+- **REQ-AGT-011** · MUST · ubiquitous — THE SYSTEM SHALL persist every message, tool call, result and approval decision of a thread before sending it to the client, and SHALL stop the turn with `stop_reason = storage_error` when a write fails, without running or announcing what it could not record.
 - **REQ-AGT-013** · MUST · state — WHILE a thread is in `auto-edit` mode, THE SYSTEM SHALL allow without approval the `WriteFS` tools whose path is inside the thread's **write root** and SHALL request approval (`ask`) for those pointing outside it. The deny reason reported for the second case is `outside_write_root`.
 - **REQ-AGT-014** · MUST · state — WHILE a thread is in `normal` mode (the default), THE SYSTEM SHALL apply `ask` to every tool that is not `ReadOnly`, unless the user has persisted `allow` rules.
 - **REQ-AGT-015** · MUST · unwanted — IF `thread.send` arrives with a `client_msg_id` already processed in the same thread, THEN THE SYSTEM SHALL reply with the original `turn_id` and `message_id` without creating a new turn or running any tool again.
 - **REQ-AGT-016** · MUST · state — WHILE a thread has finished a turn that no client has viewed, THE SYSTEM SHALL expose its attention state as `done`, and SHALL change it to `idle` when a client focuses the thread.
 - **REQ-AGT-017** · MUST · event — WHEN the daemon starts after a shutdown, THE SYSTEM SHALL restore every thread with its full message history, mark interrupted turns `stopped`, and accept `thread.send` on them without losing previous context.
-- **REQ-AGT-018** · MUST · ubiquitous — THE SYSTEM SHALL restrict `fetch_url` to the `http` and `https` schemes, a 10 s timeout and 2 MiB of body, SHALL refuse redirects whose target resolves to loopback, link-local or private address ranges, and SHALL mark the result as untrusted content.
+- **REQ-AGT-018** · MUST · ubiquitous — THE SYSTEM SHALL restrict `fetch_url` to the `http` and `https` schemes, a 10 s timeout and 2 MiB of body, SHALL refuse to connect to loopback, link-local or private address ranges, directly or through a redirect, and SHALL mark the result as untrusted content.
 - **REQ-AGT-012** · SHOULD · event — WHEN `edit_file` or `write_file` requires approval, THE SYSTEM SHOULD include the unified diff of the proposed change in `approval.requested`.
 
 ### 6.4 Context (CTX)
 
 - **REQ-CTX-001** · MUST · event — WHEN a turn's prompt is assembled, THE SYSTEM SHALL include the rules files `AGENTS.md`, `CLAUDE.md`, `WARP.md` and `CRUSH.md` (and their `.local.md` variants), searched from the repo root down to the thread's cwd. Precedence is by depth — the file closest to the cwd wins — and, at equal depth, `AGENTS.md` → `CLAUDE.md` → `WARP.md` → `CRUSH.md`, with each `.local.md` above its own file.
 - **REQ-CTX-002** · MUST · event — WHEN a message includes `@file`, `@directory` or `@block:<id>` attachments, THE SYSTEM SHALL add their content: file text, directory listing or the block's plain text.
-- **REQ-CTX-003** · MUST · state — WHILE the thread's cwd is inside a git repository, THE SYSTEM SHALL include the current branch, `git status --short` and `git diff --stat` in the context.
+- **REQ-CTX-003** · MUST · state — WHILE the thread's cwd is inside a git repository, THE SYSTEM SHALL include the current branch, `git status --short` and `git diff --stat` in the context, bounded, and without running any command the repository's configuration names.
 - **REQ-CTX-004** · MUST · unwanted — IF the estimated context exceeds the model window minus the response reserve, THEN THE SYSTEM SHALL compact the history with a summary before sending and record the `context.compacted` event.
 - **REQ-CTX-005** · MUST · unwanted — IF an attachment exceeds 256 KiB, THEN THE SYSTEM SHALL truncate it and state in the context how many bytes were omitted.
 
@@ -195,21 +201,21 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 
 - **REQ-LLM-001** · MUST · ubiquitous — THE SYSTEM SHALL support the providers `ollama` (native API), `llamacpp`, `lmstudio`, `openrouter` and generic `openai-compat`.
 - **REQ-LLM-002** · MUST · event — WHEN the daemon starts, or a client invokes `model.list` with `refresh = true`, THE SYSTEM SHALL discover the models of every configured provider (`/v1/models`, `/api/tags`) and update the catalog.
-- **REQ-LLM-003** · MUST · unwanted — IF a provider replies 429 or 5xx, or does not deliver the first token within `first_token_timeout` (30 s remote, 120 s local), THEN THE SYSTEM SHALL try the next candidate of the task class and record the failure in `usage`.
+- **REQ-LLM-003** · MUST · unwanted — IF a provider replies 429 or 5xx, or does not deliver the first token within `first_token_timeout` (30 s remote, 120 s local), before the first token reaches the caller, THEN THE SYSTEM SHALL try the next candidate of the task class and record the failure in `usage`.
 - **REQ-LLM-004** · MUST · optional — WHERE `router.offline = true`, THE SYSTEM SHALL discard every remote candidate and, if no local one remains, reply `PROVIDER_UNAVAILABLE`.
-- **REQ-LLM-005** · MUST · ubiquitous — THE SYSTEM SHALL record, for every model call, the input tokens, output tokens, time to first token and cost in micro-USD.
+- **REQ-LLM-005** · MUST · ubiquitous — THE SYSTEM SHALL record, for every model call made to a provider, the input tokens, output tokens, time to first token and cost in micro-USD.
 - **REQ-LLM-006** · MUST · ubiquitous — THE SYSTEM SHALL send Ollama the model's configured `num_ctx` in every request.
 - **REQ-LLM-007** · SHOULD · ubiquitous — THE SYSTEM SHOULD include configuration presets for the Hugging Face router (`https://router.huggingface.co/v1`) and for a self-hosted OmniRoute instance.
 - **REQ-LLM-008** · COULD · ubiquitous — THE SYSTEM MAY run an embedded model through yzma for the `fast` class.
 
 ### 6.6 Security (SEC)
 
-- **REQ-SEC-001** · MUST · ubiquitous — THE SYSTEM SHALL apply the redaction rules to all content before sending it to a provider, replacing every match with `[REDACTED:<rule>]`. The rules are prefix patterns (`sk-`, `ghp_`, `AKIA`, PEM blocks, JWT) plus a generic detector that only fires on strings with entropy ≥ 4.5 bits per character and length ≥ 20.
-- **REQ-SEC-002** · MUST · event — WHEN a request is sent to a remote provider, THE SYSTEM SHALL record in `egress_log` the destination host, bytes sent, SHA-256 of the payload, provider and thread.
+- **REQ-SEC-001** · MUST · ubiquitous — THE SYSTEM SHALL apply the redaction rules to all content before sending it to a provider, replacing every match with `[REDACTED:<rule>]`. The rules are prefix patterns (`sk-`, `ghp_`, `AKIA`, PEM blocks, JWT) plus a generic detector that only fires on strings of at least 23 characters with entropy ≥ 4.5 bits per character (a string's own entropy cannot reach 4.5 bits below 23 characters). The thresholds are necessary, not sufficient: Umbral's type-prefixed ids and identifier-shaped tokens are left alone. The generic detector is a backstop whose recall depends on length — about 98 % of random 40-character keys, 70 % at 32 and 5 % at 24 — and known formats are the named rules' job (delta `2026-09-redaction-thresholds`).
+- **REQ-SEC-002** · MUST · event — WHEN a request is sent to a remote provider, or a tool sends one off the machine (`fetch_url`), THE SYSTEM SHALL record in `egress_log` the destination host, bytes sent, SHA-256 of the payload, provider and thread.
 - **REQ-SEC-003** · MUST · unwanted — IF a socket connection does not present the valid local token in `system.hello`, THEN THE SYSTEM SHALL reply `UNAUTHORIZED` and close the connection.
 - **REQ-SEC-004** · MUST · unwanted — IF the configuration contains a plaintext API key, THEN THE SYSTEM SHALL reject that provider entry and indicate that `keyring:<path>` must be used.
 - **REQ-SEC-005** · MUST · ubiquitous — THE SYSTEM SHALL require approval for commands matching the destructive-pattern list (`rm -rf`, `git push --force`, `mkfs`, `dd of=`, `kubectl delete`, …), regardless of `allow` rules and the thread mode.
-- **REQ-SEC-006** · MUST · state — WHILE a turn's context contains content marked as untrusted (results from `fetch_url` or from MCP servers with `trust = untrusted`), THE SYSTEM SHALL require approval for tools with risk `Exec` and `Network`.
+- **REQ-SEC-006** · MUST · state — WHILE a turn's context contains content marked as untrusted (results from `fetch_url`, from MCP servers with `trust = untrusted`, or from `skill_load` — the skill descriptions in the catalog are not in this list, because they are capped at 256 characters, shown to the user at install and listed by `umb skill list`; delta `2026-09-skills-cli`), THE SYSTEM SHALL require approval for tools with risk `Exec` and `Network`.
 - **REQ-SEC-007** · MUST · ubiquitous — THE SYSTEM SHALL create the socket with permissions `0600` in `$XDG_RUNTIME_DIR/umbral/`.
 - **REQ-SEC-008** · MUST · unwanted — IF the operating system keyring is unavailable when the daemon starts (headless Linux without Secret Service, locked keychain), THEN THE SYSTEM SHALL start without aborting, disable the providers whose credential is `keyring:<path>`, mark their models `health = down` with reason `keyring_unavailable`, and show that reason in `umb status`.
 - **REQ-SEC-009** · MUST · event — WHEN a client invokes `policy.explain` with a candidate action, THE SYSTEM SHALL return the resulting decision and the ordered trace of the rules evaluated (destructive pattern, `deny` rule, taint, thread mode, `allow` rule, mode default), naming the rule that decided.
@@ -220,12 +226,14 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-SEC-014** · MUST · event — WHEN the user manages the trust store (`umb rules key add|list|remove|rotate`), THE SYSTEM SHALL show the key's SHA-256 fingerprint and require explicit confirmation before adding or rotating, SHALL refuse to remove the last valid key unless `--force` is given, and SHALL record every change with its timestamp.
 - **REQ-SEC-015** · MUST · unwanted — IF the trust store ends up without a valid key, or three consecutive verifications fail, THEN THE SYSTEM SHALL disable remote updates (fail closed), keep working with the rules in force, and require a manual `umb rules key add` to re-enable them.
 - **REQ-SEC-016** · MUST · event — WHEN the user invokes `umb rules rollback` or `umb rules reset`, THE SYSTEM SHALL return to the previous verified bundle, or to the rules built into the binary, without network access and without needing a valid key, keeping the local override directory untouched.
+- **REQ-SEC-017** · MUST · unwanted — IF a connection has not completed `system.hello` within 5 s of being accepted, THEN THE SYSTEM SHALL reply `UNAUTHORIZED` with a null id and close the connection, whatever the connection sent in the meantime.
+- **REQ-SEC-018** · MUST · unwanted — IF a JSON-RPC notification arrives before the handshake, or a `system.hello` without an `id` or with a null `id` arrives at any time, THEN THE SYSTEM SHALL reply `UNAUTHORIZED` with a null id and close the connection, without comparing any token it carries.
 
 ### 6.7 MCP
 
 - **REQ-MCP-001** · MUST · event — WHEN an MCP server is configured (stdio or streamable HTTP), THE SYSTEM SHALL connect it and expose its tools to the model with the prefix `mcp_<server>_<tool>`.
 - **REQ-MCP-002** · MUST · event — WHEN a server is added with `mcp.server.add` during a thread, THE SYSTEM SHALL offer its tools from the next turn on without restarting the thread.
-- **REQ-MCP-003** · MUST · unwanted — IF an MCP server crashes or does not respond within 10 s, THEN THE SYSTEM SHALL mark it `unavailable`, return an error to pending tool calls and retry the connection with exponential backoff (at most 5 attempts).
+- **REQ-MCP-003** · MUST · unwanted — IF an MCP server crashes or does not respond within 10 s, THEN THE SYSTEM SHALL mark it `unavailable`, return an error to pending tool calls and retry the connection with exponential backoff (1, 2, 4, 8 and 16 s, at most 5 attempts; only a connection up for a minute resets the count — delta `2026-10-mcp-client`).
 - **REQ-MCP-004** · MUST · ubiquitous — THE SYSTEM SHALL apply the `ask` policy to MCP tools by default, unless there are explicit per-server or per-tool rules.
 
 ### 6.8 CLI and TUI
@@ -236,9 +244,13 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-CLI-003** · MUST · unwanted — IF the daemon is not running, THEN `umb` SHALL try to start it and, if that fails within 3 s, exit with code 69 and an actionable message.
 - **REQ-CLI-005** · MUST · event — WHEN `umb workspace`, `umb tab`, `umb pane` or `umb layout` runs with one of the subcommands the daemon serves, THE SYSTEM SHALL invoke the JSON-RPC method of the same name and print its result, addressing workspaces, tabs and panes by the public identifiers of REQ-WS-002 given as positional arguments, so that the addressing surface that Art. 6's exception is justified by exists. THE SYSTEM SHALL print the daemon's answer as JSON WHERE `--json` is given, and SHALL use the exit codes of REQ-CLI-004.
 - **REQ-CLI-006** · MUST · event — WHEN `umb layout export --json` runs, THE SYSTEM SHALL write the layout to stdout in the form `umb layout apply` consumes, and WHEN `umb layout apply --from <file>` runs, THE SYSTEM SHALL read the layout from that file, or from stdin WHERE the file is `-`, so that a script reproduces a tab in another workspace through a pipe and without a shared filesystem location.
+- **REQ-CLI-007** · MUST · event — WHEN `umb limits set --max-message <size>` runs, THE SYSTEM SHALL validate the size, persist it as `[api] max_message_bytes` and apply it to connections opened afterwards, leaving the file untouched on an invalid value; and WHEN any `umb` command receives `RESULT_TOO_LARGE`, it SHALL exit 1 naming the size, the limit and the command that raises it.
+- **REQ-CLI-008** · MUST · event — WHEN `umb mcp add`, `umb mcp list` or `umb mcp remove` runs, THE SYSTEM SHALL invoke the `mcp.server.*` method of the same name and print its result, in JSON with `--json`, with REQ-CLI-004's exit codes; a server added this way is always `untrusted`, and a plaintext `--env` value SHALL be refused before anything is sent.
+- **REQ-CLI-009** · MUST · event — WHEN `umb thread create`, `send`, `wait`, `get` or `cancel` runs, THE SYSTEM SHALL invoke the `thread.*` method of the same name and print the value the next step of a script needs — the thread id, the turn id and, with `--wait`, its final state, the state a wait answered, the messages — in JSON with `--json`, with REQ-CLI-004's exit codes, so that a script drives a thread and waits on it without polling (US-008); a wait that reaches its timeout SHALL exit `1` naming the state it last observed.
 - **REQ-TUI-001** · MUST · ubiquitous — THE SYSTEM SHALL provide in the TUI tabs, splits, jumping between blocks and an agent panel with pending approvals.
 - **REQ-TUI-002** · MUST · event — WHEN the user presses the mode shortcut (`ctrl+space` by default), the TUI SHALL toggle input between shell and agent.
 - **REQ-TUI-003** · MUST · event — WHEN the user picks "attach to agent" on a block, the TUI SHALL open the agent panel with `@block:<id>` preloaded in the input.
+- **REQ-TUI-004** · MUST · state — WHILE the agent panel is open, THE SYSTEM SHALL show the configured MCP servers with their current state and the installed skills with whether they are enabled, and, for each turn, which MCP tools were called and which skills were loaded.
 
 ### 6.9 Workspaces, tabs and panes (WS)
 
@@ -256,6 +268,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-API-002** · MUST · ubiquitous — THE SYSTEM SHALL number every notification with a `seq` that is monotonic per daemon run and shared by every connection, so that a client that subscribed before requesting its snapshot can discard the events already contained in it. The number lives in the notification's envelope and is distinct from `session.output`'s per-session `seq`, which anchors bytes to a screen (API Spec §1, §6).
 - **REQ-API-003** · MUST · unwanted — IF a client invokes a method name that this daemon version does not know, THEN THE SYSTEM SHALL reply `METHOD_NOT_FOUND` and keep the connection and every other capability usable. IF the name is known but its capability is switched off in this build, THEN THE SYSTEM SHALL reply `NOT_IMPLEMENTED` under the same guarantee (API Spec §9).
 - **REQ-API-004** · MUST · ubiquitous — THE SYSTEM SHALL be able to print the JSON Schema of the protocol built into the binary, covering requests, responses, errors and notifications, so that clients and tests can validate against it. The comparison against the API Spec is blocking for method names, required parameters and error codes, and non-blocking for descriptions and added optional fields.
+- **REQ-API-005** · MUST · unwanted — IF a response or a notification would exceed the connection's frame limit, THEN THE SYSTEM SHALL NOT write it: a response SHALL be replaced by `RESULT_TOO_LARGE` carrying its size and the limit, with the connection kept open; a notification by `limits.notification_dropped` under the same `seq`; and `block.get` SHALL instead shorten its output to fit and report the omitted bytes in `output_response_truncated_bytes`.
 
 ### 6.11 Automation and waits (AUT)
 
@@ -301,6 +314,19 @@ live in `specs/prd/umbral-f2-desktop.md` (finding A-12); their IDs stay reserved
 - **REQ-OBS-002** · MUST · ubiquitous — THE SYSTEM SHALL expose the metric `umbral_tool_calls_invalid_total` labeled by model.
 - **REQ-OBS-004** · MUST · ubiquitous — THE SYSTEM SHALL expose the metrics `umbral_waits_active`, `umbral_waits_stalled_total`, `umbral_reports_rate_limited_total` and `umbral_rule_updates_rejected_total`, labelled by reason where applicable.
 - **REQ-OBS-003** · SHOULD · optional — WHERE `otel.endpoint` is configured, THE SYSTEM SHOULD export traces through OTLP.
+- **REQ-OBS-005** · MUST · ubiquitous — THE SYSTEM SHALL report, per daemon run, the frame limit, the largest frame read and written, the frames refused in each direction and the frames written above 75 % of their limit, through `system.status` and `limits.get`, and SHALL log every refusal with its method and size and without its content.
+
+### 6.16 Skills (SKL)
+
+Skills are text bundles the user installs locally for **Umbral's own agent**; they load no code into the product, which is what separates them from the plugins §5.2 defers to F2 (delta `2026-09-skills-cli`).
+
+- **REQ-SKL-001** · MUST · event — WHEN `umb skill install <path>` runs with a local directory or `.tar.gz` that passes the bundle checks, THE SYSTEM SHALL show its manifest and digest, ask for confirmation on a terminal or require `--yes` otherwise, and install exactly the bundle whose digest was shown, without executing any of its content.
+- **REQ-SKL-002** · MUST · unwanted — IF a bundle breaks a check, its digest changed after inspection, or a skill with its name is installed and `--replace` was not given, THEN THE SYSTEM SHALL refuse it with `VALIDATION_ERROR` or `CONFLICT` naming the reason and leave the store and the stored copies unchanged.
+- **REQ-SKL-003** · MUST · event — WHEN `umb skill list`, `show`, `enable`, `disable` or `remove` runs, THE SYSTEM SHALL invoke the `skill.*` method of the same name and print its result, in JSON with `--json`, with the exit codes of REQ-CLI-004.
+- **REQ-SKL-004** · MUST · event — WHEN a turn's prompt is assembled, THE SYSTEM SHALL include the name and the first 256 characters of the description of every enabled skill, at most 64, and SHALL include a skill's body or files only when the agent calls `skill_load`.
+- **REQ-SKL-005** · MUST · ubiquitous — THE SYSTEM SHALL treat `skill_load` output as untrusted content for REQ-SEC-006, run nothing from a skill except through `run_command` under the policy engine, and let no skill change a policy, an approval or the tool registry.
+- **REQ-SKL-006** · MUST · unwanted — IF the source of `umb skill install` is not a local path, THEN THE SYSTEM SHALL refuse it with `VALIDATION_ERROR`, until signed skill bundles are specified (Art. 5).
+- **REQ-SKL-007** · MUST · event — WHEN a skill is installed, replaced, enabled, disabled or removed while a thread exists, THE SYSTEM SHALL reflect the change from that thread's next turn on, without restarting the thread.
 
 ## 7. Non-Functional Requirements
 
@@ -462,6 +488,15 @@ TUI as text:
 | 1.10 | 2026-09-20 | E. Crespo (assisted draft) | delta `2026-09-bootstrap-sweeper`: REQ-TERM-012 — the daemon sweeps the shell bootstrap directories a killed run left in its runtime directory, and creates them there rather than in the shared temporary directory |
 | 1.11 | 2026-09-21 | E. Crespo (assisted draft) | delta `2026-09-cli-workspace-surface` (ratified 2026-09-26): REQ-CLI-005 and REQ-CLI-006 — `umb workspace`/`tab`/`pane`/`layout` over the methods of the same name, addressed by the `w<n>` identifiers, and a layout round trip through a pipe. Without them F0 exit criterion 4 cannot be performed and Art. 6's exception cites a command that does not exist |
 | 1.12 | 2026-09-26 | E. Crespo (assisted draft) | delta `2026-09-pane-term`: REQ-TERM-013 — every pane gets `TERM=xterm-256color` and `COLORTERM=truecolor` over the daemon's own, under the pane's declared `env`. Without it a daemon started with no terminal gave every shell a dumb one, and the first keystroke at a fresh prompt was lost |
+| 1.13 | 2026-09-26 | E. Crespo (assisted draft) | Four deltas ratified together for F1: `2026-09-handshake-hardening` (REQ-SEC-017, REQ-SEC-018), `2026-09-frame-limit-monitoring` (REQ-API-005, REQ-OBS-005, REQ-CLI-007), `2026-09-skills-cli` (§6.16, REQ-SKL-001 to 007; REQ-SEC-006 gains `skill_load` output) and `2026-09-cli-mcp` (REQ-CLI-008, REQ-TUI-004). §5.1's `umb` line also names the workspace tree, true since REQ-CLI-005 |
+| 1.14 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies the five deltas of T-F1-02…T-F1-10. `2026-09-redaction-thresholds`: REQ-SEC-001 states the 23-character floor, that the thresholds are necessary and not sufficient, and the generic detector's recall. `2026-09-router-fallback`: REQ-LLM-003 falls back only before the first token reaches the caller; REQ-LLM-005 counts calls made to a provider. `2026-09-builtin-tools`: REQ-SEC-002 covers `fetch_url`; REQ-AGT-018 refuses private ranges on every connection, not only redirects. `provider-config` and `policy-precedence` change no REQ text. |
+| 1.15 | 2026-09-27 | E. Crespo (assisted draft) | Ratifies the four deltas of T-F1-11…T-F1-14 (`2026-09-context-assembly`, `2026-09-context-budget`, `2026-09-agent-runtime`, `2026-09-approvals`) and folds their optional sharpenings: REQ-AGT-011 stops the turn with `storage_error` when a write fails (closes Analyze C-01); REQ-CTX-003 is bounded and runs no command the repository's configuration names. |
+| 1.16 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-tool-call-repair` (T-F1-15): REQ-AGT-006 says what an invalid call is and that the retry is one per invalid call |
+| 1.17 | 2026-10-01 | E. Crespo (assisted draft) | Ratifies delta `2026-10-mcp-client` (T-F1-17): REQ-MCP-003 states the backoff and what resets it |
+| 1.18 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-us003-e2e` (T-F1-21): §4.1 says how "the rate of invalid tool calls after repair" is counted — the calls the one repair did not fix, over every tool call, per model |
+| 1.19 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-retention` (T-F1-22): REQ-TERM-005 names its one retention exception, an ephemeral thread's agent blocks |
+| 1.20 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cost-cap`: REQ-AGT-008 stops a turn at the thread's cost cap too, checked before every priced call, and `thread.send` answers `BUDGET_EXCEEDED` past it |
+| 1.21 | 2026-10-22 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cli-thread-wait` (T-F1-38): REQ-CLI-009, `umb thread` over `thread.create`, `send`, `wait`, `get` and `cancel` |
 
 ## Approvals
 

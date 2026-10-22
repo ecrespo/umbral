@@ -37,6 +37,10 @@ tools/node_modules/
 
 # Build output (task build)
 /bin/
+# ...and what an ad-hoc `go build ./cmd/<name>` leaves at the root
+/umb
+/umbrald
+/umbral-tui
 
 # Python bytecode from the branding kit's build scripts
 __pycache__/
@@ -46,3 +50,6 @@ __pycache__/
 # Keeping it out of history: it is a full binary archive of the repository and nothing
 # references it. See docs/checkpoints/2026-09-20-reconciliation.md.
 umbral-repo-en.zip
+.lat-build
+.mcp.json
+graphify-out/

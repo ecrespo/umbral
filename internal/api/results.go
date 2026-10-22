@@ -115,7 +115,7 @@ type snapshotResult struct {
 	Tabs       []Tab       `json:"tabs"`
 	Panes      []Pane      `json:"panes"`
 	Layouts    []Layout    `json:"layouts"`
-	Threads    []any       `json:"threads"`
+	Threads    []Thread    `json:"threads"`
 }
 
 // Notification payloads of API Spec §6.
