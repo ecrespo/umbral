@@ -476,7 +476,19 @@ func (c *CLI) filtered(ctx context.Context, repoRoot, worktree, revision, tree s
 	if err != nil {
 		return false, err
 	}
-	r := c.run(ctx, call{dir: repoRoot, sanitized: true, args: []string{"diff-tree", "-r", "-z", noRenames, revision, tree}})
+	// hash-object reads attributes from the worktree. Every attributes file it can read there is
+	// in the reviewed tree, and compared below, except one .gitignore excludes: the snapshot
+	// leaves it out, so its presence means the filters cannot be taken from the review.
+	r := c.run(ctx, call{dir: worktree, env: env, sanitized: true, args: []string{"ls-files", "-z", "--others", "--ignored", "--exclude-standard"}})
+	if r.err != nil {
+		return false, r.failure("ls-files")
+	}
+	for _, p := range strings.Split(r.stdout, "\x00") {
+		if filepath.Base(p) == ".gitattributes" {
+			return false, nil
+		}
+	}
+	r = c.run(ctx, call{dir: repoRoot, sanitized: true, args: []string{"diff-tree", "-r", "-z", noRenames, revision, tree}})
 	if r.err != nil {
 		return false, r.failure("diff-tree")
 	}

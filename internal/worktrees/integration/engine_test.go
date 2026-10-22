@@ -805,3 +805,25 @@ func TestAReviewedRevisionMergesThroughTheUsersFilter_REQ_WT_004(t *testing.T) {
 		t.Errorf("landed %q, want the filtered HELLO", got)
 	}
 }
+
+// TestAnIgnoredAttributesFileCannotReshapeAReviewedMerge_REQ_WT_004: a `.gitattributes` that
+// .gitignore excludes is never in the reviewed tree, yet git reads it. Written after the review,
+// it could route a reviewed file through one of the user's filters and land content the review
+// never showed, so its presence refuses a merge whose landing tree differs from the reviewed one.
+func TestAnIgnoredAttributesFileCannotReshapeAReviewedMerge_REQ_WT_004(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.git(f.repo, "config", "filter.up.clean", "tr a-z A-Z")
+	f.write(f.repo, ".gitignore", "sub/.gitattributes\n")
+	f.git(f.repo, "add", "-A")
+	f.git(f.repo, "commit", "-q", "-m", "ignore")
+	w := f.create("thr_a")
+	f.write(w.Path, "sub/y.txt", "hello\n")
+	reviewed, err := f.svc.Diff(t.Context(), w.ID)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	f.write(w.Path, "sub/.gitattributes", "y.txt filter=up\n")
+	_, err = f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID, Revision: reviewed.Revision})
+	wantRefusal(t, err, domain.ReasonChanged)
+}
