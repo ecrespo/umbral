@@ -21,7 +21,8 @@ type RecoveryReport struct {
 	// On the first start after upgrading past T-F0-21 it also counts the rows an older
 	// daemon left pending.
 	IntegrationSettled int64
-	// ThreadsStopped is how many threads were running or awaiting an approval. The turn
+	// ThreadsStopped is how many threads were running, awaiting an approval or holding a
+	// queued turn (REQ-ORC-002). The turn
 	// died with the previous process; the thread keeps its history and accepts
 	// `thread.send` again (REQ-AGT-017).
 	ThreadsStopped int64
@@ -116,7 +117,9 @@ func (s *Store) Recover(ctx context.Context, now time.Time) (RecoveryReport, err
 	}{
 		{
 			"stop the threads a restart interrupted",
-			`UPDATE threads SET state = 'stopped', attention_state = 'idle' WHERE state IN ('running','awaiting_approval')`,
+			// A turn held `queued` (REQ-ORC-002) died with the process too: nothing will start it.
+			`UPDATE threads SET state = 'stopped', attention_state = 'idle', queued = 0
+			 WHERE state IN ('running','awaiting_approval') OR queued = 1`,
 			&report.ThreadsStopped,
 		},
 		{
