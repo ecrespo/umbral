@@ -123,6 +123,42 @@ func requireModel(t *testing.T, url, model string) {
 	t.Skipf("%s is not pulled at %s", model, url)
 }
 
+// liveWarmup is how long requireIdleModel gives Ollama to load the model and answer.
+const liveWarmup = 2 * time.Minute
+
+// requireIdleModel loads the model and asks it for one token before anything is measured, and
+// fails the test when that does not finish within liveWarmup. Ollama serves one request at a
+// time, so a model another client is using — or one paused mid-request with SIGSTOP — left the
+// first four runs of the 2026-10-18 US-003 measurement with no first token, and they were
+// counted as the agent's failures. A run measures the agent only once the model is known to
+// answer.
+func requireIdleModel(t *testing.T, url, model string) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"model": model, "prompt": "Reply with the word ok.", "stream": false, "keep_alive": "30m",
+		"options": map[string]any{"num_predict": 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), liveWarmup)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+"/api/generate", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s did not answer one token within %s (%v): another client is probably using Ollama; nothing was measured", model, liveWarmup, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("warming %s: Ollama answered %s", model, resp.Status)
+	}
+	t.Logf("%s answered in %s", model, time.Since(start).Round(time.Millisecond))
+}
+
 // liveThread creates a thread in cwd and sends text to it.
 func liveThread(t *testing.T, stream *client.Stream, ctx context.Context, cwd, text string) string {
 	t.Helper()

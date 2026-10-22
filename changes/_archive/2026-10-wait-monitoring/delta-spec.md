@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **pending the Tech Lead's review**. Folded into API 1.38, Tech Design 1.48 and the F1 tasks file |
+| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **ratified by the Tech Lead on 2026-10-18**. Folded into API 1.38, Tech Design 1.48 and the F1 tasks file |
 | **Date** | 2026-10-18 |
 | **Task** | T-F1-31 (REQ-AUT-005, REQ-AUT-006, REQ-AUT-007, REQ-AUT-008) |
 | **Raised by** | API §5.33 gives `wait.list`'s result and `wait.cancel`'s params but not a wait's identifier, what an output wait reports as its target and `until`, who may cancel whose wait, or §2's `cli` row, which omits `wait.*` although the task builds `umb wait`. §8 gives 32 waits per connection and 10 reports a second per source without saying what counts. REQ-AUT-008 says a stalled turn is exposed in `thread.list` but §4's `Thread` has no member for it, and neither the stall window's setting nor what "local model" means for a thread naming a class is written down |

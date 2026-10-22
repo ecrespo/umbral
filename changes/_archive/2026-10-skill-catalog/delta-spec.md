@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **pending the Tech Lead's review**. Folded into Tech Design 1.51 and the F1 tasks file |
+| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **ratified by the Tech Lead on 2026-10-18**. Folded into Tech Design 1.51 and the F1 tasks file |
 | **Date** | 2026-10-18 |
 | **Tasks** | T-F1-36 |
 | **Builds on** | `2026-09-skills-cli` (ratified 2026-09-26) decisions 5 and 6; `2026-09-cli-mcp`; `2026-10-skill-store` (T-F1-34) |
@@ -53,7 +53,7 @@ T-F1-36 needed answers on where the catalog sits in the prompt, how the runtime 
 7. **The daemon builds the skill store before the agent runtime,** so the runtime's catalog and
    `skill_load`'s reader are the store the API serves.
 
-## Open for the Tech Lead
+## Open for the Tech Lead — carried to `T-HRD-02` (delta `2026-10-f1-close`)
 
 - **What the normaliser does not see**, true of every pattern and older than this delta:
   `env -S 'umb skill install x'` (`-S` is read as taking an argument, so it swallows the

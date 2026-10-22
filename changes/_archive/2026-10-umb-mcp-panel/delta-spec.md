@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **pending the Tech Lead's review**. Folded into API 1.40, Tech Design 1.52 and the F1 tasks file |
+| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **ratified by the Tech Lead on 2026-10-18**. Folded into API 1.40, Tech Design 1.52 and the F1 tasks file |
 | **Date** | 2026-10-18 |
 | **Tasks** | T-F1-37 |
 | **Builds on** | `2026-09-cli-mcp` (ratified 2026-09-26) decisions 1–3; `2026-10-mcp-client` (T-F1-17); `2026-10-skill-catalog` (T-F1-36) |
@@ -54,7 +54,7 @@ panel learns of a change it is not told about.
    may name a skill that does not exist. Each appears once, in the order first used; a turn
    that used neither adds no row.
 
-## Open for the Tech Lead
+## Open for the Tech Lead — carried to `T-HRD-02` (delta `2026-10-f1-close`)
 
 Two findings from an automated security review of T-F1-36, recorded rather than acted on:
 

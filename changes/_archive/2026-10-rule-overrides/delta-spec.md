@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **pending the Tech Lead's review**. Amended the same day after the spec-guardian review (decisions 1, 2, 3, 6, 9 and 10). Folded into Tech Design 1.46, Data Model 1.21 and the F1 tasks file |
+| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **ratified by the Tech Lead on 2026-10-18**. Amended the same day after the spec-guardian review (decisions 1, 2, 3, 6, 9 and 10). Folded into Tech Design 1.46, Data Model 1.21 and the F1 tasks file |
 | **Date** | 2026-10-18 |
 | **Task** | T-F1-29 (REQ-SEC-010, REQ-SEC-011) |
 | **Raised by** | REQ-SEC-010 names the override directory and its precedence but not a file format, what "precedence" means rule by rule, when the directory is read, or what an invalid file costs. DD-016 fixes a bundle as a JSON document with a `version` and says nothing of its rules' shape. REQ-SEC-011's fetch lands in T-F1-29 while verification lands in T-F1-30 |

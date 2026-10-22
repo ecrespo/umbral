@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **pending the Tech Lead's review**. Folded into Tech Design 1.50 §9.4 and the F1 tasks file |
+| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **ratified by the Tech Lead on 2026-10-18**. Folded into Tech Design 1.50 §9.4 and the F1 tasks file |
 | **Date** | 2026-10-18 |
 | **Tasks** | T-F1-35 |
 | **Builds on** | `2026-09-skills-cli` (ratified 2026-09-26) decision 3 and its CLI table; `2026-10-skill-store` (T-F1-34) |

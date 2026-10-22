@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **pending the Tech Lead's review**. Folded into API 1.39, Tech Design 1.49, Data Model 1.23 and the F1 tasks file |
+| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **ratified by the Tech Lead on 2026-10-18**. Folded into API 1.39, Tech Design 1.49, Data Model 1.23 and the F1 tasks file |
 | **Date** | 2026-10-18 |
 | **Tasks** | T-F1-34 |
 | **Builds on** | `2026-09-skills-cli` (ratified 2026-09-26), whose decisions 1–4 and 7 T-F1-34 implements |

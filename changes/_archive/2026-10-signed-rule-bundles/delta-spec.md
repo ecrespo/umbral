@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **pending the Tech Lead's review**. Folded into API 1.37, Tech Design 1.47, Data Model 1.22 and the F1 tasks file. Amended before the commit after the spec-guardian review: the version floor a reset keeps (decision 2), the user notification (decision 3) and the accepted digest keying (decision 11) |
+| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **ratified by the Tech Lead on 2026-10-18**. Folded into API 1.37, Tech Design 1.47, Data Model 1.22 and the F1 tasks file. Amended before the commit after the spec-guardian review: the version floor a reset keeps (decision 2), the user notification (decision 3) and the accepted digest keying (decision 11) |
 | **Date** | 2026-10-18 |
 | **Task** | T-F1-30 (REQ-SEC-011, REQ-SEC-013, REQ-SEC-014, REQ-SEC-015, REQ-SEC-016) |
 | **Raised by** | `rule_bundles` holds a version and a digest but not the bundle, so `rules.rollback` could not reinstall anything offline. Nothing holds the consecutive-failure count, the fail-closed latch, the rejections not to retry or the trust store's change history REQ-SEC-014 asks to record. `egress_log` has no column for REQ-SEC-013's reason. API §5.34 gives `rules.status` but not the other methods' params or results, and §2's `cli` row omits `rules.*` although the task builds `umb rules` |

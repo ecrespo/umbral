@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **pending the Tech Lead's review**. Folded into API 1.36, Tech Design 1.45 and the F1 tasks file |
+| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1; **ratified by the Tech Lead on 2026-10-18**. Folded into API 1.36, Tech Design 1.45 and the F1 tasks file |
 | **Date** | 2026-10-18 |
 | **Task** | T-F1-28 (REQ-SEC-009) |
 | **Raised by** | API §5.36 gives the params and an example trace that predates delta `2026-09-policy-precedence`: no `exposure` step, no `decided` mark, a `mode` and a `decision` member the engine does not produce. It does not say what a `thread_id` contributes, what happens with neither a thread nor a mode, how the target is read, or who may call |

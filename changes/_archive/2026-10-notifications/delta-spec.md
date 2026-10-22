@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1 ("si creas deltas, documentalos, apruebalos"); **pending the Tech Lead's review**. Folded into API 1.35, Tech Design 1.44 and the F1 tasks file |
+| **Status** | `APPROVED 2026-10-18` by the implementing agent under the Tech Lead's standing instruction for F1 ("si creas deltas, documentalos, apruebalos"); **ratified by the Tech Lead on 2026-10-18**. Folded into API 1.35, Tech Design 1.44 and the F1 tasks file |
 | **Date** | 2026-10-18 |
 | **Task** | T-F1-27 (REQ-NTF-001, REQ-NTF-002) |
 | **Raised by** | API §5.35 gives the params and the result. It does not say: how the daemon reaches the foreground client, or which client that is; in what order `disabled`, `rate_limited` and `no_client` are checked; whether a request nobody receives counts against the source; what the `source` may hold; what an unknown `sound` does; how notifications are turned off; or how delegation decision 15 of `2026-10-integration-surface` words its notification |
