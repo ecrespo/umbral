@@ -22,6 +22,9 @@ type script struct {
 	// holdOpen blocks Stream itself until the call is cancelled, as a server that never sends
 	// its response headers does: the real adapters send the request inside Stream.
 	holdOpen bool
+	// lingerAfterCancel keeps a holdOpen Stream from returning for this long after its
+	// cancel, as a server slow to close the connection.
+	lingerAfterCancel time.Duration
 	// delay comes before the first event.
 	delay time.Duration
 	// events are yielded in order, then err ends the stream when set.
@@ -42,6 +45,27 @@ type streamProvider struct {
 	mu       sync.Mutex
 	requests []domain.Request
 	threads  []string
+	// active is how many of its streams are open now; peak the most ever open at once.
+	active, peak int
+}
+
+func (p *streamProvider) open() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.active++
+	p.peak = max(p.peak, p.active)
+}
+
+func (p *streamProvider) closed() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.active--
+}
+
+func (p *streamProvider) mostAtOnce() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.peak
 }
 
 func (p *streamProvider) ID() string  { return p.id }
@@ -54,15 +78,20 @@ func (p *streamProvider) Stream(ctx context.Context, req domain.Request) (iter.S
 	p.requests = append(p.requests, req)
 	p.threads = append(p.threads, domain.ThreadOf(ctx))
 	p.mu.Unlock()
+	p.open()
 	s := p.scripts[req.Model]
 	if s.holdOpen {
+		defer p.closed()
 		<-ctx.Done()
+		time.Sleep(s.lingerAfterCancel)
 		return nil, &domain.ProviderError{Provider: p.id, Err: ctx.Err()}
 	}
 	if s.startErr != nil {
+		p.closed()
 		return nil, s.startErr
 	}
 	return func(yield func(domain.Event, error) bool) {
+		defer p.closed()
 		if s.hang {
 			<-ctx.Done()
 			yield(domain.Event{}, ctx.Err())

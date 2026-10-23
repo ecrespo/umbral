@@ -46,6 +46,8 @@ type agentDeps struct {
 	// stallLocal and stallRemote are `[waits]`'s stall windows (REQ-AUT-008); zero takes
 	// the runtime's defaults.
 	stallLocal, stallRemote time.Duration
+	// maxTurns is `[agents] max_concurrent_turns` (REQ-ORC-002).
+	maxTurns int
 	// skills is the skill store: each turn's catalog and skill_load's reader (T-F1-36).
 	skills *skills.Service
 	// worktrees is the worktree engine a thread's turns run in (T-F2-03).
@@ -92,6 +94,8 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, *registry.Re
 		MaxCostMicroUSD: d.maxCost,
 		StallLocal:      d.stallLocal,
 		StallRemote:     d.stallRemote,
+
+		MaxConcurrentTurns: d.maxTurns,
 	})
 	return rt, tools, err
 }

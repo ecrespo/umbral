@@ -39,7 +39,10 @@ type Store interface {
 	// domain.ErrBudgetExceeded; an unknown thread is domain.ErrNotFound. It returns
 	// the thread as the transaction read it, which is what the turn runs with: a mode change
 	// that lands after the send's own read cannot leave the turn with a stale mode.
-	BeginTurn(ctx context.Context, msg domain.Message, maxCostMicroUSD, now int64) (domain.Message, domain.Thread, error)
+	// queued writes the turn as held for a slot (REQ-ORC-002).
+	BeginTurn(ctx context.Context, msg domain.Message, queued bool, maxCostMicroUSD, now int64) (domain.Message, domain.Thread, error)
+	// Dequeue records that the thread's held turn took its slot and starts now.
+	Dequeue(ctx context.Context, threadID string, now int64) error
 	// AppendMessage persists a message of a running turn.
 	AppendMessage(ctx context.Context, msg domain.Message) error
 	// AppendContent adds streamed text to a message already persisted.
@@ -47,7 +50,8 @@ type Store interface {
 	// SaveToolCall inserts a tool call or updates its status and result.
 	SaveToolCall(ctx context.Context, call domain.ToolCall) error
 	// FinishTurn adds the turn's usage to the thread and sets its state, with the attention
-	// state domain.AttentionAfter gives; a thread a client views is seen at now as well.
+	// state domain.AttentionAfter gives, and clears queued: a held turn cancelled ends here
+	// too. A thread a client views is seen at now as well.
 	FinishTurn(ctx context.Context, threadID string, state domain.State, viewed bool, usage domain.Usage, now int64) error
 	// MarkSeen records that a client focused the thread at now, and moves its attention from
 	// `done` to `idle` (REQ-AGT-016). changed reports that move; an unknown thread is

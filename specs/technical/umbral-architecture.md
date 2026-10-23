@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.59 |
+| **Version** | 1.60 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -264,6 +264,20 @@ sequenceDiagram
   - An adapter that cannot carry what a request asks for — the Fantasy-based ones and
     reasoning or a response schema, until they do — refuses it before sending, and the
     router moves on without recording a call.
+  - **Per-provider queues** (REQ-ORC-005, T-F2-04; delta `2026-10-parallel-turns`): a
+    candidate's call first waits for its place in its provider's arrival-order queue, sized by
+    the provider's `max_parallel` in `models.toml`: absent, one call at a time for a local
+    provider and no limit for a remote one. The first-token clock, `first_token_ms` and the
+    latency start once the call holds its place, so time spent behind another thread's call is
+    never a timeout; it is logged as `queued_ms` at debug level. A call that must wait first
+    yields the router's own `queued` event, and `sent` once it holds its place; no adapter
+    produces either. The runtime holds the turn's stall clock between the two, for the main call
+    and a compaction's alike, so the wait is not a stall but a provider silent once sent is. A call given up in the queue was never sent and records no
+    `usage` row. The place is released when the provider's stream has returned, not when the
+    call is abandoned, so a request dropped at its first-token timeout is closed before the next
+    one is sent. The limit of a provider `max_parallel` does not name is recomputed from its
+    locality on every reload. The breaker is consulted before the queue, so a probe waits there
+    holding the breaker's one probe.
   - **Every call that was made is one `usage` row** (REQ-LLM-005), failures included, with
     status `rate_limited`, `timeout` or `error` and the error text. `first_token_ms` is NULL
     when no event arrived. The cost is `(in × price_in + out × price_out) / 10^6` micro-USD,
@@ -636,6 +650,11 @@ for a turn whose model or class has a local candidate, `stall_remote_s` (30) for
 A value out of range stops the daemon naming the key. Not live: a change needs a restart
 (delta `2026-10-wait-monitoring`).
 
+`[agents] max_concurrent_turns` is how many agent turns, of all threads, run at once: a whole
+number from 1 to 64 (3). A turn over it is held, `queued`, and started in arrival order when a
+turn ends (REQ-ORC-002). A value out of range stops the daemon naming the key. Not live: a change
+needs a restart (delta `2026-10-parallel-turns`).
+
 `[worktrees] commit_timeout` bounds a worktree merge's commit in whole seconds, 5 to 3600 (60).
 It covers the repository's hooks and signing. When it passes, the commit's whole process
 group is killed and the merge is refused `commit_failed` (REQ-WT-004). A value out of range
@@ -682,6 +701,7 @@ code = ["ollama/gpt-oss:20b", "openrouter/moonshotai/kimi-k2"]
 id = "ollama"                   # [a-z0-9_-], unique
 type = "ollama"                 # ollama | openai-compat | lmstudio | llamacpp | openrouter | yzma
 base_url = "http://127.0.0.1:11434"
+max_parallel = 1                # REQ-ORC-005: calls sent at once, 1-64; absent = 1 local, no limit remote
 [providers.options]             # passed to the adapter, e.g. num_ctx, keep_alive
 num_ctx = 32768
 
@@ -770,6 +790,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `security` | stdlib, `go-keyring` in its adapter, `bus` in its ports (to name `rules.update_rejected`) and the root `llmgw/domain` (for the egress record a rejection writes). Its root holds policy.explain, which reads a thread's mode, directory and rules through its own `ExplainSource` port and asks the same pure `Decide` a turn uses; `cmd/umbrald` adapts the agent thread store to that port and hands both the runtime and the explainer one `isRepo`, so an explanation and a turn agree about the write root (delta `2026-10-policy-explain`). Its root also holds the `Rules` manager of signed bundles (DD-016), which reaches storage through its own `RuleStore` port and replaces the active set's base through `RuleBase`. `tools/rulesign` depends on `security/domain` only (delta `2026-10-signed-rule-bundles`) |
 | `context` | its own `ports` and `domain`, `store` and `bus` in its adapters, and `bus` in its ports, to name `skill.changed` (delta `2026-10-skill-store`) |
 | `mcp` | its own `ports` and `domain`, plus `bus`. `tools/adapters` may use `mcp/domain`, for `mcptools`, which offers a server's tools; `api` the `ports` and `domain` of `mcp`; only `cmd/*` wires the manager to the registry (delta `2026-10-mcp-client`) |
+| `slots` | stdlib only: the arrival-order semaphore of the runtime's turn slots and the router's per-provider queues (T-F2-04). `agents` and `llmgw` may import it, so neither reaches the other through it |
 | `obs` | stdlib, and OpenTelemetry from T-F1-18; imported only by `cmd/*`. Modules count through a port of their own, which `cmd/umbrald` gives the `obs` implementation (delta `2026-10-tool-call-repair`) |
 | `cmd/*` | everything |
 
@@ -999,6 +1020,17 @@ gatherer — and publishes through a `Publisher`; `cmd/umbrald` wires them. Delt
   the attachments rendered after it — while marking the thread `running`, in one transaction. A
   turn already running is `CONFLICT`; a spent budget `BUDGET_EXCEEDED`. The turn then runs on the
   runtime's context, not the request's.
+- **Turn slots** (REQ-ORC-001, REQ-ORC-002, T-F2-04; delta `2026-10-parallel-turns`): turns of
+  different threads run at once, each in its own goroutine with its own PTY, write root,
+  approvals and budget, and one thread's turns stay serial under its send lock. At most
+  `[agents] max_concurrent_turns` run together. A send takes its place in an arrival-order queue
+  (`internal/slots`) before its transaction, and a send over the limit writes the thread
+  `running`, `working` and `queued`. Its turn waits for its place before it reads anything,
+  clears `queued` once granted, and releases the place after its end is written. A cancel while
+  it waits ends it `cancelled` with no model call, and so does a daemon stop; a held turn is not
+  stall-checked until it starts, and its stall clock starts then. Nor is a turn while its model
+  call waits for its provider, between the router's `queued` and `sent` events (DD-004). The place, not the thread, is what is queued: a
+  `worktree.*` change still sees the thread `running` and refuses (§5.2's `worktrees` row).
 - **A turn** reads its thread once — so a model change applies from the next turn
   (REQ-AGT-010) — along with its rules, the tools its mode exposes (`ask`: ReadOnly only,
   REQ-AGT-009), the system prompt (§5.3c) and the history rebuilt from the stored messages and
@@ -1603,3 +1635,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.57 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-agent-detection` (T-F2-10): DD-012 says detection labels a pane and never decides its state; §5.2's `integrations` row adds the manifests and process-tree adapters, the `Shells` port and the in-memory labels |
 | 1.58 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-policy-router` (T-F2-11): DD-004 adds vision, the breakers and the policies; §5.1's `[router]` gains `breaker_failures` and `breaker_cooldown` |
 | 1.59 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-worktree-methods` (T-F2-03): §5.2's `worktrees` row names its inbound port and the runtime's two; §5.3b says a thread with an active worktree runs in it and its PTY follows its cwd; §5.3's destructive list gains `umb worktree merge` and `discard` |
+| 1.60 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-parallel-turns` (T-F2-04): §5.1 adds `[agents] max_concurrent_turns` and a provider's `max_parallel`; DD-004's walk queues each call per provider before its first-token clock; §5.2 adds `slots`; §5.3d's runtime holds turns over the limit, `queued`, in arrival order |

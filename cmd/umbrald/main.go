@@ -418,6 +418,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		maxCost: providers.MaxCostMicroUSD, redact: redact, policy: activeRules.Policy, skills: skillStore,
 		stallLocal:  time.Duration(settings.Stall.LocalS) * time.Second,
 		stallRemote: time.Duration(settings.Stall.RemoteS) * time.Second,
+		maxTurns:    settings.MaxConcurrentTurns,
 	})
 	if err != nil {
 		logger.Error("cannot build the agent runtime", slog.Any("error", err))

@@ -288,3 +288,27 @@ func TestWorktreeCommitTimeoutIsConfigurable_REQ_WT_004(t *testing.T) {
 		}
 	}
 }
+
+// TestMaxConcurrentTurnsIsConfigurable_REQ_ORC_002: `[agents] max_concurrent_turns` is a whole
+// number from 1 to 64, 3 by default; a value outside the range stops the daemon naming the key.
+func TestMaxConcurrentTurnsIsConfigurable_REQ_ORC_002(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, write(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.MaxConcurrentTurns != 3 {
+		t.Fatalf("default max_concurrent_turns %d, want 3", settings.MaxConcurrentTurns)
+	}
+	settings, err = LoadSettings(nil, write(t, "[agents]\nmax_concurrent_turns = 8\n"))
+	if err != nil || settings.MaxConcurrentTurns != 8 {
+		t.Fatalf("max_concurrent_turns = 8: %d, %v", settings.MaxConcurrentTurns, err)
+	}
+	for _, bad := range []string{"max_concurrent_turns = 0", "max_concurrent_turns = 65", "max_concurrent_turns = 2.5"} {
+		_, err := LoadSettings(nil, write(t, "[agents]\n"+bad+"\n"))
+		if !errors.Is(err, ErrSettingsInvalid) || !strings.Contains(err.Error(), "agents.max_concurrent_turns") {
+			t.Errorf("%q: %v, want ErrSettingsInvalid naming agents.max_concurrent_turns", bad, err)
+		}
+	}
+}

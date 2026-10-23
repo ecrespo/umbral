@@ -251,3 +251,28 @@ func TestRouterBreakerKeys_REQ_RTR_002(t *testing.T) {
 		t.Errorf("no file: router = %+v, want the defaults", r)
 	}
 }
+
+// TestMaxParallelIsReadPerProvider_REQ_ORC_005: a `[[providers]]` entry's `max_parallel` is a
+// whole number from 1 to 64; absent it is 0, which leaves the router's default.
+func TestMaxParallelIsReadPerProvider_REQ_ORC_005(t *testing.T) {
+	t.Parallel()
+	body := "[[providers]]\nid = \"ollama\"\ntype = \"ollama\"\nbase_url = \"http://127.0.0.1:11434\"\nmax_parallel = 2\n" +
+		"[[providers]]\nid = \"lms\"\ntype = \"lmstudio\"\nbase_url = \"http://127.0.0.1:1234/v1\"\n"
+	models, err := LoadModels(writeModels(t, body))
+	if err != nil {
+		t.Fatalf("LoadModels: %v", err)
+	}
+	got := map[string]int{}
+	for _, p := range models.Providers {
+		got[p.ID] = p.MaxParallel
+	}
+	if got["ollama"] != 2 || got["lms"] != 0 {
+		t.Errorf("max_parallel = %v, want ollama 2 and lms unset", got)
+	}
+	for _, bad := range []string{"0", "65", "1.5"} {
+		body := "[[providers]]\nid = \"ollama\"\ntype = \"ollama\"\nbase_url = \"http://127.0.0.1:11434\"\nmax_parallel = " + bad + "\n"
+		if _, err := LoadModels(writeModels(t, body)); !errors.Is(err, ErrSettingsInvalid) {
+			t.Errorf("max_parallel = %s: %v, want ErrSettingsInvalid", bad, err)
+		}
+	}
+}

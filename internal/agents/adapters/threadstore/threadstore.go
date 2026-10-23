@@ -33,7 +33,7 @@ func New(st *store.Store) (*Store, error) {
 
 const threadColumns = `id, title, mode, COALESCE(model, ''), model_class, cwd, state, attention_state,
 	ephemeral, max_steps, budget_tokens, tokens_used, cost_micro_usd, created_at, updated_at,
-	COALESCE(workspace_id, ''), COALESCE(worktree_id, '')`
+	COALESCE(workspace_id, ''), COALESCE(worktree_id, ''), queued`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -42,7 +42,7 @@ func scanThread(row scanner) (domain.Thread, error) {
 	var mode, state string
 	err := row.Scan(&t.ID, &t.Title, &mode, &t.Model, &t.ModelClass, &t.Cwd, &state, &t.AttentionState,
 		&t.Ephemeral, &t.MaxSteps, &t.BudgetTokens, &t.TokensUsed, &t.CostMicroUSD, &t.CreatedAt, &t.UpdatedAt,
-		&t.WorkspaceID, &t.WorktreeID)
+		&t.WorkspaceID, &t.WorktreeID, &t.Queued)
 	t.Mode, t.State = secdomain.Mode(mode), domain.State(state)
 	return t, err
 }
@@ -163,7 +163,7 @@ func (s *Store) UpdateThread(ctx context.Context, id string, p domain.UpdatePara
 
 // BeginTurn persists the user's message and marks the thread running (ports.Store). The
 // database's transactions are IMMEDIATE (store.Open), so no other writer runs in between.
-func (s *Store) BeginTurn(ctx context.Context, msg domain.Message, maxCostMicroUSD, now int64) (domain.Message, domain.Thread, error) {
+func (s *Store) BeginTurn(ctx context.Context, msg domain.Message, queued bool, maxCostMicroUSD, now int64) (domain.Message, domain.Thread, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Message{}, domain.Thread{}, fmt.Errorf("threadstore: begin turn: %w", err)
@@ -197,15 +197,23 @@ func (s *Store) BeginTurn(ctx context.Context, msg domain.Message, maxCostMicroU
 	if err := insertMessage(ctx, tx, msg); err != nil {
 		return domain.Message{}, domain.Thread{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE threads SET state = 'running', attention_state = 'working', updated_at = ? WHERE id = ?`,
-		now, msg.ThreadID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE threads SET state = 'running', attention_state = 'working', queued = ?, updated_at = ? WHERE id = ?`,
+		queued, now, msg.ThreadID); err != nil {
 		return domain.Message{}, domain.Thread{}, fmt.Errorf("threadstore: begin turn: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.Message{}, domain.Thread{}, fmt.Errorf("threadstore: begin turn: %w", err)
 	}
-	t.State, t.AttentionState, t.UpdatedAt = domain.StateRunning, "working", now
+	t.State, t.AttentionState, t.Queued, t.UpdatedAt = domain.StateRunning, "working", queued, now
 	return msg, t, nil
+}
+
+// Dequeue clears the thread's queued flag: its held turn took a slot (ports.Store).
+func (s *Store) Dequeue(ctx context.Context, threadID string, now int64) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE threads SET queued = 0, updated_at = ? WHERE id = ?`, now, threadID); err != nil {
+		return fmt.Errorf("threadstore: dequeue: %w", err)
+	}
+	return nil
 }
 
 type querier interface {
@@ -315,12 +323,12 @@ func (s *Store) SaveToolCall(ctx context.Context, c domain.ToolCall) error {
 	return nil
 }
 
-// FinishTurn adds the turn's usage to the thread and sets its state and attention state; a
-// thread a client views is seen at now as well (REQ-AGT-016).
+// FinishTurn adds the turn's usage to the thread, sets its state and attention state and
+// clears queued; a thread a client views is seen at now as well (REQ-AGT-016).
 func (s *Store) FinishTurn(ctx context.Context, threadID string, state domain.State, viewed bool, usage domain.Usage, now int64) error {
 	attention := domain.AttentionAfter(state, viewed)
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE threads SET state = ?, attention_state = ?, tokens_used = tokens_used + ?,
+		UPDATE threads SET state = ?, attention_state = ?, queued = 0, tokens_used = tokens_used + ?,
 			cost_micro_usd = cost_micro_usd + ?, updated_at = ?,
 			seen_at = CASE WHEN ? THEN ? ELSE seen_at END
 		WHERE id = ?`,

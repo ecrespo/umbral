@@ -69,6 +69,9 @@ type Thread struct {
 	// Stalled is true while the thread's running turn is marked stalled (REQ-AUT-008). It is
 	// the runtime's, never stored: it describes a turn of this daemon run.
 	Stalled bool
+	// Queued is true while the thread's turn is accepted but held for a slot under
+	// `[agents] max_concurrent_turns` (REQ-ORC-002). The thread is `running` meanwhile.
+	Queued bool
 	// WorkspaceID is the workspace the thread was created in, "" for none (REQ-ORC-003).
 	WorkspaceID string
 	// WorktreeID is the last worktree made for the thread, whatever its state now, "" for none.

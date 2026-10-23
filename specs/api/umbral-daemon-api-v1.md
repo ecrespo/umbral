@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.44 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.45 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -374,6 +374,7 @@ method and the ordering that produced it, so one handed to a different method is
 - `state`: `idle` | `running` | `awaiting_approval` | `stopped`
 - `attention_state`: `blocked` | `working` | `done` | `idle` | `unknown` — what the sidebar rolls up and what waits observe. `done` is a finished turn no client has viewed yet (REQ-AGT-016)
 - `stalled`: `true` while the thread's running turn is marked stalled (REQ-AUT-008, §5.33); the mark is the daemon's and is not stored
+- `queued`: `true` while the thread's turn is accepted but held for a slot under `[agents] max_concurrent_turns` (REQ-ORC-002). The thread is `running` and `working` meanwhile; the turn starts when a turn of any thread ends, in the order the sends arrived, and `queued` is `false` from then on. A held turn is never `stalled`
 - `workspace_id`: the workspace the thread was created in, `null` for none (REQ-ORC-003)
 - `worktree_id`: the thread's latest worktree, whatever its state, `null` for none. While that worktree is `active` the thread's turns run in it: the worktree is their write root and their cwd is the worktree's directory matching `cwd`, or the worktree's top when it has none; `cwd` itself does not change (REQ-WT-002)
 
@@ -684,8 +685,17 @@ goes through the 256 KiB cap of every attachment (REQ-CTX-005), and is recorded 
 The message persisted, and `thread.get` returns, is the text with its attachments' content
 appended, which is what the model read (REQ-AGT-011).
 
+**Turns over the limit.** At most `[agents] max_concurrent_turns` turns (3 by default), of all
+threads, run at once (REQ-ORC-001, REQ-ORC-002). A send over it is accepted like any other: the
+message is persisted and the answer is the same. Its turn is held with `queued: true` in `Thread`
+until a running turn ends, and held turns start in the order the daemon admitted their sends
+(after their attachments were read). A held turn is a
+turn: a second send to its thread is `CONFLICT`, `thread.cancel` drops it (§5.21), and a daemon
+stop recovers it `stopped` (Data Model §6). Its first `thread.delta` or `thread.tool_call` shows
+it started; no other notification says so.
+
 **Errors:**
-- `CONFLICT`: a turn is already running (not raised for a duplicate `client_msg_id`).
+- `CONFLICT`: a turn is already running or held (not raised for a duplicate `client_msg_id`).
 - `THREAD_BLOCKED`: with `wait`, the thread is already awaiting approval; nothing is persisted or sent.
 - `TIMEOUT`: the wait expired; the message was already sent, so do not resend it blindly.
 - `BUDGET_EXCEEDED`: the thread has spent its token budget, or reached the cost cap
@@ -716,6 +726,9 @@ appended, which is what the model read (REQ-AGT-011).
   `thread.send`, so a cancel issued after a send has answered always finds that send's turn.
 - 500 ms is a budget, not a deadline: the answer waits for the turn, bounded only by the
   request.
+- A turn held for a slot (§5.20) is dropped before it calls a model or runs a tool: it ends
+  `cancelled` like a running one, the thread is `stopped` with `queued: false`, and the turns held
+  behind it move up (REQ-ORC-002).
 
 **Errors:** `NOT_FOUND` (an unknown thread), `VALIDATION_ERROR` (no `thread_id`).
 
@@ -950,7 +963,7 @@ Delta `2026-10-wait-monitoring` (T-F1-31):
 - **`wait.cancel`** ends the wait: the waiting request answers `CANCELLED` (§3), and the turn, the process and the pane it observed are not touched — for `thread.send` the message stays sent. Any connection allowed to call it may cancel any wait. An unknown or already ended `wait_id` is `NOT_FOUND`, and so is a second cancel: a cancelled wait leaves the inventory at once. A cancelled `thread.send` answers `CANCELLED` without `turn_id` or `message_id`; the message is stored, and `thread.get` finds both.
 - **The limit.** A connection holding 32 open waits (§8), of any kind, gets `VALIDATION_ERROR` for the next — `"too many concurrent waits: the limit is 32 per connection"`, with `details: [{field: "timeout_ms", issue: "the connection already holds 32 waits"}]` — before anything is subscribed, sent or read. The connection is not closed, other connections are not affected, and a place frees when a wait ends.
 - **The report rate.** `pane.report_state` and `pane.report_metadata` share one sliding window per `source`: at most 10 kept reports in any second (§8). Validation and the pane's resolution run first, so a malformed report, an unknown pane and an agent's pane answer their errors; a report past the rate then answers its normal result and writes, announces and resolves nothing. A report counts when it is written: a discarded, refused or stale one does not. `pane.release_state` is not limited.
-- **Stalls.** A running turn with no activity — a model event, the start or end of a tool call, an answered approval, output from its own pane — for its window is marked stalled, announced once with `thread.stalled` (§6) and shown by `stalled` in `Thread` (§4) and here. It is never cancelled; the next activity clears the mark silently. A turn awaiting an approval is waiting for the user and does not stall, whatever its pane writes meanwhile. The windows are `[waits] stall_local_s` (120) when any candidate of the thread's model or class is a local provider, and `stall_remote_s` (30) otherwise.
+- **Stalls.** A running turn with no activity — a model event, the start or end of a tool call, an answered approval, output from its own pane — for its window is marked stalled, announced once with `thread.stalled` (§6) and shown by `stalled` in `Thread` (§4) and here. It is never cancelled; the next activity clears the mark silently. A turn awaiting an approval is waiting for the user and does not stall, whatever its pane writes meanwhile; nor does a turn held for a slot (§5.20), or one whose model call waits behind other calls for its provider's `max_parallel` (REQ-ORC-005), whose clock starts again when the call goes ahead. The windows are `[waits] stall_local_s` (120) when any candidate of the thread's model or class is a local provider, and `stall_remote_s` (30) otherwise.
 - **Who.** Both methods are advertised under `wait_admin`, and every client kind may call them (§2), so `umb wait ls` and `umb wait cancel WAIT_ID` work.
 
 ### 5.34 `rules.status` / `rules.key.list` / `rules.key.add` / `rules.key.remove` / `rules.key.rotate` / `rules.rollback` / `rules.reset` — REQ-SEC-011, REQ-SEC-013, REQ-SEC-014, REQ-SEC-015, REQ-SEC-016
@@ -1378,13 +1391,13 @@ subscription had not delivered, so the screen is re-sent rather than the backlog
 ```mermaid
 stateDiagram-v2
   [*] --> idle
-  idle --> running: thread.send
+  idle --> running: thread.send (held while queued)
   running --> awaiting_approval: approval.requested
   awaiting_approval --> running: approval.respond
   running --> idle: turn_finished, any stop_reason but cancelled
   running --> stopped: thread.cancel
   awaiting_approval --> stopped: thread.cancel
-  stopped --> running: thread.send
+  stopped --> running: thread.send (held while queued)
 ```
 
 ```mermaid
@@ -1524,3 +1537,4 @@ printf '%s\n' \
 | 1.42 | 2026-10-22 | Additive within `protocol_version = 1`. Delta `2026-10-agent-detection` (T-F2-10): §4 `Pane` gains `detected_agent`; new §5.39 `agent.explain`; §2's `cli` row gains `agent.explain` and the capability list `agent_detection`; §6 `pane.updated` is also sent when a pane's detected agent changes; §9 lists the capability |
 | 1.43 | 2026-10-22 | Additive within `protocol_version = 1`. Delta `2026-10-policy-router` (T-F2-11): new §5.40 `model.route`, with each candidate's rank and reason, the policies and the breakers; §2's `cli` row gains `model.route` |
 | 1.44 | 2026-10-22 | Additive within `protocol_version = 1`. Delta `2026-10-worktree-methods` (T-F2-03): §3 names `wtr_` and a refusal's `data.reason`, `data.paths` and `data.output`; §4 `Worktree`, and `Thread` gains `workspace_id` and `worktree_id`; §5.19 `thread.create` takes `workspace` and `worktree`; new §5.41 `worktree.*`; §2's `cli` row gains `worktree.list`, `get`, `diff`, `merge` and `discard`, and the capability list `worktrees`; §5.19's `worktree_refused` when git refuses a thread's worktree, which no longer withholds the thread (REQ-WT-008); §5.36 explains a thread in its worktree; §5.41 keeps a landed merge and holds every thread of a discarding `close_group` |
+| 1.45 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-parallel-turns` (T-F2-04): §4 `Thread` gains `queued`; §5.20 holds a turn over `[agents] max_concurrent_turns` and starts held turns in arrival order, and `CONFLICT` covers a held turn; §5.21 drops a held turn; §7's `running` covers a held turn |

@@ -12,6 +12,7 @@ import (
 
 	"github.com/ecrespo/umbral/internal/llmgw/domain"
 	"github.com/ecrespo/umbral/internal/llmgw/ports"
+	"github.com/ecrespo/umbral/internal/slots"
 )
 
 // First-token timeouts of REQ-LLM-003: how long a candidate has to deliver its first event
@@ -54,6 +55,17 @@ type Router struct {
 	mu      sync.RWMutex
 	classes map[string][]string
 	policy  Policy
+	// parallel is each provider's `max_parallel`; queues the per-provider queues, made as
+	// providers are first called (REQ-ORC-005). Both are guarded by mu.
+	parallel map[string]int
+	queues   map[string]providerQueue
+}
+
+// providerQueue is a provider's call queue and whether the provider is local, which decides
+// its default limit.
+type providerQueue struct {
+	q     *slots.Queue
+	local bool
 }
 
 // Call is one routed model call: Model, a catalog id, is the only candidate when set — a
@@ -90,7 +102,7 @@ func NewRouter(catalog *Catalog, cfg RouterConfig) (*Router, error) {
 	if cfg.FirstTokenLocal <= 0 {
 		cfg.FirstTokenLocal = FirstTokenTimeoutLocal
 	}
-	r := &Router{catalog: catalog, cfg: cfg, now: time.Now}
+	r := &Router{catalog: catalog, cfg: cfg, now: time.Now, queues: map[string]providerQueue{}}
 	// Through r.now, read at each call, so a test's clock reaches the breakers too.
 	r.breakers = newBreakers(func() time.Time { return r.now() })
 	r.Configure(cfg.Classes)
@@ -107,6 +119,51 @@ func (r *Router) Configure(classes map[string][]string) {
 	r.mu.Lock()
 	r.classes = copied
 	r.mu.Unlock()
+}
+
+// SetParallel replaces each provider's `max_parallel`, at start and on config.reload. A
+// provider it does not name takes the default: one call at a time for a local provider, no
+// limit for a remote one (REQ-ORC-005). A lower limit lets the calls already sent finish.
+func (r *Router) SetParallel(parallel map[string]int) {
+	copied := make(map[string]int, len(parallel))
+	for id, n := range parallel {
+		copied[id] = n
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.parallel = copied
+	for id, pq := range r.queues {
+		pq.q.SetLimit(r.limitLocked(id, pq.local))
+	}
+}
+
+// limitLocked is the provider's limit now in force: its max_parallel, or the default. r.mu is
+// held.
+func (r *Router) limitLocked(provider string, local bool) int {
+	if limit, set := r.parallel[provider]; set {
+		return limit
+	}
+	if local {
+		return 1
+	}
+	return 0
+}
+
+// queue is the provider's call queue, with the limit now in force.
+func (r *Router) queue(provider string, local bool) *slots.Queue {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	limit := r.limitLocked(provider, local)
+	pq, ok := r.queues[provider]
+	if !ok || pq.local != local {
+		if !ok {
+			pq.q = slots.New(limit)
+		}
+		pq.local = local
+		r.queues[provider] = pq
+	}
+	pq.q.SetLimit(limit)
+	return pq.q
 }
 
 type candidate struct {
@@ -336,6 +393,42 @@ func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain
 	}
 	defer settle(outcomeNone)
 
+	// The provider's queue comes first, and the clocks start after it: the first-token
+	// timeout, first_token_ms and the latency measure the provider, not the calls ahead of
+	// this one (REQ-ORC-005). A call that must wait says so first, so its caller does not
+	// read the wait as a silent model. A call given up in the queue was never sent, so it
+	// records no usage row.
+	queued := r.now()
+	slot := r.queue(c.model.Provider, c.provider.Local()).Enqueue()
+	// Read once: the caller hears sent exactly when it heard queued.
+	waited := !slot.Granted()
+	if waited && !yield(domain.Event{Kind: domain.EventQueued}, nil) {
+		slot.Release()
+		return true, nil
+	}
+	if err := slot.Wait(ctx); err != nil {
+		slot.Release()
+		yield(domain.Event{}, err)
+		return true, nil
+	}
+	if waited && !yield(domain.Event{Kind: domain.EventSent}, nil) {
+		slot.Release()
+		return true, nil
+	}
+	// The slot is the pump's from here: it is released when the provider's stream has
+	// returned, not when this call does, so a request abandoned at its first-token timeout
+	// or by a cancel is closed before the next queued call is sent.
+	pumped := false
+	defer func() {
+		if !pumped {
+			slot.Release()
+		}
+	}()
+	if waited {
+		r.cfg.Logger.DebugContext(ctx, "a model call waited for its provider", slog.String("provider", c.model.Provider),
+			slog.Int64("queued_ms", r.now().Sub(queued).Milliseconds()))
+	}
+
 	start := r.now()
 	actx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -356,7 +449,9 @@ func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain
 	// The pump opens the stream and forwards it. It is not waited for: it ends once the
 	// adapter honours actx, which ports.Provider requires.
 	events := make(chan item)
+	pumped = true
 	go func() {
+		defer slot.Release()
 		defer close(events)
 		seq, err := c.provider.Stream(actx, req)
 		if err != nil {
