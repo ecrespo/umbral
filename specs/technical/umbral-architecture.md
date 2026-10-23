@@ -866,7 +866,8 @@ allows it as in `normal`.
   terminal — a thread's live PTY shell is the process or a parent of it, or leads its POSIX
   session — every method marked `userOnly` (API §2 "An agent's terminal"): `worktree.merge`,
   `discard` and `close_group`, `approval.respond`, `thread.update`, the skill, MCP and rule
-  changes, `session.input`, and `pane.split` with a command. `cmd/umbrald` composes the check
+  changes, `session.input`, and every method that starts a process (`session.create`,
+  `pane.split`, `tab.create`, `workspace.create`, `layout.apply`). `cmd/umbrald` composes the check
   from `sessions.Service.AgentShellPIDs`, `proctree.Ancestors` and `getsid`; the verdict taken
   as the connection starts holds for it, and a peer that cannot be read while an agent's
   terminal is open is refused. Only Linux and macOS report a peer's pid. A process that calls

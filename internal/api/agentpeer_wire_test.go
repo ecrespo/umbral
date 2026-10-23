@@ -9,15 +9,16 @@ import (
 
 // agentRefused is API §2 "An agent's terminal": every method a client inside one is refused.
 var agentRefused = []string{
-	"approval.respond", "mcp.server.add", "mcp.server.remove", "rules.key.add", "rules.key.remove",
-	"rules.key.rotate", "rules.reset", "rules.rollback", "session.input", "skill.install", "skill.remove",
-	"skill.set_enabled", "thread.update", "worktree.close_group", "worktree.discard", "worktree.merge",
+	"approval.respond", "layout.apply", "mcp.server.add", "mcp.server.remove", "pane.split", "rules.key.add",
+	"rules.key.remove", "rules.key.rotate", "rules.reset", "rules.rollback", "session.create", "session.input",
+	"skill.install", "skill.remove", "skill.set_enabled", "tab.create", "thread.update", "workspace.create",
+	"worktree.close_group", "worktree.discard", "worktree.merge",
 }
 
 // TestAnAgentsTerminalCannotLandItsOwnWork_REQ_ORC_004: a client whose process runs inside an
 // agent's terminal — `umb worktree merge` typed by a turn in full-auto, or anything it builds —
-// is refused the methods that would land, drop or approve the agent's own work, or run a command
-// in a pane that is not its terminal, with PERMISSION_DENIED, whatever client kind it claims; it
+// is refused the methods that would land, drop or approve the agent's own work, or start a process
+// outside its terminal, with PERMISSION_DENIED, whatever client kind it claims; it
 // may still read. The verdict taken when it connected holds for the connection. A client outside
 // every agent's terminal is served as before.
 func TestAnAgentsTerminalCannotLandItsOwnWork_REQ_ORC_004(t *testing.T) {
@@ -52,13 +53,6 @@ func TestAnAgentsTerminalCannotLandItsOwnWork_REQ_ORC_004(t *testing.T) {
 		if resp.Error == nil || resp.Error.Code != codePermissionDenied {
 			t.Errorf("%s from an agent's terminal: %+v, want PERMISSION_DENIED", name, resp.Error)
 		}
-	}
-	resp := c.call(40, "pane.split", map[string]any{"pane_id": "w1:p1", "command": []string{"umb", "worktree", "merge"}})
-	if resp.Error == nil || resp.Error.Code != codePermissionDenied {
-		t.Errorf("pane.split with a command from an agent's terminal: %+v, want PERMISSION_DENIED", resp.Error)
-	}
-	if resp := c.call(41, "pane.split", map[string]any{"pane_id": "w1:p1"}); resp.Error != nil && resp.Error.Code == codePermissionDenied {
-		t.Errorf("pane.split without a command from an agent's terminal: %+v", resp.Error)
 	}
 	if asked.Load() != int64(os.Getpid()) {
 		t.Fatalf("the check was asked about pid %d, want the client's %d", asked.Load(), os.Getpid())

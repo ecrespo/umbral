@@ -54,10 +54,12 @@
      terminal, whatever its `client_kind`: `worktree.merge`, `worktree.discard`,
      `worktree.close_group`, `approval.respond`, `thread.update`, `skill.install`,
      `skill.set_enabled`, `skill.remove`, `mcp.server.add`, `mcp.server.remove`, `rules.key.add`,
-     `rules.key.remove`, `rules.key.rotate`, `rules.rollback`, `rules.reset`, `session.input`, and
-     `pane.split` with a `command`. The list is wider than merge and discard because each of the
-     others would let a turn approve, or change what decides, its own actions, or run a command
-     in a pane that is not its terminal — the same escape. Reads stay open. The check runs before
+     `rules.key.remove`, `rules.key.rotate`, `rules.rollback`, `rules.reset`, `session.input`, and every
+     method that starts a process: `session.create`, `pane.split`, `tab.create`,
+     `workspace.create` and `layout.apply`. The list is wider than merge and discard because each
+     of the others would let a turn approve, or change what decides, its own actions, or start a
+     process outside its terminal — a command, a shell or an environment such as `BASH_ENV` —
+     where the check no longer sees it: the same escape. Reads stay open. The check runs before
      `NOT_IMPLEMENTED`: the refusal is about the caller.
    - **This changes F1 behaviour, in every mode.** Deltas `2026-10-skill-catalog`,
      `2026-10-umb-mcp-panel` and `2026-10-worktree-methods` made `umb skill install`, `umb mcp add`
@@ -102,8 +104,7 @@
 - `TestAThreadInFullAutoSaysSo_REQ_ORC_004` and `TestExplainShowsFullAuto_REQ_ORC_004`: the wire
   and `policy.explain`.
 - `TestAnAgentsTerminalCannotLandItsOwnWork_REQ_ORC_004`: the method table's `userOnly` set is
-  API §2's list; each is refused from an agent's terminal, and so is `pane.split` with a command;
-  reads and a plain split are served; the verdict taken at connection holds after the process
+  API §2's list; each is refused from an agent's terminal; reads are served; the verdict taken at connection holds after the process
   reads as outside; another connection from outside is served. `TestAnUnreadablePeerIsTakenForAnAgents_REQ_ORC_004`:
   a peer with no pid.
 - `TestAgentShellsAreKnown_REQ_ORC_004`: a thread's PTY shell is an agent's terminal, a user's
@@ -112,6 +113,8 @@
   recognise a process, with real processes, and a peer that has exited is taken for an agent's;
   each was mutated away and reddened it.
 - The spec-guardian review (FIX FIRST) found a peer that exited after connecting let through,
-  `pane.split` with a command and `session.input` as routes around the check, the F1 change of
+  `pane.split` with a command and `session.input` as routes around the check (an automated
+  security review then found `session.create`, and `env` in a split or a layout, so every method
+  that starts a process is refused), the F1 change of
   the wider list unratified, the test covering 8 of the methods, and an Exec with no cwd allowed;
   each is fixed (the list put to the Tech Lead), the code ones with a mutated test.

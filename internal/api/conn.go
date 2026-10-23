@@ -50,12 +50,10 @@ type method struct {
 	// whose prefix names another one: thread.wait and block.wait_output are `waits`.
 	capability string
 	// userOnly marks a method an agent may not call on its own work: it lands, drops or
-	// approves what a turn did, or changes what decides for it. A client running inside an
+	// approves what a turn did, changes what decides for it, or starts a process outside the
+	// agent's terminal, where its command, shell or environment would run unchecked. A client running inside an
 	// agent's terminal is refused it with PERMISSION_DENIED (delta `2026-10-full-auto`).
 	userOnly bool
-	// userOnlyIf marks a method userOnly when its params ask for it: pane.split with a
-	// command would run that command in a pane that is not an agent's terminal.
-	userOnlyIf func(params json.RawMessage) bool
 }
 
 // deferred is an answer that comes later. A handler returns one when it has done, in
@@ -423,7 +421,7 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 
 	// An agent's terminal may not land, drop or approve its own work, whatever client kind it
 	// claims (REQ-ORC-004). Before NOT_IMPLEMENTED: the refusal is about the caller.
-	if (m.userOnly || (m.userOnlyIf != nil && m.userOnlyIf(req.Params))) && c.fromAgent() {
+	if m.userOnly && c.fromAgent() {
 		c.reply(req, nil, fmt.Errorf("%w: %s may not be called from inside an agent's terminal", ErrPermissionDenied, req.Method))
 		return false
 	}
@@ -604,12 +602,4 @@ func (c *conn) fromAgent() bool {
 		return false
 	}
 	return c.agentAtAccept || c.peerPID <= 0 || check(c.peerPID)
-}
-
-// hasCommand reports whether a request's params carry a non-empty `command`.
-func hasCommand(params json.RawMessage) bool {
-	var p struct {
-		Command []string `json:"command"`
-	}
-	return json.Unmarshal(params, &p) == nil && len(p.Command) > 0
 }

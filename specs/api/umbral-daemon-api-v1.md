@@ -134,12 +134,14 @@ The kind a client claims is not what an agent's command can be told from: anythi
 can open the socket. So the daemon also asks the kernel which process connected (`SO_PEERCRED`,
 `LOCAL_PEERPID`), and refuses a client running **inside an agent's terminal** — a thread's PTY
 shell is its process or one of its parents, or leads its POSIX session — the methods that would
-land, drop or approve the agent's own work, change what decides for it, or run a command
-outside it, with `PERMISSION_DENIED`, whatever its kind (REQ-ORC-004, delta `2026-10-full-auto`):
+land, drop or approve the agent's own work, change what decides for it, or start a process
+outside its terminal, with `PERMISSION_DENIED`, whatever its kind (REQ-ORC-004, delta `2026-10-full-auto`):
 `worktree.merge`, `worktree.discard`, `worktree.close_group`, `approval.respond`, `thread.update`,
 `skill.install`, `skill.set_enabled`, `skill.remove`, `mcp.server.add`, `mcp.server.remove`,
 `rules.key.add`, `rules.key.remove`, `rules.key.rotate`, `rules.rollback`, `rules.reset`,
-`session.input`, and `pane.split` with a `command`. Reads stay open.
+`session.input`, and every method that starts a process — `session.create`, `pane.split`,
+`tab.create`, `workspace.create` and `layout.apply` — since its command, shell or environment
+(`BASH_ENV`, say) would run outside the agent's terminal. Reads stay open.
 
 - This holds in every mode: an `umb skill install`, `umb mcp add` or `umb worktree merge` the
   user approved in an agent's turn now fails there, and the user runs it in their own pane.
