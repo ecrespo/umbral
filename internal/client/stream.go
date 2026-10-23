@@ -64,6 +64,17 @@ type Stream struct {
 
 	replies chan *rpcResponse
 
+	// unbounded streams queue notifications here instead of overflowing; forward moves them
+	// to ch. wake says the queue grew, closed that the caller closed the stream, and
+	// forwarded that forward has returned.
+	unbounded bool
+	qmu       sync.Mutex
+	queue     []Notification
+	wake      chan struct{}
+	closed    chan struct{}
+	closeOnce sync.Once
+	forwarded chan struct{}
+
 	errMu sync.Mutex
 	err   error
 }
@@ -72,14 +83,32 @@ type Stream struct {
 //
 // The client must not be used directly afterwards: its Call would race the stream's
 // reader for frames. Use the Stream's own Call.
-func NewStream(c *Client) *Stream {
+func NewStream(c *Client) *Stream { return newStream(c, false) }
+
+// NewUnboundedStream is NewStream for a caller that must see every notification, such as
+// `umb ai` printing an answer. Notifications the caller has not read are queued without bound
+// instead of ending the stream with ErrStreamOverflow, so the reader never stops reading the
+// socket: replies are never held behind unread notifications, and the daemon's writer is
+// never held by this client. The caller bounds the queue by how long it runs.
+func NewUnboundedStream(c *Client) *Stream { return newStream(c, true) }
+
+func newStream(c *Client, unbounded bool) *Stream {
 	s := &Stream{
-		c:       c,
-		ch:      make(chan Notification, NotificationBuffer),
-		done:    make(chan struct{}),
-		replies: make(chan *rpcResponse, 1),
+		c:         c,
+		ch:        make(chan Notification, NotificationBuffer),
+		done:      make(chan struct{}),
+		replies:   make(chan *rpcResponse, 1),
+		unbounded: unbounded,
+		wake:      make(chan struct{}, 1),
+		closed:    make(chan struct{}),
+		forwarded: make(chan struct{}),
 	}
 	go s.read()
+	if unbounded {
+		go s.forward()
+	} else {
+		close(s.forwarded)
+	}
 	return s
 }
 
@@ -96,7 +125,10 @@ func (s *Stream) Err() error {
 }
 
 // Close ends the stream and releases the connection.
-func (s *Stream) Close() error { return s.c.Close() }
+func (s *Stream) Close() error {
+	s.closeOnce.Do(func() { close(s.closed) })
+	return s.c.Close()
+}
 
 // Call invokes a method and waits for its reply, while notifications keep flowing to the
 // channel. Only one call may be in flight at a time, which is what the daemon's NDJSON
@@ -160,7 +192,10 @@ func (s *Stream) Call(ctx context.Context, method string, params, out any) error
 // read is the single reader. Everything that arrives is either a reply, which goes to
 // whoever is waiting, or a notification, which goes to the channel.
 func (s *Stream) read() {
-	defer close(s.ch)
+	if !s.unbounded {
+		// An unbounded stream's channel is forward's to close, once the queue is empty.
+		defer close(s.ch)
+	}
 	defer close(s.done)
 
 	for {
@@ -184,13 +219,66 @@ func (s *Stream) read() {
 			continue
 		}
 
+		n := Notification{Method: resp.Method, Seq: resp.Seq, Params: resp.Params}
+		if s.unbounded {
+			s.qmu.Lock()
+			s.queue = append(s.queue, n)
+			s.qmu.Unlock()
+			select {
+			case s.wake <- struct{}{}:
+			default:
+			}
+			continue
+		}
 		select {
-		case s.ch <- Notification{Method: resp.Method, Seq: resp.Seq, Params: resp.Params}:
+		case s.ch <- n:
 		default:
 			// The caller is too far behind to catch up. Stopping is the honest outcome:
 			// a client that silently dropped output would show a screen missing bytes it
 			// could never ask for again, and the fix is a fresh snapshot.
 			s.setErr(ErrStreamOverflow)
+			return
+		}
+	}
+}
+
+// forward delivers an unbounded stream's queue to the channel in order, and closes the
+// channel once the reader has ended and the queue is empty, or at once when the caller closes
+// the stream.
+func (s *Stream) forward() {
+	defer close(s.forwarded)
+	defer close(s.ch)
+	for {
+		s.qmu.Lock()
+		pending := len(s.queue) > 0
+		var head Notification
+		if pending {
+			head = s.queue[0]
+		}
+		s.qmu.Unlock()
+		if !pending {
+			select {
+			case <-s.wake:
+			case <-s.done:
+				// The reader appends before it ends, so an empty queue now stays empty.
+				s.qmu.Lock()
+				empty := len(s.queue) == 0
+				s.qmu.Unlock()
+				if empty {
+					return
+				}
+			case <-s.closed:
+				return
+			}
+			continue
+		}
+		select {
+		case s.ch <- head:
+			s.qmu.Lock()
+			s.queue[0] = Notification{}
+			s.queue = s.queue[1:]
+			s.qmu.Unlock()
+		case <-s.closed:
 			return
 		}
 	}

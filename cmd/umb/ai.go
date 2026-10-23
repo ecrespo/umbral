@@ -79,7 +79,9 @@ func cmdAI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr *
 		return code
 	}
 	frameLimit := c.MaxMessageBytes
-	s := client.NewStream(c)
+	// Unbounded: a reader that falls behind the socket for a moment must not lose the
+	// answer's deltas, which a bounded buffer overflowing would (client.ErrStreamOverflow).
+	s := client.NewUnboundedStream(c)
 	defer func() { _ = s.Close() }()
 
 	create := map[string]any{"mode": "ask", "cwd": cwd, "ephemeral": true, keyTitle: "umb ai"}
@@ -176,9 +178,8 @@ type turnEnd struct {
 }
 
 // relay drains the stream as fast as it delivers and holds this thread's events, unbounded,
-// for a reader that may be slower: printing waits on stdout, and a pager that is not reading
-// would otherwise fill the stream's bounded buffer, which ends the stream rather than block
-// (client.ErrStreamOverflow). Every connection receives every thread's events (API §6), so
+// for a reader that may be slower: printing waits on stdout, and a pager may not be reading.
+// The stream queues without bound too; relay keeps what it holds to this thread's events. Every connection receives every thread's events (API §6), so
 // the others are dropped here. The answer's length bounds what is held.
 func relay(in <-chan client.Notification, threadID string, done <-chan struct{}) <-chan client.Notification {
 	out := make(chan client.Notification)
@@ -214,8 +215,8 @@ func relay(in <-chan client.Notification, threadID string, done <-chan struct{})
 }
 
 // streamTurn sends the message and prints the thread's text deltas while the send's wait is
-// pending, until the turn's end is seen. The deltas are drained as they come: the stream's
-// buffer is bounded, and an answer longer than it must not end the stream.
+// pending, until the turn's end is seen. The deltas are drained as they come, so the stream's
+// queue holds no more than the relay has not yet taken.
 func streamTurn(ctx context.Context, s *client.Stream, threadID string, send map[string]any,
 	timeout time.Duration, stdout, stderr *printer,
 ) int {

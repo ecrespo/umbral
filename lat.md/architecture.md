@@ -130,6 +130,12 @@ The empty line opens no block only because [[shell/bash/umbral.bash]] disarms it
 
 It used to return at once, so `cmd/umbrald` closed the store while the sessions were still exiting and each logged `persist the session exit: sql: database is closed`. A shell that ignores the hang-up is left to recovery on the next start rather than holding the daemon's exit.
 
+## umb ai never drops an answer's deltas
+
+`umb ai` prints every delta of an answer, so its stream queues notifications without bound instead of overflowing when its reader falls behind.
+
+[[internal/client/stream.go#NewUnboundedStream]]'s reader never stops reading the socket: notifications go to a queue that [[internal/client/stream.go#Stream#forward]] delivers in order, so a reply is never held behind unread notifications and the daemon's writer is never held by this client. The TUI keeps [[internal/client/stream.go#NewStream]], which ends with `ErrStreamOverflow` and recovers with a snapshot. [[cmd/umb/ai.go#relay]] keeps the thread's own events for a slow stdout ([[internal/client/stream_test.go#TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001]]).
+
 ## A script drives a thread through umb
 
 `umb thread` gives a script one command per step — create, send with a wait, wait, read, cancel — so it drives a thread without polling and without posing as the TUI (REQ-CLI-009).

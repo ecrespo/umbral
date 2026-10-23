@@ -174,3 +174,79 @@ func awaitNotification(t *testing.T, s *Stream) Notification {
 		return Notification{}
 	}
 }
+
+// pushThenReply is a fake daemon that answers the hello, then answers the next request with
+// n numbered notifications followed by its reply.
+func pushThenReply(t *testing.T, n int) string {
+	t.Helper()
+	return fakeServer(t, func(method string, id json.RawMessage, enc *json.Encoder) {
+		if method == "system.hello" {
+			_ = enc.Encode(helloReply(id))
+			return
+		}
+		for i := range n {
+			_ = enc.Encode(map[string]any{
+				"jsonrpc": "2.0", "method": "session.output",
+				"params": map[string]any{"session_id": "ses_x", "seq": i, "data_b64": "eA=="},
+			})
+		}
+		_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{}})
+	})
+}
+
+func dialUnbounded(t *testing.T, socket string) *Stream {
+	t.Helper()
+	c, err := Dial(context.Background(), socket)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	s := NewUnboundedStream(c)
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+// TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001: `umb ai` must print every delta of
+// an answer, however far its reader falls behind. With twice the buffer pushed and nothing
+// read, the reply behind them still arrives — the reader never stopped reading the socket —
+// and then every notification comes out, in order. The default stream overflows here.
+func TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001(t *testing.T) {
+	t.Parallel()
+	const n = NotificationBuffer * 2
+	s := dialUnbounded(t, pushThenReply(t, n))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := s.Call(ctx, "session.subscribe", map[string]any{"session_id": "ses_x"}, nil); err != nil {
+		t.Fatalf("the reply behind %d unread notifications: %v", n, err)
+	}
+	for i := range n {
+		var p struct {
+			Seq int `json:"seq"`
+		}
+		select {
+		case got := <-s.Notifications():
+			if err := got.Decode(&p); err != nil || p.Seq != i {
+				t.Fatalf("notification %d has seq %d (%v): one was lost or reordered", i, p.Seq, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("notification %d never arrived; Err = %v", i, s.Err())
+		}
+	}
+}
+
+// TestClosingAnUnboundedStreamFreesItsForwarder: a forwarder waiting on a caller that stopped
+// reading must end when the caller closes the stream, or it would outlive it.
+func TestClosingAnUnboundedStreamFreesItsForwarder(t *testing.T) {
+	t.Parallel()
+	s := dialUnbounded(t, pushThenReply(t, NotificationBuffer*2))
+	if err := s.Call(t.Context(), "session.subscribe", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	// Nothing reads the channel: only Close can free the forwarder held on the full buffer.
+	select {
+	case <-s.forwarded:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the forwarder is still held on a full buffer after Close")
+	}
+}
