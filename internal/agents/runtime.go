@@ -325,7 +325,11 @@ func worktreeCwd(w ports.Worktree, cwd string) string {
 	}
 	// The worktree is the agent's to write, links included: a directory that resolves out of
 	// it would move the turn's rules files and git context out with it.
-	if real, err := filepath.EvalSymlinks(dir); err != nil || !inside(w.Path, real) {
+	top, err := filepath.EvalSymlinks(w.Path)
+	if err != nil {
+		return w.Path
+	}
+	if real, err := filepath.EvalSymlinks(dir); err != nil || !inside(top, real) {
 		return w.Path
 	}
 	return dir

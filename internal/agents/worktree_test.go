@@ -232,4 +232,13 @@ func TestATurnsCwdStaysInItsWorktree_REQ_WT_002(t *testing.T) {
 	if got := worktreeCwd(w, filepath.Join(repo, "link")); got != wt {
 		t.Errorf("a directory the worktree links out of maps to %s, want the worktree's top %s", got, wt)
 	}
+	// A worktree path reached through a link — macOS's /var is /private/var — is still inside.
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(wt, alias); err != nil {
+		t.Fatal(err)
+	}
+	aliased := ports.Worktree{ID: "wtr_1", Path: alias, RepoRoot: repo}
+	if got := worktreeCwd(aliased, filepath.Join(repo, "sub")); got != filepath.Join(alias, "sub") {
+		t.Errorf("through a linked worktree path, sub maps to %s", got)
+	}
 }
