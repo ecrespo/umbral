@@ -112,14 +112,22 @@ its matrix lists commands.
     five seconds reading the reply (PR #26, run 39779926649's first attempt, 2026-10-22), and
     passed on a rerun. The `REQ_AGT_007` cancel flake first listed here was fixed under this
     task by delta `2026-10-agent-pty-settle` (PR #27) before F1 closed;
-  - API §5.37 numbers two sections (`api.schema` and `skill.*`).
-- **REQ:** REQ-AGT-018, REQ-API-005, REQ-API-004
+  - API §5.37 numbers two sections (`api.schema` and `skill.*`);
+  - added by the Tech Lead on 2026-10-23 and fixed under this task:
+    `TestUmbAiStreamsALongAnswer_REQ_CLI_001` failed about once in 100 runs with two CPUs,
+    `umb ai` ending with `ErrStreamOverflow` because the stream's reader ran 1024 notifications
+    ahead of its relay. `umb ai` now reads through `client.NewUnboundedStream`, which queues
+    without bound rather than overflow, so its reader never stops reading the socket
+    (`TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001`).
+- **REQ:** REQ-AGT-018, REQ-API-005, REQ-API-004, REQ-CLI-001
 - **Files:** `internal/tools/adapters/builtin/fetch.go`, its test, the macOS flake's test file,
-  `specs/api/umbral-daemon-api-v1.md`
+  `specs/api/umbral-daemon-api-v1.md`; for the `umb ai` item `internal/client/stream.go`, its test
+  and `cmd/umb/ai.go`
 - **Depends on:** —
 - **Done:** a test that follows exactly five redirects and refuses the sixth, seen red first; the
   flake's cause found and fixed, with the test green over repeated runs on macOS; one §5.37, with
-  every reference to the renumbered section updated and `task schema` green.
+  every reference to the renumbered section updated and `task schema` green;
+  `TestUmbAiStreamsALongAnswer_REQ_CLI_001` green over repeated runs at `-cpu 1,2,4`.
 
 ## Traceability matrix (hardening)
 
@@ -132,7 +140,7 @@ its matrix lists commands.
 | REQ-TUI-001, 002, 003, 004 | T-REL-02 (walk) | `docs/qa/f1-tui.md`; the harness tests are F1's |
 | REQ-SEC-011, REQ-SEC-013 | T-HRD-01 (the key) | a bundle signed with the project key accepted, any other refused |
 | REQ-SEC-005, REQ-SKL-005, REQ-CLI-008 | T-HRD-02 (decisions) | per decision |
-| REQ-AGT-018, REQ-API-005, REQ-API-004 | T-HRD-03 | a five-redirect test; the macOS flake over repeated runs; `task schema` |
+| REQ-AGT-018, REQ-API-005, REQ-API-004, REQ-CLI-001 | T-HRD-03 | a five-redirect test; the macOS flake over repeated runs; `task schema`; TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001 |
 
 ## Execution log
 
@@ -141,3 +149,4 @@ its matrix lists commands.
 | 2026-09-11 | T-PKG-01, T-PKG-02 | done | Folded from `changes/_archive/2026-09-visual-identity/`. The `icons` CI job verifies the checksums, regenerates the kit from source with `tools/build.py` and compares byte for byte, then validates the `.desktop` file. The launcher targets `umbral-tui` with `Terminal=true`, since release 0.1 ships no desktop client. Recorded in the F0 tasks file until the hardening file existed; moved here on 2026-09-20 with the rest of the packaging work. |
 | 2026-10-18 | T-REL-02, T-HRD-01, T-HRD-02, T-HRD-03 | added | Delta `2026-10-f1-close`: F1 closed, and what it left moved here — `T-F1-20`'s QA walk as a release gate, the rule-signing key, the seven questions the nine ratified deltas left open, and three known defects. |
 | 2026-10-22 | T-HRD-03 | revised | Its `REQ_AGT_007` item — a late interrupt eating the first byte of the agent's next command — fixed by delta `2026-10-agent-pty-settle` (PR #27, `TestALateInterruptDoesNotEatTheNextCommand_REQ_AGT_007`) and replaced by the `REQ_API_005` macOS read timeout seen on PR #26 (delta `2026-10-f1-close`, revised). The task stays open for the other three items. |
+| 2026-10-23 | T-HRD-03 | revised | The Tech Lead added the `umb ai` stream overflow found during T-F2-04 (`TestUmbAiStreamsALongAnswer_REQ_CLI_001`, 3 failures in 300 runs at `-cpu 2`, none at `-cpu 1`); fixed by `client.NewUnboundedStream`, 900 runs green at `-cpu 1,2,4` afterwards. The task stays open for its other three items. |
