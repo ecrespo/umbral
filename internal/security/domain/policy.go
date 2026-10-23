@@ -24,6 +24,10 @@ const (
 	ModeAsk      Mode = "ask"
 	ModeNormal   Mode = "normal"
 	ModeAutoEdit Mode = "auto-edit"
+	// ModeFullAuto is a thread's effective mode while its `full_auto` flag is set and its
+	// worktree is active (REQ-ORC-004). It is never stored in `threads.mode`: the flag sits
+	// beside the mode the thread returns to (Data Model §2.5).
+	ModeFullAuto Mode = "full-auto"
 )
 
 // Verdict is what the policy engine decides.
@@ -129,7 +133,7 @@ func Exposed(mode Mode, risk Risk) bool {
 	switch mode {
 	case ModeAsk:
 		return risk == RiskReadOnly
-	case ModeNormal, ModeAutoEdit:
+	case ModeNormal, ModeAutoEdit, ModeFullAuto:
 		return true
 	default:
 		return false
@@ -158,6 +162,7 @@ type Policy struct {
 //  3. taint asks for Exec and Network (REQ-SEC-006);
 //  4. the mode: `auto-edit` allows WriteFS inside the write root and asks with
 //     `outside_write_root` outside it, whatever the `allow` rules say (REQ-AGT-013);
+//     `full-auto` does the same for WriteFS and for Exec by the command's cwd (REQ-ORC-004);
 //  5. a matching `allow` rule allows (REQ-AGT-014);
 //  6. the mode default: ReadOnly is allowed, anything else asks.
 //
@@ -189,8 +194,16 @@ func (p Policy) Decide(action Action, mode Mode, rules []Rule, tainted bool) Dec
 	isTainted := tainted && (action.Risk == RiskExec || action.Risk == RiskNetwork)
 	add(StepTaint, isTainted, taintDetail(isTainted))
 
-	modeDecides := mode == ModeAutoEdit && action.Risk == RiskWriteFS
-	inside := modeDecides && withinWriteRoot(action)
+	modeDecides := (mode == ModeAutoEdit && action.Risk == RiskWriteFS) ||
+		(mode == ModeFullAuto && (action.Risk == RiskWriteFS || action.Risk == RiskExec))
+	inside := false
+	switch {
+	case !modeDecides:
+	case action.Risk == RiskExec:
+		inside = cwdWithinWriteRoot(action)
+	default:
+		inside = withinWriteRoot(action)
+	}
 	add(StepMode, modeDecides, string(mode))
 
 	allow, isAllowed := matchAllow(rules, action)
@@ -352,6 +365,19 @@ func withinWriteRoot(a Action) bool {
 		return false
 	}
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// cwdWithinWriteRoot reports whether a command starts inside the write root: its cwd, resolved
+// as withinWriteRoot resolves a path. A command with no cwd is not known to start inside, so it
+// asks. Where the command goes from there — a `cd` in its own line — is the line's, not the
+// policy's (delta `2026-10-full-auto`).
+func cwdWithinWriteRoot(a Action) bool {
+	if a.Cwd == "" || !filepath.IsAbs(a.Cwd) {
+		return false
+	}
+	at := a
+	at.Target, at.Cwd = a.Cwd, ""
+	return withinWriteRoot(at)
 }
 
 // glob matches s against a pattern where `*` is any run of characters (slashes included) and

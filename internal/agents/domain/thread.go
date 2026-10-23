@@ -72,6 +72,10 @@ type Thread struct {
 	// Queued is true while the thread's turn is accepted but held for a slot under
 	// `[agents] max_concurrent_turns` (REQ-ORC-002). The thread is `running` meanwhile.
 	Queued bool
+	// FullAuto is the thread's `full_auto` flag (REQ-ORC-004): its turns decide under
+	// `full-auto` while its worktree is active, and under Mode otherwise. Mode is the mode the
+	// thread returns to when the flag clears.
+	FullAuto bool
 	// WorkspaceID is the workspace the thread was created in, "" for none (REQ-ORC-003).
 	WorkspaceID string
 	// WorktreeID is the last worktree made for the thread, whatever its state now, "" for none.
@@ -105,6 +109,11 @@ func (p CreateParams) Validate() (CreateParams, error) {
 	if p.Mode == "" {
 		p.Mode = secdomain.ModeNormal
 	}
+	if p.Mode == secdomain.ModeFullAuto {
+		// A new thread's worktree is not active until thread.create has made it; full-auto is
+		// entered afterwards with thread.update (delta `2026-10-full-auto`).
+		return p, fmt.Errorf("%w: a thread enters full-auto with thread.update once its worktree is active", ErrValidation)
+	}
 	if !validMode(p.Mode) {
 		return p, fmt.Errorf("%w: mode %q is not ask, normal or auto-edit", ErrValidation, p.Mode)
 	}
@@ -136,7 +145,18 @@ func validMode(m secdomain.Mode) bool {
 	return m == secdomain.ModeAsk || m == secdomain.ModeNormal || m == secdomain.ModeAutoEdit
 }
 
-// UpdateParams is thread.update's input (API §5.22); nil leaves a field as it is.
+// WireMode is the mode API §4 reports: `full-auto` while the flag is set, the thread's own mode
+// otherwise.
+func (t Thread) WireMode() secdomain.Mode {
+	if t.FullAuto {
+		return secdomain.ModeFullAuto
+	}
+	return t.Mode
+}
+
+// UpdateParams is thread.update's input (API §5.22); nil leaves a field as it is. A Mode of
+// full-auto sets the thread's flag and leaves its own mode; any other Mode sets the mode and
+// clears the flag.
 type UpdateParams struct {
 	Mode  *secdomain.Mode
 	Model *string
@@ -145,8 +165,8 @@ type UpdateParams struct {
 
 // Validate checks the fields present.
 func (p UpdateParams) Validate() error {
-	if p.Mode != nil && !validMode(*p.Mode) {
-		return fmt.Errorf("%w: mode %q is not ask, normal or auto-edit", ErrValidation, *p.Mode)
+	if p.Mode != nil && *p.Mode != secdomain.ModeFullAuto && !validMode(*p.Mode) {
+		return fmt.Errorf("%w: mode %q is not ask, normal, auto-edit or full-auto", ErrValidation, *p.Mode)
 	}
 	return nil
 }

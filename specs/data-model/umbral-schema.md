@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.24 |
+| **Version** | 1.25 |
 | **Date** | 2026-10-22 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -546,6 +546,28 @@ ALTER TABLE threads ADD COLUMN egress_visibility TEXT NOT NULL DEFAULT 'observed
   CHECK (egress_visibility IN ('observed','unobserved'));  -- REQ-ACP-007
 ```
 
+Migration **0008** (F2, T-F2-05, delta `2026-10-full-auto`) makes `full_auto` follow the
+worktree. Whatever moves a worktree out of `active` — a merge, a discard, a `close_group`, the
+missing check at start or at a turn — clears the flag of its threads in the same write, and so
+does a thread losing its worktree; `mode` is left as it was. Setting the flag is the thread
+store's guarded `UPDATE`, which requires the thread's worktree row to be `active` in that write.
+
+```sql
+-- migration 0008 (T-F2-05)
+CREATE TRIGGER worktrees_leave_full_auto AFTER UPDATE OF state ON worktrees
+  WHEN OLD.state = 'active' AND NEW.state <> 'active'
+BEGIN
+  UPDATE threads SET full_auto = 0 WHERE worktree_id = NEW.id AND full_auto = 1;
+END;
+
+CREATE TRIGGER threads_full_auto_needs_worktree AFTER UPDATE OF worktree_id ON threads
+  WHEN NEW.full_auto = 1 AND NOT EXISTS (
+    SELECT 1 FROM worktrees WHERE id = NEW.worktree_id AND state = 'active')
+BEGIN
+  UPDATE threads SET full_auto = 0 WHERE id = NEW.id;
+END;
+```
+
 ### 2.6 `messages`
 
 ```sql
@@ -803,6 +825,7 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 | `0005_agent.sql` | F1 | `messages`, `tool_calls`, `approvals`, `policy_rules`, `models`, `usage`, `egress_log`, `mcp_servers`, `pane_state_reports`, `pane_metadata`, `trust_keys`, `rule_bundles`, `skills` and their indexes (§2.4c-2.4f, §2.6-2.13), plus the two `ALTER TABLE threads` statements of §2.5 |
 | `0006_rule_state.sql` | F1 | `rule_bundles.content`, `rule_rejections`, `rule_update_state` and its one row, `trust_key_events` and `idx_trust_key_events_at` (§2.4e) — the state signed rule bundles need (T-F1-30) |
 | `0007_orchestration.sql` | F2 | `worktrees` and its three indexes (§2.4g); `threads.full_auto`, `queued`, `worktree_id`, `workspace_id`, `agent`, `egress_visibility` (§2.5); `tool_calls.via`, `decision` (§2.7); `blocks.via` (§2.2). No table rebuilt (T-F2-01) |
+| `0008_full_auto.sql` | F2 | The triggers `worktrees_leave_full_auto` and `threads_full_auto_needs_worktree` (§2.5): `full_auto` never outlives an active worktree (T-F2-05) |
 
 `threads` belongs to 0001 even though the agent arrives in F1: `sessions.owner_thread_id` and
 `blocks.thread_id` point at it, and with `foreign_keys=ON` SQLite rejects every insert into those
@@ -883,3 +906,4 @@ earlier drafts named.
 | 1.22 | 2026-10-18 | §2.4e: migration `0006_rule_state` — `rule_bundles.content`, `rule_rejections`, `rule_update_state` (with `highest_version`, the floor a reset keeps), `trust_key_events`; §2.12: the `umbral-rules:rejected:<reason>` row; §5: the 0006 row (delta `2026-10-signed-rule-bundles`, T-F1-30) |
 | 1.23 | 2026-10-18 | delta `2026-10-skill-store` (T-F1-34): §6 step 9 settles a replace interrupted between its renames, and the skills directory sits beside the database |
 | 1.24 | 2026-10-22 | delta `2026-10-orchestration-schema` (T-F2-01): migration `0007_orchestration` — §2.4g `worktrees`, the F2 columns of §2.5, §2.7 and §2.2 with their `CHECK`s in the `ALTER` (§2.5 corrects the claim that SQLite cannot add one), §5's 0007 row, §6 step 3 recovers a queued turn |
+| 1.25 | 2026-10-23 | delta `2026-10-full-auto` (T-F2-05): migration `0008_full_auto` — §2.5's two triggers that clear `full_auto` when its worktree leaves `active`, and §5's 0008 row |

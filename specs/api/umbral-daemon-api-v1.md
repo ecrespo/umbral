@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.45 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.46 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -128,6 +128,31 @@ before the daemon starts.
 | `desktop` | Wails client (F2) | All |
 | `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove`, `agent.explain`, `model.route`, `worktree.list`, `worktree.get`, `worktree.diff`, `worktree.merge`, `worktree.discard` |
 
+### An agent's terminal
+
+The kind a client claims is not what an agent's command can be told from: anything a turn runs
+can open the socket. So the daemon also asks the kernel which process connected (`SO_PEERCRED`,
+`LOCAL_PEERPID`), and refuses a client running **inside an agent's terminal** — a thread's PTY
+shell is its process or one of its parents, or leads its POSIX session — the methods that would
+land, drop or approve the agent's own work, change what decides for it, or run a command
+outside it, with `PERMISSION_DENIED`, whatever its kind (REQ-ORC-004, delta `2026-10-full-auto`):
+`worktree.merge`, `worktree.discard`, `worktree.close_group`, `approval.respond`, `thread.update`,
+`skill.install`, `skill.set_enabled`, `skill.remove`, `mcp.server.add`, `mcp.server.remove`,
+`rules.key.add`, `rules.key.remove`, `rules.key.rotate`, `rules.rollback`, `rules.reset`,
+`session.input`, and `pane.split` with a `command`. Reads stay open.
+
+- This holds in every mode: an `umb skill install`, `umb mcp add` or `umb worktree merge` the
+  user approved in an agent's turn now fails there, and the user runs it in their own pane.
+- The verdict taken when the connection starts holds for the connection, so a process that
+  connects and leaves the socket to a child is still refused.
+- While any agent's terminal is open, a peer whose process cannot be read — no pid, or one that
+  has exited — is refused them too. Only Linux and macOS report a peer's pid; elsewhere every
+  client is refused them once the check is wired.
+- Not recognised: a process that leaves its session with `setsid` and then forks away from its
+  parents, and a command handed to a launcher outside the terminal (`systemd-run --user`, `at`,
+  `ssh localhost`). The destructive patterns of REQ-SEC-005 still ask before the `umb` commands
+  for these methods; under `full-auto` that is a textual barrier only.
+
 ### Handshake
 
 ```json
@@ -213,7 +238,7 @@ absent one. The field is present on `INTERNAL_ERROR` only (Art. 7).
 | -32001 | `UNAUTHORIZED` | No `system.hello`, handshake deadline passed, `system.hello` without an id, or invalid token (§2) |
 | -32002 | `NOT_FOUND` | Unknown ID |
 | -32003 | `CONFLICT` | Incompatible state (e.g. `thread.send` while a turn is running) |
-| -32004 | `PERMISSION_DENIED` | `deny` policy |
+| -32004 | `PERMISSION_DENIED` | `deny` policy; a method an agent's terminal may not call (§2) |
 | -32005 | `PROVIDER_UNAVAILABLE` | No model candidate available (includes offline mode) |
 | -32006 | `BUDGET_EXCEEDED` | Thread token/cost budget exhausted |
 | -32007 | `UNSUPPORTED_PROTOCOL_VERSION` | Incompatible version |
@@ -370,7 +395,7 @@ method and the ordering that produced it, so one handed to a different method is
  "max_steps":50,"budget_tokens":400000,"tokens_used":12840,"cost_micro_usd":0,
  "created_at":1757592010000,"updated_at":1757592100000}
 ```
-- `mode`: `ask` | `normal` | `auto-edit`
+- `mode`: `ask` | `normal` | `auto-edit` | `full-auto`. `full-auto` is reported while the thread's `full_auto` flag is set (REQ-ORC-004, §5.22); the flag clears when the thread's worktree leaves `active`, and `mode` is then the one the thread held under it. A turn also needs the worktree on disk to decide under `full-auto`: one deleted behind the daemon's back reads `full-auto` until the missing check marks it and clears the flag, and turns meanwhile decide under the thread's own mode
 - `state`: `idle` | `running` | `awaiting_approval` | `stopped`
 - `attention_state`: `blocked` | `working` | `done` | `idle` | `unknown` — what the sidebar rolls up and what waits observe. `done` is a finished turn no client has viewed yet (REQ-AGT-016)
 - `stalled`: `true` while the thread's running turn is marked stalled (REQ-AUT-008, §5.33); the mark is the daemon's and is not stored
@@ -654,6 +679,8 @@ is not already a valid expression. A malformed query returns `VALIDATION_ERROR`.
   - A daemon without the worktree engine answers `NOT_IMPLEMENTED`.
   - `umb` may ask for one (`umb thread create --worktree`): a worktree made at a thread's birth
     moves nothing a turn uses. `worktree.create` on an existing thread stays interactive (§2).
+- `mode: "full-auto"` is `VALIDATION_ERROR`: a thread enters it with `thread.update` once its
+  worktree is active (§5.22).
 
 ### 5.20 `thread.send` — REQ-AGT-001, REQ-AGT-015, REQ-CTX-002, REQ-CLI-001
 **Params:** `{thread_id, text (1-100000 chars), attachments?:[{kind, ref | data_b64}], client_msg_id?}`.
@@ -735,6 +762,15 @@ it started; no other notification says so.
 ### 5.22 `thread.update` — REQ-AGT-010
 **Params:** `{thread_id, mode?, model?, title?}`.
 - A `model` change applies from the next turn.
+- `mode: "full-auto"` (REQ-ORC-004, delta `2026-10-full-auto`) sets the thread's `full_auto` flag
+  and keeps its own mode beside it. It needs an active worktree, checked again in the write that
+  sets the flag; a thread without one is `VALIDATION_ERROR`. While the flag is set and the
+  worktree is active, a turn decides under `full-auto` (Tech Design §5.3): `WriteFS` inside the
+  worktree and `Exec` whose cwd is inside it are allowed unasked; `Network`, the destructive
+  patterns and a tainted turn still ask. Any other `mode` sets it and clears the flag. When the
+  worktree leaves `active` (merged, discarded, missing) the flag clears in the same write, and the
+  thread is back in its own mode.
+- A client inside an agent's terminal is refused `thread.update` (`PERMISSION_DENIED`, §2).
 - **Errors:** `CONFLICT` when changing `mode` during a turn.
 
 ### 5.23 `thread.list` / `get` / `focus`
@@ -1053,10 +1089,11 @@ Delta `2026-10-policy-explain` (T-F1-28):
   - A `thread_id` lends the thread's mode, the write root found from its directory, and its own rules with the global ones.
   - A thread with an active worktree lends the worktree's directory and write root instead, as its turn would run in them (§5.41, REQ-WT-002; delta `2026-10-worktree-methods`).
   - A `mode` overrides the thread's, to ask "what if".
+  - A thread in `full-auto` lends `full-auto` while its worktree is active, as its turn would decide; `mode: "full-auto"` asks the same of any thread, with the thread's write root (delta `2026-10-full-auto`).
   - Without a thread only the global rules apply and there is no write root, so `auto-edit` cannot allow a write.
 - **What it refuses.** These are `VALIDATION_ERROR`:
   - a request with neither `thread_id` nor `mode`;
-  - a `mode` other than `ask`, `normal` and `auto-edit`;
+  - a `mode` other than `ask`, `normal`, `auto-edit` and `full-auto`;
   - a `risk` other than `ReadOnly`, `WriteFS`, `Exec` and `Network`;
   - a `tool` that is empty or longer than 128 characters;
   - a `risk` other than the one a registered tool declares, since no turn could form that action.
@@ -1311,6 +1348,9 @@ branch has gone is answered, and stored, `missing` (REQ-WT-006).
   `data.output`), `changed`, `exists`, `not_active` (the worktree is merged, discarded or missing)
   and `running`. Every refusal leaves the main copy and the worktree as they were. An unknown
   worktree is `NOT_FOUND`.
+- **Not from an agent's terminal.** `merge`, `discard` and `close_group` are refused with
+  `PERMISSION_DENIED` to a client running inside an agent's terminal (§2): landing or dropping a
+  turn's work is the user's review, and `full-auto` runs commands unasked (REQ-ORC-004).
 
 ## 6. Notifications (daemon → client)
 
@@ -1538,3 +1578,4 @@ printf '%s\n' \
 | 1.43 | 2026-10-22 | Additive within `protocol_version = 1`. Delta `2026-10-policy-router` (T-F2-11): new §5.40 `model.route`, with each candidate's rank and reason, the policies and the breakers; §2's `cli` row gains `model.route` |
 | 1.44 | 2026-10-22 | Additive within `protocol_version = 1`. Delta `2026-10-worktree-methods` (T-F2-03): §3 names `wtr_` and a refusal's `data.reason`, `data.paths` and `data.output`; §4 `Worktree`, and `Thread` gains `workspace_id` and `worktree_id`; §5.19 `thread.create` takes `workspace` and `worktree`; new §5.41 `worktree.*`; §2's `cli` row gains `worktree.list`, `get`, `diff`, `merge` and `discard`, and the capability list `worktrees`; §5.19's `worktree_refused` when git refuses a thread's worktree, which no longer withholds the thread (REQ-WT-008); §5.36 explains a thread in its worktree; §5.41 keeps a landed merge and holds every thread of a discarding `close_group` |
 | 1.45 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-parallel-turns` (T-F2-04): §4 `Thread` gains `queued`; §5.20 holds a turn over `[agents] max_concurrent_turns` and starts held turns in arrival order, and `CONFLICT` covers a held turn; §5.21 drops a held turn; §7's `running` covers a held turn |
+| 1.46 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-full-auto` (T-F2-05): §4 `Thread.mode` gains `full-auto`; §5.19 refuses it at creation; §5.22 enters and leaves it; §5.36 explains it; §2 "An agent's terminal" refuses a client inside one the methods that land, drop or approve its work, with `PERMISSION_DENIED` (§3, §5.41) |

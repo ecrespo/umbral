@@ -63,3 +63,21 @@ func (s snapshot) Subtree(pid int) []domain.Process {
 	}
 	return out
 }
+
+// Ancestors lists pid and its parents, nearest first, up to the first process with no parent
+// in the table; nil when pid itself is not in it. The API asks it whether a client runs inside
+// an agent's terminal (REQ-ORC-004).
+func Ancestors(pid int) []int {
+	parent := map[int]int{}
+	for _, e := range processTable() {
+		parent[e.pid] = e.ppid
+	}
+	if _, ok := parent[pid]; !ok {
+		return nil
+	}
+	var out []int
+	for p, ok := pid, true; ok && p > 0 && len(out) < maxProcesses; p, ok = parent[p] {
+		out = append(out, p)
+	}
+	return out
+}

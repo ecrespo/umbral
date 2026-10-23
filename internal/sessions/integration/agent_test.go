@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -388,5 +390,45 @@ func TestAThreadsPTYFollowsItsCwd_REQ_WT_002(t *testing.T) {
 	old, err := h.Get(t.Context(), first.Block.SessionID)
 	if err != nil || old.State != domain.StateExited {
 		t.Fatalf("the old PTY is %+v (%v), want exited", old.State, err)
+	}
+}
+
+// TestAgentShellsAreKnown_REQ_ORC_004: the daemon knows which shells are an agent's terminal —
+// a thread's live PTY — so the API can refuse what such a terminal may not ask; a user's own
+// pane is not one, and a thread's closed PTY no longer is.
+func TestAgentShellsAreKnown_REQ_ORC_004(t *testing.T) {
+	h := newHarness(t)
+	cwd := t.TempDir()
+	threadID := thread(t, h, cwd)
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+
+	user, err := h.Create(ctx, domain.CreateParams{CWD: cwd, Size: domain.Size{Cols: 80, Rows: 24}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := h.RunForThread(ctx, threadID, cwd, `echo $$`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentPID, ok := h.ShellPID(run.Block.SessionID)
+	if !ok || !strings.Contains(run.Output, strconv.Itoa(agentPID)) {
+		t.Fatalf("the thread's shell is pid %d (%v), and said %q", agentPID, ok, run.Output)
+	}
+	userPID, _ := h.ShellPID(user.ID)
+	shells := h.AgentShellPIDs()
+	if !slices.Contains(shells, agentPID) || slices.Contains(shells, userPID) {
+		t.Fatalf("agent shells %v: want the thread's %d and not the user's %d", shells, agentPID, userPID)
+	}
+
+	if err := h.Close(ctx, run.Block.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for slices.Contains(h.AgentShellPIDs(), agentPID) {
+		if time.Now().After(deadline) {
+			t.Fatal("a closed thread PTY is still an agent's terminal")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

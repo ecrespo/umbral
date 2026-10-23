@@ -439,3 +439,78 @@ func TestGlob(t *testing.T) {
 		}
 	}
 }
+
+// execIn is run_command started in cwd.
+func execIn(cmd, cwd string) Action {
+	a := exec(cmd)
+	a.Cwd = cwd
+	return a
+}
+
+// TestFullAutoAllowsWritesAndCommandsInsideTheWriteRoot_REQ_ORC_004: `full-auto` allows WriteFS
+// inside the write root — the thread's worktree, which the runtime makes it — and Exec whose cwd
+// is inside it, with no approval; outside it asks with `outside_write_root`, whatever an allow
+// rule says, as `auto-edit` does for writes.
+func TestFullAutoAllowsWritesAndCommandsInsideTheWriteRoot_REQ_ORC_004(t *testing.T) {
+	t.Parallel()
+
+	runPolicy(t, []policyCase{
+		{"a write inside", write("internal/x.go"), ModeFullAuto, nil, false, VerdictAllow, "", StepMode},
+		{"a write outside", write("/etc/passwd"), ModeFullAuto, nil, false, VerdictAsk, ReasonOutsideWriteRoot, StepMode},
+		{"a write escaping through ..", write("../x"), ModeFullAuto, nil, false, VerdictAsk, ReasonOutsideWriteRoot, StepMode},
+		{"a command started inside", exec("go test ./..."), ModeFullAuto, nil, false, VerdictAllow, "", StepMode},
+		{"a command started below the root", execIn("make", root+"/cmd"), ModeFullAuto, nil, false, VerdictAllow, "", StepMode},
+		{"a command started outside", execIn("make", "/home/u"), ModeFullAuto, nil, false, VerdictAsk, ReasonOutsideWriteRoot, StepMode},
+		{"a command in a sibling sharing the prefix", execIn("make", "/home/u/project-other"), ModeFullAuto, nil, false, VerdictAsk, ReasonOutsideWriteRoot, StepMode},
+		{"an allow rule does not reach outside", execIn("make", "/tmp"), ModeFullAuto, []Rule{allowRule("run_command", "make")}, false, VerdictAsk, ReasonOutsideWriteRoot, StepMode},
+		{"a read is allowed", read("/etc/hosts"), ModeFullAuto, nil, false, VerdictAllow, "", StepModeDefault},
+		{"a deny rule beats the mode", exec("go generate"), ModeFullAuto, []Rule{denyRule("run_command", "go generate")}, false, VerdictDeny, ReasonDenyRule, StepDenyRules},
+	})
+
+	a := exec("make")
+	a.WriteRoot = ""
+	if d := Decide(a, ModeFullAuto, nil, false); d.Verdict != VerdictAsk || d.Reason != ReasonOutsideWriteRoot {
+		t.Errorf("a command with no write root = %+v, want ask outside_write_root", d)
+	}
+	// A command whose cwd is not known is not known to start inside: an ACP `execute` with no
+	// cwd gets one from its caller before it is decided (REQ-ORC-004).
+	a = execIn("make", "")
+	if d := Decide(a, ModeFullAuto, nil, false); d.Verdict != VerdictAsk || d.Reason != ReasonOutsideWriteRoot {
+		t.Errorf("a command with no cwd = %+v, want ask outside_write_root", d)
+	}
+	for _, risk := range []Risk{RiskReadOnly, RiskWriteFS, RiskExec, RiskNetwork} {
+		if !Exposed(ModeFullAuto, risk) {
+			t.Errorf("%s is not exposed in full-auto", risk)
+		}
+	}
+}
+
+// TestFullAutoStillAsksForNetworkAndDestructive_REQ_ORC_004: `full-auto` frees WriteFS and Exec
+// only; Network keeps its default `ask`, and a destructive command asks, never as `always`,
+// even started inside the worktree.
+func TestFullAutoStillAsksForNetworkAndDestructive_REQ_ORC_004(t *testing.T) {
+	t.Parallel()
+
+	runPolicy(t, []policyCase{
+		{"network asks", fetch("https://go.dev"), ModeFullAuto, nil, false, VerdictAsk, ReasonPolicy, StepModeDefault},
+		{"a destructive command asks", exec("rm -rf build"), ModeFullAuto, nil, false, VerdictAsk, ReasonDestructive, StepDestructive},
+		{"a destructive command in a line asks", exec("make && git push --force"), ModeFullAuto, nil, false, VerdictAsk, ReasonDestructive, StepDestructive},
+		{"umb worktree merge asks", exec("umb worktree merge wtr_1 --yes"), ModeFullAuto, nil, false, VerdictAsk, ReasonDestructive, StepDestructive},
+	})
+	if d := Decide(exec("rm -rf build"), ModeFullAuto, nil, false); d.AllowAlways {
+		t.Error("a destructive command in full-auto may be remembered as always")
+	}
+}
+
+// TestFullAutoStillAsksWhenTainted_REQ_ORC_004: once the turn holds untrusted content, Exec and
+// Network ask in `full-auto` as in every mode (REQ-SEC-006); a write inside is still allowed,
+// since taint guards commands and egress.
+func TestFullAutoStillAsksWhenTainted_REQ_ORC_004(t *testing.T) {
+	t.Parallel()
+
+	runPolicy(t, []policyCase{
+		{"a command asks", exec("go test ./..."), ModeFullAuto, nil, true, VerdictAsk, ReasonTainted, StepTaint},
+		{"network asks", fetch("https://go.dev"), ModeFullAuto, nil, true, VerdictAsk, ReasonTainted, StepTaint},
+		{"a write inside is allowed", write("x.go"), ModeFullAuto, nil, true, VerdictAllow, "", StepMode},
+	})
+}

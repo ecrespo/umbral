@@ -50,11 +50,11 @@ func skillStore(c *conn) (ctxports.Skills, error) {
 func skillMethods() map[string]method {
 	return map[string]method{
 		"skill.inspect":     {handle: handleSkillInspect, kinds: treeClients, params: skillPathParams{}, result: skillManifest{}},
-		"skill.install":     {handle: handleSkillInstall, kinds: treeClients, params: skillInstallParams{}, result: Skill{}},
+		"skill.install":     {handle: handleSkillInstall, userOnly: true, kinds: treeClients, params: skillInstallParams{}, result: Skill{}},
 		"skill.list":        {handle: handleSkillList, kinds: treeClients, params: emptyResult{}, result: skillListResult{}},
 		"skill.get":         {handle: handleSkillGet, kinds: treeClients, params: skillGetParams{}, result: skillGetResult{}},
-		"skill.set_enabled": {handle: handleSkillSetEnabled, kinds: treeClients, params: skillSetEnabledParams{}, result: Skill{}},
-		"skill.remove":      {handle: handleSkillRemove, kinds: treeClients, params: skillNameParams{}, result: emptyResult{}},
+		"skill.set_enabled": {handle: handleSkillSetEnabled, userOnly: true, kinds: treeClients, params: skillSetEnabledParams{}, result: Skill{}},
+		"skill.remove":      {handle: handleSkillRemove, userOnly: true, kinds: treeClients, params: skillNameParams{}, result: emptyResult{}},
 	}
 }
 

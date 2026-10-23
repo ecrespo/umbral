@@ -21,11 +21,11 @@ func rulesMethods() map[string]method {
 	return map[string]method{
 		"rules.status":     {handle: handleRulesStatus, kinds: treeClients, params: emptyResult{}, result: rulesStatusResult{}},
 		"rules.key.list":   {handle: handleRulesKeyList, kinds: treeClients, params: emptyResult{}, result: rulesKeyListResult{}},
-		"rules.key.add":    {handle: handleRulesKeyAdd, kinds: treeClients, params: rulesKeyAddParams{}, result: rulesKeyResult{}},
-		"rules.key.remove": {handle: handleRulesKeyRemove, kinds: treeClients, params: rulesKeyRemoveParams{}, result: rulesKeyRemoveResult{}},
-		"rules.key.rotate": {handle: handleRulesKeyRotate, kinds: treeClients, params: rulesKeyRotateParams{}, result: rulesKeyRotateResult{}},
-		"rules.rollback":   {handle: handleRulesRollback, kinds: treeClients, params: emptyResult{}, result: rulesStatusResult{}},
-		"rules.reset":      {handle: handleRulesReset, kinds: treeClients, params: emptyResult{}, result: rulesStatusResult{}},
+		"rules.key.add":    {handle: handleRulesKeyAdd, userOnly: true, kinds: treeClients, params: rulesKeyAddParams{}, result: rulesKeyResult{}},
+		"rules.key.remove": {handle: handleRulesKeyRemove, userOnly: true, kinds: treeClients, params: rulesKeyRemoveParams{}, result: rulesKeyRemoveResult{}},
+		"rules.key.rotate": {handle: handleRulesKeyRotate, userOnly: true, kinds: treeClients, params: rulesKeyRotateParams{}, result: rulesKeyRotateResult{}},
+		"rules.rollback":   {handle: handleRulesRollback, userOnly: true, kinds: treeClients, params: emptyResult{}, result: rulesStatusResult{}},
+		"rules.reset":      {handle: handleRulesReset, userOnly: true, kinds: treeClients, params: emptyResult{}, result: rulesStatusResult{}},
 	}
 }
 

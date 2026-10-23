@@ -29,9 +29,9 @@ func worktreeMethods() map[string]method {
 		"worktree.list":        {handle: handleWorktreeList, kinds: treeClients, params: worktreeListParams{}, result: worktreeListResult{}},
 		"worktree.get":         {handle: handleWorktreeGet, kinds: treeClients, params: worktreeIDParams{}, result: Worktree{}},
 		"worktree.diff":        {handle: handleWorktreeDiff, kinds: treeClients, params: worktreeIDParams{}, result: worktreeDiffResult{}},
-		"worktree.merge":       {handle: handleWorktreeMerge, kinds: treeClients, params: worktreeMergeParams{}, result: worktreeMergeResult{}},
-		"worktree.discard":     {handle: handleWorktreeDiscard, kinds: treeClients, params: worktreeDiscardParams{}, result: Worktree{}},
-		"worktree.close_group": {handle: handleWorktreeCloseGroup, kinds: interactiveClients, params: worktreeCloseGroupParams{}, result: worktreeCloseGroupResult{}},
+		"worktree.merge":       {handle: handleWorktreeMerge, userOnly: true, kinds: treeClients, params: worktreeMergeParams{}, result: worktreeMergeResult{}},
+		"worktree.discard":     {handle: handleWorktreeDiscard, userOnly: true, kinds: treeClients, params: worktreeDiscardParams{}, result: Worktree{}},
+		"worktree.close_group": {handle: handleWorktreeCloseGroup, userOnly: true, kinds: interactiveClients, params: worktreeCloseGroupParams{}, result: worktreeCloseGroupResult{}},
 	}
 }
 

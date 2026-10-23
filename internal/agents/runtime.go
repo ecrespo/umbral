@@ -304,27 +304,41 @@ func (r *Runtime) InWorkspace(ctx context.Context, workspaceID string) ([]domain
 	return r.cfg.Store.ThreadsInWorkspace(ctx, workspaceID)
 }
 
-// dirs is where a thread's turn runs: TurnDirs with the runtime's engine and repository test.
-func (r *Runtime) dirs(ctx context.Context, thread domain.Thread) (cwd, writeRoot string, err error) {
-	return TurnDirs(ctx, r.cfg.Worktrees, r.cfg.IsRepo, thread)
+// place is where a thread's turn runs: TurnPlace with the runtime's engine and repository test.
+func (r *Runtime) place(ctx context.Context, thread domain.Thread) (Place, error) {
+	return TurnPlace(ctx, r.cfg.Worktrees, r.cfg.IsRepo, thread)
 }
 
-// TurnDirs is where a thread's turn runs: its cwd and write root. A thread with an active
-// worktree runs in it (REQ-WT-002): the worktree is the write root, and the cwd is the
-// worktree's directory matching the thread's own, or the worktree's top when the worktree
-// lacks it. policy.explain asks it too, so an explanation and a turn decide in one place.
-// wts may be nil: there are no worktrees then.
-func TurnDirs(ctx context.Context, wts ports.Worktrees, isRepo func(string) bool, thread domain.Thread) (cwd, writeRoot string, err error) {
+// Place is where a thread's turn runs and under which mode it decides.
+type Place struct {
+	Cwd       string
+	WriteRoot string
+	// Mode is the mode the turn decides under: full-auto while the thread's flag is set and
+	// its worktree is active (REQ-ORC-004), the thread's own mode otherwise.
+	Mode secdomain.Mode
+}
+
+// TurnPlace is where a thread's turn runs: its cwd and write root, and the mode it decides
+// under. A thread with an active worktree runs in it (REQ-WT-002): the worktree is the write
+// root, and the cwd is the worktree's directory matching the thread's own, or the worktree's
+// top when the worktree lacks it. Only then does the thread's full-auto flag apply.
+// policy.explain asks it too, so an explanation and a turn decide in one place. wts may be
+// nil: there are no worktrees then.
+func TurnPlace(ctx context.Context, wts ports.Worktrees, isRepo func(string) bool, thread domain.Thread) (Place, error) {
 	if wts != nil {
 		w, ok, err := wts.Active(ctx, thread.ID)
 		if err != nil {
-			return "", "", err
+			return Place{}, err
 		}
 		if ok {
-			return worktreeCwd(w, thread.Cwd), w.Path, nil
+			mode := thread.Mode
+			if thread.FullAuto {
+				mode = secdomain.ModeFullAuto
+			}
+			return Place{Cwd: worktreeCwd(w, thread.Cwd), WriteRoot: w.Path, Mode: mode}, nil
 		}
 	}
-	return thread.Cwd, secdomain.WriteRoot(thread.Cwd, isRepo), nil
+	return Place{Cwd: thread.Cwd, WriteRoot: secdomain.WriteRoot(thread.Cwd, isRepo), Mode: thread.Mode}, nil
 }
 
 // worktreeCwd maps cwd, a directory of the main working copy, to the worktree's.
@@ -387,6 +401,24 @@ func (r *Runtime) Messages(ctx context.Context, threadID string) ([]domain.Messa
 func (r *Runtime) Update(ctx context.Context, id string, p domain.UpdateParams) (domain.Thread, error) {
 	if err := p.Validate(); err != nil {
 		return domain.Thread{}, err
+	}
+	if p.Mode != nil && *p.Mode == secdomain.ModeFullAuto {
+		// REQ-ORC-004: full-auto only inside an active worktree. Active also checks the worktree
+		// is still on disk; the store checks the row again in the write that sets the flag.
+		if _, err := r.cfg.Store.Thread(ctx, id); err != nil {
+			return domain.Thread{}, err
+		}
+		active := false
+		if r.cfg.Worktrees != nil {
+			_, ok, err := r.cfg.Worktrees.Active(ctx, id)
+			if err != nil {
+				return domain.Thread{}, err
+			}
+			active = ok
+		}
+		if !active {
+			return domain.Thread{}, fmt.Errorf("%w: thread %s has no active worktree", domain.ErrValidation, id)
+		}
 	}
 	return r.cfg.Store.UpdateThread(ctx, id, p, r.now())
 }
@@ -518,10 +550,11 @@ func (r *Runtime) userContent(ctx context.Context, thread domain.Thread, p ports
 	cwd := thread.Cwd
 	if len(p.Attachments) > 0 {
 		// A relative path names a file where the turn will run: in the worktree, if any.
-		var err error
-		if cwd, _, err = r.dirs(ctx, thread); err != nil {
+		place, err := r.place(ctx, thread)
+		if err != nil {
 			return "", nil, err
 		}
+		cwd = place.Cwd
 	}
 	for _, ref := range p.Attachments {
 		a, err := r.attach(ctx, cwd, ref)

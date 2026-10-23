@@ -324,6 +324,29 @@ func (s *Service) ShellPID(id string) (int, bool) {
 	return pid, pid > 0
 }
 
+// AgentShellPIDs lists the shells of the live sessions a thread owns: the agent's terminals.
+// The API refuses a client running inside one what an agent may not ask for its own work
+// (REQ-ORC-004).
+func (s *Service) AgentShellPIDs() []int {
+	s.mu.RLock()
+	lives := make([]*liveSession, 0, len(s.live))
+	for _, live := range s.live {
+		lives = append(lives, live)
+	}
+	s.mu.RUnlock()
+	var out []int
+	for _, live := range lives {
+		session := live.snapshotState()
+		if session.OwnerThreadID == "" || session.State == domain.StateExited {
+			continue
+		}
+		if pid := live.pty.Pid(); pid > 0 {
+			out = append(out, pid)
+		}
+	}
+	return out
+}
+
 // Get reports one session. A live session is answered from memory, since its state is
 // fresher there than in the row.
 func (s *Service) Get(ctx context.Context, id string) (domain.Session, error) {

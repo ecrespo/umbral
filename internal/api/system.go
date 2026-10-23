@@ -75,7 +75,7 @@ func (s *Server) registry() map[string]method {
 		// talks to threads, it does not drive terminals.
 		"session.create": {handle: handleSessionCreate, kinds: interactiveClients, available: hasSessions, params: createSessionParams{}, result: Session{}},
 		"session.list":   {handle: handleSessionList, kinds: interactiveClients, available: hasSessions, params: emptyResult{}, result: sessionListResult{}},
-		"session.input":  {handle: handleSessionInput, kinds: interactiveClients, available: hasSessions, params: sessionInputParams{}, result: emptyResult{}},
+		"session.input":  {handle: handleSessionInput, userOnly: true, kinds: interactiveClients, available: hasSessions, params: sessionInputParams{}, result: emptyResult{}},
 		"session.resize": {handle: handleSessionResize, kinds: interactiveClients, available: hasSessions, params: sessionResizeParams{}, result: emptyResult{}},
 		"session.close":  {handle: handleSessionClose, kinds: interactiveClients, available: hasSessions, params: sessionIDParams{}, result: emptyResult{}},
 
@@ -176,7 +176,7 @@ func workspaceMethods() map[string]method {
 		"tab.rename": {handle: handleTabRename, kinds: treeClients, params: tabRenameParams{}, result: tabResult{}},
 		"tab.close":  {handle: handleTabClose, kinds: treeClients, params: tabParams{}, result: closedResult{}},
 
-		"pane.split":  {handle: handlePaneSplit, kinds: treeClients, params: splitParams{}, result: paneSplitResult{}},
+		"pane.split":  {handle: handlePaneSplit, userOnlyIf: hasCommand, kinds: treeClients, params: splitParams{}, result: paneSplitResult{}},
 		"pane.list":   {handle: handlePaneList, kinds: treeClients, params: tabParams{}, result: paneListResult{}},
 		"pane.get":    {handle: handlePaneGet, kinds: treeClients, params: paneParams{}, result: paneResult{}},
 		"pane.focus":  {handle: handlePaneFocus, kinds: treeClients, params: paneParams{}, result: paneResult{}},

@@ -49,6 +49,13 @@ type method struct {
 	// capability overrides the namespace the method is advertised under, for a method
 	// whose prefix names another one: thread.wait and block.wait_output are `waits`.
 	capability string
+	// userOnly marks a method an agent may not call on its own work: it lands, drops or
+	// approves what a turn did, or changes what decides for it. A client running inside an
+	// agent's terminal is refused it with PERMISSION_DENIED (delta `2026-10-full-auto`).
+	userOnly bool
+	// userOnlyIf marks a method userOnly when its params ask for it: pane.split with a
+	// command would run that command in a pane that is not an agent's terminal.
+	userOnlyIf func(params json.RawMessage) bool
 }
 
 // deferred is an answer that comes later. A handler returns one when it has done, in
@@ -116,6 +123,13 @@ type conn struct {
 	authenticated bool
 	clientKind    ClientKind
 	connectionID  string
+	// peerPID is the pid of the process that connected, as the kernel reports it; 0 when it
+	// cannot be read. It is read once, on accept.
+	peerPID int
+	// agentAtAccept is AgentPeer's verdict on the peer as its connection started: a process
+	// that connects from an agent's terminal and hands the socket to a child it leaves behind
+	// stays an agent's connection. Written before the read loop starts.
+	agentAtAccept bool
 	// interactive and lastRequest choose the foreground client of `notification.show`
 	// (API Spec §5.35): an interactive connection's latest request takes a number from
 	// Server.activity. Both are atomic because the notify module reads them from whichever
@@ -238,6 +252,7 @@ func (s *Server) newConn(netConn net.Conn) *conn {
 		posted:  make(chan postedNotification, postedQueue),
 		netConn: netConn,
 		logger:  s.cfg.Logger,
+		peerPID: peerPID(netConn),
 	}
 	c.limit.Store(MaxMessageBytes)
 
@@ -274,6 +289,9 @@ func (c *conn) splitLine(data []byte, atEOF bool) (int, []byte, error) {
 
 // serve reads NDJSON messages until the peer disconnects or the daemon shuts down.
 func (c *conn) serve(ctx context.Context) {
+	if check := c.server.cfg.AgentPeer; check != nil && c.peerPID > 0 {
+		c.agentAtAccept = check(c.peerPID)
+	}
 	defer c.pending.Wait()
 	defer func() { _ = c.close() }()
 	defer func() {
@@ -400,6 +418,13 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 	}
 	if !known || (c.authenticated && !m.allows(c.clientKind)) {
 		c.reply(req, nil, fmt.Errorf("%w: %s", ErrMethodNotFound, req.Method))
+		return false
+	}
+
+	// An agent's terminal may not land, drop or approve its own work, whatever client kind it
+	// claims (REQ-ORC-004). Before NOT_IMPLEMENTED: the refusal is about the caller.
+	if (m.userOnly || (m.userOnlyIf != nil && m.userOnlyIf(req.Params))) && c.fromAgent() {
+		c.reply(req, nil, fmt.Errorf("%w: %s may not be called from inside an agent's terminal", ErrPermissionDenied, req.Method))
 		return false
 	}
 
@@ -569,4 +594,22 @@ func invalidRequestID(id json.RawMessage) json.RawMessage {
 		return nullID
 	}
 	return id
+}
+
+// fromAgent reports whether the connection's process runs inside an agent's terminal. A peer
+// whose pid could not be read is taken for one: the methods it is refused are the user's.
+func (c *conn) fromAgent() bool {
+	check := c.server.cfg.AgentPeer
+	if check == nil {
+		return false
+	}
+	return c.agentAtAccept || c.peerPID <= 0 || check(c.peerPID)
+}
+
+// hasCommand reports whether a request's params carry a non-empty `command`.
+func hasCommand(params json.RawMessage) bool {
+	var p struct {
+		Command []string `json:"command"`
+	}
+	return json.Unmarshal(params, &p) == nil && len(p.Command) > 0
 }

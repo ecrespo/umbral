@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.60 |
+| **Version** | 1.61 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -307,7 +307,8 @@ sequenceDiagram
   1. destructive patterns (always `ask`);
   2. `deny` rules;
   3. taint (`ask` for Exec/Network);
-  4. mode (`ask` exposes only ReadOnly; `auto-edit` allows WriteFS inside the workspace);
+  4. mode (`ask` exposes only ReadOnly; `auto-edit` allows WriteFS inside the workspace; `full-auto`
+     also allows Exec whose cwd is inside it);
   5. `allow` rules;
   6. mode default.
 - **How it meets the §5.3 table:** an exposure step comes first, a destructive pattern is a floor a
@@ -829,18 +830,49 @@ the ids they started with, which still reach the pane as aliases (REQ-WS-007). D
 
 ### 5.3 Default policies
 
-| Risk | `ask` mode | `normal` mode | `auto-edit` mode |
-|---|---|---|---|
-| ReadOnly | allow | allow | allow |
-| WriteFS (inside the write root) | not exposed | ask (with diff) | allow |
-| WriteFS (outside the write root) | not exposed | ask | ask (`outside_write_root`) |
-| Exec | not exposed | ask | ask |
-| Network | not exposed | ask | ask |
-| Destructive pattern | — | ask, ignores `always` | ask, ignores `always` |
+| Risk | `ask` mode | `normal` mode | `auto-edit` mode | `full-auto` mode |
+|---|---|---|---|---|
+| ReadOnly | allow | allow | allow | allow |
+| WriteFS (inside the write root) | not exposed | ask (with diff) | allow | allow |
+| WriteFS (outside the write root) | not exposed | ask | ask (`outside_write_root`) | ask (`outside_write_root`) |
+| Exec (cwd inside the write root) | not exposed | ask | ask | allow |
+| Exec (cwd outside the write root) | not exposed | ask | ask | ask (`outside_write_root`) |
+| Network | not exposed | ask | ask | ask |
+| Destructive pattern | — | ask, ignores `always` | ask, ignores `always` | ask, ignores `always` |
 
 **Write root** = the git root of the thread's cwd or, when there is no repo, the cwd itself. It is
 the agent's write boundary and has nothing to do with the structural workspace of §3.2 (finding
 B-09).
+
+**`full-auto`** (REQ-ORC-004, T-F2-05, delta `2026-10-full-auto`) is a thread's flag, never a
+stored mode: `threads.full_auto` sits beside `threads.mode`, the mode the thread returns to. A turn
+decides under `full-auto` only while the flag is set **and** its worktree is active, so its write
+root is always the worktree (`agents.TurnPlace` reads both, for the turn and for
+`policy.explain`). `thread.update` refuses it to a thread without an active worktree, checked by
+the runtime and again in the write that sets the flag, and `thread.create` refuses it outright.
+Migration 0008's triggers clear the flag in the same write that moves the worktree out of
+`active` — a merge, a discard, a `close_group` or the missing check — or takes it from its thread.
+Taint and the destructive floor still ask, and so does `Network`, unless a user `allow` rule
+allows it as in `normal`.
+
+- **An Exec's cwd** is the directory the turn hands `run_command`: the worktree's directory
+  matching the thread's. The thread's PTY keeps its shell between commands, so a line that ran
+  `cd` elsewhere leaves the next one starting there; and any line can `cd` out or write outside
+  through a path of its own. The policy cannot see either: the worktree is Art. 5's disposable
+  boundary for what `full-auto` allows, not a sandbox.
+- **An agent's terminal cannot land its own work.** The destructive pattern `umb_worktree_change`
+  is a textual barrier a line built by expansion escapes. So `internal/api` reads the connecting
+  process from the kernel (`SO_PEERCRED`, `LOCAL_PEERPID`) and refuses a client inside an agent's
+  terminal — a thread's live PTY shell is the process or a parent of it, or leads its POSIX
+  session — every method marked `userOnly` (API §2 "An agent's terminal"): `worktree.merge`,
+  `discard` and `close_group`, `approval.respond`, `thread.update`, the skill, MCP and rule
+  changes, `session.input`, and `pane.split` with a command. `cmd/umbrald` composes the check
+  from `sessions.Service.AgentShellPIDs`, `proctree.Ancestors` and `getsid`; the verdict taken
+  as the connection starts holds for it, and a peer that cannot be read while an agent's
+  terminal is open is refused. Only Linux and macOS report a peer's pid. A process that calls
+  `setsid` and then forks away from its parents escapes it, and so does a command handed to a
+  launcher outside the terminal (`systemd-run --user`, `at`, `ssh localhost`).
+- **An Exec with no cwd asks** under `full-auto`: it is not known to start inside the worktree.
 
 **How the table and DD-006 meet** (T-F1-03, `internal/security/domain/policy*.go`; delta
 `2026-09-policy-precedence`):
@@ -926,7 +958,7 @@ with `run_command` from T-F1-10. Delta `2026-09-builtin-tools`:
   `missing` included — and runs with the worktree as its write root and, as its cwd, the
   worktree's directory matching the thread's own while its real path stays inside the worktree,
   or the worktree's top otherwise. Attachments resolve there too, and `policy.explain` explains
-  with the same directories (`agents.TurnDirs`). A git failure here stops the turn
+  with the same directories (`agents.TurnPlace`, which also returns the mode the turn decides under). A git failure here stops the turn
   `storage_error` rather than run it in the main copy. The thread's `cwd` does not change, so a
   merge or a discard puts its next turn back in its own directory. `worktree.create`, `merge` and
   `discard` take the thread's send lock and refuse with `CONFLICT` `running` while the stored
@@ -1636,3 +1668,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.58 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-policy-router` (T-F2-11): DD-004 adds vision, the breakers and the policies; §5.1's `[router]` gains `breaker_failures` and `breaker_cooldown` |
 | 1.59 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-worktree-methods` (T-F2-03): §5.2's `worktrees` row names its inbound port and the runtime's two; §5.3b says a thread with an active worktree runs in it and its PTY follows its cwd; §5.3's destructive list gains `umb worktree merge` and `discard` |
 | 1.60 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-parallel-turns` (T-F2-04): §5.1 adds `[agents] max_concurrent_turns` and a provider's `max_parallel`; DD-004's walk queues each call per provider before its first-token clock; §5.2 adds `slots`; §5.3d's runtime holds turns over the limit, `queued`, in arrival order |
+| 1.61 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-full-auto` (T-F2-05): DD-006 step 4 and §5.3's `full-auto` column; §5.3 says when a turn decides under it, how the flag follows the worktree, and that an agent's terminal is refused the methods that land, drop or approve its work |

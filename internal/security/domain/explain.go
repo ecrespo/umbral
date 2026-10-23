@@ -42,13 +42,13 @@ func (r ExplainRequest) Validate() error {
 		return fmt.Errorf("%w: risk %q is not one of ReadOnly, WriteFS, Exec and Network", ErrInvalidExplain, r.Risk)
 	}
 	switch r.Mode {
-	case ModeAsk, ModeNormal, ModeAutoEdit:
+	case ModeAsk, ModeNormal, ModeAutoEdit, ModeFullAuto:
 	case "":
 		if r.ThreadID == "" {
 			return fmt.Errorf("%w: give a thread_id or a mode", ErrInvalidExplain)
 		}
 	default:
-		return fmt.Errorf("%w: mode %q is not one of ask, normal and auto-edit", ErrInvalidExplain, r.Mode)
+		return fmt.Errorf("%w: mode %q is not one of ask, normal, auto-edit and full-auto", ErrInvalidExplain, r.Mode)
 	}
 	return nil
 }

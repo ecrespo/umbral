@@ -463,3 +463,43 @@ func TestQueuedRoundTrips_REQ_ORC_002(t *testing.T) {
 		t.Fatalf("a held turn cancelled: %+v", got)
 	}
 }
+
+// TestFullAutoFollowsTheWorktreeRow_REQ_ORC_004: thread.update's full-auto sets the flag only
+// while the thread's worktree row is active, in the same write, and leaves the thread's own
+// mode; any other mode sets the mode and clears the flag. The flag reads back as FullAuto.
+func TestFullAutoFollowsTheWorktreeRow_REQ_ORC_004(t *testing.T) {
+	s := open(t)
+	ctx := t.Context()
+	th := thread(t, s, 1000)
+	full := secdomain.ModeFullAuto
+	if _, err := s.UpdateThread(ctx, th.ID, domain.UpdateParams{Mode: &full}, 2); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("full-auto without a worktree row: %v, want a validation error", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO worktrees(id, thread_id, repo_root, repo_id, base_commit, origin_branch,
+		branch, path, created_at, updated_at) VALUES ('wtr_1', ?, '/r', '0123456789abcdef', 'abc', 'main', 'b', '/p', 1, 1)`, th.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetWorktree(ctx, th.ID, "wtr_1", 3); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.UpdateThread(ctx, th.ID, domain.UpdateParams{Mode: &full}, 4)
+	if err != nil || !got.FullAuto || got.Mode != th.Mode {
+		t.Fatalf("full-auto with an active worktree: %+v, %v; want the flag beside mode %s", got, err, th.Mode)
+	}
+	ask := secdomain.ModeAsk
+	if got, err = s.UpdateThread(ctx, th.ID, domain.UpdateParams{Mode: &ask}, 5); err != nil || got.FullAuto || got.Mode != ask {
+		t.Fatalf("leaving full-auto for ask: %+v, %v", got, err)
+	}
+	if _, err := s.UpdateThread(ctx, th.ID, domain.UpdateParams{Mode: &full}, 6); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE worktrees SET state = 'merged' WHERE id = 'wtr_1'`); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = s.Thread(ctx, th.ID); got.FullAuto || got.Mode != ask {
+		t.Fatalf("after the merge: %+v, want the flag cleared and mode ask", got)
+	}
+	if _, err := s.UpdateThread(ctx, th.ID, domain.UpdateParams{Mode: &full}, 7); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("full-auto with a merged worktree: %v, want a validation error", err)
+	}
+}

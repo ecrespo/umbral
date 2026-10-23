@@ -190,8 +190,12 @@ type Config struct {
 	// NOT_IMPLEMENTED, and thread.create's `worktree` with them.
 	Worktrees       wtports.Worktrees
 	WorktreeThreads agentsports.WorktreeThreads
-	Bus             *bus.Bus
-	Logger          *slog.Logger
+	// AgentPeer reports whether a process runs inside one of the agent runtime's terminals.
+	// A connection it names is refused every userOnly method (REQ-ORC-004). Nil checks
+	// nothing.
+	AgentPeer func(pid int) bool
+	Bus       *bus.Bus
+	Logger    *slog.Logger
 
 	// MaxMessageBytes is the frame limit a connection gets once it completes the handshake
 	// (`[api] max_message_bytes`, API Spec §1). Zero means config.DefaultMaxMessageBytes.

@@ -65,6 +65,7 @@ func newExplainer(t *testing.T) *Explainer {
 				"thr_edit":   {Mode: domain.ModeAutoEdit, Cwd: "/work/repo/sub"},
 				"thr_normal": {Mode: domain.ModeNormal, Cwd: "/work/repo"},
 				"thr_wt":     {Mode: domain.ModeAutoEdit, Cwd: "/data/wt/thr_wt/sub", WriteRoot: "/data/wt/thr_wt"},
+				"thr_full":   {Mode: domain.ModeFullAuto, Cwd: "/data/wt/thr_full/sub", WriteRoot: "/data/wt/thr_full"},
 			},
 			rules: []domain.Rule{
 				{Tool: "run_command", Pattern: "curl *", Decision: domain.VerdictDeny, Source: domain.RuleSourceConfig},
@@ -203,6 +204,26 @@ func TestExplainUsesTheThreadUnlessAModeIsGiven(t *testing.T) {
 	req = domain.ExplainRequest{Mode: domain.ModeAutoEdit, Tool: "write_file", Risk: domain.RiskWriteFS, Target: "main.go"}
 	if d, _ := e.Explain(t.Context(), req); d.Reason != domain.ReasonOutsideWriteRoot {
 		t.Errorf("auto-edit without a thread: %+v, want outside_write_root", d)
+	}
+}
+
+// TestExplainShowsFullAuto_REQ_ORC_004: a thread in full-auto inside its worktree explains a
+// command there as allowed by the mode step, a fetch as asked; `mode: "full-auto"` asks the same
+// "what if" of any thread.
+func TestExplainShowsFullAuto_REQ_ORC_004(t *testing.T) {
+	t.Parallel()
+	e := newExplainer(t)
+	req := domain.ExplainRequest{ThreadID: "thr_full", Tool: "run_command", Risk: domain.RiskExec, Target: "make"}
+	if d, err := e.Explain(t.Context(), req); err != nil || d.Verdict != domain.VerdictAllow || d.Step != domain.StepMode {
+		t.Errorf("a command in full-auto: %+v, %v; want allow by the mode step", d, err)
+	}
+	req = domain.ExplainRequest{ThreadID: "thr_full", Tool: "fetch_url", Risk: domain.RiskNetwork, Target: "https://example.com"}
+	if d, _ := e.Explain(t.Context(), req); d.Verdict != domain.VerdictAsk {
+		t.Errorf("a fetch in full-auto: %s, want ask", d.Verdict)
+	}
+	req = domain.ExplainRequest{ThreadID: "thr_wt", Mode: domain.ModeFullAuto, Tool: "run_command", Risk: domain.RiskExec, Target: "make"}
+	if d, err := e.Explain(t.Context(), req); err != nil || d.Verdict != domain.VerdictAllow {
+		t.Errorf("mode full-auto over a worktree thread: %+v, %v; want allow", d, err)
 	}
 }
 
