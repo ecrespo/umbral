@@ -106,9 +106,16 @@ type conn struct {
 	reader  *bufio.Scanner
 	logger  *slog.Logger
 
-	// writeMu serialises writes: replies come from the read loop, notifications will
-	// come from the bus goroutine in T-F0-06.
+	// writeMu serialises writes: replies come from the read loop, notifications from the
+	// connection's own writers (the outbox, each subscription, `notification.posted`).
 	writeMu sync.Mutex
+	// out queues the control notifications broadcast to every client, for writeOutbox;
+	// overflowOnce closes the connection the first time it overflows (REQ-API-006).
+	out          *outbox
+	overflowOnce sync.Once
+	// notifiable is set once the handshake has succeeded and writeOutbox runs: from then on
+	// broadcasts reach this connection. It is atomic because the dispatcher reads it.
+	notifiable atomic.Bool
 
 	// limit is this connection's frame limit in both directions (API Spec §1): the fixed
 	// MaxMessageBytes until `system.hello` succeeds, then the daemon's configured limit as it
@@ -248,6 +255,7 @@ func (s *Server) newConn(netConn net.Conn) *conn {
 		subs:    make(map[string]*subscription),
 		closed:  make(chan struct{}),
 		posted:  make(chan postedNotification, postedQueue),
+		out:     newOutbox(),
 		netConn: netConn,
 		logger:  s.cfg.Logger,
 		peerPID: peerPID(netConn),
@@ -555,6 +563,11 @@ func (c *conn) writeRaw(msg any) {
 		c.logger.Error("encode an outgoing message", slog.Any("error", err))
 		return
 	}
+	c.writeLine(line)
+}
+
+// writeLine writes one framed line, whole, between any other writer's lines.
+func (c *conn) writeLine(line []byte) {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	if _, err := c.netConn.Write(line); err != nil {

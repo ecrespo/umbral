@@ -6,10 +6,10 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.21 |
+| **Version** | 1.22 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
-| **Last updated** | 2026-09-27 |
+| **Last updated** | 2026-10-23 |
 | **Source** | `docs/ARCHITECTURE.md` v0.1 |
 
 ---
@@ -269,6 +269,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-API-003** · MUST · unwanted — IF a client invokes a method name that this daemon version does not know, THEN THE SYSTEM SHALL reply `METHOD_NOT_FOUND` and keep the connection and every other capability usable. IF the name is known but its capability is switched off in this build, THEN THE SYSTEM SHALL reply `NOT_IMPLEMENTED` under the same guarantee (API Spec §9).
 - **REQ-API-004** · MUST · ubiquitous — THE SYSTEM SHALL be able to print the JSON Schema of the protocol built into the binary, covering requests, responses, errors and notifications, so that clients and tests can validate against it. The comparison against the API Spec is blocking for method names, required parameters and error codes, and non-blocking for descriptions and added optional fields.
 - **REQ-API-005** · MUST · unwanted — IF a response or a notification would exceed the connection's frame limit, THEN THE SYSTEM SHALL NOT write it: a response SHALL be replaced by `RESULT_TOO_LARGE` carrying its size and the limit, with the connection kept open; a notification by `limits.notification_dropped` under the same `seq`; and `block.get` SHALL instead shorten its output to fit and report the omitted bytes in `output_response_truncated_bytes`.
+- **REQ-API-006** · MUST · unwanted — IF a client stops reading its connection, THEN THE SYSTEM SHALL keep delivering notifications to every other client without delay, and SHALL close that client's connection once it is more than the per-client queue limit (API Spec §8) of control notifications behind, rather than drop any of them.
 
 ### 6.11 Automation and waits (AUT)
 
@@ -497,6 +498,7 @@ TUI as text:
 | 1.19 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-retention` (T-F1-22): REQ-TERM-005 names its one retention exception, an ephemeral thread's agent blocks |
 | 1.20 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cost-cap`: REQ-AGT-008 stops a turn at the thread's cost cap too, checked before every priced call, and `thread.send` answers `BUDGET_EXCEEDED` past it |
 | 1.21 | 2026-10-22 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cli-thread-wait` (T-F1-38): REQ-CLI-009, `umb thread` over `thread.create`, `send`, `wait`, `get` and `cancel` |
+| 1.22 | 2026-10-23 | E. Crespo (assisted draft) | Ratifies delta `2026-10-slow-client-queue` (T-HRD-04): REQ-API-006, a client that stops reading holds up no other and is closed past the queue limit |
 
 ## Approvals
 

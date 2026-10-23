@@ -129,6 +129,21 @@ its matrix lists commands.
   every reference to the renumbered section updated and `task schema` green;
   `TestUmbAiStreamsALongAnswer_REQ_CLI_001` green over repeated runs at `-cpu 1,2,4`.
 
+### [x] 2026-10-23 T-HRD-04 · A client that stops reading holds up no other
+- **What** (delta `2026-10-slow-client-queue`, approved by the Tech Lead on 2026-10-23):
+  - `Server.broadcast` queues each control notification in the connection's own outbox, written
+    by that connection's goroutine, instead of writing every socket on the dispatcher;
+  - past 8 MiB unwritten the connection is closed, never trimmed, and the client reconnects with
+    a snapshot;
+  - a connection is sent broadcasts once its handshake has succeeded, read through an atomic.
+- **REQ:** REQ-API-006
+- **Files:** `internal/api/outbox.go`, `internal/api/slowclient_test.go`, `internal/api/conn.go`,
+  `internal/api/notify.go`, `internal/api/system.go`, `specs/prd/umbral-mvp.md`,
+  `specs/api/umbral-daemon-api-v1.md`
+- **Depends on:** —
+- **Done:** `TestASlowClientHoldsUpNoOtherClient_REQ_API_006` red before the change and green
+  after, over 20 runs at `-cpu 1,2,4`; removing the close on overflow reddens it; `task ci` green.
+
 ## Traceability matrix (hardening)
 
 | REQ | Tasks | Verification |
@@ -141,6 +156,7 @@ its matrix lists commands.
 | REQ-SEC-011, REQ-SEC-013 | T-HRD-01 (the key) | a bundle signed with the project key accepted, any other refused |
 | REQ-SEC-005, REQ-SKL-005, REQ-CLI-008 | T-HRD-02 (decisions) | per decision |
 | REQ-AGT-018, REQ-API-005, REQ-API-004, REQ-CLI-001 | T-HRD-03 | a five-redirect test; the macOS flake over repeated runs; `task schema`; TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001 |
+| REQ-API-006 | T-HRD-04 | TestASlowClientHoldsUpNoOtherClient_REQ_API_006, TestASlowClientIsClosedNotTrimmed_REQ_API_006 |
 
 ## Execution log
 
@@ -150,3 +166,4 @@ its matrix lists commands.
 | 2026-10-18 | T-REL-02, T-HRD-01, T-HRD-02, T-HRD-03 | added | Delta `2026-10-f1-close`: F1 closed, and what it left moved here — `T-F1-20`'s QA walk as a release gate, the rule-signing key, the seven questions the nine ratified deltas left open, and three known defects. |
 | 2026-10-22 | T-HRD-03 | revised | Its `REQ_AGT_007` item — a late interrupt eating the first byte of the agent's next command — fixed by delta `2026-10-agent-pty-settle` (PR #27, `TestALateInterruptDoesNotEatTheNextCommand_REQ_AGT_007`) and replaced by the `REQ_API_005` macOS read timeout seen on PR #26 (delta `2026-10-f1-close`, revised). The task stays open for the other three items. |
 | 2026-10-23 | T-HRD-03 | revised | The Tech Lead added the `umb ai` stream overflow found during T-F2-04 (`TestUmbAiStreamsALongAnswer_REQ_CLI_001`, 3 failures in 300 runs at `-cpu 2`, none at `-cpu 1`); fixed by `client.NewUnboundedStream`, 900 runs green at `-cpu 1,2,4` afterwards. The task stays open for its other three items. |
+| 2026-10-23 | T-HRD-04 | done | Added and approved by the Tech Lead (delta `2026-10-slow-client-queue`) after the T-HRD-03 review found that `Server.broadcast` wrote every client's socket on the dispatch goroutine: one client that stopped reading stopped every other's notifications. Each connection now has an outbox and its own writer; past 8 MiB it is closed. The new test blocked the dispatcher for 20 s before the change. A write deadline, also proposed, was dropped: with the outbox it would only disconnect a suspended TUI. |
