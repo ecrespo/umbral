@@ -48,6 +48,13 @@ func (g *gateway) configure(models config.Models, resolved []secdomain.ResolvedC
 	// providers, whose missing candidates it skips, rather than old classes naming providers
 	// a reload removed.
 	g.router.Configure(models.Classes)
+	parallel := map[string]int{}
+	for _, p := range models.Providers {
+		if p.MaxParallel > 0 {
+			parallel[p.ID] = p.MaxParallel
+		}
+	}
+	g.router.SetParallel(parallel)
 	g.router.SetPolicy(llmgw.Policy{
 		Order:           models.Router.Policy,
 		BreakerFailures: models.Router.BreakerFailures,

@@ -71,6 +71,13 @@ const (
 	EventToolCall       EventKind = "tool_call"
 	EventUsage          EventKind = "usage"
 	EventDone           EventKind = "done"
+	// EventQueued is the router's own, never an adapter's: the call waits behind other calls
+	// for its provider (REQ-ORC-005). It carries nothing, comes before the call's first event,
+	// and is followed by EventSent, or by the error that ended the wait.
+	EventQueued EventKind = "queued"
+	// EventSent is the router's own too: a call that said EventQueued holds its place and is
+	// sent now. Its first-token wait starts here.
+	EventSent EventKind = "sent"
 )
 
 // Usage is what a call consumed, in tokens (REQ-LLM-005).

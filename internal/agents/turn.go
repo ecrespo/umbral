@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	ctxdomain "github.com/ecrespo/umbral/internal/context/domain"
 	llm "github.com/ecrespo/umbral/internal/llmgw/domain"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
+	"github.com/ecrespo/umbral/internal/slots"
 	toolsdomain "github.com/ecrespo/umbral/internal/tools/domain"
 )
 
@@ -32,6 +34,8 @@ type turnRun struct {
 	r      *Runtime
 	thread domain.Thread
 	turnID string
+	// slot is the turn's place under max_concurrent_turns; run waits for it first.
+	slot *slots.Ticket
 	// cwd and writeRoot are where the turn runs, read once as it starts: the thread's own, or
 	// its active worktree's (REQ-WT-002).
 	cwd       string
@@ -65,10 +69,10 @@ type turnRun struct {
 // answers without asking for one or a limit stops it (REQ-AGT-008).
 // It returns how the turn ended: its stop reason, and the moment its end was written, 0 when
 // the write failed.
-func (r *Runtime) runTurn(ctx context.Context, thread domain.Thread, turnID string) (domain.StopReason, int64) {
+func (r *Runtime) runTurn(ctx context.Context, thread domain.Thread, turnID string, slot *slots.Ticket) (domain.StopReason, int64) {
 	// The turn's span holds everything below: model calls, tools and log lines (REQ-OBS-001).
 	ctx, endSpan := r.cfg.Tracer.Turn(ctx, thread.ID, turnID)
-	t := &turnRun{r: r, thread: thread, turnID: turnID}
+	t := &turnRun{r: r, thread: thread, turnID: turnID, slot: slot}
 	stop := t.run(ctx)
 
 	// A cancelled turn — thread.cancel, or the daemon closing — leaves the thread stopped
@@ -102,6 +106,9 @@ func (r *Runtime) runTurn(ctx context.Context, thread domain.Thread, turnID stri
 }
 
 func (t *turnRun) run(ctx context.Context) domain.StopReason {
+	if err := t.takeSlot(ctx); err != nil {
+		return t.stopFor(ctx, err)
+	}
 	if err := t.prepare(ctx); err != nil {
 		return t.stopFor(ctx, err)
 	}
@@ -130,6 +137,34 @@ func (t *turnRun) run(ctx context.Context) domain.StopReason {
 		}
 		t.repairing = t.invalid
 	}
+}
+
+// takeSlot waits, when the turn was held, for its place under max_concurrent_turns
+// (REQ-ORC-002). A cancel meanwhile ends the turn cancelled before anything is read or sent.
+// Once granted, the thread is written as no longer queued, and the turn's stall clock starts
+// then: waiting for a slot is not inactivity.
+func (t *turnRun) takeSlot(ctx context.Context) error {
+	if !t.thread.Queued {
+		return nil
+	}
+	if err := t.slot.Wait(ctx); err != nil {
+		return err
+	}
+	// A slot freed by a turn the same stop cancelled can be granted as this turn's context
+	// ends; the stop wins, so a held turn never starts during Close.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := t.r.cfg.Store.Dequeue(ctx, t.thread.ID, t.r.now()); err != nil {
+		return storageErr(err)
+	}
+	t.thread.Queued = false
+	t.r.mu.Lock()
+	if tr := t.r.turns[t.thread.ID]; tr != nil && tr.id == t.turnID {
+		tr.live.queued, tr.live.lastAt, tr.live.lastEvent = false, t.r.cfg.Now(), activityTurnStarted
+	}
+	t.r.mu.Unlock()
+	return nil
 }
 
 // errBudget is a step that found the cost cap reached between its compaction and its call.
@@ -275,7 +310,7 @@ func (t *turnRun) step(ctx context.Context) ([]domain.ToolCall, error) {
 	if t.overCostCap() {
 		return nil, errBudget
 	}
-	stream, err := cfg.Models.Stream(ctx, ports.ModelCall{
+	stream, err := t.stream(ctx, ports.ModelCall{
 		ThreadID: t.thread.ID, TurnID: t.turnID, Class: t.thread.ModelClass, Model: t.thread.Model, Request: req,
 	})
 	if err != nil {
@@ -396,7 +431,7 @@ const (
 
 // summarize is ctxdomain.Summarize over the `fast` class; what it consumes counts to the turn.
 func (t *turnRun) summarize(ctx context.Context, transcript string) (string, error) {
-	stream, err := t.r.cfg.Models.Stream(ctx, ports.ModelCall{
+	stream, err := t.stream(ctx, ports.ModelCall{
 		ThreadID: t.thread.ID, TurnID: t.turnID, Class: summaryClass,
 		Request: llm.Request{
 			System: summaryPrompt, MaxOutputTokens: summaryMaxTokens,
@@ -422,6 +457,38 @@ func (t *turnRun) summarize(ctx context.Context, transcript string) (string, err
 		}
 	}
 	return strings.TrimSpace(out.String()), nil
+}
+
+// stream makes a model call of the turn, the main one or a compaction's, and keeps the
+// router's queue events from its reader. While the call waits behind others for its provider
+// the turn's stall clock is held, and it starts again when the call is sent (REQ-ORC-005,
+// REQ-AUT-008): a wait the user configured is not a silent model, but a provider slow to
+// answer once sent is.
+func (t *turnRun) stream(ctx context.Context, call ports.ModelCall) (iter.Seq2[llm.Event, error], error) {
+	inner, err := t.r.cfg.Models.Stream(ctx, call)
+	if err != nil {
+		return nil, err
+	}
+	return func(yield func(llm.Event, error) bool) {
+		waiting := false
+		setWaiting := func(w bool) {
+			if w != waiting {
+				waiting = w
+				t.r.waitForProvider(t.thread.ID, t.turnID, w)
+			}
+		}
+		defer setWaiting(false)
+		for ev, err := range inner {
+			if err == nil && (ev.Kind == llm.EventQueued || ev.Kind == llm.EventSent) {
+				setWaiting(ev.Kind == llm.EventQueued)
+				continue
+			}
+			setWaiting(false)
+			if !yield(ev, err) {
+				return
+			}
+		}
+	}, nil
 }
 
 // runTool takes one tool call through the policy and, when a decision allows it, the tool.

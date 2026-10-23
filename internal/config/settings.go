@@ -55,7 +55,20 @@ type Settings struct {
 	// commit — hooks and signing included — may run before it is killed and refused as
 	// `commit_failed` (REQ-WT-004). Read at start.
 	WorktreeCommitTimeoutS int
+	// MaxConcurrentTurns is `[agents] max_concurrent_turns`: how many agent turns, of all
+	// threads, run at once; one over it is held, queued, until a turn ends (REQ-ORC-002).
+	// Read at start.
+	MaxConcurrentTurns int
 }
+
+// DefaultMaxConcurrentTurns is REQ-ORC-002's default.
+const DefaultMaxConcurrentTurns = 3
+
+// The bounds of `[agents] max_concurrent_turns`.
+const (
+	MinConcurrentTurns = 1
+	MaxConcurrentTurns = 64
+)
 
 // DefaultWorktreeCommitTimeoutS is REQ-WT-004's default, in seconds.
 const DefaultWorktreeCommitTimeoutS = 60
@@ -148,6 +161,7 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 	settings := Settings{
 		MaxMessageBytes: DefaultMaxMessageBytes, Retention: DefaultRetention(), NotificationsEnabled: true,
 		RulesURL: DefaultRulesURL, Stall: DefaultStall(), WorktreeCommitTimeoutS: DefaultWorktreeCommitTimeoutS,
+		MaxConcurrentTurns: DefaultMaxConcurrentTurns,
 	}
 
 	raw, err := os.ReadFile(path) // #nosec G304 -- the path is the daemon's own config location
@@ -241,6 +255,13 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 					ErrSettingsInvalid, path, key, value, MinWorktreeCommitTimeoutS, MaxWorktreeCommitTimeoutS)
 			}
 			settings.WorktreeCommitTimeoutS = secs
+		case "agents.max_concurrent_turns":
+			n, err := strconv.Atoi(value)
+			if err != nil || n < MinConcurrentTurns || n > MaxConcurrentTurns {
+				return Settings{}, fmt.Errorf("%w: %s: %s is %q, want a whole number from %d to %d",
+					ErrSettingsInvalid, path, key, value, MinConcurrentTurns, MaxConcurrentTurns)
+			}
+			settings.MaxConcurrentTurns = n
 		case apiSection + "." + maxMessageKey:
 			n, err := parseMaxMessageBytes(value)
 			if err != nil {

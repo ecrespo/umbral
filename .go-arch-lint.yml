@@ -94,6 +94,10 @@ components:
 
   # --- cross-cutting modules (no hexagonal split) -----------------------------
   bus:    { in: internal/bus }
+  # A counting semaphore that grants in arrival order (T-F2-04): the runtime's turn slots and
+  # the router's per-provider queues. A leaf, so neither module reaches the other through it:
+  # it has no `deps` entry, which go-arch-lint reads as no project import allowed at all.
+  slots:  { in: internal/slots }
   api:    { in: internal/api }
   store:  { in: internal/store }
   config: { in: internal/config }
@@ -488,6 +492,8 @@ deps:
       - llmgw-domain
       - security-domain
       - bus
+      # max_concurrent_turns (T-F2-04).
+      - slots
 
   mcp-service:
     anyVendorDeps: false
@@ -627,6 +633,8 @@ deps:
     mayDependOn:
       - llmgw-ports
       - llmgw-domain
+      # max_parallel per provider (T-F2-04).
+      - slots
 
   workspaces-integration:
     anyVendorDeps: true

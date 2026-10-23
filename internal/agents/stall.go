@@ -33,7 +33,12 @@ type liveness struct {
 	lastEvent string
 	// awaiting is a turn paused on an approval: it waits for the user and does not stall.
 	awaiting bool
-	stalled  bool
+	// queued is a turn held for a slot (REQ-ORC-002): it has not started, so it does not stall.
+	queued bool
+	// providerWait is a turn whose model call waits behind others for its provider
+	// (REQ-ORC-005): the wait is the queue's, not the model's, so it does not stall.
+	providerWait bool
+	stalled      bool
 }
 
 // stallWindow is the window a turn of thread gets: the local one when any candidate of its
@@ -87,6 +92,23 @@ func (r *Runtime) touch(threadID, what string, onlyAwaiting bool) {
 	}
 }
 
+// waitForProvider marks the turn's model call as waiting for its provider, or no longer; the
+// stall clock starts again when the wait ends.
+func (r *Runtime) waitForProvider(threadID, turnID string, waiting bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t := r.turns[threadID]
+	if t == nil || t.id != turnID {
+		return
+	}
+	t.live.providerWait = waiting
+	if waiting {
+		t.live.stalled = false
+	} else {
+		t.live.lastAt = r.cfg.Now()
+	}
+}
+
 // NoteOutput records output from a session the thread owns: activity for its running turn.
 // `cmd/umbrald` calls it, following `session.output` for the thread's PTY.
 func (r *Runtime) NoteOutput(threadID string) { r.touch(threadID, activityOutput, false) }
@@ -130,7 +152,7 @@ func (r *Runtime) newStalls() []ports.ThreadStalled {
 	for threadID, t := range r.turns {
 		l := &t.live
 		idle := now.Sub(l.lastAt)
-		if l.stalled || l.awaiting || idle < l.window {
+		if l.stalled || l.awaiting || l.queued || l.providerWait || idle < l.window {
 			continue
 		}
 		l.stalled = true

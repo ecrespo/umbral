@@ -21,8 +21,12 @@ import (
 	ctxdomain "github.com/ecrespo/umbral/internal/context/domain"
 	ctxports "github.com/ecrespo/umbral/internal/context/ports"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
+	"github.com/ecrespo/umbral/internal/slots"
 	toolsports "github.com/ecrespo/umbral/internal/tools/ports"
 )
+
+// DefaultMaxConcurrentTurns is `[agents] max_concurrent_turns`' default (REQ-ORC-002).
+const DefaultMaxConcurrentTurns = 3
 
 // Config wires the runtime. Store, Models, Tools, Bus, NewID, Metrics and Tracer are required.
 type Config struct {
@@ -57,8 +61,12 @@ type Config struct {
 	// StallLocal and StallRemote are REQ-AUT-008's windows, `[waits] stall_local_s` and
 	// `stall_remote_s`; StallTick is how often running turns are checked. Zero is the default.
 	StallLocal, StallRemote, StallTick time.Duration
-	Now                                func() time.Time
-	Logger                             *slog.Logger
+	// MaxConcurrentTurns is `[agents] max_concurrent_turns`: how many turns, of all threads,
+	// run at once; a turn over it is held, queued, until one ends (REQ-ORC-002). Zero is
+	// DefaultMaxConcurrentTurns.
+	MaxConcurrentTurns int
+	Now                func() time.Time
+	Logger             *slog.Logger
 }
 
 // Runtime is ports.Threads.
@@ -72,6 +80,8 @@ type Runtime struct {
 	sendMu sync.Map // thread id → *sync.Mutex
 	// attnMu holds each thread's attention lock (attention.go).
 	attnMu sync.Map // thread id → *sync.Mutex
+	// slots holds turns over MaxConcurrentTurns, granting them in arrival order.
+	slots *slots.Queue
 
 	mu     sync.Mutex
 	closed bool
@@ -122,6 +132,8 @@ type turn struct {
 	id     string
 	cancel context.CancelFunc
 	done   chan struct{}
+	// slot is the turn's place under MaxConcurrentTurns, released once its end is written.
+	slot *slots.Ticket
 	// stop and ended are how the turn ended, set before done is closed.
 	stop  domain.StopReason
 	ended int64
@@ -179,8 +191,14 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 	if cfg.StallTick <= 0 {
 		cfg.StallTick = DefaultStallTick
 	}
+	if cfg.MaxConcurrentTurns <= 0 {
+		cfg.MaxConcurrentTurns = DefaultMaxConcurrentTurns
+	}
 	base, stop := context.WithCancel(context.WithoutCancel(ctx))
-	r := &Runtime{cfg: cfg, base: base, stop: stop, turns: map[string]*turn{}, waiting: map[string]chan domain.Approval{}}
+	r := &Runtime{
+		cfg: cfg, base: base, stop: stop, slots: slots.New(cfg.MaxConcurrentTurns),
+		turns: map[string]*turn{}, waiting: map[string]chan domain.Approval{},
+	}
 	r.wg.Add(1)
 	go r.watchStalls()
 	return r, nil
@@ -427,26 +445,34 @@ func (r *Runtime) Send(ctx context.Context, p ports.SendParams) (ports.SendResul
 		ID: r.cfg.NewID(prefixMessage), ThreadID: thread.ID, TurnID: r.cfg.NewID(prefixTurn), Role: domain.RoleUser,
 		Content: content, ClientMsgID: p.ClientMsgID, Attachments: attachments, CreatedAt: r.now(),
 	}
-	stored, running, err := r.beginTurn(ctx, msg)
+	// The place is taken before the turn is written, so the store says queued from the
+	// moment the send returns, and turns are granted in the order their sends got here.
+	slot := r.slots.Enqueue()
+	stored, running, err := r.beginTurn(ctx, msg, !slot.Granted())
+	if err != nil {
+		slot.Release()
+	}
 	if errors.Is(err, ports.ErrDuplicate) {
 		return ports.SendResult{TurnID: stored.TurnID, MessageID: stored.ID}, nil
 	}
 	if err != nil {
 		return ports.SendResult{}, err
 	}
-	if !r.start(running, msg) { //nolint:contextcheck // the turn outlives the request: it runs on the runtime's context
+	if !r.start(running, msg, slot) { //nolint:contextcheck // the turn outlives the request: it runs on the runtime's context
+		slot.Release()
 		return ports.SendResult{}, errors.New("agents: the runtime is closed")
 	}
 	return ports.SendResult{TurnID: msg.TurnID, MessageID: msg.ID}, nil
 }
 
-// beginTurn persists the user's message and marks the thread running and `working`, then
-// announces the attention state, under the thread's attention lock.
-func (r *Runtime) beginTurn(ctx context.Context, msg domain.Message) (domain.Message, domain.Thread, error) {
+// beginTurn persists the user's message and marks the thread running and `working`, queued
+// when its turn waits for a slot, then announces the attention state, under the thread's
+// attention lock.
+func (r *Runtime) beginTurn(ctx context.Context, msg domain.Message, queued bool) (domain.Message, domain.Thread, error) {
 	lock := r.attentionLock(msg.ThreadID)
 	lock.Lock()
 	defer lock.Unlock()
-	stored, running, err := r.cfg.Store.BeginTurn(ctx, msg, r.maxCost(), r.now())
+	stored, running, err := r.cfg.Store.BeginTurn(ctx, msg, queued, r.maxCost(), r.now())
 	if err == nil {
 		r.publish(ports.ThreadAttentionChanged{ThreadID: msg.ThreadID, AttentionState: running.AttentionState})
 	}
@@ -530,11 +556,11 @@ func (r *Runtime) attach(ctx context.Context, cwd string, ref ports.AttachmentRe
 
 // start runs the turn in its own goroutine, on the runtime's context rather than the
 // request's: the turn outlives the thread.send call that started it. A closed runtime starts
-// nothing.
-func (r *Runtime) start(thread domain.Thread, msg domain.Message) bool {
+// nothing. The turn owns slot from here, and releases it once its end is written.
+func (r *Runtime) start(thread domain.Thread, msg domain.Message, slot *slots.Ticket) bool {
 	ctx, cancel := context.WithCancel(r.base)
-	t := &turn{id: msg.TurnID, cancel: cancel, done: make(chan struct{}), live: liveness{
-		window: r.stallWindow(ctx, thread), lastAt: r.cfg.Now(), lastEvent: activityTurnStarted,
+	t := &turn{id: msg.TurnID, cancel: cancel, done: make(chan struct{}), slot: slot, live: liveness{
+		window: r.stallWindow(ctx, thread), lastAt: r.cfg.Now(), lastEvent: activityTurnStarted, queued: thread.Queued,
 	}}
 	r.mu.Lock()
 	if r.closed {
@@ -549,7 +575,8 @@ func (r *Runtime) start(thread domain.Thread, msg domain.Message) bool {
 		defer r.wg.Done()
 		defer close(t.done)
 		defer cancel()
-		t.stop, t.ended = r.runTurn(ctx, thread, msg.TurnID)
+		defer slot.Release()
+		t.stop, t.ended = r.runTurn(ctx, thread, msg.TurnID, slot)
 		r.mu.Lock()
 		if r.turns[thread.ID] == t {
 			delete(r.turns, thread.ID)

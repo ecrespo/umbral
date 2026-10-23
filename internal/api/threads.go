@@ -34,6 +34,9 @@ type Thread struct {
 	UpdatedAt      int64   `json:"updated_at"`
 	// Stalled is true while the running turn is marked stalled (REQ-AUT-008).
 	Stalled bool `json:"stalled"`
+	// Queued is true while the thread's turn is held for a slot under `[agents]
+	// max_concurrent_turns` (REQ-ORC-002); the thread is `running` meanwhile.
+	Queued bool `json:"queued"`
 	// WorkspaceID is the workspace the thread was created in (REQ-ORC-003); WorktreeID its
 	// latest worktree, whatever its state (REQ-WT-002). Null for none.
 	WorkspaceID *string `json:"workspace_id"`
@@ -45,7 +48,7 @@ func toWireThread(t agentsdomain.Thread) Thread {
 		ID: t.ID, Title: t.Title, Mode: string(t.Mode), Model: emptyAsNull(t.Model), ModelClass: t.ModelClass,
 		CWD: t.Cwd, State: string(t.State), AttentionState: t.AttentionState, Ephemeral: t.Ephemeral,
 		MaxSteps: t.MaxSteps, BudgetTokens: t.BudgetTokens, TokensUsed: t.TokensUsed, CostMicroUSD: t.CostMicroUSD,
-		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, Stalled: t.Stalled,
+		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, Stalled: t.Stalled, Queued: t.Queued,
 		WorkspaceID: emptyAsNull(t.WorkspaceID), WorktreeID: emptyAsNull(t.WorktreeID),
 	}
 }

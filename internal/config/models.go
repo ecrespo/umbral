@@ -98,6 +98,10 @@ type Provider struct {
 	Options    map[string]any
 	LibPath    string
 	ModelsDir  string
+	// MaxParallel is `max_parallel`: how many calls the router sends the provider at once,
+	// the rest queued in arrival order (REQ-ORC-005). 0 is unset: one for a local provider,
+	// no limit for a remote one.
+	MaxParallel int
 }
 
 // CredentialKind is where a provider's key comes from.
@@ -189,6 +193,8 @@ func LoadModels(path string) (Models, error) {
 			Options   map[string]any `toml:"options"`
 			LibPath   string         `toml:"lib_path"`
 			ModelsDir string         `toml:"models_dir"`
+			// MaxParallel is bounded by the schema, so 0 is only ever "absent".
+			MaxParallel int `toml:"max_parallel"`
 		} `toml:"providers"`
 	}
 	if err := toml.Unmarshal(raw, &file); err != nil {
@@ -236,7 +242,7 @@ func LoadModels(path string) (Models, error) {
 		}
 		models.Providers = append(models.Providers, Provider{
 			ID: p.ID, Type: p.Type, BaseURL: p.BaseURL, Credential: cred,
-			Options: p.Options, LibPath: p.LibPath, ModelsDir: p.ModelsDir,
+			Options: p.Options, LibPath: p.LibPath, ModelsDir: p.ModelsDir, MaxParallel: p.MaxParallel,
 		})
 	}
 	return models, nil

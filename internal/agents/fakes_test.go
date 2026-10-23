@@ -141,7 +141,7 @@ func (s *memStore) UpdateThread(_ context.Context, id string, p domain.UpdatePar
 	return t, nil
 }
 
-func (s *memStore) BeginTurn(_ context.Context, msg domain.Message, maxCost, now int64) (domain.Message, domain.Thread, error) {
+func (s *memStore) BeginTurn(_ context.Context, msg domain.Message, queued bool, maxCost, now int64) (domain.Message, domain.Thread, error) {
 	if s.beforeBegin != nil {
 		s.beforeBegin()
 	}
@@ -172,9 +172,21 @@ func (s *memStore) BeginTurn(_ context.Context, msg domain.Message, maxCost, now
 		return domain.Message{}, domain.Thread{}, err
 	}
 	s.messages = append(s.messages, msg)
-	t.State, t.AttentionState, t.UpdatedAt = domain.StateRunning, "working", now
+	t.State, t.AttentionState, t.Queued, t.UpdatedAt = domain.StateRunning, "working", queued, now
 	s.threads[t.ID] = t
 	return msg, t, nil
+}
+
+func (s *memStore) Dequeue(_ context.Context, id string, now int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.write(); err != nil {
+		return err
+	}
+	t := s.threads[id]
+	t.Queued, t.UpdatedAt = false, now
+	s.threads[id] = t
+	return nil
 }
 
 func (s *memStore) AppendMessage(_ context.Context, msg domain.Message) error {
@@ -225,7 +237,7 @@ func (s *memStore) FinishTurn(_ context.Context, id string, state domain.State, 
 		return errors.New("disk full")
 	}
 	t := s.threads[id]
-	t.State, t.UpdatedAt, t.AttentionState = state, now, domain.AttentionAfter(state, viewed)
+	t.State, t.UpdatedAt, t.AttentionState, t.Queued = state, now, domain.AttentionAfter(state, viewed), false
 	if viewed {
 		s.seen[id] = now
 	}
@@ -401,6 +413,9 @@ type scripted struct {
 	window  int64
 	// hold, when set, keeps every stream from starting until it is closed.
 	hold chan struct{}
+	// pause, when set, holds every stream after its event at pauseAfter until it is closed.
+	pause      chan struct{}
+	pauseAfter int
 	// local makes every candidate a local provider (the stall window's choice).
 	local bool
 	// unavailable makes Available report no candidate.
@@ -445,7 +460,7 @@ func (m *scripted) Stream(ctx context.Context, call ports.ModelCall) (iter.Seq2[
 	}
 	events := m.scripts[0]
 	m.scripts = m.scripts[1:]
-	hold := m.hold
+	hold, pause, pauseAfter := m.hold, m.pause, m.pauseAfter
 	return func(yield func(llm.Event, error) bool) {
 		if hold != nil {
 			// A provider's stream ends when its call's context does.
@@ -456,9 +471,17 @@ func (m *scripted) Stream(ctx context.Context, call ports.ModelCall) (iter.Seq2[
 				return
 			}
 		}
-		for _, ev := range events {
+		for i, ev := range events {
 			if !yield(ev, nil) {
 				return
+			}
+			if i == pauseAfter && pause != nil {
+				select {
+				case <-pause:
+				case <-ctx.Done():
+					yield(llm.Event{}, ctx.Err())
+					return
+				}
 			}
 		}
 	}, nil

@@ -51,7 +51,7 @@ func TestBeginTurnPersistsAndGuards_REQ_AGT_015(t *testing.T) {
 	th := thread(t, s, 1000)
 	ctx := t.Context()
 	first := userMessage(th, "01J9Z3K8T2QH6W4V5X7Y8Z9A0B")
-	_, running, err := s.BeginTurn(ctx, first, 0, 3)
+	_, running, err := s.BeginTurn(ctx, first, false, 0, 3)
 	if err != nil || running.State != domain.StateRunning || running.Mode != secdomain.ModeNormal {
 		t.Fatalf("BeginTurn returns the thread it read: %+v %v", running, err)
 	}
@@ -60,12 +60,12 @@ func TestBeginTurnPersistsAndGuards_REQ_AGT_015(t *testing.T) {
 		t.Fatalf("thread after BeginTurn: %+v", got)
 	}
 	// The same client id, even while running, returns the original.
-	orig, _, err := s.BeginTurn(ctx, userMessage(th, first.ClientMsgID), 0, 4)
+	orig, _, err := s.BeginTurn(ctx, userMessage(th, first.ClientMsgID), false, 0, 4)
 	if !errors.Is(err, ports.ErrDuplicate) || orig.ID != first.ID || orig.TurnID != "trn_1" {
 		t.Fatalf("duplicate: %+v %v", orig, err)
 	}
 	// Another message while running conflicts.
-	if _, _, err := s.BeginTurn(ctx, userMessage(th, ""), 0, 4); !errors.Is(err, domain.ErrConflict) {
+	if _, _, err := s.BeginTurn(ctx, userMessage(th, ""), false, 0, 4); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("while running: %v", err)
 	}
 	if err := s.FinishTurn(ctx, th.ID, domain.StateIdle, false, domain.Usage{InTokens: 900, OutTokens: 100, CostMicroUSD: 42}, 5); err != nil {
@@ -75,26 +75,26 @@ func TestBeginTurnPersistsAndGuards_REQ_AGT_015(t *testing.T) {
 	if got.State != domain.StateIdle || got.TokensUsed != 1000 || got.CostMicroUSD != 42 || got.AttentionState != "done" {
 		t.Fatalf("thread after the turn: %+v", got)
 	}
-	if _, _, err := s.BeginTurn(ctx, userMessage(th, ""), 0, 6); !errors.Is(err, domain.ErrBudgetExceeded) {
+	if _, _, err := s.BeginTurn(ctx, userMessage(th, ""), false, 0, 6); !errors.Is(err, domain.ErrBudgetExceeded) {
 		t.Fatalf("past the budget: %v", err)
 	}
 	// The cost cap is checked in the same transaction (delta `2026-10-cost-cap`): the thread has
 	// spent 42 micro-USD, so a cap of 42 is reached and one of 43 is not; the token budget above
 	// already refuses, so the cap is checked on a thread with tokens left.
 	fresh := thread(t, s, 1<<30)
-	if _, _, err := s.BeginTurn(ctx, userMessage(fresh, ""), 0, 7); err != nil {
+	if _, _, err := s.BeginTurn(ctx, userMessage(fresh, ""), false, 0, 7); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.FinishTurn(ctx, fresh.ID, domain.StateIdle, false, domain.Usage{InTokens: 1, CostMicroUSD: 42}, 7); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.BeginTurn(ctx, userMessage(fresh, ""), 42, 8); !errors.Is(err, domain.ErrBudgetExceeded) {
+	if _, _, err := s.BeginTurn(ctx, userMessage(fresh, ""), false, 42, 8); !errors.Is(err, domain.ErrBudgetExceeded) {
 		t.Fatalf("at the cost cap: %v", err)
 	}
-	if _, _, err := s.BeginTurn(ctx, userMessage(fresh, ""), 43, 8); err != nil {
+	if _, _, err := s.BeginTurn(ctx, userMessage(fresh, ""), false, 43, 8); err != nil {
 		t.Fatalf("under the cost cap: %v", err)
 	}
-	if _, _, err := s.BeginTurn(ctx, domain.Message{ID: store.NewID(store.PrefixMessage), ThreadID: "thr_nope", TurnID: "t", Role: domain.RoleUser}, 0, 7); !errors.Is(err, domain.ErrNotFound) {
+	if _, _, err := s.BeginTurn(ctx, domain.Message{ID: store.NewID(store.PrefixMessage), ThreadID: "thr_nope", TurnID: "t", Role: domain.RoleUser}, false, 0, 7); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("unknown thread: %v", err)
 	}
 	msgs, _ := s.Messages(ctx, th.ID)
@@ -153,7 +153,7 @@ func TestUpdateThreadRefusesAModeChangeDuringATurn_REQ_AGT_010(t *testing.T) {
 	if err != nil || got.Model != model || got.Title != title || got.UpdatedAt != 9 {
 		t.Fatalf("update %+v %v", got, err)
 	}
-	if _, _, err := s.BeginTurn(ctx, userMessage(th, ""), 0, 10); err != nil {
+	if _, _, err := s.BeginTurn(ctx, userMessage(th, ""), false, 0, 10); err != nil {
 		t.Fatal(err)
 	}
 	ask := secdomain.ModeAsk
@@ -210,7 +210,7 @@ func TestApprovalsRoundTrip_REQ_AGT_004(t *testing.T) {
 	s := open(t)
 	th := thread(t, s, 1000)
 	ctx := t.Context()
-	if _, _, err := s.BeginTurn(ctx, userMessage(th, ""), 0, 2); err != nil {
+	if _, _, err := s.BeginTurn(ctx, userMessage(th, ""), false, 0, 2); err != nil {
 		t.Fatal(err)
 	}
 	am := domain.Message{ID: store.NewID(store.PrefixMessage), ThreadID: th.ID, TurnID: "trn_1", Role: domain.RoleAssistant, CreatedAt: 3}
@@ -278,7 +278,7 @@ func TestTurnStatusReadsTheThreadAndItsLatestTurn(t *testing.T) {
 		t.Fatalf("before a turn: %+v %v", st, err)
 	}
 	first := userMessage(th, "")
-	if _, _, err := s.BeginTurn(ctx, first, 0, 3); err != nil {
+	if _, _, err := s.BeginTurn(ctx, first, false, 0, 3); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.FinishTurn(ctx, th.ID, domain.StateIdle, false, domain.Usage{}, 4); err != nil {
@@ -286,7 +286,7 @@ func TestTurnStatusReadsTheThreadAndItsLatestTurn(t *testing.T) {
 	}
 	second := userMessage(th, "")
 	second.TurnID, second.CreatedAt = "trn_2", 5
-	if _, _, err := s.BeginTurn(ctx, second, 0, 5); err != nil {
+	if _, _, err := s.BeginTurn(ctx, second, false, 0, 5); err != nil {
 		t.Fatal(err)
 	}
 	st, err = s.TurnStatus(ctx, th.ID)
@@ -329,7 +329,7 @@ func TestSeenAndViewedEnds_REQ_AGT_016(t *testing.T) {
 		t.Fatalf("seen_at = %v, want 5", at)
 	}
 
-	if _, _, err := s.BeginTurn(ctx, userMessage(th, ""), 0, 6); err != nil {
+	if _, _, err := s.BeginTurn(ctx, userMessage(th, ""), false, 0, 6); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.FinishTurn(ctx, th.ID, domain.StateIdle, false, domain.Usage{}, 7); err != nil {
@@ -350,7 +350,7 @@ func TestSeenAndViewedEnds_REQ_AGT_016(t *testing.T) {
 
 	msg := userMessage(th, "")
 	msg.TurnID = "trn_2"
-	if _, _, err := s.BeginTurn(ctx, msg, 0, 9); err != nil {
+	if _, _, err := s.BeginTurn(ctx, msg, false, 0, 9); err != nil {
 		t.Fatal(err)
 	}
 	if changed, err := s.MarkSeen(ctx, th.ID, 10); err != nil || changed {
@@ -427,5 +427,39 @@ func TestAThreadKeepsItsWorkspaceAndWorktree_REQ_ORC_003(t *testing.T) {
 	}
 	if _, err := s.Thread(ctx, earlier.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("a deleted thread: %v", err)
+	}
+}
+
+// TestQueuedRoundTrips_REQ_ORC_002: a turn begun held reads queued until Dequeue, and a turn's
+// end clears it too — a held turn cancelled ends without ever being dequeued.
+func TestQueuedRoundTrips_REQ_ORC_002(t *testing.T) {
+	s := open(t)
+	ctx := t.Context()
+	th := thread(t, s, 1000)
+	if _, running, err := s.BeginTurn(ctx, userMessage(th, ""), true, 0, 2); err != nil || !running.Queued {
+		t.Fatalf("BeginTurn held: queued=%v %v", running.Queued, err)
+	}
+	if got, _ := s.Thread(ctx, th.ID); !got.Queued || got.State != domain.StateRunning || got.AttentionState != "working" {
+		t.Fatalf("a held turn's thread: %+v", got)
+	}
+	if err := s.Dequeue(ctx, th.ID, 3); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Thread(ctx, th.ID); got.Queued || got.State != domain.StateRunning {
+		t.Fatalf("after Dequeue: %+v", got)
+	}
+	if err := s.FinishTurn(ctx, th.ID, domain.StateIdle, false, domain.Usage{}, 4); err != nil {
+		t.Fatal(err)
+	}
+
+	other := thread(t, s, 1000)
+	if _, _, err := s.BeginTurn(ctx, userMessage(other, ""), true, 0, 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishTurn(ctx, other.ID, domain.StateStopped, false, domain.Usage{}, 6); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Thread(ctx, other.ID); got.Queued || got.State != domain.StateStopped {
+		t.Fatalf("a held turn cancelled: %+v", got)
 	}
 }
