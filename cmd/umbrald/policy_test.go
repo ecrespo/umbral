@@ -64,7 +64,7 @@ func TestExplainReadsWhatATurnDecidesWith_REQ_SEC_009(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := newExplainer(db, tools, nil)
+	e, err := newExplainer(db, tools, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

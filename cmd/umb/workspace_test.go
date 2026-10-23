@@ -378,6 +378,7 @@ var domainErrors = map[string]int{
 	"VALIDATION_ERROR": -32602,
 	"NOT_FOUND":        -32002,
 	"TIMEOUT":          -32011,
+	"CONFLICT":         -32003,
 }
 
 // serveRecordingDaemon starts a socket that answers the handshake and the given methods and

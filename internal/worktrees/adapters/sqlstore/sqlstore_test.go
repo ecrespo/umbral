@@ -3,6 +3,7 @@ package sqlstore
 import (
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/ecrespo/umbral/internal/store"
@@ -60,5 +61,55 @@ func TestWorktreeRowsRoundTrip_REQ_WT_001(t *testing.T) {
 	}
 	if err := s.SetState(ctx, "wtr_none", domain.StateMissing, 1); !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("SetState of an unknown id: %v", err)
+	}
+}
+
+// TestListByThread_REQ_WT_007: List returns a group's rows in every state, oldest first, every
+// row for nil, and none for an empty group.
+func TestListByThread_REQ_WT_007(t *testing.T) {
+	t.Parallel()
+	db, err := store.Open(t.Context(), store.Options{Path: filepath.Join(t.TempDir(), "umbral.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	for _, id := range []string{"thr_a", "thr_b", "thr_c"} {
+		if _, err := db.DB().ExecContext(t.Context(), `INSERT INTO threads(id, cwd, created_at, updated_at) VALUES (?, '/repo', 1, 1)`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := New(db.DB())
+	row := func(thread string, at int64, state domain.State) domain.Worktree {
+		w := domain.Worktree{
+			ID: store.NewID(store.PrefixWorktree), ThreadID: thread, RepoRoot: "/repo", RepoID: "0123456789abcdef",
+			BaseCommit: "abc", Branch: "umbral/" + thread, Path: "/data/" + thread + string(state),
+			State: state, CreatedAt: at, UpdatedAt: at,
+		}
+		if err := s.Insert(t.Context(), w); err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	a2 := row("thr_a", 20, domain.StateActive)
+	a1 := row("thr_a", 10, domain.StateMerged)
+	b := row("thr_b", 15, domain.StateMissing)
+	c := row("thr_c", 5, domain.StateActive)
+
+	ids := func(ws []domain.Worktree) []string {
+		out := make([]string, 0, len(ws))
+		for _, w := range ws {
+			out = append(out, w.ID)
+		}
+		return out
+	}
+	got, err := s.List(t.Context(), []string{"thr_a", "thr_b"})
+	if err != nil || !slices.Equal(ids(got), []string{a1.ID, b.ID, a2.ID}) {
+		t.Errorf("List(a, b) = %v, %v", ids(got), err)
+	}
+	if got, err := s.List(t.Context(), nil); err != nil || !slices.Equal(ids(got), []string{c.ID, a1.ID, b.ID, a2.ID}) {
+		t.Errorf("List(nil) = %v, %v", ids(got), err)
+	}
+	if got, err := s.List(t.Context(), []string{}); err != nil || len(got) != 0 {
+		t.Errorf("List(empty) = %v, %v", ids(got), err)
 	}
 }

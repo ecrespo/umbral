@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"github.com/ecrespo/umbral/internal/worktrees"
 	"github.com/ecrespo/umbral/internal/worktrees/adapters/gitcli"
 	"github.com/ecrespo/umbral/internal/worktrees/domain"
+	"github.com/ecrespo/umbral/internal/worktrees/ports"
 )
 
 // memStore is the Store port in memory, so the engine's tests need no database; the SQLite
@@ -68,6 +71,19 @@ func (m *memStore) ListActive(context.Context) ([]domain.Worktree, error) {
 			out = append(out, r)
 		}
 	}
+	return out, nil
+}
+
+func (m *memStore) List(_ context.Context, threadIDs []string) ([]domain.Worktree, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []domain.Worktree
+	for _, r := range m.rows {
+		if threadIDs == nil || slices.Contains(threadIDs, r.ThreadID) {
+			out = append(out, r)
+		}
+	}
+	slices.SortFunc(out, func(a, b domain.Worktree) int { return strings.Compare(a.ID, b.ID) })
 	return out, nil
 }
 
@@ -295,7 +311,7 @@ func TestWorktreeMergeSquashesIntoTheOriginBranch_REQ_WT_004(t *testing.T) {
 	f.write(w.Path, "b.txt", "untracked\n")
 	before := f.git(f.repo, "rev-parse", "HEAD")
 
-	res, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID, Message: "squash thr_a"})
+	res, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID, Message: "squash thr_a"})
 	if err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -332,7 +348,7 @@ func TestWorktreeMergeRefusesADirtyCopy_REQ_WT_004(t *testing.T) {
 	f.write(w.Path, "a.txt", "worktree\n")
 	f.write(f.repo, "a.txt", "user's own edit\n")
 	main, wt := f.state(f.repo), f.state(w.Path)
-	_, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID})
+	_, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID})
 	wantRefusal(t, err, domain.ReasonDirty)
 	if f.state(f.repo) != main || f.state(w.Path) != wt {
 		t.Error("a refused merge changed a side")
@@ -348,7 +364,7 @@ func TestWorktreeMergeRefusesAnotherBranch_REQ_WT_004(t *testing.T) {
 	f.write(w.Path, "a.txt", "worktree\n")
 	f.git(f.repo, "switch", "-q", "-c", "feature")
 	main := f.state(f.repo)
-	_, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID})
+	_, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID})
 	wantRefusal(t, err, domain.ReasonOtherBranch)
 	if f.state(f.repo) != main {
 		t.Error("a refused merge changed the main copy")
@@ -364,7 +380,7 @@ func TestWorktreeMergeRefusesADetachedHead_REQ_WT_004(t *testing.T) {
 	f.write(w.Path, "a.txt", "worktree\n")
 	f.git(f.repo, "switch", "-q", "--detach", "HEAD")
 	main := f.state(f.repo)
-	_, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID})
+	_, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID})
 	wantRefusal(t, err, domain.ReasonDetached)
 	if f.state(f.repo) != main {
 		t.Error("a refused merge changed the main copy")
@@ -383,7 +399,7 @@ func TestWorktreeMergeConflictLeavesBothSides_REQ_WT_004(t *testing.T) {
 	f.git(f.repo, "commit", "-qam", "main moved on")
 	main, wt := f.state(f.repo), f.state(w.Path)
 
-	_, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID})
+	_, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID})
 	r := wantRefusal(t, err, domain.ReasonConflict)
 	if len(r.Paths) != 1 || r.Paths[0] != "a.txt" {
 		t.Errorf("paths %v, want [a.txt]", r.Paths)
@@ -433,7 +449,7 @@ func TestARejectedCommitLeavesBothSides_REQ_WT_004(t *testing.T) {
 			main, wt := f.state(f.repo), f.state(w.Path)
 
 			start := time.Now()
-			_, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID})
+			_, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID})
 			r := wantRefusal(t, err, domain.ReasonCommitFailed)
 			if elapsed := time.Since(start); elapsed > 10*time.Second {
 				t.Errorf("the merge took %s, past the 2 s commit timeout", elapsed)
@@ -587,7 +603,7 @@ func TestARedirectedWorktreeGitDirIsNotFollowed_REQ_WT_004(t *testing.T) {
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("the diff ran a command the redirected git directory named")
 	}
-	if _, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID}); err != nil {
+	if _, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID}); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
 	if _, err := os.Stat(marker); err == nil {
@@ -615,7 +631,7 @@ func TestAMergeNeverOverwritesAnIgnoredFile_REQ_WT_004(t *testing.T) {
 	f.git(w.Path, "commit", "-q", "-m", "carry .env")
 	main := f.state(f.repo)
 
-	_, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID})
+	_, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID})
 	r := wantRefusal(t, err, domain.ReasonConflict)
 	if len(r.Paths) != 1 || r.Paths[0] != ".env" {
 		t.Errorf("paths %q, want [.env]", r.Paths)
@@ -640,7 +656,7 @@ func TestASlowPostCommitHookStillLands_REQ_WT_004(t *testing.T) {
 	if err := os.Chmod(filepath.Join(f.repo, ".git/hooks/post-commit"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	res, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID})
+	res, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID})
 	if err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -666,7 +682,7 @@ func TestAMergeOfWorkAlreadyOnTheBranchIsEmpty_REQ_WT_004(t *testing.T) {
 	f.git(f.repo, "commit", "-q", "-am", "same change")
 	head := f.git(f.repo, "rev-parse", "HEAD")
 
-	res, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID})
+	res, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID})
 	if err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -758,7 +774,7 @@ func TestAMergeRefusesAWorktreeChangedSinceItsReview_REQ_WT_004(t *testing.T) {
 	}
 	f.write(w.Path, "a.txt", "changed after the review\n")
 	main := f.state(f.repo)
-	_, err = f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID, Revision: reviewed.Revision})
+	_, err = f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID, Revision: reviewed.Revision})
 	wantRefusal(t, err, domain.ReasonChanged)
 	if f.state(f.repo) != main {
 		t.Error("the main copy was changed")
@@ -770,7 +786,7 @@ func TestAMergeRefusesAWorktreeChangedSinceItsReview_REQ_WT_004(t *testing.T) {
 	if again.Revision == reviewed.Revision {
 		t.Fatal("two different worktree contents have one revision")
 	}
-	if _, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID, Revision: again.Revision}); err != nil {
+	if _, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID, Revision: again.Revision}); err != nil {
 		t.Fatalf("Merge of the reviewed revision: %v", err)
 	}
 	if f.read(f.repo, "a.txt") != "changed after the review\n" {
@@ -795,10 +811,10 @@ func TestAReviewedRevisionMergesThroughTheUsersFilter_REQ_WT_004(t *testing.T) {
 		t.Fatalf("Diff: %v", err)
 	}
 	f.write(w.Path, "x.up", "other\n")
-	_, err = f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID, Revision: reviewed.Revision})
+	_, err = f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID, Revision: reviewed.Revision})
 	wantRefusal(t, err, domain.ReasonChanged)
 	f.write(w.Path, "x.up", "hello\n")
-	if _, err := f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID, Revision: reviewed.Revision}); err != nil {
+	if _, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID, Revision: reviewed.Revision}); err != nil {
 		t.Fatalf("Merge of the reviewed revision: %v", err)
 	}
 	if got := f.git(f.repo, "show", "HEAD:x.up"); got != "HELLO" {
@@ -824,6 +840,192 @@ func TestAnIgnoredAttributesFileCannotReshapeAReviewedMerge_REQ_WT_004(t *testin
 		t.Fatalf("Diff: %v", err)
 	}
 	f.write(w.Path, "sub/.gitattributes", "y.txt filter=up\n")
-	_, err = f.svc.Merge(t.Context(), worktrees.MergeRequest{ID: w.ID, Revision: reviewed.Revision})
+	_, err = f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID, Revision: reviewed.Revision})
 	wantRefusal(t, err, domain.ReasonChanged)
+}
+
+// TestCloseGroupNeverDropsAnUnmergedChange_REQ_WT_007: closing a group reports every worktree of
+// its threads with its state, and an active one as changed or clean; it discards only the active
+// worktrees the request names, so a changed worktree nobody named keeps its work.
+func TestCloseGroupNeverDropsAnUnmergedChange_REQ_WT_007(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	changed := f.create("thr_changed")
+	f.write(changed.Path, "a.txt", "unmerged work\n")
+	clean := f.create("thr_clean")
+	named := f.create("thr_named")
+	f.write(named.Path, "b.txt", "work the user chose to drop\n")
+	merged := f.create("thr_merged")
+	f.write(merged.Path, "c.txt", "landed\n")
+	if _, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: merged.ID}); err != nil {
+		t.Fatal(err)
+	}
+	outside := f.create("thr_outside")
+
+	threads := []string{"thr_changed", "thr_clean", "thr_named", "thr_merged"}
+	if _, err := f.svc.CloseGroup(t.Context(), domain.CloseGroupRequest{ThreadIDs: threads, Discard: []string{named.ID}}); err == nil {
+		t.Fatal("a discard without confirm was accepted")
+	} else {
+		wantRefusal(t, err, domain.ReasonConfirmRequired)
+	}
+	_, err := f.svc.CloseGroup(t.Context(), domain.CloseGroupRequest{ThreadIDs: threads, Discard: []string{outside.ID}, Confirm: true})
+	wantRefusal(t, err, domain.ReasonNotInGroup)
+	if got, _ := f.st.Get(t.Context(), outside.ID); got.State != domain.StateActive {
+		t.Fatal("a worktree outside the group was discarded")
+	}
+
+	entries, err := f.svc.CloseGroup(t.Context(), domain.CloseGroupRequest{ThreadIDs: threads, Discard: []string{named.ID}, Confirm: true})
+	if err != nil {
+		t.Fatalf("CloseGroup: %v", err)
+	}
+	got := map[string]string{}
+	for _, e := range entries {
+		got[e.Worktree.ID] = fmt.Sprintf("%s/%s/%t", e.Worktree.State, e.Changes, e.Discarded)
+	}
+	want := map[string]string{
+		changed.ID: "active/changed/false",
+		clean.ID:   "active/clean/false",
+		named.ID:   "discarded/changed/true",
+		merged.ID:  "merged//false",
+	}
+	if !maps.Equal(got, want) {
+		t.Fatalf("entries %v, want %v", got, want)
+	}
+	if f.read(changed.Path, "a.txt") != "unmerged work\n" {
+		t.Fatal("an unnamed worktree lost its change")
+	}
+	if _, err := os.Stat(named.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Error("the named worktree is still on disk")
+	}
+}
+
+// TestCloseGroupReportsAMissingWorktree_REQ_WT_007: a worktree removed behind Umbral's back is
+// reported missing, and naming it for a discard is not an error: it has nothing to discard.
+func TestCloseGroupReportsAMissingWorktree_REQ_WT_007(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	gone := f.create("thr_gone")
+	if err := os.RemoveAll(gone.Path); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := f.svc.CloseGroup(t.Context(), domain.CloseGroupRequest{ThreadIDs: []string{"thr_gone"}, Discard: []string{gone.ID}, Confirm: true})
+	if err != nil {
+		t.Fatalf("CloseGroup: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Worktree.State != domain.StateMissing || entries[0].Changes != "" || entries[0].Discarded {
+		t.Fatalf("entries %+v, want one missing worktree, not discarded", entries)
+	}
+	if _, err := os.Stat(gone.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Error("a missing worktree was recreated")
+	}
+}
+
+// TestCloseGroupDiscardsOnlyThroughItsGuard_REQ_WT_007: the guard — the agent runtime's "no turn
+// is running" — decides each discard; a refused one discards nothing at all.
+func TestCloseGroupDiscardsOnlyThroughItsGuard_REQ_WT_007(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	a := f.create("thr_a")
+	b := f.create("thr_b")
+	busy := errors.New("thr_b has a turn running")
+	guard := func(_ context.Context, threadID string, fn func() error) error {
+		if threadID == "thr_b" {
+			return busy
+		}
+		return fn()
+	}
+	_, err := f.svc.CloseGroup(t.Context(), domain.CloseGroupRequest{
+		ThreadIDs: []string{"thr_a", "thr_b"}, Discard: []string{a.ID, b.ID}, Confirm: true, Guard: guard,
+	})
+	if !errors.Is(err, busy) {
+		t.Fatalf("err = %v, want the guard's", err)
+	}
+	for _, w := range []domain.Worktree{a, b} {
+		if got, _ := f.st.Get(t.Context(), w.ID); got.State != domain.StateActive {
+			t.Errorf("%s is %s: a refused group discarded something", w.ID, got.State)
+		}
+	}
+}
+
+// TestCloseGroupHoldsEveryGuardAcrossItsDiscards_REQ_WT_007: a turn that could start on one
+// thread after another's worktree is gone would make a refused request that discarded
+// something. Each guard is entered once and every discard runs inside all of them, so the
+// guard of a thread whose turn starts later refuses before anything is discarded.
+func TestCloseGroupHoldsEveryGuardAcrossItsDiscards_REQ_WT_007(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	a := f.create("thr_a")
+	b := f.create("thr_b")
+	busy := errors.New("thr_b has a turn running")
+	calls := map[string]int{}
+	guard := func(_ context.Context, threadID string, fn func() error) error {
+		calls[threadID]++
+		if threadID == "thr_b" && calls[threadID] > 1 {
+			return busy // a turn started on thr_b after its first guard let go
+		}
+		return fn()
+	}
+	entries, err := f.svc.CloseGroup(t.Context(), domain.CloseGroupRequest{
+		ThreadIDs: []string{"thr_a", "thr_b"}, Discard: []string{a.ID, b.ID}, Confirm: true, Guard: guard,
+	})
+	if err != nil {
+		t.Fatalf("CloseGroup = %v", err)
+	}
+	if calls["thr_a"] != 1 || calls["thr_b"] != 1 {
+		t.Fatalf("guards entered %v, want each once", calls)
+	}
+	for _, e := range entries {
+		if !e.Discarded {
+			t.Errorf("%s was not discarded", e.Worktree.ID)
+		}
+	}
+}
+
+// stuckGit is git whose worktree removal fails, as on a directory a process still holds.
+type stuckGit struct{ ports.Git }
+
+func (stuckGit) RemoveWorktree(context.Context, string, string, string) error {
+	return errors.New("cannot remove: device busy")
+}
+
+// TestAMergeThatLandedIsAMergeAfterAFailedCleanUp_REQ_WT_004: once the commit is on the origin
+// branch the merge has happened. A worktree directory that cannot be removed afterwards is
+// left over, not a failure: the caller gets the commit, and the row says merged.
+func TestAMergeThatLandedIsAMergeAfterAFailedCleanUp_REQ_WT_004(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	w := f.create("thr_a")
+	f.write(w.Path, "b.txt", "new\n")
+	svc := worktrees.New(worktrees.Options{
+		Store: f.st, Git: stuckGit{gitcli.New(gitcli.Options{Env: f.env})}, Root: f.data, CommitTimeout: 2 * time.Second,
+		NewID: func() string { return "wtr_unused" }, Now: func() time.Time { return time.UnixMilli(2000) },
+	})
+	res, err := svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID})
+	if err != nil {
+		t.Fatalf("Merge = %v, want the landed commit", err)
+	}
+	if res.Commit == "" || res.Commit != f.git(f.repo, "rev-parse", "HEAD") || res.Leftover == nil {
+		t.Fatalf("result %+v, want HEAD's commit and the left-over directory", res)
+	}
+	if got, _ := f.st.Get(t.Context(), w.ID); got.State != domain.StateMerged {
+		t.Fatalf("the row is %s, want merged", got.State)
+	}
+}
+
+// TestListMarksAMissingWorktree_REQ_WT_006: listing is an access, so a worktree gone from disk is
+// listed — and stored — as missing; ActiveFor no longer finds it.
+func TestListMarksAMissingWorktree_REQ_WT_006(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	gone := f.create("thr_gone")
+	if err := os.RemoveAll(gone.Path); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := f.svc.List(t.Context(), nil)
+	if err != nil || len(rows) != 1 || rows[0].State != domain.StateMissing {
+		t.Fatalf("List = %+v, %v; want one missing row", rows, err)
+	}
+	if _, ok, err := f.svc.ActiveFor(t.Context(), "thr_gone"); ok || err != nil {
+		t.Fatalf("ActiveFor = %t, %v; want none", ok, err)
+	}
 }

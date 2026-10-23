@@ -441,6 +441,9 @@ deps:
       # skill.* (T-F1-34).
       - context-ports
       - context-domain
+      # worktree.* (T-F2-03): the engine's inbound port, its rows, diffs and refusals.
+      - worktrees-ports
+      - worktrees-domain
   client:
     anyVendorDeps: true
     mayDependOn:
@@ -574,6 +577,11 @@ deps:
       - mcp-domain
       # Agent detection: the built-in manifests overlaid with the local ones (T-F2-10).
       - integrations-domain
+      # The worktree engine and its adapters, wired to the runtime and worktree.* (T-F2-03).
+      - worktrees-service
+      - worktrees-ports
+      - worktrees-adapters
+      - worktrees-domain
 
 
   # --- the workspace tree (Tech Design §5.2) ----------------------------------

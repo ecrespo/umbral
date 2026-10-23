@@ -69,6 +69,15 @@ type Thread struct {
 	// Stalled is true while the thread's running turn is marked stalled (REQ-AUT-008). It is
 	// the runtime's, never stored: it describes a turn of this daemon run.
 	Stalled bool
+	// WorkspaceID is the workspace the thread was created in, "" for none (REQ-ORC-003).
+	WorkspaceID string
+	// WorktreeID is the last worktree made for the thread, whatever its state now, "" for none.
+	// Whether the thread runs in it is the worktree's state: only an active one is used.
+	WorktreeID string
+	// WorktreeRefusal is git's refusal of the worktree thread.create asked for (REQ-WT-008): the
+	// thread was made without one and works in its own directory. Set by Create only, never
+	// stored.
+	WorktreeRefusal error
 }
 
 // CreateParams is thread.create's input (API §5.19).
@@ -81,6 +90,11 @@ type CreateParams struct {
 	Ephemeral    bool
 	MaxSteps     int
 	BudgetTokens int64
+	// Workspace is the workspace the thread belongs to, "" for none (REQ-ORC-003).
+	Workspace string
+	// Worktree makes the thread's worktree with it (REQ-WT-001): a thread git refuses one to
+	// is not created.
+	Worktree bool
 }
 
 // Validate fills the defaults and checks the bounds.
@@ -138,6 +152,10 @@ func (p UpdateParams) Validate() error {
 var (
 	ErrNotFound   = errors.New("not found")
 	ErrValidation = errors.New("invalid parameters")
+	// ErrTurnRunning is a worktree change asked of a thread whose turn is running: its turn
+	// keeps the directory and write root it started with (delta `2026-10-worktree-engine`,
+	// decision 19). It is a conflict.
+	ErrTurnRunning = fmt.Errorf("%w: a worktree change waits for the turn to end", ErrConflict)
 	// ErrConflict is a thread.send while a turn runs, or a mode change during one.
 	ErrConflict = errors.New("a turn is running")
 	// ErrBudgetExceeded is a thread.send on a thread that has spent its token budget or its

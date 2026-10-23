@@ -353,3 +353,40 @@ func dumpThreadPTY(t *testing.T, h *harness, threadID string) {
 		t.Logf("the thread's screen (%s): %q", s.ID, data)
 	}
 }
+
+// TestAThreadsPTYFollowsItsCwd_REQ_WT_002: the thread's PTY is its own while its cwd stays the
+// same, and when the cwd changes — the thread moved into its worktree, or back out — the old
+// shell is closed and the next command runs in a new one started there.
+func TestAThreadsPTYFollowsItsCwd_REQ_WT_002(t *testing.T) {
+	h := newHarness(t)
+	repo, worktree := t.TempDir(), t.TempDir()
+	threadID := thread(t, h, repo)
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+
+	first, err := h.RunForThread(ctx, threadID, repo, `pwd`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := h.RunForThread(ctx, threadID, repo, `cd /; pwd`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Block.SessionID != first.Block.SessionID {
+		t.Fatal("one cwd, two PTYs")
+	}
+	moved, err := h.RunForThread(ctx, threadID, worktree, `pwd`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.Block.SessionID == first.Block.SessionID {
+		t.Fatal("the thread's new cwd reused the old PTY")
+	}
+	if !strings.Contains(moved.Output, worktree) {
+		t.Fatalf("the command ran in %q, want %s", moved.Output, worktree)
+	}
+	old, err := h.Get(t.Context(), first.Block.SessionID)
+	if err != nil || old.State != domain.StateExited {
+		t.Fatalf("the old PTY is %+v (%v), want exited", old.State, err)
+	}
+}

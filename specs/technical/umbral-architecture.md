@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.58 |
+| **Version** | 1.59 |
 | **Date** | 2026-10-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -766,7 +766,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `waits` | `ports` and `domain` of `agents` and `sessions`, plus `bus`; never `api`. It reads the store only through the agents runtime, and its own domain reuses the sessions domain's escape-sequence stripper (delta `2026-10-wait-engine`) |
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api`. The tree resolves a pane's state in DD-012's order (`workspaces/domain.ResolveAttention`); `integrations` writes the external reports and announces every change. It hears the changes it did not make — blocks, integration verdicts, exits, thread attention — through events `cmd/umbrald` subscribes it to, and re-reads the whole tree on each (delta `2026-10-integration-surface`). Display metadata is written by `integrations` and read by the tree into a `Pane`'s `metadata`, never on the state path: `ResolveAttention`, the rollup, waits and notifications do not read it, and a written report is announced as `pane.updated` only (delta `2026-10-display-metadata`). Third-party agent detection lives here too (delta `2026-10-agent-detection`): `integrations/adapters/manifests` reads the local manifests and `integrations/adapters/proctree` the process table, without running a command; the detector reaches a pane's shell pid through `integrations/ports.Shells`, which `cmd/umbrald` satisfies with the sessions service, and keeps its labels in memory, keyed by session, for the tree to read through `workspaces/ports.AgentLabels` — never on the state path |
 | `notify` | `bus` and stdlib only; it is a sink and imports no other module. `api` implements its `Deliverer` port — the foreground client of API §5.35 — and is handed to it by `cmd/umbrald` once the server exists; `cmd/umbrald` adapts `integrations`' `Notifier` port to it for an external `blocked`. Both modules deliver outside their locks, and `api` through a per-connection queue, so a client that stops reading stalls no source (delta `2026-10-notifications`) |
-| `worktrees` | its own `ports` and `domain`; its adapters run the `git` binary and use `store`. It imports no other module: the agents runtime reaches a thread's worktree through what `cmd/umbrald` wires (T-F2-03). Reading a worktree to show it runs with fsmonitor, filter drivers, external diff and textconv off. Landing it runs as the user's `git commit` would — hooks and signing included — in a session with no terminal, killed whole at `[worktrees] commit_timeout` (delta `2026-10-worktree-engine`) |
+| `worktrees` | its own `ports` and `domain`; its adapters run the `git` binary and use `store`. It imports no other module. Its `ports` publish `Worktrees`, the inbound port `api` serves as `worktree.*`; the agents runtime reaches a thread's worktree through a port of its own, `agents/ports.Worktrees`, which `cmd/umbrald` adapts, and decides through `agents/ports.WorktreeThreads` when one may change: never while the thread's turn runs (T-F2-03). Reading a worktree to show it runs with fsmonitor, filter drivers, external diff and textconv off. Landing it runs as the user's `git commit` would — hooks and signing included — in a session with no terminal, killed whole at `[worktrees] commit_timeout` (delta `2026-10-worktree-engine`) |
 | `security` | stdlib, `go-keyring` in its adapter, `bus` in its ports (to name `rules.update_rejected`) and the root `llmgw/domain` (for the egress record a rejection writes). Its root holds policy.explain, which reads a thread's mode, directory and rules through its own `ExplainSource` port and asks the same pure `Decide` a turn uses; `cmd/umbrald` adapts the agent thread store to that port and hands both the runtime and the explainer one `isRepo`, so an explanation and a turn agree about the write root (delta `2026-10-policy-explain`). Its root also holds the `Rules` manager of signed bundles (DD-016), which reaches storage through its own `RuleStore` port and replaces the active set's base through `RuleBase`. `tools/rulesign` depends on `security/domain` only (delta `2026-10-signed-rule-bundles`) |
 | `context` | its own `ports` and `domain`, `store` and `bus` in its adapters, and `bus` in its ports, to name `skill.changed` (delta `2026-10-skill-store`) |
 | `mcp` | its own `ports` and `domain`, plus `bus`. `tools/adapters` may use `mcp/domain`, for `mcptools`, which offers a server's tools; `api` the `ports` and `domain` of `mcp`; only `cmd/*` wires the manager to the registry (delta `2026-10-mcp-client`) |
@@ -853,7 +853,8 @@ B-09).
   a redirection onto a block device; recursive `chmod`/`chown` of `/`; `umb skill install`,
   `enable` or `remove` and `umb mcp add`, so the agent cannot change what instructs it or which
   tools it has (REQ-SKL-005, deltas `2026-09-skills-cli`, `2026-09-cli-mcp` and
-  `2026-10-skill-catalog`). A rule bundle replaces it (REQ-SEC-010).
+  `2026-10-skill-catalog`); `umb worktree merge` or `discard`, so it cannot land or drop its own
+  work without the user's review (delta `2026-10-worktree-methods`). A rule bundle replaces it (REQ-SEC-010).
 - **MCP tools are `Network`**, whatever their transport and whatever the server says of them:
   what they do happens outside Umbral's view. They ask by default (REQ-MCP-004), a tainted turn
   asks for them, `ask` mode does not offer them, and a rule `mcp_<server>_*` or one naming the
@@ -899,9 +900,26 @@ with `run_command` from T-F1-10. Delta `2026-09-builtin-tools`:
   its description made one line (whitespace collapsed, control and format characters dropped)
   and cut to 256 characters — under `# Skills`, after the rules files and inside
   the budget, read again for every turn (REQ-SKL-007).
+- **A thread with an active worktree runs in it** (REQ-WT-002): each turn reads, as it starts,
+  the thread's active worktree through `agents/ports.Worktrees` — the check that marks a gone one
+  `missing` included — and runs with the worktree as its write root and, as its cwd, the
+  worktree's directory matching the thread's own while its real path stays inside the worktree,
+  or the worktree's top otherwise. Attachments resolve there too, and `policy.explain` explains
+  with the same directories (`agents.TurnDirs`). A git failure here stops the turn
+  `storage_error` rather than run it in the main copy. The thread's `cwd` does not change, so a
+  merge or a discard puts its next turn back in its own directory. `worktree.create`, `merge` and
+  `discard` take the thread's send lock and refuse with `CONFLICT` `running` while the stored
+  thread is `running` or `awaiting_approval`, so a turn never changes directory or loses its
+  worktree part way; a discarding `close_group` holds every one of its threads' locks, in
+  thread-id order, across all its discards. `thread.create` with `worktree` writes the thread,
+  then the worktree; when git refuses the worktree the thread is kept without isolation and the
+  answer names the refusal (REQ-WT-008), and any other failure deletes the thread (delta
+  `2026-10-worktree-methods`).
 - **`run_command` runs in the thread's own PTY** (REQ-AGT-003): a session created on first use
   in the thread's cwd, owned by the thread, its input held by the agent, and reused after, so
-  the shell's state carries over. The command — one line — is typed as the agent; the block
+  the shell's state carries over. A thread whose cwd changes — it moved into its worktree, or
+  back out once the worktree was merged or discarded (REQ-WT-002) — has that shell closed and a
+  new one started in the new cwd at its next command. The command — one line — is typed as the agent; the block
   it opens is marked origin `agent` with the thread, and the call returns when that block
   closes, with the exit code and the last 64 KiB of output, marked not persisted when the
   block's row could not be written. 120 s by default, 600 at most. Cancelling sends SIGTERM to
@@ -1584,3 +1602,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.56 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-worktree-engine` (T-F2-02): §3.2 and §5.2 add `worktrees`; §5.1 adds `[worktrees] commit_timeout` |
 | 1.57 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-agent-detection` (T-F2-10): DD-012 says detection labels a pane and never decides its state; §5.2's `integrations` row adds the manifests and process-tree adapters, the `Shells` port and the in-memory labels |
 | 1.58 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-policy-router` (T-F2-11): DD-004 adds vision, the breakers and the policies; §5.1's `[router]` gains `breaker_failures` and `breaker_cooldown` |
+| 1.59 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-worktree-methods` (T-F2-03): §5.2's `worktrees` row names its inbound port and the runtime's two; §5.3b says a thread with an active worktree runs in it and its PTY follows its cwd; §5.3's destructive list gains `umb worktree merge` and `discard` |

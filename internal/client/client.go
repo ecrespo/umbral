@@ -113,6 +113,11 @@ type Error struct {
 	LimitBytes int64 `json:"limit_bytes,omitempty"`
 	// LastState is set on TIMEOUT: what the wait last observed (API Spec §3, REQ-AUT-004).
 	LastState string `json:"last_state,omitempty"`
+	// Reason is why a worktree request was refused, Paths a conflicting squash's paths and
+	// Output a failed commit's git output (API Spec §3, REQ-WT-004).
+	Reason string   `json:"reason,omitempty"`
+	Paths  []string `json:"paths,omitempty"`
+	Output string   `json:"output,omitempty"`
 }
 
 // ErrorField is one entry of an error's `details` array.
@@ -295,6 +300,9 @@ type wireError struct {
 		SizeBytes  int64        `json:"size_bytes"`
 		LimitBytes int64        `json:"limit_bytes"`
 		LastState  string       `json:"last_state"`
+		Reason     string       `json:"reason"`
+		Paths      []string     `json:"paths"`
+		Output     string       `json:"output"`
 	} `json:"data"`
 }
 
@@ -359,6 +367,9 @@ func (c *Client) call(ctx context.Context, method string, params, out any) error
 				SizeBytes:  resp.Error.Data.SizeBytes,
 				LimitBytes: resp.Error.Data.LimitBytes,
 				LastState:  resp.Error.Data.LastState,
+				Reason:     resp.Error.Data.Reason,
+				Paths:      resp.Error.Data.Paths,
+				Output:     resp.Error.Data.Output,
 			}
 		}
 		if out == nil || len(resp.Result) == 0 {

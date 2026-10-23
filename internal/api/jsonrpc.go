@@ -90,6 +90,12 @@ type errorData struct {
 	LimitBytes *int64 `json:"limit_bytes,omitempty"`
 	// LastState is set only on TIMEOUT: what the wait last observed (REQ-AUT-004).
 	LastState *string `json:"last_state,omitempty"`
+	// Reason names why a worktree request was refused, on VALIDATION_ERROR and CONFLICT; Paths
+	// are a conflicting squash's paths and Output git's error output, at most 4 KiB, for a
+	// commit that failed (REQ-WT-004).
+	Reason string   `json:"reason,omitempty"`
+	Paths  []string `json:"paths,omitempty"`
+	Output string   `json:"output,omitempty"`
 }
 
 // ErrorField explains which field of the request was wrong.

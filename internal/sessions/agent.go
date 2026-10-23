@@ -39,8 +39,9 @@ var (
 
 // RunForThread runs one command line in the thread's PTY and waits for it (REQ-AGT-003). The
 // PTY is the live session the thread owns, created on first use in cwd with shell
-// integration and the agent holding its input; later commands reuse it and run wherever its
-// shell now is. The command is typed as the agent and recorded as a block with origin agent
+// integration and the agent holding its input; later commands with the same cwd reuse it and
+// run wherever its shell now is. A different cwd — the thread moved into its worktree, or back
+// out (REQ-WT-002) — closes that shell and starts a new one in the new cwd. The command is typed as the agent and recorded as a block with origin agent
 // and the thread's id, which comes back closed, with its output.
 //
 // Cancelling ctx kills the command's process group, not the shell, and returns within
@@ -227,16 +228,31 @@ func (s *Service) threadSession(ctx context.Context, threadID, cwd string) (*liv
 	s.threadMu.Lock()
 	defer s.threadMu.Unlock()
 	s.mu.Lock()
+	var stale *liveSession
 	for _, live := range s.live {
 		live.mu.RLock()
 		mine := live.session.OwnerThreadID == threadID && live.session.State == domain.StateAlive
+		same := live.threadCwd == cwd
 		live.mu.RUnlock()
-		if mine {
+		if mine && same {
 			s.mu.Unlock()
 			return live, nil
 		}
+		if mine {
+			stale = live
+		}
 	}
 	s.mu.Unlock()
+	if stale != nil {
+		if err := s.Close(ctx, stale.snapshotState().ID); err != nil && !errors.Is(err, domain.ErrNotFound) {
+			return nil, err
+		}
+		select {
+		case <-stale.done:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 
 	session, err := s.Create(ctx, domain.CreateParams{
 		CWD: cwd, Size: domain.Size{Cols: 120, Rows: 40}, ShellIntegration: true, OwnerThreadID: threadID,
@@ -248,6 +264,9 @@ func (s *Service) threadSession(ctx context.Context, threadID, cwd string) (*liv
 	if live == nil {
 		return nil, fmt.Errorf("%w: %s", domain.ErrNotFound, session.ID)
 	}
+	live.mu.Lock()
+	live.threadCwd = cwd
+	live.mu.Unlock()
 	return live, nil
 }
 

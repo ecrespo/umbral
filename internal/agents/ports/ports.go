@@ -20,6 +20,13 @@ var ErrDuplicate = errors.New("the thread already has this client_msg_id")
 // publishes an event for comes first (DD-007).
 type Store interface {
 	CreateThread(ctx context.Context, t domain.Thread) error
+	// DeleteThread removes a thread nothing refers to yet: one whose worktree was refused as it
+	// was being created.
+	DeleteThread(ctx context.Context, id string) error
+	// SetWorktree records the thread's latest worktree.
+	SetWorktree(ctx context.Context, threadID, worktreeID string, now int64) error
+	// ThreadsInWorkspace lists a workspace's threads, ephemeral ones included, oldest first.
+	ThreadsInWorkspace(ctx context.Context, workspaceID string) ([]domain.Thread, error)
 	Thread(ctx context.Context, id string) (domain.Thread, error)
 	// Threads lists the threads that are not ephemeral, most recently updated first.
 	Threads(ctx context.Context) ([]domain.Thread, error)
@@ -71,6 +78,40 @@ type Store interface {
 	// rule is set — and marks its thread running again, in one transaction. An approval that is
 	// not pending is domain.ErrConflict.
 	DecideApproval(ctx context.Context, id string, state domain.ApprovalState, scope domain.Scope, rule *secdomain.Rule, now int64) (domain.Approval, error)
+}
+
+// Worktree is a thread's worktree as the runtime uses it: where its turns run (REQ-WT-002).
+type Worktree struct {
+	ID       string
+	Path     string
+	RepoRoot string // the main working copy's top level, a real path
+}
+
+// ErrWorktreeRefused wraps a refusal of Worktrees.Create the user can act on — the directory
+// is not in a repository, the repository is bare, git is too old (REQ-WT-008) — as opposed to a
+// failure of git or of the store.
+var ErrWorktreeRefused = errors.New("agents: the worktree was refused")
+
+// Worktrees is the worktree engine as the runtime reaches it; cmd/umbrald wires it.
+type Worktrees interface {
+	// Create makes the thread's worktree from the repository cwd is in, at base (HEAD when
+	// empty). A refusal is the engine's error, passed through as it is.
+	Create(ctx context.Context, threadID, cwd, base string) (Worktree, error)
+	// Active is the thread's active worktree; a worktree gone from disk is not active
+	// (REQ-WT-006).
+	Active(ctx context.Context, threadID string) (Worktree, bool, error)
+}
+
+// WorktreeThreads is the runtime's side of worktree.*, which internal/api serves.
+type WorktreeThreads interface {
+	// CreateWorktree makes the thread's worktree and records it, while no turn runs.
+	CreateWorktree(ctx context.Context, threadID, base string) (string, error)
+	// WhileIdle runs fn while the thread has no turn running, holding off a new one until fn
+	// returns: a merge or a discard never pulls a worktree from under a turn. A thread with a
+	// turn running is domain.ErrTurnRunning; an unknown one domain.ErrNotFound.
+	WhileIdle(ctx context.Context, threadID string, fn func() error) error
+	// InWorkspace lists a workspace's threads, oldest first.
+	InWorkspace(ctx context.Context, workspaceID string) ([]domain.Thread, error)
 }
 
 // Publisher is where the runtime announces what it persisted: the daemon's bus.

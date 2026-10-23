@@ -64,6 +64,7 @@ func newExplainer(t *testing.T) *Explainer {
 			threads: map[string]ports.ThreadPolicy{
 				"thr_edit":   {Mode: domain.ModeAutoEdit, Cwd: "/work/repo/sub"},
 				"thr_normal": {Mode: domain.ModeNormal, Cwd: "/work/repo"},
+				"thr_wt":     {Mode: domain.ModeAutoEdit, Cwd: "/data/wt/thr_wt/sub", WriteRoot: "/data/wt/thr_wt"},
 			},
 			rules: []domain.Rule{
 				{Tool: "run_command", Pattern: "curl *", Decision: domain.VerdictDeny, Source: domain.RuleSourceConfig},
@@ -248,5 +249,27 @@ func TestExplainShapesTheActionAsTheToolDoes(t *testing.T) {
 		Mode: domain.ModeNormal, Tool: "mcp_gitlab_merge", Risk: domain.RiskNetwork, Target: "!42",
 	}); err != nil || d.Verdict != domain.VerdictAsk {
 		t.Errorf("an unregistered tool: %+v %v, want ask", d, err)
+	}
+}
+
+// TestExplainUsesTheThreadsWorktree_REQ_WT_002: a thread running in its worktree lends the
+// worktree's directory and write root, as its turn decides with them: a relative write lands
+// in the worktree and is allowed in auto-edit, and a write to the main copy is outside the
+// write root and asks.
+func TestExplainUsesTheThreadsWorktree_REQ_WT_002(t *testing.T) {
+	t.Parallel()
+	e := newExplainer(t)
+	for target, want := range map[string]domain.Verdict{
+		"main.go":            domain.VerdictAllow,
+		"../go.mod":          domain.VerdictAllow,
+		"/work/repo/main.go": domain.VerdictAsk,
+	} {
+		d, err := e.Explain(t.Context(), domain.ExplainRequest{ThreadID: "thr_wt", Tool: "write_file", Risk: domain.RiskWriteFS, Target: target})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Verdict != want {
+			t.Errorf("write %s = %s, want %s", target, d.Verdict, want)
+		}
 	}
 }

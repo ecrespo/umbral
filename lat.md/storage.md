@@ -28,6 +28,8 @@ Each added column carries its own `CHECK`. SQLite accepts a `CHECK` in `ADD COLU
 
 `full-auto` is a `full_auto` flag beside `mode` rather than a new mode value, so clearing it restores the thread's own mode.
 
+`threads.workspace_id` is written at creation and must name a workspace; `threads.worktree_id` records the thread's latest worktree whatever its state, set by [[internal/agents/adapters/threadstore/threadstore.go#Store#SetWorktree]]. Whether a turn runs in it is the `worktrees` row's state, not this column.
+
 `worktrees.thread_id` has no cascade. A thread holding a worktree cannot be deleted, not even by the retention job ([[internal/store/migration0007_test.go#TestRetentionKeepsAThreadWithAWorktree_REQ_WT_001]]).
 
 [[internal/store/recovery.go#Store#Recover]] stops a thread whose turn was held `queued`, the same way as a running one.

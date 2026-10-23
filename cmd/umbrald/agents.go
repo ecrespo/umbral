@@ -48,6 +48,8 @@ type agentDeps struct {
 	stallLocal, stallRemote time.Duration
 	// skills is the skill store: each turn's catalog and skill_load's reader (T-F1-36).
 	skills *skills.Service
+	// worktrees is the worktree engine a thread's turns run in (T-F2-03).
+	worktrees agentsports.Worktrees
 }
 
 // newRuntime wires the agent runtime (T-F1-13) to the modules it reaches through their ports:
@@ -84,6 +86,8 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, *registry.Re
 		IsRepo:  isRepo,
 		Policy:  d.policy,
 		Skills:  catalog,
+
+		Worktrees: d.worktrees,
 
 		MaxCostMicroUSD: d.maxCost,
 		StallLocal:      d.stallLocal,

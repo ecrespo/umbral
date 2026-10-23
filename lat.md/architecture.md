@@ -48,7 +48,7 @@ A hook raises one with `umb notify` ([[cmd/umb/notify.go#cmdNotify]]), which exi
 
 [[internal/security/explain.go#Explainer#Explain]] answers `policy.explain` by calling the same `Decide` a turn calls, with the thread's mode, rules and write root (delta `2026-10-policy-explain`).
 
-A second implementation could drift from the real policy and explain decisions the daemon never makes. For the same reason the explainer refuses a risk the registered tool does not declare, shapes a file target with the built-ins' own [[internal/tools/adapters/builtin/builtin.go#PolicyPath]], and shares one [[cmd/umbrald/policy.go#isRepo]] with the runtime.
+A second implementation could drift from the real policy and explain decisions the daemon never makes. For the same reason the explainer refuses a risk the registered tool does not declare, shapes a file target with the built-ins' own [[internal/tools/adapters/builtin/builtin.go#PolicyPath]], and shares one [[cmd/umbrald/policy.go#isRepo]] with the runtime. A thread's directory and write root come from [[internal/agents/runtime.go#TurnDirs]], so a thread in its worktree is explained with the worktree's, as its turn runs.
 
 ## One rule set for every decision and redaction
 
@@ -136,6 +136,8 @@ It used to return at once, so `cmd/umbrald` closed the store while the sessions 
 
 [[cmd/umb/thread.go#cmdThread]] makes one call per command and prints only the value the next step needs: the thread id, the turn id with its final state, the state a wait answered. A `TIMEOUT` exits 1 naming the state last observed. The `cli` client kind may call `thread.wait` ([[internal/api/waits.go#waitMethods]]) and `thread.get` ([[internal/api/threads.go#threadMethods]]), which only read; `thread.list`, `update`, `focus` and `approval.*` stay interactive, so a script cannot switch a thread to `auto-edit` and hands an approval to a person (delta `2026-10-cli-thread-wait`).
 
+`umb thread create --worktree` gives the thread its worktree at creation — when git refuses it the thread is still made, and stderr names the refusal — and the thread joins the pane's workspace, `UMBRAL_WORKSPACE_ID`, unless `--workspace` names another.
+
 ## A worktree lands without a checkout
 
 [[internal/worktrees/worktrees.go#Service]] gives a thread its own copy of a repository outside it. A merge squashes that copy into the branch it came from, in the user's clean working copy, and never checks out another branch (delta `2026-10-worktree-engine`).
@@ -159,6 +161,18 @@ A diff answers with the revision it was read from. A merge that passes it is ref
 [[internal/worktrees/domain/domain.go#ParseUnifiedDiff]] gives each hunk an id from its path and lines, not its position, so a hunk keeps its id while an earlier one grows.
 
 [[internal/worktrees/worktrees.go#Service#CheckAll]] marks a worktree missing when its directory, branch or repository is gone, and never recreates it.
+
+## A thread runs in its active worktree
+
+A turn reads its thread's active worktree as it starts and runs there; the thread's own `cwd` never changes, so a merge or discard puts the next turn back home (delta `2026-10-worktree-methods`).
+
+[[internal/agents/runtime.go#TurnDirs]] asks [[internal/agents/ports/ports.go#Worktrees]] — which `cmd/umbrald` adapts to [[internal/worktrees/worktrees.go#Service#ActiveFor]], the missing-check included — and makes the worktree the write root and [[internal/agents/runtime.go#worktreeCwd]] the cwd: the worktree's directory matching the thread's while it resolves inside the worktree, or its top. `policy.explain` calls the same function through `cmd/umbrald`'s `explainSource`, so an explanation and a turn decide with the same directories. The thread's PTY follows: [[internal/sessions/agent.go#Service#threadSession]] closes a shell started for another cwd and starts one in the new one.
+
+A worktree never changes under a running turn. [[internal/agents/runtime.go#Runtime#WhileIdle]] holds the thread's send lock, which a send keeps until its turn is written as running, and refuses with `ErrTurnRunning` while the stored thread is `running` or `awaiting_approval` — the store, not the turn map, because a turn's end is written before `thread.turn_finished` and its goroutine lets go after. `worktree.create`, `merge`, `discard` and the discards of [[internal/worktrees/worktrees.go#Service#CloseGroup]] all go through it, the last nesting every thread's guard in id order around all its discards; the API answers `CONFLICT` with `data.reason = running`.
+
+[[internal/agents/runtime.go#Runtime#Create]] with a worktree writes the thread, then the worktree. A refusal the user can act on arrives wrapped in [[internal/agents/ports/ports.go#ErrWorktreeRefused]]: the thread is kept without isolation and `thread.create` answers it with `worktree_refused` (REQ-WT-008). Any other failure deletes the thread.
+
+`worktree.*` is served by [[internal/api/worktrees.go]] over the engine's inbound port [[internal/worktrees/ports/ports.go#Worktrees]]; [[internal/api/worktrees.go#worktreeErrorData]] carries a refusal's `reason`, `paths` and `output`. `close_group` reports every worktree of the group with `changed` or `clean` and discards only the active ones it names, after every check has passed. `umb worktree merge` prints the diff, asks, and merges with the diff's revision, waiting for the daemon rather than `umb`'s 10-second call bound; `umb worktree merge|discard` is on the destructive list. A merge whose commit landed answers it even when the worktree's removal fails ([[internal/worktrees/domain/domain.go#MergeResult]]'s `Leftover`, logged).
 
 ## Agent detection labels a pane and never decides its state
 

@@ -10,6 +10,7 @@ import (
 	agentsdomain "github.com/ecrespo/umbral/internal/agents/domain"
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
+	wtdomain "github.com/ecrespo/umbral/internal/worktrees/domain"
 
 	waitsports "github.com/ecrespo/umbral/internal/waits/ports"
 )
@@ -33,6 +34,10 @@ type Thread struct {
 	UpdatedAt      int64   `json:"updated_at"`
 	// Stalled is true while the running turn is marked stalled (REQ-AUT-008).
 	Stalled bool `json:"stalled"`
+	// WorkspaceID is the workspace the thread was created in (REQ-ORC-003); WorktreeID its
+	// latest worktree, whatever its state (REQ-WT-002). Null for none.
+	WorkspaceID *string `json:"workspace_id"`
+	WorktreeID  *string `json:"worktree_id"`
 }
 
 func toWireThread(t agentsdomain.Thread) Thread {
@@ -41,6 +46,7 @@ func toWireThread(t agentsdomain.Thread) Thread {
 		CWD: t.Cwd, State: string(t.State), AttentionState: t.AttentionState, Ephemeral: t.Ephemeral,
 		MaxSteps: t.MaxSteps, BudgetTokens: t.BudgetTokens, TokensUsed: t.TokensUsed, CostMicroUSD: t.CostMicroUSD,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, Stalled: t.Stalled,
+		WorkspaceID: emptyAsNull(t.WorkspaceID), WorktreeID: emptyAsNull(t.WorktreeID),
 	}
 }
 
@@ -160,7 +166,7 @@ func threads(c *conn) (agentsports.Threads, error) {
 // thread to `auto-edit`, and it views nothing.
 func threadMethods() map[string]method {
 	return map[string]method{
-		"thread.create": {handle: handleThreadCreate, params: createThreadParams{}, result: Thread{}},
+		"thread.create": {handle: handleThreadCreate, params: createThreadParams{}, result: createThreadResult{}},
 		"thread.send":   {handle: handleThreadSend, params: sendParams{}, result: sendResult{}},
 		"thread.cancel": {handle: handleThreadCancel, params: cancelThreadParams{}, result: cancelResult{}},
 		"thread.get":    {handle: handleThreadGet, kinds: treeClients, params: getThreadParams{}, result: threadResult{}},
@@ -179,6 +185,10 @@ type createThreadParams struct {
 	Ephemeral    bool   `json:"ephemeral" api:"optional"`
 	MaxSteps     int    `json:"max_steps" api:"optional"`
 	BudgetTokens int64  `json:"budget_tokens" api:"optional"`
+	// Workspace is the workspace the thread belongs to (REQ-ORC-003); Worktree makes its
+	// worktree with it (REQ-WT-001).
+	Workspace string `json:"workspace" api:"optional"`
+	Worktree  bool   `json:"worktree" api:"optional"`
 }
 
 func handleThreadCreate(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -193,14 +203,66 @@ func handleThreadCreate(ctx context.Context, c *conn, raw json.RawMessage) (any,
 	if p.CWD == "" {
 		return nil, ValidationError("cwd is required", ErrorField{Field: "cwd", Issue: requiredTag})
 	}
+	if p.Worktree && !hasWorktrees(c.server.cfg) {
+		return nil, fmt.Errorf("%w: thread.create's worktree: the worktree engine is not wired in", ErrNotImplemented)
+	}
+	if p.Workspace != "" {
+		if err := openWorkspace(ctx, c, p.Workspace); err != nil {
+			return nil, err
+		}
+	}
 	t, err := svc.Create(ctx, agentsdomain.CreateParams{
 		Mode: secdomain.Mode(p.Mode), Model: p.Model, ModelClass: p.ModelClass, Cwd: p.CWD, Title: p.Title,
 		Ephemeral: p.Ephemeral, MaxSteps: p.MaxSteps, BudgetTokens: p.BudgetTokens,
+		Workspace: p.Workspace, Worktree: p.Worktree,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return toWireThread(t), nil
+	result := createThreadResult{Thread: toWireThread(t)}
+	if t.WorktreeRefusal != nil {
+		var data errorData
+		worktreeErrorData(t.WorktreeRefusal, &data)
+		// The engine's own refusal, without the runtime's wrapping, is what the user reads.
+		msg := t.WorktreeRefusal.Error()
+		var refusal *wtdomain.Refusal
+		if errors.As(t.WorktreeRefusal, &refusal) {
+			msg = refusal.Error()
+		}
+		result.WorktreeRefused = &WorktreeRefusal{Reason: data.Reason, Message: msg}
+	}
+	return result, nil
+}
+
+// createThreadResult is thread.create's answer: the Thread, and why it has no worktree when
+// one was asked for and git refused it (§5.19, REQ-WT-008).
+type createThreadResult struct {
+	Thread
+	WorktreeRefused *WorktreeRefusal `json:"worktree_refused,omitempty"`
+}
+
+// WorktreeRefusal is `worktree_refused` of thread.create: the reason worktree.create would have
+// answered in `data.reason`, and its message.
+type WorktreeRefusal struct {
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
+}
+
+// openWorkspace refuses a workspace that is not open: a thread belongs to one the user can see.
+func openWorkspace(ctx context.Context, c *conn, id string) error {
+	if c.server.cfg.Workspaces == nil {
+		return fmt.Errorf("%w: thread.create's workspace: the workspace tree is not wired in", ErrNotImplemented)
+	}
+	open, err := c.server.cfg.Workspaces.ListWorkspaces(ctx)
+	if err != nil {
+		return err
+	}
+	for _, w := range open {
+		if w.ID == id {
+			return nil
+		}
+	}
+	return ValidationError(fmt.Sprintf("workspace %q is not open", id), ErrorField{Field: "workspace", Issue: "unknown"})
 }
 
 // sendAttachment is one of thread.send's attachments: a `ref`, or for `stdin` the data

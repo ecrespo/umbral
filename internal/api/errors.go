@@ -166,6 +166,7 @@ var moduleErrors = []func(error) (int, string, bool){
 	policyDomainError,
 	rulesDomainError,
 	skillsDomainError,
+	worktreesDomainError,
 }
 
 // workspaceDomainError maps the workspace tree's sentinels onto the §5.4 table.
@@ -252,6 +253,7 @@ func finishWire(err error, code int, domainCode, traceID string) *wireError {
 		data.Details = []ErrorField{{Field: "timeout_ms", Issue: fmt.Sprintf("the connection already holds %d waits", waitsdomain.MaxPerConnection)}}
 		return &wireError{Code: code, Message: waitsdomain.LimitMessage, Data: data}
 	}
+	worktreeErrorData(err, data)
 	var timedOut *waitsdomain.TimeoutError
 	if code == codeTimeout && errors.As(err, &timedOut) {
 		data.LastState = &timedOut.LastState

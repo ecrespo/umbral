@@ -41,6 +41,9 @@ var DefaultDestructivePatterns = []DestructivePattern{
 	// deltas `2026-09-skills-cli` and `2026-09-cli-mcp`).
 	{"umb_skill_change", regexp.MustCompile(`^umb( \S+)* skill( \S+)* (install|enable|remove)( |$)`)},
 	{"umb_mcp_add", regexp.MustCompile(`^umb( \S+)* mcp( \S+)* add( |$)`)},
+	// Nor land or drop its own worktree: a merge is the user's review of the diff (delta
+	// `2026-10-worktree-engine`, decision 19), and full-auto runs commands in the worktree.
+	{"umb_worktree_change", regexp.MustCompile(`^umb( \S+)* worktree( \S+)* (merge|discard)( |$)`)},
 }
 
 // MatchDestructive reports the first pattern that matches any simple command of the line.

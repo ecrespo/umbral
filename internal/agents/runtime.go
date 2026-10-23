@@ -35,6 +35,9 @@ type Config struct {
 	// Skills is the catalog of enabled skills each turn's prompt lists (REQ-SKL-004); nil
 	// lists none.
 	Skills ctxports.SkillCatalog
+	// Worktrees is the worktree engine: a thread with an active worktree runs its turns there
+	// (REQ-WT-002). Nil makes no worktree and runs every thread in its own directory.
+	Worktrees ports.Worktrees
 	// NewID makes a type-prefixed ULID (store.NewID).
 	NewID func(prefix string) string
 	// Metrics counts what the runtime measures.
@@ -81,7 +84,10 @@ type Runtime struct {
 	wg    sync.WaitGroup
 }
 
-var _ ports.Threads = (*Runtime)(nil)
+var (
+	_ ports.Threads         = (*Runtime)(nil)
+	_ ports.WorktreeThreads = (*Runtime)(nil)
+)
 
 // turn is a running turn, which thread.cancel (T-F1-16) stops through cancel.
 // maxTurnEnds bounds the runtime's memory of how turns ended: enough for every wait of a
@@ -202,11 +208,133 @@ func (r *Runtime) Create(ctx context.Context, p domain.CreateParams) (domain.Thr
 		ID: r.cfg.NewID(prefixThread), Title: p.Title, Mode: p.Mode, Model: p.Model, ModelClass: p.ModelClass,
 		Cwd: filepath.Clean(p.Cwd), State: domain.StateIdle, AttentionState: "idle", Ephemeral: p.Ephemeral,
 		MaxSteps: p.MaxSteps, BudgetTokens: p.BudgetTokens, CreatedAt: now, UpdatedAt: now,
+		WorkspaceID: p.Workspace,
+	}
+	if p.Worktree && r.cfg.Worktrees == nil {
+		return domain.Thread{}, fmt.Errorf("%w: worktrees are not available", domain.ErrValidation)
 	}
 	if err := r.cfg.Store.CreateThread(ctx, t); err != nil {
 		return domain.Thread{}, err
 	}
+	if !p.Worktree {
+		return t, nil
+	}
+	// The worktree's row points at the thread, so the thread is written first. When git refuses
+	// the worktree, the thread keeps working without isolation and says why (REQ-WT-008); any
+	// other failure takes it back.
+	w, err := r.cfg.Worktrees.Create(ctx, t.ID, t.Cwd, "")
+	if errors.Is(err, ports.ErrWorktreeRefused) {
+		t.WorktreeRefusal = err
+		return t, nil
+	}
+	if err != nil {
+		return domain.Thread{}, errors.Join(err, r.cfg.Store.DeleteThread(context.WithoutCancel(ctx), t.ID))
+	}
+	if err := r.cfg.Store.SetWorktree(ctx, t.ID, w.ID, now); err != nil {
+		return domain.Thread{}, err
+	}
+	t.WorktreeID = w.ID
 	return t, nil
+}
+
+// CreateWorktree is worktree.create (REQ-WT-001): the thread's worktree, made while it has no
+// turn running so a turn never changes directory part way.
+func (r *Runtime) CreateWorktree(ctx context.Context, threadID, base string) (string, error) {
+	if r.cfg.Worktrees == nil {
+		return "", fmt.Errorf("%w: worktrees are not available", domain.ErrValidation)
+	}
+	var id string
+	err := r.WhileIdle(ctx, threadID, func() error {
+		thread, err := r.cfg.Store.Thread(ctx, threadID)
+		if err != nil {
+			return err
+		}
+		w, err := r.cfg.Worktrees.Create(ctx, thread.ID, thread.Cwd, base)
+		if err != nil {
+			return err
+		}
+		id = w.ID
+		return r.cfg.Store.SetWorktree(ctx, thread.ID, w.ID, r.now())
+	})
+	return id, err
+}
+
+// WhileIdle implements ports.WorktreeThreads. It holds the thread's send lock, which a send
+// holds until its turn is written as running, so no turn can start while fn runs. Whether one
+// runs is read from the store, as a send reads it: a turn's end is written before
+// thread.turn_finished is published, and its goroutine lets go of it only after, so a merge
+// sent the moment a wait returns would otherwise be refused.
+func (r *Runtime) WhileIdle(ctx context.Context, threadID string, fn func() error) error {
+	if _, err := r.cfg.Store.Thread(ctx, threadID); err != nil {
+		return err
+	}
+	lock := r.threadLock(threadID)
+	lock.Lock()
+	defer lock.Unlock()
+	st, err := r.cfg.Store.TurnStatus(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	if st.State == domain.StateRunning || st.State == domain.StateAwaitingApproval {
+		return fmt.Errorf("%w: thread %s", domain.ErrTurnRunning, threadID)
+	}
+	return fn()
+}
+
+// InWorkspace implements ports.WorktreeThreads.
+func (r *Runtime) InWorkspace(ctx context.Context, workspaceID string) ([]domain.Thread, error) {
+	return r.cfg.Store.ThreadsInWorkspace(ctx, workspaceID)
+}
+
+// dirs is where a thread's turn runs: TurnDirs with the runtime's engine and repository test.
+func (r *Runtime) dirs(ctx context.Context, thread domain.Thread) (cwd, writeRoot string, err error) {
+	return TurnDirs(ctx, r.cfg.Worktrees, r.cfg.IsRepo, thread)
+}
+
+// TurnDirs is where a thread's turn runs: its cwd and write root. A thread with an active
+// worktree runs in it (REQ-WT-002): the worktree is the write root, and the cwd is the
+// worktree's directory matching the thread's own, or the worktree's top when the worktree
+// lacks it. policy.explain asks it too, so an explanation and a turn decide in one place.
+// wts may be nil: there are no worktrees then.
+func TurnDirs(ctx context.Context, wts ports.Worktrees, isRepo func(string) bool, thread domain.Thread) (cwd, writeRoot string, err error) {
+	if wts != nil {
+		w, ok, err := wts.Active(ctx, thread.ID)
+		if err != nil {
+			return "", "", err
+		}
+		if ok {
+			return worktreeCwd(w, thread.Cwd), w.Path, nil
+		}
+	}
+	return thread.Cwd, secdomain.WriteRoot(thread.Cwd, isRepo), nil
+}
+
+// worktreeCwd maps cwd, a directory of the main working copy, to the worktree's.
+func worktreeCwd(w ports.Worktree, cwd string) string {
+	real, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return w.Path
+	}
+	rel, err := filepath.Rel(w.RepoRoot, real)
+	if err != nil || !filepath.IsLocal(rel) {
+		return w.Path
+	}
+	dir := filepath.Join(w.Path, rel)
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return w.Path
+	}
+	// The worktree is the agent's to write, links included: a directory that resolves out of
+	// it would move the turn's rules files and git context out with it.
+	if real, err := filepath.EvalSymlinks(dir); err != nil || !inside(w.Path, real) {
+		return w.Path
+	}
+	return dir
+}
+
+// inside reports whether path is root or below it.
+func inside(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && filepath.IsLocal(rel)
 }
 
 // Get reads a thread.
@@ -357,8 +485,16 @@ func (r *Runtime) threadLock(id string) *sync.Mutex {
 func (r *Runtime) userContent(ctx context.Context, thread domain.Thread, p ports.SendParams) (string, []domain.Attachment, error) {
 	var read []ctxdomain.Attachment
 	var recorded []domain.Attachment
+	cwd := thread.Cwd
+	if len(p.Attachments) > 0 {
+		// A relative path names a file where the turn will run: in the worktree, if any.
+		var err error
+		if cwd, _, err = r.dirs(ctx, thread); err != nil {
+			return "", nil, err
+		}
+	}
 	for _, ref := range p.Attachments {
-		a, err := r.attach(ctx, thread.Cwd, ref)
+		a, err := r.attach(ctx, cwd, ref)
 		if err != nil {
 			return "", nil, err
 		}
