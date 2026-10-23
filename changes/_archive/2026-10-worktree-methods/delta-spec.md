@@ -69,6 +69,13 @@
    moves nothing a turn is using.
    - `umb worktree merge|discard` join the destructive patterns as `umb_worktree_change`, so an
      agent running commands cannot land or drop its own work without the user's review.
+   - That pattern is a textual barrier: a command line built by expansion (`$(…)`, variables,
+     backslashes) can escape it, as an automated security review noted for this pattern and, in
+     T-F1-36, for `umb skill`. In `normal` and `auto-edit` every `run_command` the rules do not
+     allow is still asked. Before T-F2-05 lets `full-auto` run Exec unasked, the daemon itself
+     must refuse `worktree.merge` and `worktree.discard` from a client running inside an agent's
+     session (for example by the peer's process tree, or a marker the thread's PTY carries).
+     This is a required item of T-F2-05.
    - `umb worktree diff`, `merge` and `discard` wait for the daemon's answer or Ctrl-C, not
      `umb`'s 10-second call bound: a merge may take `commit_timeout` with hooks and signing, and
      giving up early would report a failure for a commit that lands.
