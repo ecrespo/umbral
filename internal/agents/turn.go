@@ -40,10 +40,12 @@ type turnRun struct {
 	// its active worktree's (REQ-WT-002).
 	cwd       string
 	writeRoot string
-	rules     []secdomain.Rule
-	tools     []llm.ToolSpec
-	tainted   bool
-	usage     domain.Usage
+	// mode is the mode the turn decides under, read with them (REQ-ORC-004).
+	mode    secdomain.Mode
+	rules   []secdomain.Rule
+	tools   []llm.ToolSpec
+	tainted bool
+	usage   domain.Usage
 
 	// model is the catalog id that served the last model call, as the router reports it.
 	model string
@@ -207,12 +209,12 @@ func (t *turnRun) stopFor(ctx context.Context, err error) domain.StopReason {
 // exposes, and the system prompt with the rules files, the skill catalog and git state.
 func (t *turnRun) prepare(ctx context.Context) error {
 	cfg := t.r.cfg
-	cwd, writeRoot, err := t.r.dirs(ctx, t.thread)
+	place, err := t.r.place(ctx, t.thread)
 	if err != nil {
 		// The worktree's row, or the check that it is still on disk, could not be read.
 		return storageErr(err)
 	}
-	t.cwd, t.writeRoot = cwd, writeRoot
+	t.cwd, t.writeRoot, t.mode = place.Cwd, place.WriteRoot, place.Mode
 	rules, err := cfg.Store.Rules(ctx, t.thread.ID)
 	if err != nil {
 		return storageErr(err)
@@ -222,14 +224,14 @@ func (t *turnRun) prepare(ctx context.Context) error {
 	for _, spec := range cfg.Tools.Specs() {
 		t.known[spec.Name] = true
 		// REQ-AGT-009: `ask` offers only ReadOnly tools; the policy refuses the rest anyway.
-		if secdomain.Exposed(t.thread.Mode, spec.Risk) {
+		if secdomain.Exposed(t.mode, spec.Risk) {
 			t.tools = append(t.tools, llm.ToolSpec{Name: spec.Name, Description: spec.Description, InputSchema: spec.InputSchema})
 		}
 	}
 	if err := t.loadHistory(ctx); err != nil {
 		return storageErr(err)
 	}
-	in := ctxdomain.SystemInput{Cwd: t.cwd, Mode: string(t.thread.Mode)}
+	in := ctxdomain.SystemInput{Cwd: t.cwd, Mode: string(t.mode)}
 	if cfg.Context != nil {
 		if in.Rules, err = cfg.Context.Rules(ctx, t.cwd); err != nil {
 			return err
@@ -538,7 +540,7 @@ func (t *turnRun) callTool(ctx context.Context, c domain.ToolCall) error {
 	}
 	t.r.publish(ports.ThreadToolCall{Call: c})
 
-	decision := cfg.Policy().Decide(action, t.thread.Mode, t.rules, t.tainted)
+	decision := cfg.Policy().Decide(action, t.mode, t.rules, t.tainted)
 	grant := toolsdomain.Grant{Action: action, Decision: decision}
 	switch decision.Verdict {
 	case secdomain.VerdictDeny:

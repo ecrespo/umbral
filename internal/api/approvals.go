@@ -36,7 +36,7 @@ func toWireApproval(a agentsdomain.Approval) Approval {
 func approvalMethods() map[string]method {
 	return map[string]method{
 		"approval.list":    {handle: handleApprovalList, kinds: interactiveClients, params: listApprovalsParams{}, result: approvalListResult{}},
-		"approval.respond": {handle: handleApprovalRespond, kinds: interactiveClients, params: respondParams{}, result: Approval{}},
+		"approval.respond": {handle: handleApprovalRespond, userOnly: true, kinds: interactiveClients, params: respondParams{}, result: Approval{}},
 	}
 }
 

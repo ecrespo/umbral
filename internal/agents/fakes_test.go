@@ -128,7 +128,11 @@ func (s *memStore) UpdateThread(_ context.Context, id string, p domain.UpdatePar
 		if t.State == domain.StateRunning {
 			return domain.Thread{}, domain.ErrConflict
 		}
-		t.Mode = *p.Mode
+		if *p.Mode == secdomain.ModeFullAuto {
+			t.FullAuto = true
+		} else {
+			t.Mode, t.FullAuto = *p.Mode, false
+		}
 	}
 	if p.Model != nil {
 		t.Model = *p.Model

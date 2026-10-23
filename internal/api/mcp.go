@@ -53,8 +53,8 @@ func hasMCP(cfg Config) bool { return cfg.MCP != nil }
 func mcpMethods() map[string]method {
 	return map[string]method{
 		"mcp.server.list":   {handle: handleMcpList, kinds: treeClients, params: emptyResult{}, result: mcpListResult{}},
-		"mcp.server.add":    {handle: handleMcpAdd, kinds: treeClients, params: mcpAddParams{}, result: McpServer{}},
-		"mcp.server.remove": {handle: handleMcpRemove, kinds: treeClients, params: mcpRemoveParams{}, result: emptyResult{}},
+		"mcp.server.add":    {handle: handleMcpAdd, userOnly: true, kinds: treeClients, params: mcpAddParams{}, result: McpServer{}},
+		"mcp.server.remove": {handle: handleMcpRemove, userOnly: true, kinds: treeClients, params: mcpRemoveParams{}, result: emptyResult{}},
 	}
 }
 

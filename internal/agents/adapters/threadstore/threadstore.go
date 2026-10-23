@@ -33,7 +33,7 @@ func New(st *store.Store) (*Store, error) {
 
 const threadColumns = `id, title, mode, COALESCE(model, ''), model_class, cwd, state, attention_state,
 	ephemeral, max_steps, budget_tokens, tokens_used, cost_micro_usd, created_at, updated_at,
-	COALESCE(workspace_id, ''), COALESCE(worktree_id, ''), queued`
+	COALESCE(workspace_id, ''), COALESCE(worktree_id, ''), queued, full_auto`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -42,7 +42,7 @@ func scanThread(row scanner) (domain.Thread, error) {
 	var mode, state string
 	err := row.Scan(&t.ID, &t.Title, &mode, &t.Model, &t.ModelClass, &t.Cwd, &state, &t.AttentionState,
 		&t.Ephemeral, &t.MaxSteps, &t.BudgetTokens, &t.TokensUsed, &t.CostMicroUSD, &t.CreatedAt, &t.UpdatedAt,
-		&t.WorkspaceID, &t.WorktreeID, &t.Queued)
+		&t.WorkspaceID, &t.WorktreeID, &t.Queued, &t.FullAuto)
 	t.Mode, t.State = secdomain.Mode(mode), domain.State(state)
 	return t, err
 }
@@ -135,8 +135,13 @@ func (s *Store) Threads(ctx context.Context) ([]domain.Thread, error) {
 // domain.ErrConflict (API §5.22).
 func (s *Store) UpdateThread(ctx context.Context, id string, p domain.UpdateParams, now int64) (domain.Thread, error) {
 	sets, args := []string{"updated_at = ?"}, []any{now}
-	if p.Mode != nil {
-		sets, args = append(sets, "mode = ?"), append(args, string(*p.Mode))
+	fullAuto := p.Mode != nil && *p.Mode == secdomain.ModeFullAuto
+	switch {
+	case fullAuto:
+		// The flag, beside the mode the thread returns to (REQ-ORC-004, Data Model §2.5).
+		sets = append(sets, "full_auto = 1")
+	case p.Mode != nil:
+		sets, args = append(sets, "mode = ?", "full_auto = 0"), append(args, string(*p.Mode))
 	}
 	if p.Model != nil {
 		sets, args = append(sets, "model = ?"), append(args, nullable(*p.Model))
@@ -148,13 +153,22 @@ func (s *Store) UpdateThread(ctx context.Context, id string, p domain.UpdatePara
 	if p.Mode != nil {
 		where += " AND state NOT IN ('running', 'awaiting_approval')"
 	}
+	if fullAuto {
+		// Checked in the write itself: a worktree that left `active` since the runtime asked
+		// cannot be entered, and 0008's triggers clear the flag once it leaves.
+		where += " AND EXISTS (SELECT 1 FROM worktrees WHERE worktrees.id = threads.worktree_id AND worktrees.state = 'active')"
+	}
 	res, err := s.db.ExecContext(ctx, `UPDATE threads SET `+strings.Join(sets, ", ")+` WHERE `+where, append(args, id)...) //nolint:gosec // the SET list is fixed column names
 	if err != nil {
 		return domain.Thread{}, fmt.Errorf("threadstore: update thread: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		if _, err := s.Thread(ctx, id); err != nil {
+		t, err := s.Thread(ctx, id)
+		if err != nil {
 			return domain.Thread{}, err
+		}
+		if fullAuto && t.State != domain.StateRunning && t.State != domain.StateAwaitingApproval {
+			return domain.Thread{}, fmt.Errorf("%w: thread %s has no active worktree", domain.ErrValidation, id)
 		}
 		return domain.Thread{}, fmt.Errorf("%w: the mode cannot change during a turn", domain.ErrConflict)
 	}

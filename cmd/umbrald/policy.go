@@ -62,13 +62,13 @@ func (s explainSource) ThreadPolicy(ctx context.Context, threadID string) (secpo
 	if err != nil {
 		return secports.ThreadPolicy{}, err
 	}
-	// The directories the thread's next turn would run in, its worktree's when it has one
-	// (REQ-WT-002): the turn and the explanation decide with the same ones.
-	cwd, writeRoot, err := agents.TurnDirs(ctx, s.worktrees, isRepo, t)
+	// The directories and mode the thread's next turn would run with, its worktree's when it
+	// has one (REQ-WT-002, REQ-ORC-004): the turn and the explanation decide with the same ones.
+	place, err := agents.TurnPlace(ctx, s.worktrees, isRepo, t)
 	if err != nil {
 		return secports.ThreadPolicy{}, err
 	}
-	return secports.ThreadPolicy{Mode: t.Mode, Cwd: cwd, WriteRoot: writeRoot}, nil
+	return secports.ThreadPolicy{Mode: place.Mode, Cwd: place.Cwd, WriteRoot: place.WriteRoot}, nil
 }
 
 func (s explainSource) Rules(ctx context.Context, threadID string) ([]secdomain.Rule, error) {

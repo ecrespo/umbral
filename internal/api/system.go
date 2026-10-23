@@ -73,9 +73,9 @@ func (s *Server) registry() map[string]method {
 
 		// session.* is not in the `cli` allowlist of API Spec §2: `umb` reads blocks and
 		// talks to threads, it does not drive terminals.
-		"session.create": {handle: handleSessionCreate, kinds: interactiveClients, available: hasSessions, params: createSessionParams{}, result: Session{}},
+		"session.create": {handle: handleSessionCreate, userOnly: true, kinds: interactiveClients, available: hasSessions, params: createSessionParams{}, result: Session{}},
 		"session.list":   {handle: handleSessionList, kinds: interactiveClients, available: hasSessions, params: emptyResult{}, result: sessionListResult{}},
-		"session.input":  {handle: handleSessionInput, kinds: interactiveClients, available: hasSessions, params: sessionInputParams{}, result: emptyResult{}},
+		"session.input":  {handle: handleSessionInput, userOnly: true, kinds: interactiveClients, available: hasSessions, params: sessionInputParams{}, result: emptyResult{}},
 		"session.resize": {handle: handleSessionResize, kinds: interactiveClients, available: hasSessions, params: sessionResizeParams{}, result: emptyResult{}},
 		"session.close":  {handle: handleSessionClose, kinds: interactiveClients, available: hasSessions, params: sessionIDParams{}, result: emptyResult{}},
 
@@ -164,19 +164,19 @@ func workspaceMethods() map[string]method {
 		// API Spec §2 gives `cli` the tree, because `umb` addresses it (REQ-CLI-005), but
 		// not `pane.move`, which has no `umb` verb, and not session.*: `umb` arranges panes
 		// and never drives the PTY inside one.
-		"workspace.create": {handle: handleWorkspaceCreate, kinds: treeClients, params: createWorkspaceParams{}, result: workspaceCreateResult{}},
+		"workspace.create": {handle: handleWorkspaceCreate, userOnly: true, kinds: treeClients, params: createWorkspaceParams{}, result: workspaceCreateResult{}},
 		"workspace.list":   {handle: handleWorkspaceList, kinds: treeClients, params: emptyResult{}, result: workspaceListResult{}},
 		"workspace.focus":  {handle: handleWorkspaceFocus, kinds: treeClients, params: workspaceIDParams{}, result: workspaceResult{}},
 		"workspace.rename": {handle: handleWorkspaceRename, kinds: treeClients, params: workspaceRenameParams{}, result: workspaceResult{}},
 		"workspace.close":  {handle: handleWorkspaceClose, kinds: treeClients, params: workspaceCloseParams{}, result: closedResult{}},
 
-		"tab.create": {handle: handleTabCreate, kinds: treeClients, params: tabCreateParams{}, result: tabCreateResult{}},
+		"tab.create": {handle: handleTabCreate, userOnly: true, kinds: treeClients, params: tabCreateParams{}, result: tabCreateResult{}},
 		"tab.list":   {handle: handleTabList, kinds: treeClients, params: workspaceIDParams{}, result: tabListResult{}},
 		"tab.focus":  {handle: handleTabFocus, kinds: treeClients, params: tabParams{}, result: tabResult{}},
 		"tab.rename": {handle: handleTabRename, kinds: treeClients, params: tabRenameParams{}, result: tabResult{}},
 		"tab.close":  {handle: handleTabClose, kinds: treeClients, params: tabParams{}, result: closedResult{}},
 
-		"pane.split":  {handle: handlePaneSplit, kinds: treeClients, params: splitParams{}, result: paneSplitResult{}},
+		"pane.split":  {handle: handlePaneSplit, userOnly: true, kinds: treeClients, params: splitParams{}, result: paneSplitResult{}},
 		"pane.list":   {handle: handlePaneList, kinds: treeClients, params: tabParams{}, result: paneListResult{}},
 		"pane.get":    {handle: handlePaneGet, kinds: treeClients, params: paneParams{}, result: paneResult{}},
 		"pane.focus":  {handle: handlePaneFocus, kinds: treeClients, params: paneParams{}, result: paneResult{}},
@@ -187,7 +187,7 @@ func workspaceMethods() map[string]method {
 		// §2 lists `layouts` as a capability of its own, which is why these two are not
 		// folded into the workspace surface above.
 		"layout.export": {handle: handleLayoutExport, kinds: treeClients, params: layoutExportParams{}, result: Layout{}},
-		"layout.apply":  {handle: handleLayoutApply, kinds: treeClients, params: applyParams{}, result: layoutApplyResult{}},
+		"layout.apply":  {handle: handleLayoutApply, userOnly: true, kinds: treeClients, params: applyParams{}, result: layoutApplyResult{}},
 	}
 }
 

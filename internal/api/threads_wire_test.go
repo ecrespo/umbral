@@ -558,3 +558,18 @@ func TestAFailedFocusIsStillForgottenOnClose_REQ_AGT_016(t *testing.T) {
 		t.Fatal("a connection whose focus failed was never unfocused")
 	}
 }
+
+// TestAThreadInFullAutoSaysSo_REQ_ORC_004: §4's `mode` is `full-auto` while the thread's flag
+// is set, and thread.update passes `full-auto` to the runtime, which decides whether the thread
+// may enter it.
+func TestAThreadInFullAutoSaysSo_REQ_ORC_004(t *testing.T) {
+	t.Parallel()
+	svc, c, _ := threadRig(t)
+	svc.thread.FullAuto = true
+	resp := c.call(2, "thread.update", map[string]any{"thread_id": "thr_1", "mode": "full-auto"})
+	var th Thread
+	decodeResult(t, resp, &th)
+	if th.Mode != "full-auto" || svc.updated.Mode == nil || *svc.updated.Mode != "full-auto" {
+		t.Fatalf("thread.update = %+v (%+v), runtime got %+v", th, resp.Error, svc.updated)
+	}
+}

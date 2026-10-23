@@ -45,7 +45,7 @@ type Thread struct {
 
 func toWireThread(t agentsdomain.Thread) Thread {
 	return Thread{
-		ID: t.ID, Title: t.Title, Mode: string(t.Mode), Model: emptyAsNull(t.Model), ModelClass: t.ModelClass,
+		ID: t.ID, Title: t.Title, Mode: string(t.WireMode()), Model: emptyAsNull(t.Model), ModelClass: t.ModelClass,
 		CWD: t.Cwd, State: string(t.State), AttentionState: t.AttentionState, Ephemeral: t.Ephemeral,
 		MaxSteps: t.MaxSteps, BudgetTokens: t.BudgetTokens, TokensUsed: t.TokensUsed, CostMicroUSD: t.CostMicroUSD,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, Stalled: t.Stalled, Queued: t.Queued,
@@ -174,7 +174,7 @@ func threadMethods() map[string]method {
 		"thread.cancel": {handle: handleThreadCancel, params: cancelThreadParams{}, result: cancelResult{}},
 		"thread.get":    {handle: handleThreadGet, kinds: treeClients, params: getThreadParams{}, result: threadResult{}},
 		"thread.list":   {handle: handleThreadList, kinds: interactiveClients, params: emptyResult{}, result: threadListResult{}},
-		"thread.update": {handle: handleThreadUpdate, kinds: interactiveClients, params: updateThreadParams{}, result: Thread{}},
+		"thread.update": {handle: handleThreadUpdate, userOnly: true, kinds: interactiveClients, params: updateThreadParams{}, result: Thread{}},
 		"thread.focus":  {handle: handleThreadFocus, kinds: interactiveClients, params: focusThreadParams{}, result: emptyResult{}},
 	}
 }
