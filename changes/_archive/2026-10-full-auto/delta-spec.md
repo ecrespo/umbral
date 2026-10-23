@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-10-23 by the implementing agent under the Tech Lead's standing F2 instruction — decision 8's list reaches F1 surfaces and awaits the Tech Lead's ratification; folded into API 1.46 (§2, §3, §4 `Thread`, §5.19, §5.22, §5.36, §5.41), Tech 1.61 (DD-006, §5.3) and Data Model 1.25 (§2.5, §5)` |
+| **Status** | `APPROVED 2026-10-23 by the implementing agent under the Tech Lead's standing F2 instruction; decision 8's list, which reaches F1 surfaces, ratified by the Tech Lead on 2026-10-23; folded into API 1.46 (§2, §3, §4 `Thread`, §5.19, §5.22, §5.36, §5.41), Tech 1.61 (DD-006, §5.3) and Data Model 1.25 (§2.5, §5)` |
 | **Date** | 2026-10-23 |
 | **Task** | T-F2-05 |
 | **REQ** | REQ-ORC-004 |
@@ -65,8 +65,8 @@
      `2026-10-umb-mcp-panel` and `2026-10-worktree-methods` made `umb skill install`, `umb mcp add`
      and `umb worktree merge|discard` destructive patterns the user may approve in a turn; such an
      approved command now fails with `PERMISSION_DENIED`, and the user runs it in their own pane.
-     The standing instruction covers F2's own deltas, so **this list awaits the Tech Lead's
-     ratification**; narrowing it to the worktree methods is the alternative.
+     The standing instruction covers F2's own deltas, so the list was put to the Tech Lead, who
+     **ratified it on 2026-10-23** over the alternative of narrowing it to the worktree methods.
    - "Inside an agent's terminal" is: a thread's live PTY shell (`sessions.Service.AgentShellPIDs`)
      is the process or one of its parents (`proctree.Ancestors`), or leads its POSIX session
      (`getsid`), which catches a process its shell's children left to init. `cmd/umbrald` composes
