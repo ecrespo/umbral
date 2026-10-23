@@ -62,6 +62,38 @@ func (s *memStore) CreateThread(_ context.Context, t domain.Thread) error {
 	return nil
 }
 
+func (s *memStore) DeleteThread(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.threads, id)
+	return nil
+}
+
+func (s *memStore) SetWorktree(_ context.Context, threadID, worktreeID string, now int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.threads[threadID]
+	if !ok {
+		return fmt.Errorf("%w: %s", domain.ErrNotFound, threadID)
+	}
+	t.WorktreeID, t.UpdatedAt = worktreeID, now
+	s.threads[threadID] = t
+	return nil
+}
+
+func (s *memStore) ThreadsInWorkspace(_ context.Context, workspaceID string) ([]domain.Thread, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []domain.Thread
+	for _, t := range s.threads {
+		if t.WorkspaceID == workspaceID {
+			out = append(out, t)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
 func (s *memStore) Thread(_ context.Context, id string) (domain.Thread, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -455,6 +487,15 @@ type fakeTool struct {
 	actionErr error
 	// tainted marks every result as untrusted content, as skill_load's are.
 	tainted bool
+
+	envMu sync.Mutex
+	env   toolsdomain.Env // the environment of the last call that ran
+}
+
+func (t *fakeTool) lastEnv() toolsdomain.Env {
+	t.envMu.Lock()
+	defer t.envMu.Unlock()
+	return t.env
 }
 
 // fakeTools is the tool registry: every tool takes {"path": …}.
@@ -493,12 +534,15 @@ func (f *fakeTools) Preview(context.Context, toolsdomain.Env, toolsdomain.Call) 
 	return "", nil
 }
 
-func (f *fakeTools) Invoke(_ context.Context, _ toolsdomain.Env, call toolsdomain.Call, grant toolsdomain.Grant) (toolsdomain.Result, error) {
+func (f *fakeTools) Invoke(_ context.Context, env toolsdomain.Env, call toolsdomain.Call, grant toolsdomain.Grant) (toolsdomain.Result, error) {
 	if !grant.Allows() {
 		return toolsdomain.Result{}, toolsdomain.ErrNotAuthorized
 	}
 	t := f.tools[call.Tool]
 	t.ran.Add(1)
+	t.envMu.Lock()
+	t.env = env
+	t.envMu.Unlock()
 	return toolsdomain.Result{Text: t.out, Summary: "done", Tainted: t.tainted}, nil
 }
 
@@ -514,6 +558,9 @@ type checkingBus struct {
 	approvals chan domain.Approval
 	// onApproval runs in the turn's goroutine as approval.requested is published.
 	onApproval func(domain.Approval)
+	// onFinished runs in the turn's goroutine as thread.turn_finished is published, while the
+	// runtime may still hold the turn in its map.
+	onFinished func(ports.TurnFinished)
 }
 
 func (b *checkingBus) Publish(ev bus.Event) {
@@ -575,7 +622,12 @@ func (b *checkingBus) Publish(ev bus.Event) {
 		if state == domain.StateRunning && e.StopReason != domain.StopStorageError {
 			b.fail = append(b.fail, "turn_finished published while the thread is still running")
 		}
-		defer func() { b.ended <- e }()
+		defer func() {
+			if b.onFinished != nil {
+				b.onFinished(e)
+			}
+			b.ended <- e
+		}()
 	}
 	b.evs = append(b.evs, ev)
 }

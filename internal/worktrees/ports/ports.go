@@ -9,6 +9,19 @@ import (
 	"github.com/ecrespo/umbral/internal/worktrees/domain"
 )
 
+// Worktrees is the engine as internal/api serves it, worktree.* (API §5.41). The agent runtime
+// reaches it through its own port, which cmd/umbrald adapts.
+type Worktrees interface {
+	// Get returns a worktree, marking it missing first if it has gone (REQ-WT-006).
+	Get(ctx context.Context, id string) (domain.Worktree, error)
+	// List returns the worktrees of these threads, every one when threadIDs is nil.
+	List(ctx context.Context, threadIDs []string) ([]domain.Worktree, error)
+	Diff(ctx context.Context, id string) (domain.DiffResult, error)
+	Merge(ctx context.Context, req domain.MergeRequest) (domain.MergeResult, error)
+	Discard(ctx context.Context, id string, confirm bool) error
+	CloseGroup(ctx context.Context, req domain.CloseGroupRequest) ([]domain.GroupEntry, error)
+}
+
 // Store keeps worktree rows (Data Model §2.4g).
 type Store interface {
 	Insert(ctx context.Context, w domain.Worktree) error
@@ -17,6 +30,8 @@ type Store interface {
 	// Active returns the thread's active worktree, if it has one.
 	Active(ctx context.Context, threadID string) (domain.Worktree, bool, error)
 	ListActive(ctx context.Context) ([]domain.Worktree, error)
+	// List returns the rows of these threads, every row when threadIDs is nil, oldest first.
+	List(ctx context.Context, threadIDs []string) ([]domain.Worktree, error)
 	SetState(ctx context.Context, id string, s domain.State, at int64) error
 }
 

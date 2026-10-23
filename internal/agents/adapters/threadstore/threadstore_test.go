@@ -373,3 +373,59 @@ func TestSeenAndViewedEnds_REQ_AGT_016(t *testing.T) {
 		t.Fatalf("MarkSeen on an unknown thread: %v", err)
 	}
 }
+
+// TestAThreadKeepsItsWorkspaceAndWorktree_REQ_ORC_003: a thread stores the workspace it was
+// created in and its latest worktree, a workspace lists its threads oldest first, an unknown
+// workspace is refused by its foreign key, and a deleted thread is gone.
+func TestAThreadKeepsItsWorkspaceAndWorktree_REQ_ORC_003(t *testing.T) {
+	s := open(t)
+	ctx := t.Context()
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO workspaces(id, label, cwd, created_at) VALUES ('w1', 'one', '/w', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(ws string, at int64) domain.Thread {
+		th := domain.Thread{
+			ID: store.NewID(store.PrefixThread), Mode: secdomain.ModeNormal, ModelClass: "code", Cwd: "/w",
+			State: domain.StateIdle, AttentionState: "idle", MaxSteps: 50, BudgetTokens: 1, CreatedAt: at, UpdatedAt: at,
+			WorkspaceID: ws,
+		}
+		if err := s.CreateThread(ctx, th); err != nil {
+			t.Fatal(err)
+		}
+		return th
+	}
+	later := mk("w1", 20)
+	earlier := mk("w1", 10)
+	mk("", 5)
+	if err := s.CreateThread(ctx, domain.Thread{
+		ID: store.NewID(store.PrefixThread), Mode: secdomain.ModeNormal,
+		ModelClass: "code", Cwd: "/w", State: domain.StateIdle, AttentionState: "idle", MaxSteps: 1, BudgetTokens: 1,
+		WorkspaceID: "w9",
+	}); err == nil {
+		t.Error("a thread in an unknown workspace was stored")
+	}
+	got, err := s.ThreadsInWorkspace(ctx, "w1")
+	if err != nil || len(got) != 2 || got[0].ID != earlier.ID || got[1].ID != later.ID || got[0].WorkspaceID != "w1" {
+		t.Fatalf("ThreadsInWorkspace = %+v, %v", got, err)
+	}
+
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO worktrees(id, thread_id, repo_root, repo_id, base_commit, origin_branch,
+		branch, path, created_at, updated_at) VALUES ('wtr_1', ?, '/r', '0123456789abcdef', 'abc', 'main', 'b', '/p', 1, 1)`, later.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetWorktree(ctx, later.ID, "wtr_1", 30); err != nil {
+		t.Fatal(err)
+	}
+	if th, _ := s.Thread(ctx, later.ID); th.WorktreeID != "wtr_1" || th.UpdatedAt != 30 {
+		t.Fatalf("after SetWorktree: %+v", th)
+	}
+	if err := s.SetWorktree(ctx, "thr_none", "wtr_1", 30); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("SetWorktree of an unknown thread: %v", err)
+	}
+	if err := s.DeleteThread(ctx, earlier.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Thread(ctx, earlier.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("a deleted thread: %v", err)
+	}
+}

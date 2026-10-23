@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -32,7 +33,7 @@ type Options struct {
 	Now           func() time.Time
 }
 
-// Service is the engine.
+// Service is the engine, and the module's inbound port.
 type Service struct {
 	o Options
 	// mu serialises the operations that change a repository — create, merge and discard — so
@@ -45,6 +46,8 @@ type Service struct {
 	versionDone bool
 	versionErr  error
 }
+
+var _ ports.Worktrees = (*Service)(nil)
 
 // New returns an engine.
 func New(o Options) *Service {
@@ -170,6 +173,35 @@ func (s *Service) check(ctx context.Context, w domain.Worktree) (domain.Worktree
 	return w, nil
 }
 
+// List returns the worktrees of these threads, every one when threadIDs is nil, oldest first.
+// Listing is an access: an active worktree that has gone is marked missing first (REQ-WT-006).
+func (s *Service) List(ctx context.Context, threadIDs []string) ([]domain.Worktree, error) {
+	rows, err := s.o.Store.List(ctx, threadIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		if rows[i], err = s.check(ctx, rows[i]); err != nil {
+			return nil, err
+		}
+	}
+	return rows, nil
+}
+
+// ActiveFor returns the thread's active worktree, after the check that marks a gone one missing:
+// the agent runtime asks it at the start of every turn for the turn's cwd and write root
+// (REQ-WT-002).
+func (s *Service) ActiveFor(ctx context.Context, threadID string) (domain.Worktree, bool, error) {
+	w, ok, err := s.o.Store.Active(ctx, threadID)
+	if err != nil || !ok {
+		return domain.Worktree{}, false, err
+	}
+	if w, err = s.check(ctx, w); err != nil {
+		return domain.Worktree{}, false, err
+	}
+	return w, w.State == domain.StateActive, nil
+}
+
 // CheckAll marks every active worktree that has gone as missing; the daemon runs it at start.
 func (s *Service) CheckAll(ctx context.Context) error {
 	rows, err := s.o.Store.ListActive(ctx)
@@ -198,68 +230,45 @@ func (s *Service) active(ctx context.Context, id string) (domain.Worktree, error
 	return w, nil
 }
 
-// DiffResult is a worktree's changes and the revision they were read from.
-type DiffResult struct {
-	Files []domain.FileDiff
-	// Revision names the content shown. A merge that passes it lands exactly that content or
-	// nothing (MergeRequest.Revision).
-	Revision string
-}
-
 // Diff is the worktree's changes since its base, split into files and hunks (REQ-WT-003).
-func (s *Service) Diff(ctx context.Context, id string) (DiffResult, error) {
+func (s *Service) Diff(ctx context.Context, id string) (domain.DiffResult, error) {
 	w, err := s.active(ctx, id)
 	if err != nil {
-		return DiffResult{}, err
+		return domain.DiffResult{}, err
 	}
 	text, revision, err := s.o.Git.Diff(ctx, w.RepoRoot, w.Path, w.BaseCommit)
 	if err != nil {
-		return DiffResult{}, err
+		return domain.DiffResult{}, err
 	}
-	return DiffResult{Files: domain.ParseUnifiedDiff(text), Revision: revision}, nil
-}
-
-// MergeRequest is `worktree.merge`.
-type MergeRequest struct {
-	ID      string
-	Message string // the generated one when empty
-	// Revision, when set, is the DiffResult.Revision the user reviewed: the merge is refused
-	// `changed` if the worktree no longer holds it, so the agent cannot slip in work after the
-	// review.
-	Revision string
-}
-
-// MergeResult is what a merge made.
-type MergeResult struct {
-	Commit string // "" when the worktree changed nothing
+	return domain.DiffResult{Files: domain.ParseUnifiedDiff(text), Revision: revision}, nil
 }
 
 // Merge squashes the worktree into its origin branch in the main copy, then removes the
 // worktree's directory and branch and marks it merged (REQ-WT-004).
-func (s *Service) Merge(ctx context.Context, req MergeRequest) (MergeResult, error) {
+func (s *Service) Merge(ctx context.Context, req domain.MergeRequest) (domain.MergeResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w, err := s.active(ctx, req.ID)
 	if err != nil {
-		return MergeResult{}, err
+		return domain.MergeResult{}, err
 	}
 	repo, err := s.o.Git.Inspect(ctx, w.RepoRoot)
 	if err != nil {
-		return MergeResult{}, err
+		return domain.MergeResult{}, err
 	}
 	switch {
 	case repo.Branch == "":
-		return MergeResult{}, &domain.Refusal{Reason: domain.ReasonDetached, Detail: w.RepoRoot}
+		return domain.MergeResult{}, &domain.Refusal{Reason: domain.ReasonDetached, Detail: w.RepoRoot}
 	case repo.Branch != w.OriginBranch:
-		return MergeResult{}, &domain.Refusal{
+		return domain.MergeResult{}, &domain.Refusal{
 			Reason: domain.ReasonOtherBranch,
 			Detail: fmt.Sprintf("%s is on %s, the worktree came from %q", w.RepoRoot, repo.Branch, w.OriginBranch),
 		}
 	}
 	if dirty, err := s.o.Git.Dirty(ctx, w.RepoRoot); err != nil {
-		return MergeResult{}, err
+		return domain.MergeResult{}, err
 	} else if dirty {
-		return MergeResult{}, &domain.Refusal{Reason: domain.ReasonDirty, Detail: w.RepoRoot}
+		return domain.MergeResult{}, &domain.Refusal{Reason: domain.ReasonDirty, Detail: w.RepoRoot}
 	}
 	msg := req.Message
 	if msg == "" {
@@ -267,14 +276,16 @@ func (s *Service) Merge(ctx context.Context, req MergeRequest) (MergeResult, err
 	}
 	commit, err := s.o.Git.Squash(ctx, w.RepoRoot, w.Path, w.BaseCommit, req.Revision, msg, s.o.CommitTimeout)
 	if err != nil {
-		return MergeResult{}, err
+		return domain.MergeResult{}, err
 	}
 	// The work is in the origin branch now. The row is marked first: a directory left behind
 	// by a failed removal is harmless, a row still active over landed work is not.
 	if err := s.o.Store.SetState(ctx, w.ID, domain.StateMerged, s.o.Now().UnixMilli()); err != nil {
-		return MergeResult{Commit: commit}, err
+		return domain.MergeResult{Commit: commit}, err
 	}
-	return MergeResult{Commit: commit}, s.o.Git.RemoveWorktree(ctx, w.RepoRoot, w.Path, w.Branch)
+	// The merge has happened: a directory or branch that will not go is left over, not a
+	// failure, or the caller would lose the commit it landed.
+	return domain.MergeResult{Commit: commit, Leftover: s.o.Git.RemoveWorktree(ctx, w.RepoRoot, w.Path, w.Branch)}, nil
 }
 
 // Discard removes the worktree's directory and branch and keeps its row as discarded. It needs
@@ -293,6 +304,84 @@ func (s *Service) Discard(ctx context.Context, id string, confirm bool) error {
 		return err
 	}
 	return s.o.Store.SetState(ctx, w.ID, domain.StateDiscarded, s.o.Now().UnixMilli())
+}
+
+// CloseGroup reports every worktree of the group's threads with its state and, for an active
+// one, whether it holds changes, then discards the active ones the request names, so closing a
+// group never loses an unmerged change silently (REQ-WT-007). A named worktree that is not
+// active has nothing to discard. Every check runs before the first discard: a discard the
+// request may not make, or the guard refuses, leaves every worktree as it was. A discard that
+// fails part way returns its error; the ones before it stand, each complete.
+func (s *Service) CloseGroup(ctx context.Context, req domain.CloseGroupRequest) ([]domain.GroupEntry, error) {
+	if len(req.Discard) > 0 && !req.Confirm {
+		return nil, &domain.Refusal{Reason: domain.ReasonConfirmRequired, Detail: "discarding a worktree loses its changes"}
+	}
+	rows, err := s.List(ctx, req.ThreadIDs)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]domain.GroupEntry, len(rows))
+	index := make(map[string]int, len(rows))
+	for i, w := range rows {
+		entries[i].Worktree, index[w.ID] = w, i
+		if w.State != domain.StateActive {
+			continue
+		}
+		d, err := s.Diff(ctx, w.ID)
+		if err != nil {
+			return nil, err
+		}
+		entries[i].Changes = domain.ChangesClean
+		if len(d.Files) > 0 {
+			entries[i].Changes = domain.ChangesChanged
+		}
+	}
+	var discard []int
+	for _, id := range req.Discard {
+		i, ok := index[id]
+		if !ok {
+			return nil, &domain.Refusal{Reason: domain.ReasonNotInGroup, Detail: id}
+		}
+		if entries[i].Worktree.State == domain.StateActive && !slices.Contains(discard, i) {
+			discard = append(discard, i)
+		}
+	}
+	guard := req.Guard
+	if guard == nil {
+		guard = func(_ context.Context, _ string, discard func() error) error { return discard() }
+	}
+	// Every discard runs inside the guards of all the threads it touches, entered once each in
+	// a fixed order: a turn cannot start on one thread after another's worktree is gone, so a
+	// refusal leaves everything as it was (API Spec §5.41), and two groups never take the same
+	// threads' locks in opposite orders.
+	var threads []string
+	for _, i := range discard {
+		threads = append(threads, entries[i].Worktree.ThreadID)
+	}
+	slices.Sort(threads)
+	threads = slices.Compact(threads)
+	var within func(k int) error
+	within = func(k int) error {
+		if k < len(threads) {
+			return guard(ctx, threads[k], func() error { return within(k + 1) })
+		}
+		for _, i := range discard {
+			e := &entries[i]
+			if err := s.Discard(ctx, e.Worktree.ID, true); err != nil {
+				return err
+			}
+			w, err := s.o.Store.Get(ctx, e.Worktree.ID)
+			if err != nil {
+				return err
+			}
+			e.Worktree, e.Discarded = w, true
+		}
+		return nil
+	}
+	if err := within(0); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 func short(commit string) string {

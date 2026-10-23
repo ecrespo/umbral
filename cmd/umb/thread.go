@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,7 +22,7 @@ const (
 	threadCancel = "cancel"
 )
 
-const threadUsage = "umb thread: create [CWD] [--mode M] [--title T] [--model M] | " +
+const threadUsage = "umb thread: create [CWD] [--mode M] [--title T] [--model M] [--worktree] [--workspace W] | " +
 	"send THREAD TEXT… [--wait STATES] [--timeout D] | wait THREAD --until STATES [--timeout D] | " +
 	"get THREAD | cancel THREAD"
 
@@ -45,6 +47,8 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 	mode := fs.String("mode", "", "create: the thread's mode, as the daemon names it (API §4)")
 	title := fs.String("title", "", "create: the thread's title")
 	model := fs.String("model", "", "create: the model, provider/name")
+	worktree := fs.Bool("worktree", false, "create: give the thread its own git worktree (REQ-WT-001)")
+	workspace := fs.String("workspace", os.Getenv("UMBRAL_WORKSPACE_ID"), "create: the workspace the thread belongs to; the pane's own by default")
 	wait := fs.String("wait", "", "send: wait for one of these states, comma-separated: idle,done,blocked,stopped")
 	until := fs.String("until", "", "wait: the states that end it, comma-separated: idle,done,blocked,stopped")
 	timeout := fs.Duration("timeout", defaultThreadWait, "send --wait and wait: how long to wait, 1s to 1h")
@@ -74,10 +78,13 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 			return exitFailure
 		}
 		method, params["cwd"] = "thread.create", abs
-		for key, v := range map[string]string{"mode": *mode, keyTitle: *title, "model": *model} {
+		for key, v := range map[string]string{"mode": *mode, keyTitle: *title, "model": *model, "workspace": *workspace} {
 			if v != "" {
 				params[key] = v
 			}
+		}
+		if *worktree {
+			params["worktree"] = true
 		}
 	case threadSend:
 		if len(pos) < 2 {
@@ -127,6 +134,12 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 			return exitFailure
 		}
 		return callFailed(stderr, "umb thread "+sub+": ", err)
+	}
+	if refused, ok := result["worktree_refused"].(map[string]any); ok {
+		// The thread exists and works in its own directory (REQ-WT-008); say so where a script's
+		// stdout is not read.
+		stderr.printf("umb thread create: the thread works without a worktree: %s (%v)\n",
+			printable(fmt.Sprint(refused["message"])), printable(fmt.Sprint(refused["reason"])))
 	}
 	if f.asJSON {
 		return printJSON(stdout, stderr, result)

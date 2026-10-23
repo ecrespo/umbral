@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.43 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.44 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -126,7 +126,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove`, `agent.explain`, `model.route` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove`, `agent.explain`, `model.route`, `worktree.list`, `worktree.get`, `worktree.diff`, `worktree.merge`, `worktree.discard` |
 
 ### Handshake
 
@@ -138,7 +138,7 @@ before the daemon starts.
 ```json
 {"jsonrpc":"2.0","id":1,"result":{
   "daemon_version":"0.1.0","protocol_version":1,
-  "capabilities":["sessions","blocks","threads","mcp","models","workspaces","layouts","waits","integrations","notifications","policy_explain","wait_admin","rules","skills","limits","config","agent_detection"],
+  "capabilities":["sessions","blocks","threads","mcp","models","workspaces","layouts","waits","integrations","notifications","policy_explain","wait_admin","rules","skills","limits","config","agent_detection","worktrees"],
   "connection_id":"con_01J9Z3K8T2QH6W4V5X7Y8Z9A0B","max_message_bytes":4194304}}
 ```
 
@@ -147,7 +147,7 @@ before the daemon starts.
   compatible would silently pair this daemon with a client built for a version it never declared.
 - Each entry of `capabilities` names a method namespace (`sessions`, `blocks`, `threads`, `mcp`,
   `models`, `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`,
-  `wait_admin`, `rules`, `skills`, `limits`, `config`, `agent_detection`) whose methods the daemon **serves at that moment**. THE SYSTEM SHALL derive
+  `wait_admin`, `rules`, `skills`, `limits`, `config`, `agent_detection`, `worktrees`) whose methods the daemon **serves at that moment**. THE SYSTEM SHALL derive
   the list from its method table rather than declaring it statically, SHALL advertise a namespace
   when at least one of its methods is served by this build, and SHALL NOT advertise one whose
   methods are all unserved: a client that branches on the advertisement must not be sent down a path
@@ -172,7 +172,7 @@ before the daemon starts.
 ## 3. General Conventions
 
 ### Identifiers
-- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`, `trn_` for a turn (`turn_id`, T-F1-13), `wt_` for a wait (`wait_id`, T-F1-31), `skl_` for a skill (T-F1-34), and `key_` for a trust key — fixed by the binary's trust seed for the project's keys, so every install shows the same id, and minted at `rules.key.add` otherwise
+- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`, `trn_` for a turn (`turn_id`, T-F1-13), `wt_` for a wait (`wait_id`, T-F1-31), `skl_` for a skill (T-F1-34), `wtr_` for a worktree (T-F2-01; not `wt_`, which is a wait's), and `key_` for a trust key — fixed by the binary's trust seed for the project's keys, so every install shows the same id, and minted at `rules.key.add` otherwise
   (Constitution Art. 6). Example: `blk_01J9Z3K8T2QH6W4V5X7Y8Z9A0B`.
 - **Structural identifiers** are the documented exception to that rule (Art. 6, amendment of
   2026-09-20): a workspace is `w<n>`, a tab `w<n>:t<m>` and a pane `w<n>:p<m>`, with `n` and `m`
@@ -225,6 +225,19 @@ absent one. The field is present on `INTERNAL_ERROR` only (Art. 7).
 | -32013 | `CANCELLED` | The wait was cancelled with `wait.cancel` |
 | -32014 | `RESULT_TOO_LARGE` | The result would exceed this connection's frame limit (§1). `data.size_bytes` is the size it would have had and `data.limit_bytes` the limit, both numbers; the connection stays open (REQ-API-005) |
 | -32603 | `INTERNAL_ERROR` | Unexpected error (always with `trace_id`) |
+
+### A refusal's reason
+
+A worktree request the daemon refuses (§5.41) carries `data.reason`, a stable word naming why, on
+`VALIDATION_ERROR` when the request is at fault and on `CONFLICT` when the repository's or the
+thread's state is. A `conflict` refusal carries `data.paths`, the conflicting paths, and a
+`commit_failed` one `data.output`, the first 4 KiB of git's error output (REQ-WT-004). The fields
+are absent on every other error.
+
+```json
+{"jsonrpc":"2.0","id":9,"error":{"code":-32003,"message":"worktree: conflict: a.txt",
+  "data":{"domain_code":"CONFLICT","reason":"conflict","paths":["a.txt"]}}}
+```
 
 ### Cursor pagination
 
@@ -361,6 +374,19 @@ method and the ordering that produced it, so one handed to a different method is
 - `state`: `idle` | `running` | `awaiting_approval` | `stopped`
 - `attention_state`: `blocked` | `working` | `done` | `idle` | `unknown` — what the sidebar rolls up and what waits observe. `done` is a finished turn no client has viewed yet (REQ-AGT-016)
 - `stalled`: `true` while the thread's running turn is marked stalled (REQ-AUT-008, §5.33); the mark is the daemon's and is not stored
+- `workspace_id`: the workspace the thread was created in, `null` for none (REQ-ORC-003)
+- `worktree_id`: the thread's latest worktree, whatever its state, `null` for none. While that worktree is `active` the thread's turns run in it: the worktree is their write root and their cwd is the worktree's directory matching `cwd`, or the worktree's top when it has none; `cwd` itself does not change (REQ-WT-002)
+
+### Worktree
+```json
+{"id":"wtr_…","thread_id":"thr_…","repo_root":"/home/u/repo","origin_branch":"main",
+ "base_commit":"9f2c…","branch":"umbral/thr_…",
+ "path":"/home/u/.local/share/umbral/worktrees/1a2b3c4d5e6f7a8b/thr_…","state":"active",
+ "created_at":1757592010000,"updated_at":1757592010000}
+```
+- `state`: `active` | `merged` | `discarded` | `missing` (REQ-WT-006: its directory or branch was removed outside Umbral)
+- `origin_branch`: the branch a merge squashes into; `null` for a worktree made from a detached `HEAD`, which no merge can land
+- `path` is outside the repository, in `worktrees/<repo_id>/<thread_id>` beside the database (REQ-WT-001)
 
 ### Message
 ```json
@@ -613,8 +639,20 @@ a bareword character. A client offering a search box SHALL quote what the user t
 is not already a valid expression. A malformed query returns `VALIDATION_ERROR`.
 
 ### 5.19 `thread.create`
-**Params:** `{mode?:"normal", model?, model_class?:"code", cwd, title?, ephemeral?:false, max_steps?:1-200, budget_tokens?}`.
-**Result:** `Thread`.
+**Params:** `{mode?:"normal", model?, model_class?:"code", cwd, title?, ephemeral?:false, max_steps?:1-200, budget_tokens?, workspace?, worktree?:false}`.
+**Result:** `Thread`, plus `worktree_refused?: {reason, message}` when a worktree was asked for and git refused it.
+
+- `workspace` is an open workspace (`w<n>`) the thread belongs to (REQ-ORC-003); another is
+  `VALIDATION_ERROR`. `umb thread create` sends the pane's own, `UMBRAL_WORKSPACE_ID`, unless told
+  otherwise.
+- `worktree: true` creates the thread's worktree with it, as `worktree.create` would (§5.41).
+  - When git refuses one with a `VALIDATION_ERROR` reason of §5.41 (`not_git`, `bare`, `old_git`,
+    `no_commit`), the thread is created without isolation and keeps working in `cwd` (REQ-WT-008):
+    the answer has `worktree_id: null` and `worktree_refused` with that `reason` and its message.
+  - Any other failure of the worktree is the answer, and no thread is created.
+  - A daemon without the worktree engine answers `NOT_IMPLEMENTED`.
+  - `umb` may ask for one (`umb thread create --worktree`): a worktree made at a thread's birth
+    moves nothing a turn uses. `worktree.create` on an existing thread stays interactive (§2).
 
 ### 5.20 `thread.send` — REQ-AGT-001, REQ-AGT-015, REQ-CTX-002, REQ-CLI-001
 **Params:** `{thread_id, text (1-100000 chars), attachments?:[{kind, ref | data_b64}], client_msg_id?}`.
@@ -1000,6 +1038,7 @@ Delta `2026-10-policy-explain` (T-F1-28):
 
 - **What it evaluates with.** The engine a turn decides with, and the same destructive patterns.
   - A `thread_id` lends the thread's mode, the write root found from its directory, and its own rules with the global ones.
+  - A thread with an active worktree lends the worktree's directory and write root instead, as its turn would run in them (§5.41, REQ-WT-002; delta `2026-10-worktree-methods`).
   - A `mode` overrides the thread's, to ask "what if".
   - Without a thread only the global rules apply and there is no write root, so `auto-edit` cannot allow a write.
 - **What it refuses.** These are `VALIDATION_ERROR`:
@@ -1207,6 +1246,59 @@ plus response reserve (0 needs no particular window). **Result:**
 - A class `models.toml` does not declare answers no candidates. An unknown class name, both
   `class` and `model` or neither, or a negative `input_tokens` is `VALIDATION_ERROR`.
 
+### 5.41 `worktree.create` / `list` / `get` / `diff` / `merge` / `discard` / `close_group` — REQ-WT-001, REQ-WT-002, REQ-WT-003, REQ-WT-004, REQ-WT-005, REQ-WT-006, REQ-WT-007, REQ-WT-008
+A thread's isolated copy of its repository, under the `worktrees` capability. `umb` may call
+`list`, `get`, `diff`, `merge` and `discard` (§2); `create` and `close_group` are the interactive
+clients'. Every method that returns a worktree checks it first: an `active` one whose directory or
+branch has gone is answered, and stored, `missing` (REQ-WT-006).
+
+`create` params: `{thread_id, base?}`. `list` params: `{thread_id?, workspace_id?}`. `get` params: `{worktree_id}`. `diff` params: `{worktree_id}`. `merge` params: `{worktree_id, message?, revision?}`. `discard` params: `{worktree_id, confirm?}`. `close_group` params: `{workspace_id?, thread_ids?, discard?, confirm?}`.
+
+- **`create`** makes the thread's worktree on `umbral/<thread_id>` from the repository's `HEAD`, or
+  `base`, and answers the `Worktree`. A thread has at most one `active` worktree (`CONFLICT`
+  `exists`). From the thread's next turn on, its turns run there (§4 `Thread`).
+- **`list`** answers `{items: [Worktree]}`, oldest first: one thread's, a workspace's threads', or
+  every worktree with neither. `thread_id` and `workspace_id` together are `VALIDATION_ERROR`.
+- **`get`** answers the `Worktree`.
+- **`diff`** answers the changes since the base commit, untracked files included, and the
+  `revision` they were read as:
+  ```json
+  {"worktree_id":"wtr_…","revision":"4b825d…","files":[{"path":"a.go","status":"modified","binary":false,
+   "hunks":[{"id":"3f9a1c0d2e4b5a6c","header":"@@ -1,3 +1,3 @@","lines":[" package a","-old","+new"]}]}]}
+  ```
+  `status` is `added`, `modified` or `deleted`; a binary file has no hunks. A hunk's `id` stays the
+  same while the hunk does, whatever happens to the hunks before it (REQ-WT-003).
+- **`merge`** squashes the worktree into one commit on its origin branch in the main working copy,
+  with `message` or a generated one, running the repository's hooks and signing, without checking
+  out anything; then it removes the worktree's directory and branch and answers
+  `{worktree, commit}` — `commit` is `null` when the worktree changed nothing. With `revision`, a
+  `diff`'s, it lands exactly what that diff showed or nothing (`CONFLICT` `changed`); `umb worktree
+  merge` always passes the revision it showed (delta `2026-10-worktree-engine`, decision 19).
+  Once the commit has landed the merge stands: a directory or branch that cannot be removed is
+  logged and left, and the answer still carries the commit.
+- **`discard`** removes the worktree's directory and branch and keeps its record `discarded`. It
+  needs `confirm: true` (REQ-WT-005).
+- **`close_group`** names a group by `workspace_id` — the threads created in that workspace — or
+  `thread_ids`, exactly one of the two. It answers `{items: [{worktree, changes, discarded}]}`,
+  every worktree of the group's threads oldest first. `changes` is `changed` or `clean` for a
+  worktree that was `active`, `null` otherwise. It discards only the `active` worktrees `discard`
+  names, which needs `confirm: true`; a named worktree that is not active has nothing to discard,
+  and one outside the group is `VALIDATION_ERROR` `not_in_group`. Every check, the running turns'
+  included, is made before the first discard, and the discards run while every one of their
+  threads is held from starting a turn, so a refused request discards nothing (REQ-WT-007).
+- **No change under a running turn.** `create`, `merge`, `discard` and a `close_group` that
+  discards answer `CONFLICT` `running` while the worktree's thread has a turn running (its state is
+  `running` or `awaiting_approval`), and hold off a new turn while they run: a turn keeps the
+  directory and write root it started with. A turn has ended once `thread.turn_finished` is sent.
+- **Refusals** carry `data.reason` (§3). `VALIDATION_ERROR`: `not_git`, `bare`, `old_git` (git
+  older than 2.34), `no_commit`, `bad_thread`, `confirm_required`, `not_in_group` (REQ-WT-008: the
+  thread keeps working without isolation). `CONFLICT`: `dirty`, `other_branch`, `detached` (the
+  main copy has uncommitted changes, is on another branch, or on a detached `HEAD`), `conflict`
+  (with `data.paths`), `commit_failed` (a hook, signing or `[worktrees] commit_timeout`, with
+  `data.output`), `changed`, `exists`, `not_active` (the worktree is merged, discarded or missing)
+  and `running`. Every refusal leaves the main copy and the worktree as they were. An unknown
+  worktree is `NOT_FOUND`.
+
 ## 6. Notifications (daemon → client)
 
 | Method | Payload | REQ |
@@ -1347,7 +1439,7 @@ stateDiagram-v2
 - **Optional capabilities:** `system.hello` returns the namespaces the daemon **serves** at that
   moment (§2). The protocol's namespaces are `sessions`, `blocks`, `threads`, `mcp`, `models`,
   `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`, `wait_admin`,
-  `rules`, `skills`, `limits`, `config` and `agent_detection`; `worktrees`, `graphics`, `plugins` and `federation` are reserved for later. The §2
+  `rules`, `skills`, `limits`, `config`, `agent_detection` and `worktrees`; `graphics`, `plugins` and `federation` are reserved for later. The §2
   example shows the full list and is illustrative: what a given daemon returns is whatever it can
   actually do, which is narrower than what its method table holds whenever a module is absent.
 - **Which error a missing method gets.** A name this build does not know receives
@@ -1431,3 +1523,4 @@ printf '%s\n' \
 | 1.41 | 2026-10-22 | Additive within `protocol_version = 1`. Ratifies delta `2026-10-cli-thread-wait` (T-F1-38): §2's `cli` row gains `thread.get` and `thread.wait`, and §5.23 and §5.29 say so |
 | 1.42 | 2026-10-22 | Additive within `protocol_version = 1`. Delta `2026-10-agent-detection` (T-F2-10): §4 `Pane` gains `detected_agent`; new §5.39 `agent.explain`; §2's `cli` row gains `agent.explain` and the capability list `agent_detection`; §6 `pane.updated` is also sent when a pane's detected agent changes; §9 lists the capability |
 | 1.43 | 2026-10-22 | Additive within `protocol_version = 1`. Delta `2026-10-policy-router` (T-F2-11): new §5.40 `model.route`, with each candidate's rank and reason, the policies and the breakers; §2's `cli` row gains `model.route` |
+| 1.44 | 2026-10-22 | Additive within `protocol_version = 1`. Delta `2026-10-worktree-methods` (T-F2-03): §3 names `wtr_` and a refusal's `data.reason`, `data.paths` and `data.output`; §4 `Worktree`, and `Thread` gains `workspace_id` and `worktree_id`; §5.19 `thread.create` takes `workspace` and `worktree`; new §5.41 `worktree.*`; §2's `cli` row gains `worktree.list`, `get`, `diff`, `merge` and `discard`, and the capability list `worktrees`; §5.19's `worktree_refused` when git refuses a thread's worktree, which no longer withholds the thread (REQ-WT-008); §5.36 explains a thread in its worktree; §5.41 keeps a landed merge and holds every thread of a discarding `close_group` |

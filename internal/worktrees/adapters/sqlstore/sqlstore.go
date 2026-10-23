@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/ecrespo/umbral/internal/worktrees/domain"
 	"github.com/ecrespo/umbral/internal/worktrees/ports"
@@ -61,6 +62,34 @@ func (s *Store) Active(ctx context.Context, threadID string) (domain.Worktree, b
 // ListActive implements ports.Store.
 func (s *Store) ListActive(ctx context.Context) ([]domain.Worktree, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+columns+` FROM worktrees WHERE state = 'active' ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []domain.Worktree
+	for rows.Next() {
+		w, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// List implements ports.Store.
+func (s *Store) List(ctx context.Context, threadIDs []string) ([]domain.Worktree, error) {
+	query, args := `SELECT `+columns+` FROM worktrees`, []any{}
+	if threadIDs != nil {
+		if len(threadIDs) == 0 {
+			return nil, nil
+		}
+		query += ` WHERE thread_id IN (?` + strings.Repeat(`, ?`, len(threadIDs)-1) + `)`
+		for _, id := range threadIDs {
+			args = append(args, id)
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, query+` ORDER BY created_at, id`, args...)
 	if err != nil {
 		return nil, err
 	}

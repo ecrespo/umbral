@@ -141,6 +141,9 @@ func (s *Stream) Call(ctx context.Context, method string, params, out any) error
 					Details:    resp.Error.Data.Details,
 					TraceID:    resp.Error.Data.TraceID,
 					LastState:  resp.Error.Data.LastState,
+					Reason:     resp.Error.Data.Reason,
+					Paths:      resp.Error.Data.Paths,
+					Output:     resp.Error.Data.Output,
 				}
 			}
 			if out == nil || len(resp.Result) == 0 {

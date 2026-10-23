@@ -155,3 +155,25 @@ func TestThreadGetPrintsEveryPage_REQ_CLI_009(t *testing.T) {
 		t.Errorf("thread get --json printed %q (%v), want both pages' messages", stdout.String(), err)
 	}
 }
+
+// TestThreadCreateSaysWhenItsWorktreeWasRefused_REQ_WT_008: when git refuses the worktree
+// `--worktree` asked for, the thread is still made and its id printed, and stderr says the
+// thread works without isolation and why.
+func TestThreadCreateSaysWhenItsWorktreeWasRefused_REQ_WT_008(t *testing.T) {
+	t.Parallel()
+	d := serveRecordingDaemon(t, map[string]fakeReply{
+		"thread.create": func(map[string]any) (any, string) {
+			return map[string]any{"id": "thr_1", "worktree_id": nil, "worktree_refused": map[string]any{
+				"reason": "not_git", "message": "worktree: not_git: /work\x1b[2J",
+			}}, ""
+		},
+	})
+	var stdout, stderr bytes.Buffer
+	requireExit(t, run([]string{"thread", "create", "/work", "--worktree", "--socket", d.socket, "--no-autostart"}, &stdout, &stderr), exitOK, &stderr)
+	if stdout.String() != "thr_1\n" {
+		t.Errorf("stdout %q, want the id alone", stdout.String())
+	}
+	if errOut := stderr.String(); !strings.Contains(errOut, "not_git") || !strings.Contains(errOut, "without a worktree") || strings.Contains(errOut, "\x1b") {
+		t.Errorf("stderr %q, want the refusal, escaped", errOut)
+	}
+}

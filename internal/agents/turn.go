@@ -29,9 +29,12 @@ const unknown = "unknown"
 
 // turnRun is one turn's state.
 type turnRun struct {
-	r         *Runtime
-	thread    domain.Thread
-	turnID    string
+	r      *Runtime
+	thread domain.Thread
+	turnID string
+	// cwd and writeRoot are where the turn runs, read once as it starts: the thread's own, or
+	// its active worktree's (REQ-WT-002).
+	cwd       string
 	writeRoot string
 	rules     []secdomain.Rule
 	tools     []llm.ToolSpec
@@ -169,7 +172,12 @@ func (t *turnRun) stopFor(ctx context.Context, err error) domain.StopReason {
 // exposes, and the system prompt with the rules files, the skill catalog and git state.
 func (t *turnRun) prepare(ctx context.Context) error {
 	cfg := t.r.cfg
-	t.writeRoot = secdomain.WriteRoot(t.thread.Cwd, cfg.IsRepo)
+	cwd, writeRoot, err := t.r.dirs(ctx, t.thread)
+	if err != nil {
+		// The worktree's row, or the check that it is still on disk, could not be read.
+		return storageErr(err)
+	}
+	t.cwd, t.writeRoot = cwd, writeRoot
 	rules, err := cfg.Store.Rules(ctx, t.thread.ID)
 	if err != nil {
 		return storageErr(err)
@@ -186,12 +194,12 @@ func (t *turnRun) prepare(ctx context.Context) error {
 	if err := t.loadHistory(ctx); err != nil {
 		return storageErr(err)
 	}
-	in := ctxdomain.SystemInput{Cwd: t.thread.Cwd, Mode: string(t.thread.Mode)}
+	in := ctxdomain.SystemInput{Cwd: t.cwd, Mode: string(t.thread.Mode)}
 	if cfg.Context != nil {
-		if in.Rules, err = cfg.Context.Rules(ctx, t.thread.Cwd); err != nil {
+		if in.Rules, err = cfg.Context.Rules(ctx, t.cwd); err != nil {
 			return err
 		}
-		if in.Git, err = cfg.Context.Git(ctx, t.thread.Cwd); err != nil {
+		if in.Git, err = cfg.Context.Git(ctx, t.cwd); err != nil {
 			return err
 		}
 	}
@@ -439,7 +447,7 @@ func (t *turnRun) runTool(ctx context.Context, c domain.ToolCall) error {
 // callTool runs one tool call: classify, record, decide, ask if it must, invoke.
 func (t *turnRun) callTool(ctx context.Context, c domain.ToolCall) error {
 	cfg := t.r.cfg
-	env := toolsdomain.Env{ThreadID: t.thread.ID, Cwd: t.thread.Cwd, WriteRoot: t.writeRoot}
+	env := toolsdomain.Env{ThreadID: t.thread.ID, Cwd: t.cwd, WriteRoot: t.writeRoot}
 	call := toolsdomain.Call{Tool: c.Tool, Input: c.Args}
 
 	var action secdomain.Action

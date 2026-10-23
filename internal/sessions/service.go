@@ -80,6 +80,10 @@ type liveSession struct {
 	pty ports.PTY
 	emu ports.Emulator
 
+	// threadCwd is the cwd a thread's PTY was started for (RunForThread), "" for any other
+	// session. Guarded by mu.
+	threadCwd string
+
 	seq     uint64
 	cleanup func() error
 

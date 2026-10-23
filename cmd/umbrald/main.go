@@ -405,10 +405,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitCantCreate
 	}
 
+	// The worktree engine (T-F2-02), its missing worktrees marked before the runtime can run a
+	// turn in one (REQ-WT-006).
+	worktreeEngine := newWorktrees(ctx, db, time.Duration(settings.WorktreeCommitTimeoutS)*time.Second, logger)
+
 	// The agent runtime (T-F1-13). Its turns run on the daemon's context; closing it waits
 	// for each to record how it ended.
 	runtime, tools, err := newRuntime(ctx, agentDeps{
-		logger: logger, db: db, bus: eventBus, gateway: models, egress: egress,
+		worktrees: runtimeWorktrees{svc: worktreeEngine},
+		logger:    logger, db: db, bus: eventBus, gateway: models, egress: egress,
 		terminal: sessionService, blocks: blockReader, metrics: metrics, tracer: agentTracer{telemetry},
 		maxCost: providers.MaxCostMicroUSD, redact: redact, policy: activeRules.Policy, skills: skillStore,
 		stallLocal:  time.Duration(settings.Stall.LocalS) * time.Second,
@@ -423,7 +428,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	go followThreadOutput(ctx, eventBus.Subscribe(sessports.KindBlockStarted), eventBus.Subscribe(sessports.KindSessionOutput), runtime)
 
 	// policy.explain (T-F1-28) reads the same threads and rules a turn decides with.
-	explainer, err := newExplainer(db, tools, activeRules.Policy)
+	explainer, err := newExplainer(db, tools, activeRules.Policy, runtimeWorktrees{svc: worktreeEngine})
 	if err != nil {
 		logger.Error("cannot build policy.explain", slog.Any("error", err))
 		return exitCantCreate
@@ -490,8 +495,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		PolicyExplain: explainer,
 		Rules:         ruleManager,
 		Skills:        skillStore,
-		Bus:           eventBus,
-		Logger:        logger,
+		// worktree.* (T-F2-03): the engine, and the runtime's word on when a thread's may change.
+		Worktrees:       worktreeEngine,
+		WorktreeThreads: runtime,
+		Bus:             eventBus,
+		Logger:          logger,
 		// The first live setting: `limits.set` rewrites it in this file and applies it to
 		// new connections without a restart (REQ-CLI-007, Tech Design §5.1).
 		MaxMessageBytes: settings.MaxMessageBytes,

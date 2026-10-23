@@ -60,7 +60,7 @@ func (e *Explainer) Explain(ctx context.Context, req domain.ExplainRequest) (dom
 	if declared, ok := e.cfg.Tools.Risk(req.Tool); ok && declared != req.Risk {
 		return domain.Decision{}, fmt.Errorf("%w: %s declares %s, not %s", domain.ErrRiskMismatch, req.Tool, declared, req.Risk)
 	}
-	mode, cwd := req.Mode, ""
+	mode, cwd, writeRoot := req.Mode, "", ""
 	if req.ThreadID != "" {
 		t, err := e.cfg.Source.ThreadPolicy(ctx, req.ThreadID)
 		if err != nil {
@@ -69,7 +69,7 @@ func (e *Explainer) Explain(ctx context.Context, req domain.ExplainRequest) (dom
 		if mode == "" {
 			mode = t.Mode
 		}
-		cwd = t.Cwd
+		cwd, writeRoot = t.Cwd, t.WriteRoot
 	}
 	rules, err := e.cfg.Source.Rules(ctx, req.ThreadID)
 	if err != nil {
@@ -78,7 +78,10 @@ func (e *Explainer) Explain(ctx context.Context, req domain.ExplainRequest) (dom
 	action := domain.Action{ThreadID: req.ThreadID, Tool: req.Tool, Risk: req.Risk, Target: req.Target}
 	if cwd != "" {
 		action.Cwd = e.cfg.Tools.PolicyPath("", cwd)
-		action.WriteRoot = e.cfg.Tools.PolicyPath("", domain.WriteRoot(cwd, e.cfg.IsRepo))
+		if writeRoot == "" {
+			writeRoot = domain.WriteRoot(cwd, e.cfg.IsRepo)
+		}
+		action.WriteRoot = e.cfg.Tools.PolicyPath("", writeRoot)
 	}
 	// ReadOnly and WriteFS are the file tools' risks — every MCP tool is Network — and their
 	// target is a path, which the rules match in the form the tool gives it.

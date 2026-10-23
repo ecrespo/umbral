@@ -53,7 +53,7 @@ func TestTheDaemonLoadsLocalRules_REQ_SEC_010(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := newExplainer(db, tools, active.Policy)
+	e, err := newExplainer(db, tools, active.Policy, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

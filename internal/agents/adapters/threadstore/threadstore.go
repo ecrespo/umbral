@@ -32,7 +32,8 @@ func New(st *store.Store) (*Store, error) {
 }
 
 const threadColumns = `id, title, mode, COALESCE(model, ''), model_class, cwd, state, attention_state,
-	ephemeral, max_steps, budget_tokens, tokens_used, cost_micro_usd, created_at, updated_at`
+	ephemeral, max_steps, budget_tokens, tokens_used, cost_micro_usd, created_at, updated_at,
+	COALESCE(workspace_id, ''), COALESCE(worktree_id, '')`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -40,7 +41,8 @@ func scanThread(row scanner) (domain.Thread, error) {
 	var t domain.Thread
 	var mode, state string
 	err := row.Scan(&t.ID, &t.Title, &mode, &t.Model, &t.ModelClass, &t.Cwd, &state, &t.AttentionState,
-		&t.Ephemeral, &t.MaxSteps, &t.BudgetTokens, &t.TokensUsed, &t.CostMicroUSD, &t.CreatedAt, &t.UpdatedAt)
+		&t.Ephemeral, &t.MaxSteps, &t.BudgetTokens, &t.TokensUsed, &t.CostMicroUSD, &t.CreatedAt, &t.UpdatedAt,
+		&t.WorkspaceID, &t.WorktreeID)
 	t.Mode, t.State = secdomain.Mode(mode), domain.State(state)
 	return t, err
 }
@@ -49,14 +51,53 @@ func scanThread(row scanner) (domain.Thread, error) {
 func (s *Store) CreateThread(ctx context.Context, t domain.Thread) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO threads(id, title, mode, model, model_class, cwd, state, attention_state, ephemeral,
-		                    max_steps, budget_tokens, tokens_used, cost_micro_usd, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+		                    max_steps, budget_tokens, tokens_used, cost_micro_usd, created_at, updated_at, workspace_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
 		t.ID, t.Title, string(t.Mode), nullable(t.Model), t.ModelClass, t.Cwd, string(t.State), t.AttentionState,
-		t.Ephemeral, t.MaxSteps, t.BudgetTokens, t.CreatedAt, t.UpdatedAt)
+		t.Ephemeral, t.MaxSteps, t.BudgetTokens, t.CreatedAt, t.UpdatedAt, nullable(t.WorkspaceID))
 	if err != nil {
 		return fmt.Errorf("threadstore: create thread: %w", err)
 	}
 	return nil
+}
+
+// DeleteThread removes a thread nothing refers to yet.
+func (s *Store) DeleteThread(ctx context.Context, id string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM threads WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("threadstore: delete thread: %w", err)
+	}
+	return nil
+}
+
+// SetWorktree records the thread's latest worktree.
+func (s *Store) SetWorktree(ctx context.Context, threadID, worktreeID string, now int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE threads SET worktree_id = ?, updated_at = ? WHERE id = ?`, worktreeID, now, threadID)
+	if err != nil {
+		return fmt.Errorf("threadstore: set worktree: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: thread %s", domain.ErrNotFound, threadID)
+	}
+	return nil
+}
+
+// ThreadsInWorkspace lists a workspace's threads, ephemeral ones included, oldest first.
+func (s *Store) ThreadsInWorkspace(ctx context.Context, workspaceID string) ([]domain.Thread, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+threadColumns+` FROM threads
+		WHERE workspace_id = ? ORDER BY created_at, id`, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("threadstore: list a workspace's threads: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []domain.Thread
+	for rows.Next() {
+		t, err := scanThread(rows)
+		if err != nil {
+			return nil, fmt.Errorf("threadstore: list a workspace's threads: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 // Thread reads one thread.

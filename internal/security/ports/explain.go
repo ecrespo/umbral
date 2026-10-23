@@ -11,6 +11,9 @@ import (
 type ThreadPolicy struct {
 	Mode domain.Mode
 	Cwd  string
+	// WriteRoot is the thread's write root when it is not the one found from Cwd: the thread's
+	// active worktree (REQ-WT-002). "" finds it from Cwd.
+	WriteRoot string
 }
 
 // ExplainSource reads what the agent runtime decides with. It has no write: policy.explain

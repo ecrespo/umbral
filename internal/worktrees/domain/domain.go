@@ -3,6 +3,7 @@
 package domain
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -101,7 +102,8 @@ const (
 	ReasonOldGit          Reason = "old_git"
 	ReasonNoCommit        Reason = "no_commit" // a repository with no commit has no HEAD to start from
 	ReasonConfirmRequired Reason = "confirm_required"
-	ReasonBadThread       Reason = "bad_thread" // not a thread id a branch and a directory can carry
+	ReasonBadThread       Reason = "bad_thread"   // not a thread id a branch and a directory can carry
+	ReasonNotInGroup      Reason = "not_in_group" // close_group named a worktree of another thread
 
 	ReasonDirty        Reason = "dirty"
 	ReasonOtherBranch  Reason = "other_branch"
@@ -111,6 +113,12 @@ const (
 	ReasonNotActive    Reason = "not_active" // merged, discarded or missing: nothing to act on
 	ReasonExists       Reason = "exists"     // the thread already has an active worktree
 	ReasonChanged      Reason = "changed"    // the worktree no longer holds the revision reviewed
+)
+
+// What an active worktree holds, as close_group reports it (REQ-WT-007).
+const (
+	ChangesChanged = "changed"
+	ChangesClean   = "clean"
 )
 
 // MaxOutputBytes is how much of git's error output a commit_failed refusal carries.
@@ -138,7 +146,7 @@ func (r *Refusal) Error() string {
 // Conflict reports whether the refusal is about the repository's state rather than the request.
 func (r *Refusal) Conflict() bool {
 	switch r.Reason {
-	case ReasonNotGit, ReasonBare, ReasonOldGit, ReasonNoCommit, ReasonConfirmRequired, ReasonBadThread:
+	case ReasonNotGit, ReasonBare, ReasonOldGit, ReasonNoCommit, ReasonConfirmRequired, ReasonBadThread, ReasonNotInGroup:
 		return false
 	}
 	return true
@@ -243,4 +251,50 @@ func pathFromDiffLine(line string) string {
 		return rest[i+3:]
 	}
 	return rest
+}
+
+// DiffResult is a worktree's changes and the revision they were read from.
+type DiffResult struct {
+	Files []FileDiff
+	// Revision names the content shown. A merge that passes it lands exactly that content or
+	// nothing (MergeRequest.Revision).
+	Revision string
+}
+
+// MergeRequest is `worktree.merge`.
+type MergeRequest struct {
+	ID      string
+	Message string // the generated one when empty
+	// Revision, when set, is the DiffResult.Revision the user reviewed: the merge is refused
+	// `changed` if the worktree no longer holds it, so the agent cannot slip in work after the
+	// review.
+	Revision string
+}
+
+// MergeResult is what a merge made.
+type MergeResult struct {
+	Commit string // "" when the worktree changed nothing
+	// Leftover is why the worktree's directory or branch is still there after the commit
+	// landed, nil when both are gone. The merge stands either way.
+	Leftover error
+}
+
+// CloseGroupRequest is `worktree.close_group` once the group is resolved to its threads.
+type CloseGroupRequest struct {
+	ThreadIDs []string
+	// Discard names the worktrees to discard; each must belong to one of ThreadIDs.
+	Discard []string
+	Confirm bool
+	// Guard runs each discard for its thread, and may refuse it — the agent runtime refuses
+	// while the thread's turn runs. Nil runs the discard as it is.
+	Guard func(ctx context.Context, threadID string, discard func() error) error
+}
+
+// GroupEntry is one worktree of a closed group.
+type GroupEntry struct {
+	Worktree Worktree
+	// Changes is ChangesChanged or ChangesClean for a worktree that was active when the group
+	// was read, and "" otherwise.
+	Changes   string
+	Discarded bool
 }

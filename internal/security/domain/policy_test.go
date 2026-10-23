@@ -237,6 +237,11 @@ func TestDestructiveAlwaysAsk_REQ_SEC_005(t *testing.T) {
 		"umb --socket /s mcp add evil --stdio -- x",
 		"sudo /opt/umb mcp add e --stdio -- x",
 		`bash -lc 'umb mcp add e --http https://x'`,
+		// The agent landing or dropping its own work without the user's review (REQ-WT-004).
+		"umb worktree merge wtr_1 --yes",
+		"umb worktree --yes discard wtr_1",
+		"umb --socket /s worktree merge wtr_1",
+		`sh -c "umb worktree discard wtr_1 --yes"`,
 	}
 	allowEverything := []Rule{allowRule("*", "*")}
 	for _, cmd := range destructive {
@@ -280,6 +285,8 @@ func TestDestructiveAlwaysAsk_REQ_SEC_005(t *testing.T) {
 		"umb mcp list",
 		"umb mcp remove x",
 		"echo umb skill install x",
+		"umb worktree list",
+		"umb worktree diff wtr_1",
 	}
 	for _, cmd := range harmless {
 		d := Decide(exec(cmd), ModeNormal, allowEverything, false)

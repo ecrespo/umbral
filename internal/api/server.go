@@ -22,6 +22,7 @@ import (
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	mcpports "github.com/ecrespo/umbral/internal/mcp/ports"
 	waitsports "github.com/ecrespo/umbral/internal/waits/ports"
+	wtports "github.com/ecrespo/umbral/internal/worktrees/ports"
 
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/config"
@@ -81,6 +82,7 @@ var capabilityOf = map[string]string{
 	"wait":      "waits",
 	"rule":      "rules",
 	"skill":     "skills",
+	"worktree":  capabilityWorktrees,
 }
 
 // capabilities reports the namespaces this daemon actually serves, which is what the
@@ -183,8 +185,13 @@ type Config struct {
 	// Skills is skill.* (REQ-SKL-001, REQ-SKL-002, REQ-SKL-006). A nil value leaves them
 	// answering NOT_IMPLEMENTED.
 	Skills ctxports.Skills
-	Bus    *bus.Bus
-	Logger *slog.Logger
+	// Worktrees and WorktreeThreads are worktree.* (REQ-WT-001…007): the engine, and the agent
+	// runtime that says when a thread's worktree may change. Either nil leaves them answering
+	// NOT_IMPLEMENTED, and thread.create's `worktree` with them.
+	Worktrees       wtports.Worktrees
+	WorktreeThreads agentsports.WorktreeThreads
+	Bus             *bus.Bus
+	Logger          *slog.Logger
 
 	// MaxMessageBytes is the frame limit a connection gets once it completes the handshake
 	// (`[api] max_message_bytes`, API Spec §1). Zero means config.DefaultMaxMessageBytes.

@@ -102,6 +102,8 @@ func runIO(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return finish(cmdThread(ctx, args[1:], out, errOut), out, stderr)
 	case "agent":
 		return finish(cmdAgent(ctx, args[1:], out, errOut), out, stderr)
+	case "worktree":
+		return finish(cmdWorktree(ctx, args[1:], stdin, out, errOut), out, stderr)
 	case famWorkspace, famTab, famPane, famLayout:
 		return finish(cmdTree(ctx, args[0], args[1:], out, errOut), out, stderr)
 	case "version", "--version", "-version":
@@ -150,7 +152,7 @@ Usage:
   umb wait ls [--json]           every open wait: target, age, whether its thread stalled
   umb wait cancel WAIT_ID        end one wait; the turn or command it watched goes on
                                  (REQ-AUT-006, REQ-AUT-007)
-  umb thread create [CWD] [--mode M] [--title T] [--model M]
+  umb thread create [CWD] [--mode M] [--title T] [--model M] [--worktree] [--workspace W]
   umb thread send THREAD TEXT [--wait STATES] [--timeout D]
   umb thread wait THREAD --until STATES [--timeout D]
   umb thread get|cancel THREAD   drive a thread from a script, waiting without polling
@@ -158,6 +160,12 @@ Usage:
   umb agent explain PANE [--json]
                                  the third-party agent detected in a pane, the rule that
                                  matched and who decides its state (REQ-XAG-003)
+  umb worktree list [--thread THREAD | --workspace W]
+  umb worktree diff WORKTREE     a thread's worktree, file by file and hunk by hunk
+  umb worktree merge WORKTREE [--message M] [--yes]
+                                 land exactly the diff shown, as one commit (REQ-WT-004)
+  umb worktree discard WORKTREE [--yes]
+                                 drop the worktree and its branch (REQ-WT-005)
   umb workspace create|list|focus|rename|close
   umb tab create|list|focus|rename|close
   umb pane split|list|get|focus|rename|close

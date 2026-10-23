@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ecrespo/umbral/internal/agents"
 	"github.com/ecrespo/umbral/internal/agents/adapters/threadstore"
 	agentsdomain "github.com/ecrespo/umbral/internal/agents/domain"
+	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	"github.com/ecrespo/umbral/internal/security"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 	secports "github.com/ecrespo/umbral/internal/security/ports"
@@ -24,15 +26,16 @@ func isRepo(dir string) bool {
 	return err == nil
 }
 
-// newExplainer wires policy.explain (T-F1-28) to the thread store the runtime decides with
-// and the registry its tools are declared in.
-func newExplainer(db *store.Store, tools *registry.Registry, policy func() secdomain.Policy) (*security.Explainer, error) {
+// newExplainer wires policy.explain (T-F1-28) to the thread store the runtime decides with,
+// the registry its tools are declared in and the worktree engine its turns run in (nil for
+// none).
+func newExplainer(db *store.Store, tools *registry.Registry, policy func() secdomain.Policy, wts agentsports.Worktrees) (*security.Explainer, error) {
 	st, err := threadstore.New(db)
 	if err != nil {
 		return nil, err
 	}
 	return security.NewExplainer(security.ExplainConfig{
-		Source: explainSource{threads: st}, Tools: toolCatalog{tools: tools}, IsRepo: isRepo, Policy: policy,
+		Source: explainSource{threads: st, worktrees: wts}, Tools: toolCatalog{tools: tools}, IsRepo: isRepo, Policy: policy,
 	})
 }
 
@@ -45,7 +48,8 @@ type threadReader interface {
 // explainSource reads a thread's mode, directory and rules for policy.explain, and nothing
 // else: the security module may not import agents, so the root adapts one to the other.
 type explainSource struct {
-	threads threadReader
+	threads   threadReader
+	worktrees agentsports.Worktrees
 }
 
 var _ secports.ExplainSource = explainSource{}
@@ -58,7 +62,13 @@ func (s explainSource) ThreadPolicy(ctx context.Context, threadID string) (secpo
 	if err != nil {
 		return secports.ThreadPolicy{}, err
 	}
-	return secports.ThreadPolicy{Mode: t.Mode, Cwd: t.Cwd}, nil
+	// The directories the thread's next turn would run in, its worktree's when it has one
+	// (REQ-WT-002): the turn and the explanation decide with the same ones.
+	cwd, writeRoot, err := agents.TurnDirs(ctx, s.worktrees, isRepo, t)
+	if err != nil {
+		return secports.ThreadPolicy{}, err
+	}
+	return secports.ThreadPolicy{Mode: t.Mode, Cwd: cwd, WriteRoot: writeRoot}, nil
 }
 
 func (s explainSource) Rules(ctx context.Context, threadID string) ([]secdomain.Rule, error) {
