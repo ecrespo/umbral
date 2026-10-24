@@ -340,6 +340,12 @@ func (n *normaliser) command(words, out []string, redirs []*syntax.Redirect, dep
 		}
 	case interpreter(prog):
 		n.inline(words, depth)
+		if encodedProgram(words) {
+			n.flag(UnknownDynamicWord) // PowerShell's base64 program is not text to read
+		}
+		if readsProgramFromStdin(words) {
+			n.stdinWith(redirs, func(src string) { n.inline([]string{prog, src}, depth) })
+		}
 	case prog == "fc" || prog == "r" || prog == "hash":
 		// fc and r run commands from history; `hash -p` renames a program.
 		n.flag(UnknownDynamicWord)
@@ -441,7 +447,10 @@ func (n *normaliser) unwrap(words, out []string, redirs []*syntax.Redirect, dept
 			}
 			switch {
 			case wr.flags[flag] && len(words) > 0:
+				n.flagValue(name, flag, words[0], depth)
 				words = words[1:]
+			case len(flag) > 2 && !strings.HasPrefix(flag, "--") && wr.flags[flag[:2]]:
+				n.flagValue(name, flag[:2], flag[2:], depth) // `-oKey=value`
 			case wr.noArg[flag] || strings.Contains(flag, "=") || len(words) == 0:
 			default:
 				// Not in the table: also read the line as if the flag took the next word.
@@ -476,6 +485,33 @@ func (n *normaliser) unwrap(words, out []string, redirs []*syntax.Redirect, dept
 		}
 	}
 	return words, false
+}
+
+// sshCommandOptions are ssh_config keywords whose value is a command ssh runs locally.
+var sshCommandOptions = set("proxycommand", "localcommand", "knownhostscommand", "remotecommand")
+
+// flagValue reads a wrapper flag's value when it holds a command: ssh's `-o ProxyCommand=…`
+// and its kin, a config file (`-F`) that may hold one, and strace's or ltrace's output piped to
+// a command (`-o '|cmd'`).
+func (n *normaliser) flagValue(name, flag, value string, depth int) {
+	switch {
+	case name == sshProgram && flag == "-o":
+		key, rest, ok := strings.Cut(value, "=")
+		if !ok {
+			key, rest, _ = strings.Cut(strings.TrimSpace(value), " ")
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		switch {
+		case sshCommandOptions[key]:
+			n.script(strings.TrimSpace(rest), depth+1)
+		case key == "match" || key == "include":
+			n.flag(UnknownDynamicWord)
+		}
+	case name == sshProgram && flag == "-F" && value != "/dev/null":
+		n.flag(UnknownDynamicWord) // its ProxyCommand is not on the line
+	case (name == "strace" || name == "ltrace") && flag == "-o" && (strings.HasPrefix(value, "|") || strings.HasPrefix(value, "!")):
+		n.script(value[1:], depth+1)
+	}
 }
 
 // alternative normalises another reading of a command, one level deeper so readings cannot
@@ -601,6 +637,68 @@ func interpreter(prog string) bool {
 	return false
 }
 
+// readsProgramFromStdin reports an interpreter given no inline program, no module and no
+// script file, or `-` or a stdin path as its script: it reads its program from stdin. awk's
+// program is always an argument.
+func readsProgramFromStdin(words []string) bool {
+	prog := words[0]
+	if strings.HasSuffix(prog, "awk") {
+		return false
+	}
+	for i := 1; i < len(words); i++ {
+		w := words[i]
+		switch {
+		case w == "-" || stdinPath(w):
+			return true
+		case inlineProgramFlag(prog, w):
+			return false
+		case strings.HasPrefix(prog, "python") && (w == "-m" || strings.HasPrefix(w, "-m")):
+			return false
+		case strings.HasPrefix(prog, "python") && (w == "-W" || w == "-X"):
+			i++
+		case strings.HasPrefix(w, "-"):
+		default:
+			return false // a script file
+		}
+	}
+	return true
+}
+
+// encodedProgram reports PowerShell's -EncodedCommand, in any of its abbreviations.
+func encodedProgram(words []string) bool {
+	if words[0] != "pwsh" && words[0] != "powershell" {
+		return false
+	}
+	for _, w := range words[1:] {
+		if lw := strings.ToLower(w); lw == "-e" || lw == "-ec" || (len(lw) > 3 && strings.HasPrefix("-encodedcommand", lw)) {
+			return true
+		}
+	}
+	return false
+}
+
+// inlineProgramFlag reports a flag that gives an interpreter its program inline.
+func inlineProgramFlag(prog, w string) bool {
+	cluster := strings.HasPrefix(w, "-") && !strings.HasPrefix(w, "--")
+	switch {
+	case strings.HasPrefix(prog, "python"):
+		return cluster && strings.Contains(w, "c")
+	case prog == "perl" || prog == "ruby":
+		return cluster && strings.ContainsAny(w, "eE")
+	case prog == "node" || prog == "nodejs" || prog == "bun":
+		return w == "-e" || w == "-p" || strings.HasPrefix(w, "--eval") || strings.HasPrefix(w, "--print")
+	case prog == "deno":
+		return w == "eval" || w == "run" || w == "task"
+	case prog == "pwsh" || prog == "powershell":
+		lw := strings.ToLower(w)
+		return lw == "-c" || strings.HasPrefix(lw, "-command") || strings.HasPrefix(lw, "-encodedcommand") || strings.HasPrefix(lw, "-file")
+	case prog == "php":
+		return w == "-r"
+	default: // lua, Rscript, osascript
+		return w == "-e"
+	}
+}
+
 // inline reads each argument of an interpreter as the old normaliser read a line: split at
 // separators, quotes and backslashes dropped.
 func (n *normaliser) inline(words []string, depth int) {
@@ -632,6 +730,12 @@ func (n *normaliser) at(words []string, redirs []*syntax.Redirect, depth int) {
 // stdin normalises the script a here-document or here-string gives a command; without one,
 // or with one built at run time, what it reads is not on the line.
 func (n *normaliser) stdin(redirs []*syntax.Redirect, depth int) {
+	n.stdinWith(redirs, func(src string) { n.script(src, depth+1) })
+}
+
+// stdinWith hands read the text a here-document or here-string gives a command, and flags the
+// line when its stdin is something the line does not show.
+func (n *normaliser) stdinWith(redirs []*syntax.Redirect, read func(string)) {
 	for _, r := range redirs {
 		var body *syntax.Word
 		switch r.Op {
@@ -659,7 +763,7 @@ func (n *normaliser) stdin(redirs []*syntax.Redirect, depth int) {
 			n.flag(UnknownDynamicWord)
 			return
 		}
-		n.script(src, depth+1)
+		read(src)
 		return
 	}
 	n.flag(UnknownStdinScript)

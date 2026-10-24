@@ -929,7 +929,9 @@ allows it as in `normal`.
   `batch`, `ssh`, `su` or `source /dev/stdin` reads. A wrapper's flag missing from its table is
   read both ways, as taking a value and not; a shell's unknown long option asks. The inline
   program of an interpreter (`python -c`, `perl -e`, `node -e`, awk) is not shell; its words are
-  read with the separator split the normaliser used before the parser. Three things make a line ask with no pattern,
+  read with the separator split the normaliser used before the parser, and one reading its
+  program from stdin reads a here-document's or here-string's, or asks. ssh's `-o ProxyCommand`
+  and its kin are scripts, and its `-F` asks; strace's `-o '|cmd'` is a script. Three things make a line ask with no pattern,
   named in the trace (delta `2026-10-shell-parser`): `dynamic_word`, a word built at run time — a
   variable, a command, process or arithmetic substitution, `$'…'`, a brace expansion, an unquoted
   glob — or arguments taken from stdin (`xargs`, `parallel`) or split from a string (`env -S`);
