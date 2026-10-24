@@ -193,12 +193,12 @@ its matrix lists commands.
 - **Depends on:** —
 - **Done:** a prompt test shows the block and preamble, and a description that tries to close it cannot.
 
-### [ ] T-HRD-10 · No lost last line in an agent's zsh
+### [x] 2026-10-24 T-HRD-10 · No lost last line in an agent's zsh
 - **What:** Q9: the daemon marks the sessions it owns for an agent, and the zsh bootstrap runs `unsetopt PROMPT_SP` after the user's rc in those sessions only; a `precmd` hook re-applies it only if a framework turns it back on at every prompt. (delta `2026-10-hrd02-open-questions`).
 - **REQ:** REQ-AGT-007
 - **Files:** `internal/sessions/adapters/shellinteg/**`, `shell/zsh/`
 - **Depends on:** —
-- **Done:** `run_command` of `printf x` in a zsh thread PTY returns `x`, red first; skipped where zsh is absent; a user's own pane keeps `PROMPT_SP`.
+- **Done:** `run_command` of `printf x` in a zsh thread PTY returns `x`, red first; skipped where zsh is absent; a user's own pane keeps `PROMPT_SP`. Written as `internal/sessions/lifecycle.go` (`umbralEnv`, `umbralOwned`) and `shell/zsh/.zshrc` (precmd and preexec); tests in `internal/sessions/integration/agent_test.go` and `env_test.go`; delta `2026-10-zsh-prompt-sp`.
 
 ### [ ] T-HRD-11 · A hosted OpenCode starts without its own update traffic
 - **What:** Q10: a manifest field of fixed variables the user's `env` refs cannot override; the OpenCode manifest sets its `OPENCODE_DISABLE_*` switches. Its delta amends PRD F2 REQ-ACP-009's environment allowlist with "the manifest's fixed variables". (delta `2026-10-hrd02-open-questions`).
@@ -291,7 +291,7 @@ its matrix lists commands.
 | REQ-ORC-004 (hosted agents) | T-HRD-05 | TestAHostedAgentIsRefusedTheUsersMethods_REQ_ORC_004, TestAHostedAgentIsKnownByItsSession_REQ_ORC_004, TestAHostedAgentsExitEndsWhatItLeft_REQ_ORC_004, TestAReusedPidStaysListedForItsNewerAgent_REQ_ORC_004 |
 | REQ-SEC-005, REQ-ACP-003 | T-HRD-06, T-HRD-07 | TestDestructiveEvasionsAsk_REQ_SEC_005, TestARunCommandEvasionAsks_REQ_SEC_005, TestAnACPExecuteEvasionAsks_REQ_ACP_003; TestDestructiveAlwaysAsk_REQ_SEC_005 (the new patterns) |
 | REQ-SKL-005 | T-HRD-08, T-HRD-09 | TestSkillLoadRefusesAnEditedStoredCopy_REQ_SKL_005, TestSkillLoadServesACopyInstalledFromATarball_REQ_SKL_005; TestTheCatalogIsADelimitedThirdPartyBlock_REQ_SKL_005 |
-| REQ-AGT-007 (zsh) | T-HRD-10 | `printf x` returned whole in a zsh thread PTY |
+| REQ-AGT-007 (zsh), REQ-AGT-003 | T-HRD-10 | TestAZshThreadKeepsAnUnterminatedLastLine_REQ_AGT_007, TestAZshThreadKeepsPromptSPOffUnderAFramework_REQ_AGT_007 |
 | REQ-ACP-009, REQ-ACP-007 | T-HRD-11, T-HRD-12 | fixed manifest variables; the disclosure's worktree sentence |
 | REQ-AGT-018, REQ-API-005, REQ-API-004, REQ-CLI-001 | T-HRD-03 | TestFetchUrlFollowsFiveRedirects_REQ_AGT_018; TestAPlainCutMatchesTheEncoder_REQ_API_005, TestAPlainCutEncodesAFewTimes_REQ_API_005 and the macOS job over repeated runs; `task schema`; TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001 |
 | REQ-API-006 | T-HRD-04 | TestASlowClientHoldsUpNoOtherClient_REQ_API_006, TestASlowClientIsClosedNotTrimmed_REQ_API_006 |
@@ -315,3 +315,4 @@ its matrix lists commands.
 | 2026-10-24 | T-HRD-07 | done | Delta `2026-10-rules-mcp-patterns` (Tech 1.70 §5.3), on top of T-HRD-06's branch. `umb_rules_change` and `umb_mcp_remove` join the built-in list; ten command lines ask, `umb rules status`, `umb rules key list` and `echo umb rules reset` do not; `umb mcp remove x` moved from the harmless list. Removing `rollback` or `remove` from a pattern reddens the test. |
 | 2026-10-24 | T-HRD-08 | done | Delta `2026-10-skill-load-digest` (Tech 1.71 §5.3b), stacked on T-HRD-07's branch. `ReadSkill` reads the stored copy once with the install reader, compares its digest with the row's and serves the entry from that read; an edited, added or removed file refuses every load of the skill with `VALIDATION_ERROR` naming it and saying to reinstall. Red first on all four edits; skipping the comparison reddens them. |
 | 2026-10-24 | T-HRD-09 | done | Delta `2026-10-catalog-third-party` (Tech 1.72 §5.3b), stacked on T-HRD-08's branch. The `# Skills` section wraps the catalog in a `<skills>` block after a preamble naming the descriptions third-party text, not instructions; `&`, `<` and `>` in each entry are escaped when the prompt is rendered, so a description writing `</skills>` or a `<rules>` tag stays inside. Red first (no block); not escaping reddens it. |
+| 2026-10-24 | T-HRD-10 | done | Delta `2026-10-zsh-prompt-sp` (Tech 1.73 §5.2b), stacked on T-HRD-09's branch. A thread-owned session gets `UMBRAL_AGENT_SESSION=1`; the zsh bootstrap turns `PROMPT_SP` off after the user's rc and again in `__umbral_precmd` and `__umbral_preexec`. `printf x` in a zsh thread came back `" "`, red, and now returns `x`, under a framework that sets the option every prompt too; a user's zsh pane keeps it. Not setting the variable, or dropping the precmd re-apply, reddens the tests. |

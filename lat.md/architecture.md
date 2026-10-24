@@ -130,6 +130,12 @@ The thread's shell can keep an interrupt meant for a cancelled command and spend
 
 The empty line opens no block only because [[shell/bash/umbral.bash]] disarms its DEBUG trap in `__umbral_save_status`, the first hook of `PROMPT_COMMAND`. Armed through the prompt, the trap took a user's own hook (Starship, direnv) for a command, and its phantom block took the agent's claim. [[internal/sessions/service.go#Config]]'s `AgentInterruptEvery` lets a test interrupt every millisecond, which turns the race from rare into routine.
 
+## A thread's zsh keeps a last line without a newline
+
+zsh's `PROMPT_SP` writes a mark, spaces and a carriage return before each prompt, which erased a last line printed without a newline from what `run_command` returned.
+
+[[internal/sessions/lifecycle.go#Service#umbralEnv]] sets `UMBRAL_AGENT_SESSION=1` only in a session a thread owns, and the name is one a pane never inherits. [[shell/zsh/.zshrc]] reads it after the user's rc, turns `PROMPT_SP` off, and turns it off again in `__umbral_precmd` and `__umbral_preexec`: zsh writes the mark before precmd runs, and preexec runs after every precmd hook, so even a framework hook appended late that sets it every prompt cannot bring the mark back. A user's own zsh pane keeps the option (delta `2026-10-zsh-prompt-sp`).
+
 ## Shutdown records every exit before the store closes
 
 [[internal/sessions/service.go#Service#Shutdown]] hangs up every shell and waits, up to [[internal/sessions/service.go#shutdownGrace]] in all, for each session's exit to be persisted.

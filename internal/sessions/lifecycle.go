@@ -39,7 +39,7 @@ func (s *Service) launch(id string, params domain.CreateParams) (program string,
 		return params.Shell, args, env, cleanup, err
 	}
 
-	env = environ(params.Env, s.umbralEnv(id, params.Pane))
+	env = environ(params.Env, s.umbralEnv(id, params.Pane, params.OwnerThreadID != ""))
 	program, err = lookPath(params.Command[0], env)
 	if err != nil {
 		return "", nil, nil, nil, err
@@ -99,7 +99,7 @@ func pathFrom(env []string) string {
 // REQ-BLK-003 marks it `integration: none` after five seconds, which is the degraded mode
 // DD-002 describes.
 func (s *Service) bootstrap(id string, params domain.CreateParams) (args, env []string, cleanup func() error, err error) {
-	env = environ(params.Env, s.umbralEnv(id, params.Pane))
+	env = environ(params.Env, s.umbralEnv(id, params.Pane, params.OwnerThreadID != ""))
 
 	if !params.ShellIntegration || s.cfg.Bootstrap == nil {
 		return nil, env, nil, nil
@@ -150,13 +150,18 @@ var umbralOwned = map[string]bool{
 	"UMBRAL_SESSION": true, "UMBRAL_ENV": true, "UMBRAL_SESSION_ID": true,
 	"UMBRAL_SOCKET_PATH": true, "UMBRAL_BIN_PATH": true,
 	"UMBRAL_WORKSPACE_ID": true, "UMBRAL_TAB_ID": true, "UMBRAL_PANE_ID": true,
+	"UMBRAL_AGENT_SESSION": true,
 }
 
 // umbralEnv is REQ-INT-001's variables for one session, leaving out the ones with no value: a
 // thread's PTY is in no pane. UMBRAL_SESSION=1 is the marker every session carried before
-// REQ-INT-001, kept so that nothing that tested for it breaks.
-func (s *Service) umbralEnv(id string, pane domain.PaneLocation) []string {
+// REQ-INT-001, kept so that nothing that tested for it breaks. UMBRAL_AGENT_SESSION=1 marks a
+// session the daemon owns for a thread, which the zsh bootstrap reads to turn PROMPT_SP off.
+func (s *Service) umbralEnv(id string, pane domain.PaneLocation, agent bool) []string {
 	env := []string{"UMBRAL_SESSION=1", "UMBRAL_ENV=1", "UMBRAL_SESSION_ID=" + id}
+	if agent {
+		env = append(env, "UMBRAL_AGENT_SESSION=1")
+	}
 	for _, v := range []struct{ name, value string }{
 		{"UMBRAL_SOCKET_PATH", s.cfg.SocketPath},
 		{"UMBRAL_BIN_PATH", s.cfg.BinPath},

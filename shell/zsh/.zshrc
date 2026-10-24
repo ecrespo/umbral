@@ -38,6 +38,18 @@ typeset -g __umbral_active=1
 
 typeset -g __umbral_hostname="${HOST:-${HOSTNAME:-localhost}}"
 
+# A session the daemon owns for a thread's agent turns PROMPT_SP off. Its mark, spaces and
+# carriage return before each prompt erase a last line printed without a newline from what
+# run_command returns. Nobody types into these sessions, so nothing is lost; a user's own
+# pane keeps the option. It is set after the user's rc, and again in precmd and preexec in
+# case a framework turns it back on from a hook: zsh writes the mark before it runs precmd, so
+# a hook appended after ours (a lazy loader) is undone by preexec, which runs after every
+# precmd hook and just before the command whose output matters.
+if [[ -n "${UMBRAL_AGENT_SESSION-}" ]]; then
+	typeset -g __umbral_agent_session=1
+	unsetopt PROMPT_SP
+fi
+
 # __umbral_esc writes an OSC sequence terminated by BEL.
 __umbral_esc() { printf '\033]%s\007' "$1" }
 
@@ -54,6 +66,7 @@ __umbral_cwd() {
 # preexec receives the command line zsh is about to run, so unlike bash there is no trap to
 # guard and no history to consult.
 __umbral_preexec() {
+	[[ -n "${__umbral_agent_session-}" ]] && unsetopt PROMPT_SP
 	__umbral_esc "633;E;$1"
 	__umbral_esc "133;C"
 	__umbral_in_command=1
@@ -79,6 +92,8 @@ __umbral_precmd() {
 	fi
 	__umbral_cwd
 	__umbral_mark_prompt
+	[[ -n "${__umbral_agent_session-}" ]] && unsetopt PROMPT_SP
+	return 0
 }
 
 # __umbral_mark_prompt wraps PROMPT every prompt rather than once: powerlevel10k and
