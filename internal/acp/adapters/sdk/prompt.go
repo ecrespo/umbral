@@ -51,7 +51,7 @@ func (h *Host) Prompt(ctx context.Context, req Request, text string, sink ports.
 	tick := time.NewTicker(h.tick())
 	defer tick.Stop()
 	cancelled := ctx.Done()
-	exited := p.exited
+	exited := p.gone
 	var killAt <-chan time.Time
 	for {
 		select {
@@ -64,7 +64,7 @@ func (h *Host) Prompt(ctx context.Context, req Request, text string, sink ports.
 				// A connection that ended with the process answers before its exit is seen; the
 				// exit is the better reason.
 				select {
-				case <-p.exited:
+				case <-p.gone:
 				case <-time.After(exitGrace):
 				}
 				return "", h.agentError(ctx, p, replyError("session/prompt", r.err).Error())

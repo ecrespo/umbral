@@ -499,3 +499,26 @@ func TestAnACPThreadIsMarkedUnobserved_REQ_ACP_007(t *testing.T) {
 		t.Errorf("the row says %q (%v)", stored, err)
 	}
 }
+
+// TestAHostedAgentIsRefusedTheUsersMethods_REQ_ORC_004: a hosted ACP agent is an agent too.
+// Its isolated HOME sits under the daemon's runtime directory, beside the socket and its token,
+// so it can find and dial the daemon; when it calls a method only the user may call — here
+// `skill.install` — it is refused like a client inside an agent's terminal, and the user's own
+// client is not (delta `2026-10-hosted-agent-peer`, from Q12 of `2026-10-hrd02-open-questions`).
+func TestAHostedAgentIsRefusedTheUsersMethods_REQ_ORC_004(t *testing.T) {
+	stream, ctx := acpDaemon(t)
+	var hosted acpThread
+	if err := stream.Call(ctx, "thread.create", map[string]any{"cwd": t.TempDir(), "agent": "fake"}, &hosted); err != nil {
+		t.Fatal(err)
+	}
+	sendAndFinish(t, ctx, stream, hosted.ID, "dial skill.install")
+	if got := lastAnswer(t, ctx, stream, hosted.ID); got != "PERMISSION_DENIED" {
+		t.Errorf("the hosted agent's skill.install answered %q, want PERMISSION_DENIED", got)
+	}
+
+	// The refusal is about the caller: the user's own client gets past it to the method.
+	err := stream.Call(ctx, "skill.install", map[string]any{}, nil)
+	if err == nil || client.DomainCode(err) == "PERMISSION_DENIED" {
+		t.Errorf("the user's skill.install answered %v, want an error other than PERMISSION_DENIED", err)
+	}
+}
