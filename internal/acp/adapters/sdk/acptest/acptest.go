@@ -5,12 +5,15 @@
 package acptest
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -348,6 +351,24 @@ func (a *agent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResp
 		} else {
 			a.say(ctx, sid, acp.UpdateAgentMessageText(resp.Content))
 		}
+	case "orphan":
+		// Leaves a child behind that holds the agent's stderr, answers its pid, ends the turn,
+		// and exits between turns, when no request of Umbral's is waiting on it.
+		child := exec.Command("sleep", "60") //nolint:noctx // outlives the agent on purpose
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			a.say(ctx, sid, acp.UpdateAgentMessageText("error: "+err.Error()))
+			return end(acp.StopReasonEndTurn)
+		}
+		a.say(ctx, sid, acp.UpdateAgentMessageText(strconv.Itoa(child.Process.Pid)))
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			os.Exit(0)
+		}()
+	case "dial":
+		// Calls fields[1] on the daemon's socket as a `cli` client, the way a hosted agent that
+		// went looking for it would, and answers the method's error code or "ok".
+		a.say(ctx, sid, acp.UpdateAgentMessageText(dialDaemon(ctx, arg(fields, 1))))
 	case Time:
 		a.say(ctx, sid, acp.UpdateAgentMessageText(a.timeReads(ctx, sid, arg(fields, 1), arg(fields, 2))))
 	case "write":
@@ -434,4 +455,59 @@ func deref(p *int) int {
 		return -1
 	}
 	return *p
+}
+
+// dialDaemon finds the daemon from the agent's own HOME — the isolated home sits at
+// <runtime dir>/acp/<thread>/home, beside the socket and its token — and calls method with
+// empty params after the handshake. It answers the error code, "ok", or "dial: …" when the
+// socket cannot be reached at all.
+func dialDaemon(ctx context.Context, method string) string {
+	runtimeDir := filepath.Dir(filepath.Dir(filepath.Dir(os.Getenv("HOME"))))
+	token, err := os.ReadFile(filepath.Join(runtimeDir, "token")) //nolint:gosec // the test daemon's own token
+	if err != nil {
+		return "dial: " + err.Error()
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(runtimeDir, "umbral.sock"))
+	if err != nil {
+		return "dial: " + err.Error()
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	lines := bufio.NewScanner(conn)
+	lines.Buffer(nil, 4<<20)
+	call := func(id int, method string, params any) string {
+		line, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+		if _, err := conn.Write(append(line, '\n')); err != nil {
+			return "dial: " + err.Error()
+		}
+		if !lines.Scan() {
+			return "dial: no reply"
+		}
+		var reply struct {
+			Error *struct {
+				Data struct {
+					DomainCode string `json:"domain_code"`
+				} `json:"data"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(lines.Bytes(), &reply); err != nil {
+			return "dial: " + err.Error()
+		}
+		if reply.Error != nil {
+			if reply.Error.Data.DomainCode != "" {
+				return reply.Error.Data.DomainCode
+			}
+			return reply.Error.Message
+		}
+		return "ok"
+	}
+	hello := map[string]any{
+		"token": strings.TrimSpace(string(token)), "client_kind": "cli",
+		"client_version": "0.1.0-acptest", "protocol_version": 1,
+	}
+	if got := call(1, "system.hello", hello); got != "ok" {
+		return "dial: hello: " + got
+	}
+	return call(2, method, map[string]any{})
 }

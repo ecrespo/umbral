@@ -7,12 +7,16 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/ecrespo/umbral/internal/acp/adapters/sdk/acptest"
 	"github.com/ecrespo/umbral/internal/acp/domain"
@@ -962,5 +966,52 @@ func TestATerminalStartedDuringACancelIsKilled_REQ_ACP_008(t *testing.T) {
 	terms.mu.Lock()
 	if len(terms.killedAt) != 1 {
 		t.Errorf("%d terminals killed, want the next turn's left running", len(terms.killedAt))
+	}
+}
+
+// TestAHostedAgentIsKnownByItsSession_REQ_ORC_004: while a hosted agent runs, its pid is
+// listed for the daemon's peer check and it leads its own session, so a process it starts and
+// leaves behind is still known as the agent's; once it is closed its pid is forgotten
+// (delta `2026-10-hosted-agent-peer`, from Q12 of `2026-10-hrd02-open-questions`).
+func TestAHostedAgentIsKnownByItsSession_REQ_ORC_004(t *testing.T) {
+	h := newHost(t, nil)
+	report(t, h, workDir(t))
+	pids := h.AgentPIDs()
+	if len(pids) != 1 {
+		t.Fatalf("AgentPIDs %v, want the one running agent", pids)
+	}
+	if sid, err := unix.Getsid(pids[0]); err != nil || sid != pids[0] {
+		t.Errorf("the agent %d is in session %d (%v), want its own", pids[0], sid, err)
+	}
+	h.Close("thr_1")
+	if got := h.AgentPIDs(); len(got) != 0 {
+		t.Errorf("after Close AgentPIDs is %v, want none", got)
+	}
+}
+
+// TestAHostedAgentsExitEndsWhatItLeft_REQ_ORC_004: an agent that exits between turns, leaving a
+// child behind that still holds its stderr, has that child killed with its group and its pid
+// forgotten, with no turn running to notice — so nothing it started outlives the pid the daemon
+// stopped counting (delta `2026-10-hosted-agent-peer`, decision 3).
+func TestAHostedAgentsExitEndsWhatItLeft_REQ_ORC_004(t *testing.T) {
+	h := newHost(t, nil)
+	s, stop, err := prompt(t, h, workDir(t), "orphan")
+	if err != nil || stop != "end_turn" {
+		t.Fatalf("orphan: stop %q, err %v", stop, err)
+	}
+	child, convErr := strconv.Atoi(strings.TrimSpace(s.Text0()))
+	if convErr != nil {
+		t.Fatalf("the agent answered %q, not its child's pid", s.Text0())
+	}
+	t.Cleanup(func() { _ = unix.Kill(child, unix.SIGKILL) })
+	// Only Linux can kill the group before the pid is free (waitid's WNOWAIT); elsewhere the
+	// child runs on until the agent is closed, and only the forgetting is checked.
+	childAlive := func() bool { return runtime.GOOS == "linux" && unix.Kill(child, 0) == nil }
+	deadline := time.Now().Add(5 * time.Second)
+	for childAlive() || len(h.AgentPIDs()) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("5 s after the agent exited: child %d alive %v, AgentPIDs %v", child, childAlive(), h.AgentPIDs())
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

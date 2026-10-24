@@ -158,10 +158,10 @@ its matrix lists commands.
   - Q12 (new: a hosted agent's own processes are not "inside an agent's terminal"): its pids join
     `agentPeer` and it is started with `Setsid` — **T-HRD-05**, first.
 
-### [ ] T-HRD-05 · A hosted agent is refused what an agent's terminal is refused
-- **What:** Q12: `cmd/umbrald`'s `agentPeer` also counts the processes of hosted ACP agents, which `internal/acp` reports through a port when it launches them with `Setsid` (process-group signalling on cancel is unchanged). A hosted agent, or a command it runs itself, calling a `userOnly` method gets `PERMISSION_DENIED` like an agent's terminal (REQ-ORC-004). (delta `2026-10-hrd02-open-questions`).
+### [x] 2026-10-24 T-HRD-05 · A hosted agent is refused what an agent's terminal is refused
+- **What:** Q12: `cmd/umbrald`'s `agentPeer` also counts the processes of hosted ACP agents, which the ACP host lists (`Host.AgentPIDs`, wired by `cmd/umbrald`) when it launches them with `Setsid` (process-group signalling on cancel is unchanged). A hosted agent, or a command it runs itself, calling a `userOnly` method gets `PERMISSION_DENIED` like an agent's terminal (REQ-ORC-004). (delta `2026-10-hrd02-open-questions`).
 - **REQ:** REQ-ORC-004, REQ-ACP-009
-- **Files:** `internal/acp/**`, `cmd/umbrald/agentpeer.go`, `cmd/umbrald/acp.go`
+- **Files:** `internal/acp/**`, `cmd/umbrald/agentpeer.go`, `cmd/umbrald/acp.go`. Written as `internal/acp/adapters/sdk/host.go` (`AgentPIDs`, `Setsid`), `process.go` (the pid recorded from the start, the group killed at exit before reaping, stderr `/dev/null`), `reap_linux.go`/`reap_other.go`, `acptest/acptest.go` (the `dial` prompt), `cmd/umbrald/main.go` and `agentpeer.go`; tests `TestAHostedAgentIsRefusedTheUsersMethods_REQ_ORC_004`, `TestAHostedAgentIsKnownByItsSession_REQ_ORC_004` and `TestAHostedAgentsExitEndsWhatItLeft_REQ_ORC_004`; delta `2026-10-hosted-agent-peer`
 - **Depends on:** T-F2-08
 - **Done:** a test with a fake hosted agent that calls `skill.install` over the socket is refused, seen red first; `task ci` green. Goes first.
 
@@ -288,7 +288,7 @@ its matrix lists commands.
 | REQ-TUI-001, 002, 003, 004 | T-REL-02 (walk) | `docs/qa/f1-tui.md`; the harness tests are F1's |
 | REQ-SEC-011, REQ-SEC-013 | T-HRD-01 (the key) | a bundle signed with the project key accepted, any other refused |
 | REQ-SEC-005, REQ-SKL-005, REQ-CLI-008 | T-HRD-02 (decisions) | per decision |
-| REQ-ORC-004 (hosted agents) | T-HRD-05 | a fake hosted agent calling `skill.install` is refused |
+| REQ-ORC-004 (hosted agents) | T-HRD-05 | TestAHostedAgentIsRefusedTheUsersMethods_REQ_ORC_004, TestAHostedAgentIsKnownByItsSession_REQ_ORC_004, TestAHostedAgentsExitEndsWhatItLeft_REQ_ORC_004 |
 | REQ-SEC-005, REQ-ACP-003 | T-HRD-06, T-HRD-07 | the evasion table on `run_command` and ACP `execute`; the new patterns |
 | REQ-SKL-005 | T-HRD-08, T-HRD-09 | an edited stored copy refused; the delimited catalog block |
 | REQ-AGT-007 (zsh) | T-HRD-10 | `printf x` returned whole in a zsh thread PTY |
@@ -310,3 +310,4 @@ its matrix lists commands.
 | 2026-10-24 | T-PKG-06, T-PKG-07 | added | Delta `2026-10-deb-package`, ratified by the Tech Lead: the `systemd --user` unit, the tar.gz archives and the `launchd` plist Tech §9 and the Plan name for 0.1, which no task owned. |
 | 2026-10-24 | T-HRD-02 | done | Delta `2026-10-hrd02-open-questions`, ratified by the Tech Lead: every question names its answer above. Q5 and Q7 are accepted once T-HRD-05 is done; Q11 is disclosed in PRD F2 0.9 REQ-ACP-007. |
 | 2026-10-24 | T-HRD-05 … T-HRD-12 | added | The code those answers need, Q12 (T-HRD-05) first. Spec-guardian's review found that the socket is reachable from a hosted agent's `HOME`, so a hosted agent can call `userOnly` methods today. |
+| 2026-10-24 | T-HRD-05 | done | Delta `2026-10-hosted-agent-peer` (API 1.52 §2, Tech 1.68). The hole was measured first: a fake hosted agent found the socket from its `HOME`, read the token and reached `skill.install`, which answered `VALIDATION_ERROR` for its empty params. The ACP host now lists its agents' pids from launch, the agents lead their own sessions, and a group is killed when its agent exits — on Linux before the zombie is reaped, so a reused pid is never signalled or forgotten — with the agent's stderr `/dev/null`, since a discarding pipe held by a child hid the exit. The agent's call answers `PERMISSION_DENIED`. Each piece was mutated back and its test went red. |
