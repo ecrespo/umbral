@@ -123,12 +123,14 @@ func PolicyLine(command string, args []string, env [][2]string) string {
 }
 
 // scriptProgram matches a program that runs a script it is given — every POSIX and C shell by
-// name, with a version or none, fish, xonsh, elvish, nu, busybox, PowerShell, cmd, ssh (whose
-// remote command is one), eval, and the runners whose operand is a shell line (watch, su,
-// script, flock) — in any case, `.exe` or not, whatever its flags: a terminal naming one asks,
-// so no flag grammar has to be right. Like the destructive list it guards, it is a floor, not a
-// sandbox: what any program does is outside it, and a real shell tokenizer is T-HRD-02's.
-var scriptProgram = regexp.MustCompile(`(?i)^((ba|z|da|a|k|mk|pdk|ya|po|rba|rk|tc|c)?sh[0-9.]*|fish|xonsh|elvish|nu|busybox|pwsh|powershell|cmd|ssh|eval|watch|su|script|flock)(\.exe)?$`)
+// name, with a version or none and any suffix such as `-static` (the prefixes are listed, not
+// `[a-z]*sh`, which would take `push` for a shell), fish, xonsh, elvish, nu, busybox,
+// PowerShell, cmd, ssh (whose remote command is one), eval, and the runners whose operand is a
+// shell line (watch, su, script, flock) — in any case, `.exe` or not, whatever its flags: a
+// terminal naming one asks, so no flag grammar has to be right. Like the destructive list it
+// guards, it is a floor, not a sandbox: what any program does is outside it, and a real shell
+// tokenizer is T-HRD-02's.
+var scriptProgram = regexp.MustCompile(`(?i)^((ba|z|rz|da|a|k|ok|o|y|hu|lk|mk|pdk|ya|po|rba|rk|tc|c|sc|es)?sh[0-9.]*|fish|xonsh|elvish|nu|busybox|pwsh|powershell|cmd|ssh|eval|watch|su|script|flock)(-[a-z0-9._]+)?(\.exe)?$`)
 
 // safeEnvOption is an `env` option that cannot make env read a script, compared whole: anything
 // else — `-S`, `--split-string`, a bundle, an abbreviation — is taken for one.
