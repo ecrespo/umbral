@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.50 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.51 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -482,7 +482,7 @@ method and the ordering that produced it, so one handed to a different method is
 - `name`: 1–64 of `[a-z0-9-]`, not starting with `-`; unique, and how methods address a skill
 - `version`: `null` when the front matter has none
 - `source`: the path it was installed from, for display only — the stored copy is what is used
-- `sha256`: the bundle's digest (§5.37)
+- `sha256`: the bundle's digest (§5.42)
 
 ## 5. Methods
 
@@ -1204,59 +1204,6 @@ Every client kind may call both (§2). The `limits` capability announces them.
   - A daemon with no settings file location answers `NOT_IMPLEMENTED` rather than raising a limit it
     cannot persist.
 
-### 5.37 `skill.inspect` / `skill.install` / `skill.list` / `skill.get` / `skill.set_enabled` / `skill.remove` — REQ-SKL-001, REQ-SKL-002, REQ-SKL-006
-
-Skills are instruction bundles for Umbral's own agent (delta `2026-09-skills-cli`): a directory
-with a `SKILL.md` whose front matter gives `name`, `description` (1–1024 characters) and an
-optional `version`. Nothing in a skill is executed by these methods. Every client kind may call
-them (§2); they are advertised under `skills`.
-
-`skill.inspect` params: `{path}`. **Result:**
-```json
-{"name":"release-check","description":"Steps to cut a release.","version":"1.2",
- "files":[{"path":"SKILL.md","size_bytes":4100},{"path":"scripts/check.sh","size_bytes":110}],
- "size_bytes":4210,"sha256":"9f2c…"}
-```
-It checks the bundle and copies nothing.
-
-`skill.install` params: `{path, expected_sha256, replace?}`. **Result:** the `Skill`.
-
-`skill.list` params: `{}`. **Result:** `{items: Skill[]}`, by name.
-
-`skill.get` params: `{name, include?}`, `include` `none` (the default) or `body`. **Result:**
-`{skill: Skill, body}`, `body` SKILL.md after its front matter when asked and `null` otherwise.
-
-`skill.set_enabled` params: `{name, enabled}`. **Result:** the `Skill`.
-
-`skill.remove` params: `{name}`. **Result:** `{}`.
-
-- **The source.** `path` is classified before anything resolves it: one containing `://`,
-  starting `git@` or of scp-like form `user@host:path` is not local and is `VALIDATION_ERROR`
-  (REQ-SKL-006). A local `path` must be absolute — `umb` resolves it — and name a directory or a
-  `.tar.gz`/`.tgz` readable by the daemon's user. A tarball whose entries all sit under one top
-  directory holding `SKILL.md` is read as that directory.
-- **The checks.** A bundle breaking any is `VALIDATION_ERROR` naming the entry and the rule:
-  only regular files and directories (no symlink, hardlink, device, FIFO or socket); no absolute
-  path, no `..` and no backslash; no file and directory under one path; at most 1 MiB per file,
-  8 MiB per bundle and 256 entries, enforced on decompressed bytes as a tarball is read, and a
-  tarball's whole stream, headers included, bounded too; a `SKILL.md` at the root with valid
-  front matter. A directory's files are opened without following a link, so one swapped for a
-  symlink between the walk and the read is refused.
-- **The digest** is the SHA-256 of the files sorted by path, each written `path NUL size NUL
-  sha256(content) LF`. Directories are not part of it, and an empty directory is not installed.
-  The same files give the same digest from a directory and from a tarball.
-- **Install.** The bundle is checked again; a digest other than `expected_sha256` is `CONFLICT`,
-  so what is installed is exactly what was inspected. An installed `name` without `replace` is
-  `CONFLICT`. Files are copied with mode `0644` and directories `0755` — no exec, setuid, setgid
-  or sticky bit survives — through a staging directory renamed into place. A replace keeps the
-  skill's `id` and whether it is enabled. A skill installed while 64 are enabled is stored
-  disabled.
-- **Enabling** a 65th is `VALIDATION_ERROR`; disable one first. Setting the state a skill already
-  has is answered with the `Skill` and announces nothing.
-- **Errors.** An unknown `name` is `NOT_FOUND`. A refused install leaves the store and the stored
-  copies as they were (REQ-SKL-002).
-- **Announced** with `skill.changed` (§6) once stored.
-
 ### 5.39 `agent.explain` — REQ-XAG-001, REQ-XAG-002, REQ-XAG-003
 Open to `tui`, `desktop` and `cli` (§2), under the `agent_detection` capability. On the CLI it is
 `umb agent explain PANE [--json]`.
@@ -1392,6 +1339,59 @@ branch has gone is answered, and stored, `missing` (REQ-WT-006).
   `PERMISSION_DENIED` to a client running inside an agent's terminal (§2): landing or dropping a
   turn's work is the user's review, and `full-auto` runs commands unasked (REQ-ORC-004).
 
+### 5.42 `skill.inspect` / `skill.install` / `skill.list` / `skill.get` / `skill.set_enabled` / `skill.remove` — REQ-SKL-001, REQ-SKL-002, REQ-SKL-006
+
+Skills are instruction bundles for Umbral's own agent (delta `2026-09-skills-cli`): a directory
+with a `SKILL.md` whose front matter gives `name`, `description` (1–1024 characters) and an
+optional `version`. Nothing in a skill is executed by these methods. Every client kind may call
+them (§2); they are advertised under `skills`.
+
+`skill.inspect` params: `{path}`. **Result:**
+```json
+{"name":"release-check","description":"Steps to cut a release.","version":"1.2",
+ "files":[{"path":"SKILL.md","size_bytes":4100},{"path":"scripts/check.sh","size_bytes":110}],
+ "size_bytes":4210,"sha256":"9f2c…"}
+```
+It checks the bundle and copies nothing.
+
+`skill.install` params: `{path, expected_sha256, replace?}`. **Result:** the `Skill`.
+
+`skill.list` params: `{}`. **Result:** `{items: Skill[]}`, by name.
+
+`skill.get` params: `{name, include?}`, `include` `none` (the default) or `body`. **Result:**
+`{skill: Skill, body}`, `body` SKILL.md after its front matter when asked and `null` otherwise.
+
+`skill.set_enabled` params: `{name, enabled}`. **Result:** the `Skill`.
+
+`skill.remove` params: `{name}`. **Result:** `{}`.
+
+- **The source.** `path` is classified before anything resolves it: one containing `://`,
+  starting `git@` or of scp-like form `user@host:path` is not local and is `VALIDATION_ERROR`
+  (REQ-SKL-006). A local `path` must be absolute — `umb` resolves it — and name a directory or a
+  `.tar.gz`/`.tgz` readable by the daemon's user. A tarball whose entries all sit under one top
+  directory holding `SKILL.md` is read as that directory.
+- **The checks.** A bundle breaking any is `VALIDATION_ERROR` naming the entry and the rule:
+  only regular files and directories (no symlink, hardlink, device, FIFO or socket); no absolute
+  path, no `..` and no backslash; no file and directory under one path; at most 1 MiB per file,
+  8 MiB per bundle and 256 entries, enforced on decompressed bytes as a tarball is read, and a
+  tarball's whole stream, headers included, bounded too; a `SKILL.md` at the root with valid
+  front matter. A directory's files are opened without following a link, so one swapped for a
+  symlink between the walk and the read is refused.
+- **The digest** is the SHA-256 of the files sorted by path, each written `path NUL size NUL
+  sha256(content) LF`. Directories are not part of it, and an empty directory is not installed.
+  The same files give the same digest from a directory and from a tarball.
+- **Install.** The bundle is checked again; a digest other than `expected_sha256` is `CONFLICT`,
+  so what is installed is exactly what was inspected. An installed `name` without `replace` is
+  `CONFLICT`. Files are copied with mode `0644` and directories `0755` — no exec, setuid, setgid
+  or sticky bit survives — through a staging directory renamed into place. A replace keeps the
+  skill's `id` and whether it is enabled. A skill installed while 64 are enabled is stored
+  disabled.
+- **Enabling** a 65th is `VALIDATION_ERROR`; disable one first. Setting the state a skill already
+  has is answered with the `Skill` and announces nothing.
+- **Errors.** An unknown `name` is `NOT_FOUND`. A refused install leaves the store and the stored
+  copies as they were (REQ-SKL-002).
+- **Announced** with `skill.changed` (§6) once stored.
+
 ## 6. Notifications (daemon → client)
 
 | Method | Payload | REQ |
@@ -1421,7 +1421,7 @@ branch has gone is answered, and stored, `missing` (REQ-WT-006).
 | `layout.updated` | `Layout` | REQ-WS-004 |
 | `thread.attention_changed` | `{thread_id, attention_state}` — after every change written: a turn starts (`working`), asks for an approval (`blocked`), is answered (`working`), ends (`done`, or `idle` when viewed or cancelled), or a `done` thread is focused (`idle`). Not sent for the changes Data Model §6 makes at start, before any client connects | REQ-AGT-016 |
 | `thread.stalled` | `{thread_id, turn_id, idle_ms, last_event}` — once per stall of a running turn (§5.33); `last_event` is the last activity seen: `turn_started`, `text`, `reasoning`, `tool_call`, `tool_result`, `output` or `approval` | REQ-AUT-008 |
-| `skill.changed` | `{name, change}` — `change` one of `installed`, `replaced`, `enabled`, `disabled`, `removed` — once the change is stored (§5.37) | REQ-SKL-007 |
+| `skill.changed` | `{name, change}` — `change` one of `installed`, `replaced`, `enabled`, `disabled`, `removed` — once the change is stored (§5.42) | REQ-SKL-007 |
 | `rules.update_rejected` | `{reason, version, source}` — `reason` as §5.34's `last_rejection`, `version` the bundle's own when its signature verified and 0 otherwise — unverified bytes are never parsed — `source` `"remote"`. Sent to every client once per bundle: a bundle already rejected is not announced again. The daemon also raises a user notification for it under its own source `umbral:rules` (§5.35) | REQ-SEC-013 |
 | `limits.notification_dropped` | `{method, size_bytes, limit_bytes}` — in place of a notification over the frame limit, under that notification's `seq` (§1) | REQ-API-005 |
 
@@ -1624,3 +1624,4 @@ printf '%s\n' \
 | 1.48 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-acp-client` (T-F2-07): §4 `Thread` gains `agent` and `egress_visibility`, and `ToolCall` names a hosted agent's calls `acp:<kind>`; §5.19 `thread.create` takes `agent`, refuses it with `data.reason` `unknown_agent`, `no_manifest`, `config_key` or `project_config`, and answers `agent_unavailable` when the agent does not start; §5.20 sends a hosted thread's message as `session/prompt` and maps its updates and stop reasons; §6 gains `stop_reason = agent_error` (REQ-ACP-001, 002, 006, 009) |
 | 1.49 | 2026-10-24 | Additive within `protocol_version = 1`. Delta `2026-10-acp-mediation` (T-F2-08): §4 `ToolCall` names the rows of a hosted agent's file and terminal requests (REQ-ACP-004, REQ-ACP-005) |
 | 1.50 | 2026-10-24 | Additive within `protocol_version = 1`. Delta `2026-10-acp-cancel-traces` (T-F2-09): §5.21 says how a hosted thread's turn is cancelled and when the answer comes (REQ-ACP-008) |
+| 1.51 | 2026-10-24 | No change to the protocol. T-HRD-03: `skill.*` was numbered §5.37 like `api.schema`; it moves to §5.42 after `worktree.*`, and §4 `Skill` and §6 `skill.changed` point there. No other section is renumbered |

@@ -230,12 +230,27 @@ func fitBlockResult(result blockResult, output sessdomain.BlockOutput, limit int
 }
 
 // plainPrefix is the longest prefix of text, cut on a rune boundary, whose JSON string
-// contents take at most room bytes. Found by bisection over the encoded length: the one
-// measure that cannot disagree with the encoder is the encoder.
+// contents take at most room bytes. One pass adds up each rune's escaped width and the
+// encoder confirms the cut: the one measure that cannot disagree with the encoder is the
+// encoder, but encoding a megabyte once per step of a bisection took longer than a client
+// waits on a loaded runner. Should the widths ever disagree with the encoder, the cut is
+// found by bisection over the encoder instead.
 func plainPrefix(text string, room int) string {
-	fits := func(n int) bool {
-		encoded, _ := json.Marshal(text[:n])
-		return len(encoded)-2 <= room
+	fits := func(n int) bool { return jsonStringLen(text[:n]) <= room }
+	cut, width := 0, 0
+	for i := 0; i < len(text); {
+		r, size := utf8.DecodeRuneInString(text[i:])
+		width += escapedWidth(r, size)
+		i += size
+		if width > room {
+			break
+		}
+		if i == len(text) || utf8.RuneStart(text[i]) {
+			cut = i
+		}
+	}
+	if fits(cut) && (cut == len(text) || !fits(nextRuneStart(text, cut))) {
+		return text[:cut]
 	}
 	// fits(runeStart(n)) only ever turns from true to false as n grows, so bisect on n.
 	lo, hi := 0, len(text)
@@ -248,6 +263,38 @@ func plainPrefix(text string, room int) string {
 		}
 	}
 	return text[:runeStart(text, lo)]
+}
+
+// escapedWidth is how many bytes encoding/json writes for the rune r that took size bytes of
+// the text: HTML's `<>&` and control characters as \u00XX, quotes, backslashes and the short
+// escapes as two bytes, U+2028, U+2029 and each invalid byte as a six-byte \u escape.
+func escapedWidth(r rune, size int) int {
+	switch {
+	case r == utf8.RuneError && size == 1, r == '\u2028', r == '\u2029':
+		return 6
+	case r == '"', r == '\\', r == '\b', r == '\f', r == '\n', r == '\r', r == '\t':
+		return 2
+	case r < 0x20, r == '<', r == '>', r == '&':
+		return 6
+	default:
+		return size
+	}
+}
+
+// nextRuneStart is the first rune boundary after n.
+func nextRuneStart(text string, n int) int {
+	n++
+	for n < len(text) && !utf8.RuneStart(text[n]) {
+		n++
+	}
+	return n
+}
+
+// jsonStringLen is the length of s's JSON string contents, quotes excluded, as the encoder
+// writes them.
+var jsonStringLen = func(s string) int {
+	encoded, _ := json.Marshal(s)
+	return len(encoded) - 2
 }
 
 // runeStart moves n back to the start of the rune it falls in.

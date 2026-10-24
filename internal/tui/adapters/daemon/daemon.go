@@ -339,7 +339,7 @@ func (d *Daemon) McpServers(ctx context.Context) ([]ports.McpServer, error) {
 	return list, nil
 }
 
-// Skills lists the installed skills (API Spec §5.37).
+// Skills lists the installed skills (API Spec §5.42).
 func (d *Daemon) Skills(ctx context.Context) ([]ports.Skill, error) {
 	var out struct {
 		Items []struct {

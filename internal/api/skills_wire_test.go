@@ -65,7 +65,7 @@ func (f *fakeSkills) SetEnabled(_ context.Context, _ string, enabled bool) (ctxd
 func (f *fakeSkills) Remove(context.Context, string) error { return nil }
 
 // TestSkillsOverTheWire_REQ_SKL_001: `umb` may call skill.*, `skills` is advertised, the
-// results have API §5.37's shapes, the store's refusals map onto §3 — a remote source is
+// results have API §5.42's shapes, the store's refusals map onto §3 — a remote source is
 // VALIDATION_ERROR (REQ-SKL-006) and a changed digest CONFLICT (REQ-SKL-002) — and
 // skill.changed reaches clients.
 func TestSkillsOverTheWire_REQ_SKL_001(t *testing.T) {

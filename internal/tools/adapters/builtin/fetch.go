@@ -156,7 +156,9 @@ func newFetchURL(cfg FetchConfig) fetchURL {
 		Transport: rt,
 		Timeout:   cfg.Timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= fetchMaxHops {
+			// via holds every request made so far, the first included: the fifth
+			// redirect arrives with five, the sixth with six.
+			if len(via) > fetchMaxHops {
 				return fmt.Errorf("more than %d redirects", fetchMaxHops)
 			}
 			return checkScheme(req.URL)

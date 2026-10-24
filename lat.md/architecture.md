@@ -142,6 +142,12 @@ The dispatcher only queues control notifications; each connection's own goroutin
 
 [[internal/api/notify.go#Server#broadcast]] hands each notification to [[internal/api/outbox.go#conn#enqueue]], which frames it into the connection's [[internal/api/outbox.go#outbox]]; [[internal/api/outbox.go#conn#writeOutbox]] writes it in dispatch order. Past [[internal/api/outbox.go#ClientNotificationQueueBytes]] the connection is closed, because a dropped `pane.closed` would leave the client's cache silently wrong, and the client reconnects with a snapshot. There is no write deadline: a suspended TUI harms only itself ([[internal/api/slowclient_test.go#TestASlowClientHoldsUpNoOtherClient_REQ_API_006]]).
 
+## block.get shortens its output to fit the frame
+
+A `block.get` over the connection's frame limit answers with most of its output and says how much it left out, instead of `RESULT_TOO_LARGE` (REQ-API-005).
+
+[[internal/api/blocks.go#fitBlockResult]] cuts the one output field asked for: raw on a 3-byte boundary before base64, plain on a rune boundary measured as JSON. [[internal/api/blocks.go#plainPrefix]] adds up each rune's [[internal/api/blocks.go#escapedWidth]] in one pass and has the encoder confirm the cut, falling back to a bisection over the encoder if they disagree. A bisection alone encoded a megabyte about twenty times per response, which outlasted a client's read on a loaded runner ([[internal/api/blocks_fit_test.go#TestAPlainCutMatchesTheEncoder_REQ_API_005]], [[internal/api/blocks_fit_test.go#TestAPlainCutEncodesAFewTimes_REQ_API_005]]).
+
 ## umb ai never drops an answer's deltas
 
 `umb ai` prints every delta of an answer, so its stream queues notifications without bound instead of overflowing when its reader falls behind.

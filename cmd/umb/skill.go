@@ -62,7 +62,7 @@ var stdinIsTerminal = func(r io.Reader) bool {
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
-// cmdSkill is `umb skill` (REQ-SKL-001, REQ-SKL-003, API Spec §5.37). Each subcommand is one
+// cmdSkill is `umb skill` (REQ-SKL-001, REQ-SKL-003, API Spec §5.42). Each subcommand is one
 // skill.* method, except install, which inspects first, shows the manifest and its digest,
 // and installs that digest only once the user confirmed it.
 func cmdSkill(ctx context.Context, args []string, stdin io.Reader, stdout, stderr *printer) int {
