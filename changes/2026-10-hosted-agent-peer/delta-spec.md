@@ -55,6 +55,14 @@ its thread owns.
      child kept `Wait` from returning, so the exit was not seen and the pid stayed listed. That
      part was found by spec-guardian and predates this delta: a turn running at that moment
      still ended, because stdout closed.
+   - **The second push's security review** found three more gaps, and each is closed.
+     - **Reused pid unlisted.** On macOS an older agent's release could unlist a newer agent
+       that had reused its pid. The listing now counts per pid.
+     - **Wrong process signalled.** A pid read from `/proc` could be reused before its kill.
+       Each process is now signalled through a pidfd, after its session is read again.
+     - **Survivors forgotten.** A bounded scan could forget the pid while processes survived.
+       Zombies are now ignored, the scan runs until a 2 s deadline, and a session not seen
+       empty keeps the pid listed (fail closed).
    - **No controlling terminal.** With `Setsid` the agent has none, where before it shared the
      daemon's when the daemon ran in a terminal.
 4. **The residual of `2026-10-full-auto` stays.** A process that calls `setsid` again and forks
@@ -88,3 +96,5 @@ its thread owns.
   own. Within 5 s the child is dead and the pid is no longer listed (Linux). It was red before
   decision 3 was rewritten (child alive, pid listed), and red in the second case with the kill
   of the group alone. It is red again with the `/proc` scan removed.
+- **`TestAReusedPidStaysListedForItsNewerAgent_REQ_ORC_004`:** the newer agent stays listed
+  after the older one's release. It is red with a plain delete in place of the count.

@@ -1022,3 +1022,20 @@ func exitEndsWhatItLeft(t *testing.T, how string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// TestAReusedPidStaysListedForItsNewerAgent_REQ_ORC_004: where an agent's pid stays listed
+// until it is closed, a newer agent can get the same pid first; the older one's release must
+// leave the newer one listed (delta `2026-10-hosted-agent-peer`).
+func TestAReusedPidStaysListedForItsNewerAgent_REQ_ORC_004(t *testing.T) {
+	h := newHost(t, nil)
+	h.trackPID(4242, true) // the older agent, exited, listed until close
+	h.trackPID(4242, true) // a newer agent that got its pid
+	h.trackPID(4242, false)
+	if got := h.AgentPIDs(); len(got) != 1 || got[0] != 4242 {
+		t.Fatalf("after the older agent's release AgentPIDs is %v, want the newer agent's 4242", got)
+	}
+	h.trackPID(4242, false)
+	if got := h.AgentPIDs(); len(got) != 0 {
+		t.Errorf("after both releases AgentPIDs is %v, want none", got)
+	}
+}

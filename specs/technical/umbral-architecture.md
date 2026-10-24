@@ -1236,7 +1236,10 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
     launch. On Linux, when it exits, every process left in its session — whatever its
     process group, found in `/proc` — is killed and then it stops counting, all while it is
     still an unreaped zombie (`waitid` with `WNOWAIT`), so nothing reaches a process that
-    reused its pid; a signal a close would send after that is skipped. macOS has no `WNOWAIT`:
+    reused its pid; each is signalled through a pidfd after its session is read again, and a
+    signal a close would send after that is skipped. A session not seen empty within 2 s keeps
+    the pid listed for good (fail closed). A pid is counted, not set, so an older agent's
+    release never unlists a newer one that reused it. macOS has no `WNOWAIT`:
     there it counts until the thread's agent is closed, so what it left is refused until then,
     and a child it left behind is not killed (delta `2026-10-hosted-agent-peer`);
   - its stderr is `/dev/null`, as an MCP server's is discarded — a pipe would keep the exit

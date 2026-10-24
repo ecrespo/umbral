@@ -13,5 +13,6 @@ const forgetAtExit = false
 // waitExit reaps the agent.
 func waitExit(cmd *exec.Cmd) { _ = cmd.Wait() }
 
-// endSession does nothing: the session's id may already be someone else's.
-func endSession(int) {}
+// endSession does nothing and reports the session not ended: the session's id may already
+// be someone else's.
+func endSession(int) bool { return false }

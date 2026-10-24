@@ -103,8 +103,9 @@ func (p *process) start(cmd *exec.Cmd) error {
 		close(p.gone)
 		p.reapMu.Lock()
 		p.reaped = true
-		if forgetAtExit {
-			endSession(pid)
+		// A session not seen empty keeps the pid listed for good: what is left in it stays
+		// refused (fail closed).
+		if forgetAtExit && endSession(pid) {
 			p.h.trackPID(pid, false)
 		}
 		p.reapMu.Unlock()
