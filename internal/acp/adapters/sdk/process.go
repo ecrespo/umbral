@@ -48,11 +48,14 @@ type process struct {
 	turn sync.Mutex
 
 	// terminals are the agent's terminals not released yet, by their id; opening counts the
-	// ones being created, which the cap counts too (REQ-ACP-005).
+	// ones being created, which the cap counts too (REQ-ACP-005). killing is set by a cancel's
+	// sweep for the rest of the turn, so a terminal still starting then is killed as it is
+	// registered (REQ-ACP-008).
 	termMu    sync.Mutex
 	terminals map[string]*terminal
 	opening   int
 	nextTerm  int
+	killing   bool
 }
 
 func newProcess(h *Host, req Request, iso domain.Isolation) *process {

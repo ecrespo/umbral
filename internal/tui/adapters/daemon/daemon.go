@@ -225,6 +225,8 @@ type wireSnapshot struct {
 		Attention   string  `json:"attention_state"`
 		State       string  `json:"state"`
 		Queued      bool    `json:"queued"`
+		Agent       *string `json:"agent"`
+		Egress      string  `json:"egress_visibility"`
 	} `json:"threads"`
 }
 
@@ -234,6 +236,7 @@ func (w wireSnapshot) list() ports.ThreadList {
 		list.Threads = append(list.Threads, ports.Thread{
 			ID: t.ID, Title: t.Title, WorkspaceID: deref(t.WorkspaceID), WorktreeID: deref(t.WorktreeID),
 			Attention: t.Attention, State: t.State, Queued: t.Queued,
+			Agent: deref(t.Agent), EgressVisibility: t.Egress,
 		})
 	}
 	return list

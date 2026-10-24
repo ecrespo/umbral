@@ -555,7 +555,9 @@ func (m *Model) switchTo(threadID string) tea.Cmd {
 }
 
 // threadLines are the thread list's rows: the selected one marked, each with its attention
-// state, `queued`, its worktree and its pending approvals, at most maxThreadRows of them.
+// state, `queued`, its worktree, the external agent hosting it and `unobserved`, and its
+// pending approvals, at most maxThreadRows of them. A selected hosted thread adds a line saying
+// what Umbral does not record of it (REQ-ACP-007).
 func (m *Model) threadLines(width int) []string {
 	shown := m.shownThreads()
 	if len(shown) == 0 {
@@ -580,6 +582,9 @@ func (m *Model) threadLines(width int) []string {
 			attention = "unknown"
 		}
 		parts := []string{t.ID, attention}
+		if t.Agent != "" {
+			parts = append(parts, oneLine(t.Agent)+" "+oneLine(t.EgressVisibility))
+		}
 		if t.Queued {
 			parts = append(parts, "queued")
 		}
@@ -599,6 +604,13 @@ func (m *Model) threadLines(width int) []string {
 			parts = append(parts, title)
 		}
 		rows = append(rows, truncate(mark+strings.Join(parts, " · "), width))
+	}
+	for _, t := range shown {
+		if t.ID == m.agent.threadID && t.Agent != "" {
+			for _, line := range wrap(oneLine(t.Agent)+" runs this thread: Umbral does not record its own network traffic or file reads", width-2) {
+				rows = append(rows, "  "+line)
+			}
+		}
 	}
 	return rows
 }

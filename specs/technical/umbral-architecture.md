@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.64 |
+| **Version** | 1.65 |
 | **Date** | 2026-10-24 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1153,9 +1153,11 @@ and the column that separates it, and do the same for the block list.
 - **Every thread of the focused workspace** (T-F2-06, REQ-ORC-003, delta `2026-10-panel-threads`).
   - Under the extensions view the panel lists the threads of the daemon's focused workspace,
     read with it from one `session.snapshot`, or those of no workspace when none is focused. A
-    row is the thread's id, `attention_state`, `queued` when held, worktree id or `no worktree`,
-    pending approvals and title; six rows at most, the rest `… n more`. The selected thread is
-    marked `>` and listed even when it belongs elsewhere.
+    row is the thread's id, `attention_state`, a hosted thread's agent and `egress_visibility`,
+    `queued` when held, worktree id or `no worktree`, pending approvals and title; six rows at
+    most, the rest `… n more`. The selected thread is marked `>` and listed even when it belongs
+    elsewhere; a selected hosted thread adds a line saying Umbral does not record its agent's own
+    network traffic or file reads (REQ-ACP-007, delta `2026-10-acp-cancel-traces`).
   - In agent mode up and down select the previous or next thread; with none selected down takes
     the first. The selected thread is the one viewed (`thread.focus`), shown, sent to and
     stopped. A switch is refused while the panel's thread is being created.
@@ -1297,10 +1299,21 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   ends the connection at once: the SDK alone would log it and read on. The process exiting, that,
   or `[acp] silence_timeout` without a message end the turn `agent_error`, kill the process and
   leave the next send to relaunch it (REQ-ACP-006). The silence clock restarts while a request of
-  the agent's is unanswered or an approval of the thread is pending. A cancelled turn sends
-  `session/cancel`; the process is killed if the turn has not ended 5 s later (REQ-ACP-008; the
-  terminals' 500 ms is T-F2-09's). The daemon stops the runtime before the host, so a shutdown
-  ends a hosted turn `cancelled`.
+  the agent's is unanswered or an approval of the thread is pending. A cancelled turn first kills
+  the commands of the agent's terminals, as a cancelled `run_command`'s, keeping their sessions
+  for the agent to read and release — a terminal still starting then is killed as it is
+  registered, until the next turn — then sends `session/cancel`; the process is killed if the
+  turn has not ended 5 s later (REQ-ACP-008, delta `2026-10-acp-cancel-traces`). The daemon stops
+  the runtime before the host, so a shutdown ends a hosted turn `cancelled`.
+- **Traces.** A hosted turn has the turn span of Umbral's own (§7.1). Each tool call the agent
+  reports is a child span `tool.acp:<kind>`, opened by its first update or permission and ended by
+  the first status that is not `pending` or `in_progress`, or by the turn's end; each mediated
+  request is a child span `tool.acp:<method>`, opened as it arrives and ended with its outcome,
+  or as an error when it is refused before its row is written (REQ-ACP-007).
+- **Disclosure.** `umb thread create --agent` (§9.4) and the agent panel (§5.3e) say that Umbral
+  does not record a hosted agent's own network traffic or file reads, from the thread's
+  `egress_visibility` (REQ-ACP-007): the CLI on stderr at creation, the panel in the thread's row
+  and in a line under the list while the thread is selected.
 
 ### 5.4 Error Handling
 
@@ -1564,8 +1577,10 @@ is exit 1 before anything is read or sent. There is no `--json`: the output is t
 **`umb thread`** (REQ-CLI-009; delta `2026-10-cli-thread-wait`). One call per command, to the
 `thread.*` method of the same name, each printing the one value a script's next step needs.
 
-- `umb thread create [CWD] [--mode M] [--title T] [--model M]` prints the thread id; `CWD`
-  defaults to `.` and is made absolute; the flags are sent only when given.
+- `umb thread create [CWD] [--mode M] [--title T] [--model M] [--agent A]` prints the thread id;
+  `CWD` defaults to `.` and is made absolute; the flags are sent only when given. With `--agent`,
+  stderr says the agent's own network traffic and file reads are not recorded, and why the agent
+  did not start when the answer carries `agent_unavailable` (delta `2026-10-acp-cancel-traces`).
 - `umb thread send THREAD TEXT… [--wait STATES] [--timeout D]` joins the text with spaces and
   prints the turn id, or `<turn id> <final_state>` with `--wait`.
 - `umb thread wait THREAD --until STATES [--timeout D]` prints the state the wait answered, which
@@ -1812,3 +1827,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.62 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-panel-threads` (T-F2-06): §5.3e lists every thread of the focused workspace, switches with up and down, keeps a transcript per thread and creates the panel's thread in the focused workspace |
 | 1.63 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-acp-client` (T-F2-07): §3.2 and §5.2 add `acp`; §5.1 lays out `internal/acp` and adds `[acp]` and `[[acp.agents]]`; DD-012 makes a hosted ACP thread the level-1 authority of its pane; §5.3f describes the host |
 | 1.64 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-acp-mediation` (T-F2-08): §5.3f — the running turn mediates a hosted agent's permissions, files and terminals; the `Mediator` port is gone |
+| 1.65 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-acp-cancel-traces` (T-F2-09): §5.3f — a cancel kills the terminals' commands before `session/cancel`, a hosted turn's spans, the disclosure; §5.3e the panel's hosted-thread row and notice; §9.4 `umb thread create --agent` |

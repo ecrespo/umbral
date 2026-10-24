@@ -259,6 +259,23 @@ func (a *agent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResp
 			said = append(said, "read "+r.Content)
 		}
 		a.say(ctx, sid, acp.UpdateAgentMessageText(strings.Join(said, "; ")))
+	case "hold":
+		// Runs `sleep 30` in a terminal and waits for it to exit, whatever cancels the turn: the
+		// turn ends when the terminal does, saying how.
+		resp, err := a.conn.CreateTerminal(context.WithoutCancel(ctx), acp.CreateTerminalRequest{SessionId: sid, Command: "sleep", Args: []string{"30"}})
+		if err != nil {
+			a.say(ctx, sid, acp.UpdateAgentMessageText("error "+errCode(err)))
+			break
+		}
+		exit, err := a.conn.WaitForTerminalExit(context.WithoutCancel(ctx), acp.WaitForTerminalExitRequest{SessionId: sid, TerminalId: resp.TerminalId})
+		if err != nil {
+			a.say(context.WithoutCancel(ctx), sid, acp.UpdateAgentMessageText("wait error "+errCode(err)))
+			break
+		}
+		a.say(context.WithoutCancel(ctx), sid, acp.UpdateAgentMessageText(fmt.Sprintf("exited %d", deref(exit.ExitCode))))
+	case "deaf":
+		// Ignores session/cancel: the turn never ends on its own.
+		time.Sleep(time.Minute)
 	case "terminals":
 		// Creates N terminals running `sleep 9` and keeps them; says each id or error code.
 		n, _ := strconv.Atoi(arg(fields, 1))

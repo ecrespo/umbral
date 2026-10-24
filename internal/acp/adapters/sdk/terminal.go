@@ -50,11 +50,15 @@ func (p *process) unreserve() {
 
 func (p *process) addTerminal(t *terminal) string {
 	p.termMu.Lock()
-	defer p.termMu.Unlock()
 	p.opening--
 	p.nextTerm++
 	id := fmt.Sprintf("term_%d", p.nextTerm)
 	p.terminals[id] = t
+	killing := p.killing
+	p.termMu.Unlock()
+	if killing {
+		t.term.Kill()
+	}
 	return id
 }
 
@@ -88,6 +92,28 @@ func (p *process) releaseTerminals() {
 	for _, t := range all {
 		_ = t.term.Release(context.Background())
 	}
+}
+
+// killTerminals stops the command of every terminal of the agent and keeps their sessions;
+// one registered after it, until the next turn, is killed as it is registered.
+func (p *process) killTerminals() {
+	p.termMu.Lock()
+	p.killing = true
+	all := make([]*terminal, 0, len(p.terminals))
+	for _, t := range p.terminals {
+		all = append(all, t)
+	}
+	p.termMu.Unlock()
+	for _, t := range all {
+		t.term.Kill()
+	}
+}
+
+// stopKilling ends a cancel's sweep: a new turn's terminals run.
+func (p *process) stopKilling() {
+	p.termMu.Lock()
+	p.killing = false
+	p.termMu.Unlock()
 }
 
 // terminalCommand is the request's command line, its policy line and its directory, or why

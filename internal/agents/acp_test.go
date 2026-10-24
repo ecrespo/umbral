@@ -535,3 +535,62 @@ func TestATerminalThatRunsAScriptAsks_REQ_ACP_005(t *testing.T) {
 	}
 	r.finished(t)
 }
+
+// TestAnACPTurnHasATrace_REQ_ACP_007: a hosted turn is one trace, like Umbral's own: its span,
+// and inside it a span per tool call the agent reports — ended at its last status, or with the
+// turn when it never finished — and one per request Umbral mediated.
+func TestAnACPTurnHasATrace_REQ_ACP_007(t *testing.T) {
+	dir := realDir(t)
+	r := acpRig(t, nil, func(ctx context.Context, _ ports.ExternalRequest, sink ports.ExternalSink) {
+		read := ports.ExternalToolCall{ID: "r1", Kind: "read", Risk: string(secdomain.RiskReadOnly), Status: "pending", Locations: []string{filepath.Join(dir, "x")}}
+		_ = sink.ToolCall(read)
+		read.Status = "completed"
+		_ = sink.ToolCall(read)
+		exec := ports.ExternalToolCall{ID: "x1", Kind: "execute", Risk: string(secdomain.RiskExec), Status: "pending", Command: "make"}
+		_ = sink.ToolCall(exec)
+		_, _ = sink.Permission(ctx, exec)
+		exec.Status = "failed"
+		_ = sink.ToolCall(exec)
+		_ = sink.ToolCall(ports.ExternalToolCall{ID: "p1", Kind: "search", Risk: string(secdomain.RiskReadOnly), Status: "pending"})
+		if err := sink.Request(ctx, ports.ExternalOp{Method: ports.OpReadFile, Path: filepath.Join(dir, "x")}, func(context.Context, string) (string, error) { return "read", nil }); err != nil {
+			t.Error(err)
+		}
+		// A request refused before it has a row still has its span, ended as an error.
+		if err := sink.Request(ctx, ports.ExternalOp{Method: ports.OpWriteFile, Path: "relative"}, func(context.Context, string) (string, error) { return "", nil }); err == nil {
+			t.Error("a relative write was performed")
+		}
+	})
+	th := r.thread(t, domain.CreateParams{Cwd: dir, Agent: "fake", Mode: secdomain.ModeAsk})
+	r.sendOnly(t, th.ID)
+	r.finished(t)
+
+	r.tracer.mu.Lock()
+	defer r.tracer.mu.Unlock()
+	if len(r.tracer.turns) != 1 || r.tracer.turns[0].threadID != th.ID || r.tracer.turns[0].end == nil {
+		t.Fatalf("turn spans %+v, want the hosted turn's, ended", r.tracer.turns)
+	}
+	parent := "turn:" + r.tracer.turns[0].turnID
+	want := map[string]domain.ToolStatus{
+		"acp:read": domain.ToolOK, "acp:execute": domain.ToolError, "acp:search": domain.ToolPending,
+		"acp:fs/read_text_file": domain.ToolOK, "acp:fs/write_text_file": domain.ToolError,
+	}
+	got := map[string]domain.ToolStatus{}
+	for _, s := range r.tracer.tools {
+		if s.parent != parent || s.end == nil {
+			t.Errorf("span %s under %q ended %v, want under the turn's and ended", s.tool, s.parent, s.end != nil)
+			continue
+		}
+		if _, dup := got[s.tool]; dup {
+			t.Errorf("two spans for %s", s.tool)
+		}
+		got[s.tool] = s.end.Status
+	}
+	for tool, status := range want {
+		if got[tool] != status {
+			t.Errorf("%s's span ended %q, want %q (spans %v)", tool, got[tool], status, got)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("spans %v, want one per call and request", got)
+	}
+}

@@ -19,8 +19,9 @@ import (
 // The turn ends with domain.ErrAgent — and the process killed, so the next prompt relaunches
 // it — when the agent exits, sends a line that is not ACP, or sends nothing for the silence
 // timeout while nothing it asked of Umbral is unanswered and no approval of its thread is
-// pending. A cancelled ctx sends `session/cancel`, and kills the process if the turn has not
-// ended KillAfter later (REQ-ACP-008).
+// pending. A cancelled ctx kills the commands of the thread's terminals, sends
+// `session/cancel`, and kills the process if the turn has not ended KillAfter later
+// (REQ-ACP-008).
 func (h *Host) Prompt(ctx context.Context, req Request, text string, sink ports.Sink) (string, error) {
 	p, err := h.ensure(ctx, req)
 	if err != nil {
@@ -31,6 +32,7 @@ func (h *Host) Prompt(ctx context.Context, req Request, text string, sink ports.
 	p.client.begin(sink)
 	defer p.client.end()
 	p.client.touch()
+	p.stopKilling()
 
 	type result struct {
 		resp acp.PromptResponse
@@ -95,6 +97,9 @@ func (h *Host) Prompt(ctx context.Context, req Request, text string, sink ports.
 			return "", h.agentError(ctx, p, "")
 		case <-cancelled:
 			cancelled = nil
+			// The terminals' commands stop first, within REQ-ACP-008's 500 ms, whatever the agent
+			// does with the cancel; their sessions stay the agent's until it releases them.
+			p.killTerminals()
 			_ = p.conn.Cancel(context.WithoutCancel(ctx), acp.CancelNotification{SessionId: p.session})
 			killAt = time.After(h.cfg.KillAfter)
 		case <-killAt:

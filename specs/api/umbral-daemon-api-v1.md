@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.49 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.50 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -776,7 +776,8 @@ relaunch (REQ-ACP-006); the thread keeps its history.
 - The running turn's context is cancelled: a model call ends, a pending approval becomes
   `expired`, and `run_command` sends SIGTERM to the process groups the thread's shell launched
   and SIGKILL 300 ms later, keeping the shell (§5.3b of the Tech Design).
-- The call returns once the turn has recorded its end, within 500 ms (REQ-AGT-007).
+- The call returns once the turn has recorded its end, within 500 ms (REQ-AGT-007); a hosted
+  thread's turn can take up to 5 s, as the last item says.
   `stopped_at` is that moment. The turn ends with `thread.turn_finished`, whose
   `stop_reason = cancelled`, and the thread is left `stopped` (§7).
 - A thread with no turn running is left as it is, and `stopped_at` is `null`. That cancel lost
@@ -790,6 +791,11 @@ relaunch (REQ-ACP-006); the thread keeps its history.
 - A turn held for a slot (§5.20) is dropped before it calls a model or runs a tool: it ends
   `cancelled` like a running one, the thread is `stopped` with `queued: false`, and the turns held
   behind it move up (REQ-ORC-002).
+- A hosted thread's turn (§5.20, REQ-ACP-008; delta `2026-10-acp-cancel-traces`) first kills the
+  commands of the agent's terminals, as `run_command`'s are killed, keeping their sessions, then
+  sends `session/cancel`; the agent's process is killed if the turn has not ended 5 s later. The
+  500 ms are the terminals': the answer comes when the turn has ended, as soon as the agent ends
+  it and at most 5 s after the cancel.
 
 **Errors:** `NOT_FOUND` (an unknown thread), `VALIDATION_ERROR` (no `thread_id`).
 
@@ -1617,3 +1623,4 @@ printf '%s\n' \
 | 1.47 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-slow-client-queue` (T-HRD-04): §6 says control notifications travel through a per-connection queue in dispatch order; §8 gains its 8 MiB limit, past which the connection is closed (REQ-API-006) |
 | 1.48 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-acp-client` (T-F2-07): §4 `Thread` gains `agent` and `egress_visibility`, and `ToolCall` names a hosted agent's calls `acp:<kind>`; §5.19 `thread.create` takes `agent`, refuses it with `data.reason` `unknown_agent`, `no_manifest`, `config_key` or `project_config`, and answers `agent_unavailable` when the agent does not start; §5.20 sends a hosted thread's message as `session/prompt` and maps its updates and stop reasons; §6 gains `stop_reason = agent_error` (REQ-ACP-001, 002, 006, 009) |
 | 1.49 | 2026-10-24 | Additive within `protocol_version = 1`. Delta `2026-10-acp-mediation` (T-F2-08): §4 `ToolCall` names the rows of a hosted agent's file and terminal requests (REQ-ACP-004, REQ-ACP-005) |
+| 1.50 | 2026-10-24 | Additive within `protocol_version = 1`. Delta `2026-10-acp-cancel-traces` (T-F2-09): §5.21 says how a hosted thread's turn is cancelled and when the answer comes (REQ-ACP-008) |

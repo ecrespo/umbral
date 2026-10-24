@@ -130,16 +130,19 @@ type ThreadList struct {
 }
 
 // Thread is a thread as the panel lists it (API §4's Thread): WorkspaceID and WorktreeID are
-// "" for none.
+// "" for none. Agent is the hosted ACP agent's name, "" for Umbral's own (REQ-ACP-001), and
+// EgressVisibility `observed` or `unobserved` (REQ-ACP-007).
 type Thread struct {
 	ID          string
 	Title       string
 	WorkspaceID string
 	WorktreeID  string
 	// Attention is `attention_state`; State is the thread's `state`.
-	Attention string
-	State     string
-	Queued    bool
+	Attention        string
+	State            string
+	Queued           bool
+	Agent            string
+	EgressVisibility string
 }
 
 // McpServer is an MCP server as the panel shows it (API §4's McpServer): LastError is ""

@@ -27,8 +27,9 @@ func (t *turnRun) runExternal(ctx context.Context) domain.StopReason {
 	if t.rules, err = t.r.cfg.Store.Rules(ctx, t.thread.ID); err != nil {
 		return t.stopFor(ctx, storageErr(err))
 	}
-	sink := &externalSink{t: t, ctx: ctx, calls: map[string]domain.ToolCall{}, covered: map[string]bool{}}
+	sink := &externalSink{t: t, ctx: ctx, calls: map[string]domain.ToolCall{}, covered: map[string]bool{}, spans: map[string]func(ports.ToolTrace){}}
 	stop, err := t.r.cfg.Agents.Prompt(ctx, ports.ExternalRequest{ThreadID: t.thread.ID, Agent: t.thread.Agent, Dir: place.Cwd}, t.prompt, sink)
+	sink.endSpans()
 	if err != nil {
 		return t.stopFor(ctx, err)
 	}
@@ -50,6 +51,9 @@ type externalSink struct {
 	// covered are the paths allowed permissions of this turn listed, resolved: a write to one
 	// is not decided again (REQ-ACP-004).
 	covered map[string]bool
+	// spans are the open spans of the calls the agent reported, by its id, ended when the call
+	// ends or with the turn (REQ-ACP-007).
+	spans map[string]func(ports.ToolTrace)
 	// deciding serialises the decisions, so two requests never ask at once and the rules an
 	// approval remembers are read before the next decision.
 	deciding sync.Mutex
@@ -125,7 +129,33 @@ func (s *externalSink) ToolCall(ec ports.ExternalToolCall) error {
 	}
 	s.calls[ec.ID] = c
 	s.t.r.publish(ports.ThreadToolCall{Call: c})
+	s.traceCall(ec.ID, c)
 	return nil
+}
+
+// traceCall keeps a reported call's span: started with its row, ended when the call ends. The
+// caller holds s.mu.
+func (s *externalSink) traceCall(id string, c domain.ToolCall) {
+	end, open := s.spans[id]
+	if !open {
+		_, end = s.t.r.cfg.Tracer.Tool(s.ctx, c.ID, c.Tool)
+		s.spans[id] = end
+	}
+	if c.Status != domain.ToolPending {
+		end(ports.ToolTrace{Status: c.Status, Risk: c.Risk})
+		delete(s.spans, id)
+	}
+}
+
+// endSpans ends the spans of the calls the agent never finished, with the turn.
+func (s *externalSink) endSpans() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, end := range s.spans {
+		c := s.calls[id]
+		end(ports.ToolTrace{Status: c.Status, Risk: c.Risk})
+		delete(s.spans, id)
+	}
 }
 
 // toolName is the row's `tool`: `acp:` and the call's kind, a closed set, never the agent's
@@ -305,6 +335,7 @@ func (s *externalSink) Permission(ctx context.Context, ec ports.ExternalToolCall
 	err = s.t.r.cfg.Store.SaveToolCall(s.ctx, c) //nolint:contextcheck // the row is the turn's: written on its context, not the agent's request
 	if err == nil {
 		s.calls[ec.ID] = c
+		s.traceCall(ec.ID, c)
 	}
 	s.mu.Unlock()
 	if err != nil {
@@ -334,6 +365,12 @@ func (s *externalSink) Request(ctx context.Context, op ports.ExternalOp, perform
 	ctx, cancel := s.within(ctx)
 	defer cancel()
 	tool := "acp:" + op.Method
+	// The request is a span of its own inside the turn's from its arrival, ended with its row or
+	// as an error when it never gets one (REQ-ACP-007).
+	id := s.t.r.cfg.NewID(prefixToolCall)
+	ctx, endSpan := s.t.r.cfg.Tracer.Tool(ctx, id, tool)
+	ended, risk := domain.ToolError, ""
+	defer func() { endSpan(ports.ToolTrace{Status: ended, Risk: risk}) }()
 
 	s.deciding.Lock()
 	a, d, args, err := s.requestDecision(ctx, tool, op)
@@ -348,7 +385,7 @@ func (s *externalSink) Request(ctx context.Context, op ports.ExternalOp, perform
 		return err
 	}
 	c := domain.ToolCall{
-		ID: s.t.r.cfg.NewID(prefixToolCall), ThreadID: s.t.thread.ID, MessageID: s.messageID, Tool: tool,
+		ID: id, ThreadID: s.t.thread.ID, MessageID: s.messageID, Tool: tool,
 		Risk: string(a.Risk), Args: args, Via: domain.ViaACP, Decision: verdictDecision(d.Verdict),
 		Status: domain.ToolPending, StartedAt: s.t.r.now(),
 	}
@@ -359,6 +396,11 @@ func (s *externalSink) Request(ctx context.Context, op ports.ExternalOp, perform
 		return storageErr(err)
 	}
 	s.t.r.publish(ports.ThreadToolCall{Call: c})
+	risk = c.Risk
+	finish := func(status domain.ToolStatus, result string) error {
+		ended = status
+		return s.finish(ctx, c, status, result)
+	}
 
 	allowed := d.Verdict == secdomain.VerdictAllow
 	status := domain.ToolDeniedByPolicy
@@ -370,26 +412,26 @@ func (s *externalSink) Request(ctx context.Context, op ports.ExternalOp, perform
 		allowed, err = s.t.awaitApproval(ctx, c, a, d, diff)
 		if err != nil {
 			s.deciding.Unlock()
-			_ = s.finish(ctx, c, domain.ToolError, "cancelled")
+			_ = finish(domain.ToolError, "cancelled")
 			return err
 		}
 		status = domain.ToolDeniedByUser
 	}
 	s.deciding.Unlock()
 	if !allowed {
-		if err := s.finish(ctx, c, status, "denied: "+d.Reason); err != nil {
+		if err := finish(status, "denied: "+d.Reason); err != nil {
 			return err
 		}
 		return ports.ErrDenied
 	}
 	summary, perr := perform(ctx, a.Target)
 	if perr != nil {
-		if err := s.finish(ctx, c, domain.ToolError, "error: "+perr.Error()); err != nil {
+		if err := finish(domain.ToolError, "error: "+perr.Error()); err != nil {
 			return err
 		}
 		return perr
 	}
-	return s.finish(ctx, c, domain.ToolOK, summary)
+	return finish(domain.ToolOK, summary)
 }
 
 // requestDecision is what a request is decided on, and the verdict (decision 6 and 7 of delta
