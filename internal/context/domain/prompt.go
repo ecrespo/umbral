@@ -10,8 +10,15 @@ import (
 var templateFS embed.FS
 
 var templates = template.Must(template.New("").Funcs(template.FuncMap{
-	"trim": strings.TrimRight,
+	"trim":   strings.TrimRight,
+	"escape": escapeEntry,
 }).ParseFS(templateFS, "templates/*.tmpl"))
+
+// entryEscaper writes a catalog entry's ampersands and angle brackets as entities, so a skill's
+// own text cannot close the <skills> block or open a tag the model would read as Umbral's.
+var entryEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+func escapeEntry(s string) string { return entryEscaper.Replace(s) }
 
 // SystemInput is what the system prompt is assembled from.
 type SystemInput struct {
