@@ -109,7 +109,7 @@ its matrix lists commands.
 - **Done:** a bundle signed with the key and served locally is accepted by a daemon built with the
   seed, and one signed with any other key is refused and recorded in `egress_log`.
 
-### [ ] T-HRD-02 · The questions F1's ratified deltas left open
+### [x] 2026-10-24 T-HRD-02 · The questions F1's ratified deltas left open
 - **What:** answer each of the seven by a delta, or accept it in writing in the delta that raised
   it (delta `2026-10-f1-close`):
   - `2026-10-skill-catalog`: forms of a command the normaliser does not see (`env -S`, a word
@@ -134,6 +134,85 @@ its matrix lists commands.
 - **Depends on:** —
 - **Done:** each question names its answer and where it was decided; `task ci` green on any code
   that answer required.
+- **Answered** by delta `2026-10-hrd02-open-questions`, ratified by the Tech Lead on 2026-10-24
+  ("Ratifico el delta y el PR #50"); the code each answer needs is its own task below:
+  - Q1 (`env -S`, substitution, raw JSON-RPC) and Q8 (`env 'A=x y' rm -rf /`, through
+    `run_command` and ACP `execute`): a real shell parser, dynamic words ask, `setsid` and
+    launchers read as wrappers — **T-HRD-06**;
+  - Q2 (`umb rules key add|rotate`, `rollback`, `reset`) and Q6 (`umb mcp remove`): new
+    `umb_rules_change` and `umb_mcp_remove` patterns, defence in depth for the Tech §5.3
+    residual only — **T-HRD-07**;
+  - Q3 (`skill_load` and the digest): hash on every load and serve from that read — **T-HRD-08**;
+  - Q4 (catalog descriptions untainted): a delimited third-party block in `# Skills` —
+    **T-HRD-09**;
+  - Q5 (`umb skill`/`umb mcp` from the agent's PTY): closed by `2026-10-full-auto` decision 8,
+    the Tech §5.3 residual accepted, once T-HRD-05 is done;
+  - Q7 (which `env_refs` a `cli` client may set): accepted as is, the Tech §5.3 residual
+    accepted, once T-HRD-05 is done;
+  - Q9 (zsh `PROMPT_SP`): `unsetopt PROMPT_SP` after the user's rc in sessions the daemon flags
+    as an agent's — **T-HRD-10**;
+  - Q10 (a hosted OpenCode is not offline): the manifest's fixed `OPENCODE_DISABLE_*` variables,
+    amending REQ-ACP-009 — **T-HRD-11**; a shared package cache is left to an F2 slice;
+  - Q11 (sibling worktrees readable): disclosed now in PRD F2 0.9 REQ-ACP-007, shown by
+    **T-HRD-12**; an OS sandbox is left to an F2 slice;
+  - Q12 (new: a hosted agent's own processes are not "inside an agent's terminal"): its pids join
+    `agentPeer` and it is started with `Setsid` — **T-HRD-05**, first.
+
+### [ ] T-HRD-05 · A hosted agent is refused what an agent's terminal is refused
+- **What:** Q12: `cmd/umbrald`'s `agentPeer` also counts the processes of hosted ACP agents, which `internal/acp` reports through a port when it launches them with `Setsid` (process-group signalling on cancel is unchanged). A hosted agent, or a command it runs itself, calling a `userOnly` method gets `PERMISSION_DENIED` like an agent's terminal (REQ-ORC-004). (delta `2026-10-hrd02-open-questions`).
+- **REQ:** REQ-ORC-004, REQ-ACP-009
+- **Files:** `internal/acp/**`, `cmd/umbrald/agentpeer.go`, `cmd/umbrald/acp.go`
+- **Depends on:** T-F2-08
+- **Done:** a test with a fake hosted agent that calls `skill.install` over the socket is refused, seen red first; `task ci` green. Goes first.
+
+### [ ] T-HRD-06 · A shell parser in front of the destructive patterns
+- **What:** Q1 and Q8: the command normaliser behind `MatchDestructive` parses the line with a real shell parser (a new dependency, checked under Art. 9); a word built at run time (`$(…)`, a variable, `env -S`) makes the line ask; `setsid`, `systemd-run`, `at` and `ssh localhost` are read as wrappers. Both paths into it are covered: `run_command` and the ACP `execute` permission's `raw_input.command`. (delta `2026-10-hrd02-open-questions`).
+- **REQ:** REQ-SEC-005, REQ-ACP-003
+- **Files:** `internal/security/domain/policy_destructive.go` and its tests, `go.mod`
+- **Depends on:** T-HRD-05
+- **Done:** a table of evasions — `env -S`, `env 'A=x y' rm -rf /`, `$(…)`, `setsid -f umb skill install x` — asks on both paths, each red first; the existing pattern tests stay green.
+
+### [ ] T-HRD-07 · Destructive patterns for `umb rules` and `umb mcp remove`
+- **What:** Q2 and Q6: built-in patterns `umb_rules_change` (`umb rules key add|rotate|remove`, `rollback`, `reset`) and `umb_mcp_remove`, defence in depth for the Tech §5.3 residual; the daemon's refusal stays the control, and an approved command still ends `PERMISSION_DENIED` when the peer check sees the caller. Tech §5.3's list gains both. (delta `2026-10-hrd02-open-questions`).
+- **REQ:** REQ-SEC-005, REQ-CLI-008
+- **Files:** `internal/security/domain/policy_destructive.go`, `policy_test.go`, Tech §5.3
+- **Depends on:** T-HRD-06
+- **Done:** each command matches its pattern and `umb rules status`/`umb mcp list` do not; `policy_test.go`'s `umb mcp remove x` moves to the destructive list.
+
+### [ ] T-HRD-08 · `skill_load` checks the stored copy's digest
+- **What:** Q3: `ReadSkill` reads the stored bundle once, hashes it against the installed digest and serves the entry from that same read; a mismatch refuses the load, names the skill and tells the user to reinstall it. (delta `2026-10-hrd02-open-questions`).
+- **REQ:** REQ-SKL-005
+- **Files:** `internal/context/adapters/skills/**`
+- **Depends on:** —
+- **Done:** a test that edits the stored copy after install is refused, red first.
+
+### [ ] T-HRD-09 · Catalog descriptions as third-party text
+- **What:** Q4: the `# Skills` section of the system prompt wraps the catalog in a delimited block whose preamble says the descriptions are third-party text, not instructions. Taint stays for content the user never saw. (delta `2026-10-hrd02-open-questions`).
+- **REQ:** REQ-SKL-005
+- **Files:** `internal/context/**` (the prompt builder)
+- **Depends on:** —
+- **Done:** a prompt test shows the block and preamble, and a description that tries to close it cannot.
+
+### [ ] T-HRD-10 · No lost last line in an agent's zsh
+- **What:** Q9: the daemon marks the sessions it owns for an agent, and the zsh bootstrap runs `unsetopt PROMPT_SP` after the user's rc in those sessions only; a `precmd` hook re-applies it only if a framework turns it back on at every prompt. (delta `2026-10-hrd02-open-questions`).
+- **REQ:** REQ-AGT-007
+- **Files:** `internal/sessions/adapters/shellinteg/**`, `shell/zsh/`
+- **Depends on:** —
+- **Done:** `run_command` of `printf x` in a zsh thread PTY returns `x`, red first; skipped where zsh is absent; a user's own pane keeps `PROMPT_SP`.
+
+### [ ] T-HRD-11 · A hosted OpenCode starts without its own update traffic
+- **What:** Q10: a manifest field of fixed variables the user's `env` refs cannot override; the OpenCode manifest sets its `OPENCODE_DISABLE_*` switches. Its delta amends PRD F2 REQ-ACP-009's environment allowlist with "the manifest's fixed variables". (delta `2026-10-hrd02-open-questions`).
+- **REQ:** REQ-ACP-009
+- **Files:** `internal/acp/**` (the manifest), `specs/prd/umbral-f2.md`
+- **Depends on:** —
+- **Done:** a test that the fixed variables reach the agent and a ref cannot override them; the disclosure stays true.
+
+### [ ] T-HRD-12 · The disclosure names the readable worktrees
+- **What:** Q11: what `umb thread create --agent` and the agent panel show for a hosted thread adds that the agent can read the repository's main copy and every other thread's worktree, as PRD F2 0.9 REQ-ACP-007 now says. (delta `2026-10-hrd02-open-questions`).
+- **REQ:** REQ-ACP-007
+- **Files:** `cmd/umb/thread.go`, `internal/tui/**` (the hosted-thread notice)
+- **Depends on:** —
+- **Done:** both texts carry the sentence, checked by their existing disclosure tests.
 
 ### [x] 2026-10-24 T-HRD-03 · Three defects known when F1 closed
 - **What** (delta `2026-10-f1-close`):
@@ -209,6 +288,11 @@ its matrix lists commands.
 | REQ-TUI-001, 002, 003, 004 | T-REL-02 (walk) | `docs/qa/f1-tui.md`; the harness tests are F1's |
 | REQ-SEC-011, REQ-SEC-013 | T-HRD-01 (the key) | a bundle signed with the project key accepted, any other refused |
 | REQ-SEC-005, REQ-SKL-005, REQ-CLI-008 | T-HRD-02 (decisions) | per decision |
+| REQ-ORC-004 (hosted agents) | T-HRD-05 | a fake hosted agent calling `skill.install` is refused |
+| REQ-SEC-005, REQ-ACP-003 | T-HRD-06, T-HRD-07 | the evasion table on `run_command` and ACP `execute`; the new patterns |
+| REQ-SKL-005 | T-HRD-08, T-HRD-09 | an edited stored copy refused; the delimited catalog block |
+| REQ-AGT-007 (zsh) | T-HRD-10 | `printf x` returned whole in a zsh thread PTY |
+| REQ-ACP-009, REQ-ACP-007 | T-HRD-11, T-HRD-12 | fixed manifest variables; the disclosure's worktree sentence |
 | REQ-AGT-018, REQ-API-005, REQ-API-004, REQ-CLI-001 | T-HRD-03 | TestFetchUrlFollowsFiveRedirects_REQ_AGT_018; TestAPlainCutMatchesTheEncoder_REQ_API_005, TestAPlainCutEncodesAFewTimes_REQ_API_005 and the macOS job over repeated runs; `task schema`; TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001 |
 | REQ-API-006 | T-HRD-04 | TestASlowClientHoldsUpNoOtherClient_REQ_API_006, TestASlowClientIsClosedNotTrimmed_REQ_API_006 |
 
@@ -224,3 +308,5 @@ its matrix lists commands.
 | 2026-10-24 | T-HRD-03 | done | Its last three items are closed. `fetch_url` follows five redirects and refuses the sixth. The `REQ_API_005` macOS timeout was `plainPrefix` encoding a megabyte about twenty times per cut; it is now one pass checked by the encoder, 1.2 s to 0.5 s per subtest under `-race`. macOS was green on four attempts of PR #49's CI. `skill.*` moved from the second §5.37 to §5.42 (API 1.51). Each fix was red first, and each was mutated to red again. |
 | 2026-10-24 | T-PKG-03 | done | Delta `2026-10-deb-package` (Tech 1.67 §9.3). `task deb` builds `umbral_<version>_<arch>.deb` with `dpkg-deb` from the built binaries and the kit's files as they are; libghostty-vt is static, so it depends on `libc6 (>= 2.36)` alone. `check.sh` was red on an empty package first; `check_selftest.sh` shows it rejects a missing icon, an icon not the kit's, a `.desktop` naming another icon and a postinst that refreshes nothing. In an `ubuntu:26.04` container the package installed, `umb` autostarted the installed `umbrald` and read its status, the icon cache listed the icon, and after removal it no longer did. The `systemd --user` unit, the tar.gz archives and the `launchd` plist became T-PKG-06 and T-PKG-07. |
 | 2026-10-24 | T-PKG-06, T-PKG-07 | added | Delta `2026-10-deb-package`, ratified by the Tech Lead: the `systemd --user` unit, the tar.gz archives and the `launchd` plist Tech §9 and the Plan name for 0.1, which no task owned. |
+| 2026-10-24 | T-HRD-02 | done | Delta `2026-10-hrd02-open-questions`, ratified by the Tech Lead: every question names its answer above. Q5 and Q7 are accepted once T-HRD-05 is done; Q11 is disclosed in PRD F2 0.9 REQ-ACP-007. |
+| 2026-10-24 | T-HRD-05 … T-HRD-12 | added | The code those answers need, Q12 (T-HRD-05) first. Spec-guardian's review found that the socket is reachable from a hosted agent's `HOME`, so a hosted agent can call `userOnly` methods today. |

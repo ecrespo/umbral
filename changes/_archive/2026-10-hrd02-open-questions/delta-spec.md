@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-10-24 — awaiting the Tech Lead; every question below is "Tech Lead decides"` |
+| **Status** | `RATIFIED 2026-10-24 by the Tech Lead ("Ratifico el delta y el PR #50"), every recommendation as written`; folded into the hardening tasks (T-HRD-02 answered, T-HRD-05 … T-HRD-12) and PRD F2 0.9 REQ-ACP-007, and archived |
 | **Date** | 2026-10-24 |
 | **Task** | `T-HRD-02` (`specs/tasks/umbral-hardening-tasks.md`) |
 | **REQ** | REQ-SEC-005, REQ-SKL-005, REQ-CLI-008; REQ-ACP-007 and REQ-ACP-009 for Q10 and Q11 |
