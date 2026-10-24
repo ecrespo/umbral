@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -13,18 +14,39 @@ import (
 	"github.com/ecrespo/umbral/internal/client"
 )
 
-// buildDaemon compiles umbrald into a temporary directory and returns its path.
+// daemonBuild is the package's one build of umbrald: every test runs the same binary, so the
+// package does not pay a link per daemon test, which put it past go test's ten minutes on the
+// macOS runner. TestMain removes its directory.
+var daemonBuild struct {
+	once sync.Once
+	dir  string
+	bin  string
+	err  error
+}
+
+// buildDaemon compiles umbrald once for the package and returns its path. No test may change
+// the file, since every test shares it.
 func buildDaemon(t *testing.T) string {
 	t.Helper()
 
-	bin := filepath.Join(t.TempDir(), "umbrald")
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", bin, "./cmd/umbrald")
-	build.Dir = "../.."
-	build.Env = append(os.Environ(), "PKG_CONFIG_PATH="+os.Getenv("PKG_CONFIG_PATH"))
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build umbrald: %v\n%s", err, out)
+	daemonBuild.once.Do(func() {
+		dir, err := os.MkdirTemp("", "umbrald-build")
+		if err != nil {
+			daemonBuild.err = err
+			return
+		}
+		daemonBuild.dir, daemonBuild.bin = dir, filepath.Join(dir, "umbrald")
+		build := exec.CommandContext(context.Background(), "go", "build", "-o", daemonBuild.bin, "./cmd/umbrald")
+		build.Dir = "../.."
+		build.Env = append(os.Environ(), "PKG_CONFIG_PATH="+os.Getenv("PKG_CONFIG_PATH"))
+		if out, err := build.CombinedOutput(); err != nil {
+			daemonBuild.err = fmt.Errorf("%w\n%s", err, out)
+		}
+	})
+	if daemonBuild.err != nil {
+		t.Fatalf("build umbrald: %v", daemonBuild.err)
 	}
-	return bin
+	return daemonBuild.bin
 }
 
 // TestNoGapBetweenSnapshotAndStream_REQ_API_002 walks the bootstrap API Spec §5.3 documents,

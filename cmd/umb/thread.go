@@ -22,7 +22,7 @@ const (
 	threadCancel = "cancel"
 )
 
-const threadUsage = "umb thread: create [CWD] [--mode M] [--title T] [--model M] [--worktree] [--workspace W] | " +
+const threadUsage = "umb thread: create [CWD] [--mode M] [--title T] [--model M] [--agent A] [--worktree] [--workspace W] | " +
 	"send THREAD TEXT… [--wait STATES] [--timeout D] | wait THREAD --until STATES [--timeout D] | " +
 	"get THREAD | cancel THREAD"
 
@@ -47,6 +47,7 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 	mode := fs.String("mode", "", "create: the thread's mode, as the daemon names it (API §4)")
 	title := fs.String("title", "", "create: the thread's title")
 	model := fs.String("model", "", "create: the model, provider/name")
+	agent := fs.String("agent", "", "create: host this configured ACP agent instead of Umbral's own (REQ-ACP-001)")
 	worktree := fs.Bool("worktree", false, "create: give the thread its own git worktree (REQ-WT-001)")
 	workspace := fs.String("workspace", os.Getenv("UMBRAL_WORKSPACE_ID"), "create: the workspace the thread belongs to; the pane's own by default")
 	wait := fs.String("wait", "", "send: wait for one of these states, comma-separated: idle,done,blocked,stopped")
@@ -78,7 +79,7 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 			return exitFailure
 		}
 		method, params["cwd"] = "thread.create", abs
-		for key, v := range map[string]string{"mode": *mode, keyTitle: *title, "model": *model, "workspace": *workspace} {
+		for key, v := range map[string]string{"mode": *mode, keyTitle: *title, "model": *model, "workspace": *workspace, "agent": *agent} {
 			if v != "" {
 				params[key] = v
 			}
@@ -140,6 +141,16 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 		// stdout is not read.
 		stderr.printf("umb thread create: the thread works without a worktree: %s (%v)\n",
 			printable(fmt.Sprint(refused["message"])), printable(fmt.Sprint(refused["reason"])))
+	}
+	if hosted, ok := result["agent"].(string); ok && hosted != "" {
+		// REQ-ACP-007: what Umbral cannot see is said where the user reads, not where a script
+		// takes the id.
+		stderr.printf("umb thread create: %s is an external agent; Umbral does not record its own network traffic or file reads (egress_visibility %s)\n",
+			printable(hosted), printable(fmt.Sprint(result["egress_visibility"])))
+		if gone, ok := result["agent_unavailable"].(map[string]any); ok {
+			stderr.printf("umb thread create: %s did not start: %s (%v)\n", printable(hosted),
+				printable(fmt.Sprint(gone["message"])), printable(fmt.Sprint(gone["reason"])))
+		}
 	}
 	if f.asJSON {
 		return printJSON(stdout, stderr, result)

@@ -1148,3 +1148,39 @@ func TestNoSwitchWhileTheThreadIsCreated_REQ_ORC_003(t *testing.T) {
 		t.Fatalf("thr_y was viewed while the panel's thread was being created: %v", got)
 	}
 }
+
+// TestAgentPanelSaysAHostedThreadIsUnobserved_REQ_ACP_007: a thread an external agent runs is
+// listed with its agent and `unobserved`, and selecting it says, in a line of its own, that
+// Umbral records neither that agent's network traffic nor its file reads. Umbral's own thread
+// says neither.
+func TestAgentPanelSaysAHostedThreadIsUnobserved_REQ_ACP_007(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.daemon.setThreads(ports.ThreadList{WorkspaceID: "w1", Threads: []ports.Thread{
+		{ID: "thr_h", WorkspaceID: "w1", Attention: "idle", State: "idle", Agent: "opencode", EgressVisibility: "unobserved"},
+		{ID: "thr_o", WorkspaceID: "w1", Attention: "idle", State: "idle", EgressVisibility: "observed"},
+	}})
+	h.openSession()
+	h.step(ctrlSpace())
+
+	view := h.m.View().Content
+	for _, want := range []string{"opencode", "unobserved"} {
+		if row := threadRow(view, "thr_h"); !strings.Contains(row, want) {
+			t.Errorf("the hosted thread's row %q lacks %q", row, want)
+		}
+	}
+	if row := threadRow(view, "thr_o"); strings.Contains(row, "observed") {
+		t.Errorf("Umbral's own thread's row %q speaks of observation", row)
+	}
+	if strings.Contains(view, "network traffic") {
+		t.Errorf("the notice shows before the hosted thread is selected:\n%s", view)
+	}
+	h.step(keyPress(t, "down"))
+	if view := h.m.View().Content; !strings.Contains(view, "network traffic") || !strings.Contains(view, "file reads") {
+		t.Errorf("selecting the hosted thread does not say what Umbral cannot see:\n%s", view)
+	}
+	h.step(keyPress(t, "down"))
+	if view := h.m.View().Content; strings.Contains(view, "network traffic") {
+		t.Errorf("Umbral's own thread carries the hosted notice:\n%s", view)
+	}
+}

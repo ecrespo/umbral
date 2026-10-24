@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ecrespo/umbral/internal/acp/adapters/sdk/acptest"
 	"github.com/ecrespo/umbral/internal/client"
@@ -385,5 +386,116 @@ func TestACPFilesAreMediatedInTheDaemon_REQ_ACP_004(t *testing.T) {
 		if decision != "allow" {
 			t.Errorf("%s decided %q, want allow", tool, decision)
 		}
+	}
+}
+
+// TestACPCancelStopsWithin500ms_REQ_ACP_008: `thread.cancel` on a hosted thread whose agent is
+// waiting on a terminal stops that terminal's command within 500 ms — its block closed — and
+// the turn ends cancelled.
+func TestACPCancelStopsWithin500ms_REQ_ACP_008(t *testing.T) {
+	stream, ctx := acpDaemon(t)
+	dir := t.TempDir()
+	var thread acpThread
+	if err := stream.Call(ctx, "thread.create", map[string]any{"cwd": dir, "agent": "fake"}, &thread); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Call(ctx, "thread.send", map[string]any{"thread_id": thread.ID, "text": "hold"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(os.Getenv("XDG_DATA_HOME"), "umbral", "umbral.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	// Approve the terminal, then wait for its block to open: `sleep 30` is running.
+	for open := false; !open; {
+		select {
+		case n, ok := <-stream.Notifications():
+			if !ok {
+				t.Fatalf("the stream ended: %v", stream.Err())
+			}
+			if n.Method == "approval.requested" {
+				var a struct{ ID string }
+				_ = n.Decode(&a)
+				if err := stream.Call(ctx, "approval.respond", map[string]any{"approval_id": a.ID, "decision": "approve", "scope": "once"}, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+		case <-time.After(20 * time.Millisecond):
+		case <-ctx.Done():
+			t.Fatal("the terminal never started")
+		}
+		var n int
+		_ = db.QueryRowContext(ctx, `SELECT count(*) FROM blocks WHERE thread_id = ? AND via = 'acp' AND ended_at IS NULL`, thread.ID).Scan(&n)
+		open = n == 1
+	}
+	cancelled := time.Now().UnixMilli()
+	if err := stream.Call(ctx, "thread.cancel", map[string]any{"thread_id": thread.ID}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var stop string
+	for stop == "" {
+		select {
+		case n, ok := <-stream.Notifications():
+			if !ok {
+				t.Fatalf("the stream ended: %v", stream.Err())
+			}
+			if n.Method == "thread.turn_finished" {
+				var f struct {
+					StopReason string `json:"stop_reason"`
+				}
+				_ = n.Decode(&f)
+				stop = f.StopReason
+			}
+		case <-ctx.Done():
+			t.Fatal("the cancelled turn did not finish")
+		}
+	}
+	if stop != "cancelled" {
+		t.Errorf("the turn ended %q, want cancelled", stop)
+	}
+	var ended sql.NullInt64
+	if err := db.QueryRowContext(ctx, `SELECT ended_at FROM blocks WHERE thread_id = ? AND via = 'acp'`, thread.ID).Scan(&ended); err != nil {
+		t.Fatal(err)
+	}
+	if !ended.Valid {
+		t.Fatal("the terminal's block is still open")
+	}
+	if took := ended.Int64 - cancelled; took > 500 {
+		t.Errorf("the terminal's command stopped %d ms after the cancel, want within 500 ms", took)
+	}
+}
+
+// TestAnACPThreadIsMarkedUnobserved_REQ_ACP_007: a hosted thread is `unobserved` — in the
+// `thread.create` answer, in `thread.get` and in its row — and Umbral's own thread is
+// `observed`, since Umbral does not see the agent's own traffic.
+func TestAnACPThreadIsMarkedUnobserved_REQ_ACP_007(t *testing.T) {
+	stream, ctx := acpDaemon(t)
+	dir := t.TempDir()
+	var hosted, own acpThread
+	if err := stream.Call(ctx, "thread.create", map[string]any{"cwd": dir, "agent": "fake"}, &hosted); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Call(ctx, "thread.create", map[string]any{"cwd": dir}, &own); err != nil {
+		t.Fatal(err)
+	}
+	if hosted.EgressVisibility != "unobserved" || own.EgressVisibility != "observed" {
+		t.Errorf("created: hosted %q, own %q; want unobserved and observed", hosted.EgressVisibility, own.EgressVisibility)
+	}
+	var got acpThread
+	if err := stream.Call(ctx, "thread.get", map[string]any{"thread_id": hosted.ID}, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.EgressVisibility != "unobserved" {
+		t.Errorf("thread.get says %q", got.EgressVisibility)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(os.Getenv("XDG_DATA_HOME"), "umbral", "umbral.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var stored string
+	if err := db.QueryRowContext(ctx, `SELECT egress_visibility FROM threads WHERE id = ?`, hosted.ID).Scan(&stored); err != nil || stored != "unobserved" {
+		t.Errorf("the row says %q (%v)", stored, err)
 	}
 }

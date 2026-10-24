@@ -291,3 +291,21 @@ func TestTheThreadListReadsTheSnapshotsNames_REQ_ORC_003(t *testing.T) {
 		t.Fatal("a null focused workspace is not none")
 	}
 }
+
+// TestTheThreadListReadsAHostedThread_REQ_ACP_007: a hosted thread's `agent` and
+// `egress_visibility` reach the panel; Umbral's own thread has a null agent and `observed`.
+func TestTheThreadListReadsAHostedThread_REQ_ACP_007(t *testing.T) {
+	t.Parallel()
+	var w wireSnapshot
+	raw := `{"seq":1,"focused":{"workspace_id":"w1"},"threads":[
+		{"id":"thr_h","agent":"opencode","egress_visibility":"unobserved","attention_state":"idle","state":"idle"},
+		{"id":"thr_o","agent":null,"egress_visibility":"observed","attention_state":"idle","state":"idle"}]}`
+	if err := json.Unmarshal([]byte(raw), &w); err != nil {
+		t.Fatal(err)
+	}
+	got := w.list().Threads
+	if len(got) != 2 || got[0].Agent != "opencode" || got[0].EgressVisibility != "unobserved" ||
+		got[1].Agent != "" || got[1].EgressVisibility != "observed" {
+		t.Fatalf("got %+v", got)
+	}
+}

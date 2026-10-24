@@ -638,24 +638,46 @@ func TestACancelledACPTurnSendsSessionCancel_REQ_ACP_008(t *testing.T) {
 	}
 }
 
-// fakeTerms starts terminals that ended at once, printing what they were given.
+// fakeTerms starts terminals that ended at once, printing what they were given; with hold,
+// terminals that run until killed.
 type fakeTerms struct {
-	mu       sync.Mutex
+	mu   sync.Mutex
+	hold bool
+	// entered, when set, receives a value as Start begins, and Start then waits for gate.
+	entered  chan struct{}
+	gate     chan struct{}
 	started  []string
 	cwds     []string
+	killedAt []time.Time
 	released atomic.Int32
 }
 
 func (f *fakeTerms) Start(_ context.Context, _, cwd, command string) (ports.Terminal, error) {
+	if f.entered != nil {
+		f.entered <- struct{}{}
+		<-f.gate
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.started, f.cwds = append(f.started, command), append(f.cwds, cwd)
-	return &fakeTerm{f: f, out: "output of " + command}, nil
+	t := &fakeTerm{f: f, out: "output of " + command, killed: make(chan struct{})}
+	if !f.hold {
+		close(t.killed)
+	}
+	return t, nil
+}
+
+func (f *fakeTerms) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.started)
 }
 
 type fakeTerm struct {
-	f   *fakeTerms
-	out string
+	f      *fakeTerms
+	out    string
+	once   sync.Once
+	killed chan struct{}
 }
 
 func (t *fakeTerm) Output() (string, *domain.TerminalExit) {
@@ -663,11 +685,27 @@ func (t *fakeTerm) Output() (string, *domain.TerminalExit) {
 	return t.out, &domain.TerminalExit{Code: &zero}
 }
 
-func (t *fakeTerm) Wait(context.Context) (domain.TerminalExit, error) {
+func (t *fakeTerm) Wait(ctx context.Context) (domain.TerminalExit, error) {
+	select {
+	case <-t.killed:
+	case <-ctx.Done():
+		return domain.TerminalExit{}, ctx.Err()
+	}
 	zero := 0
 	return domain.TerminalExit{Code: &zero}, nil
 }
-func (t *fakeTerm) Kill()                         {}
+
+func (t *fakeTerm) Kill() {
+	t.once.Do(func() {
+		t.f.mu.Lock()
+		t.f.killedAt = append(t.f.killedAt, time.Now())
+		t.f.mu.Unlock()
+		if t.f.hold {
+			close(t.killed)
+		}
+	})
+}
+
 func (t *fakeTerm) Release(context.Context) error { t.f.released.Add(1); return nil }
 
 // fakeFiles records the targets it is asked to read and write.
@@ -821,5 +859,108 @@ func TestACPFileRequestsArePerformedOnTheDecidedTarget_REQ_ACP_004(t *testing.T)
 	}
 	if got := files.targets; len(got) != 2 || got[0] != "/resolved/a/b.txt" || got[1] != "/resolved/a/c.txt" {
 		t.Errorf("performed on %v", got)
+	}
+}
+
+// TestACancelKillsTheACPTerminalsFirst_REQ_ACP_008: a cancel kills the commands of the thread's
+// terminals at once — before the agent answers session/cancel, which it may never do — and keeps
+// their sessions, so the agent can still read how they ended.
+func TestACancelKillsTheACPTerminalsFirst_REQ_ACP_008(t *testing.T) {
+	t.Parallel()
+	terms := &fakeTerms{hold: true}
+	h := newHost(t, func(c *Config) { c.Terminals = terms })
+	dir := workDir(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	var cancelled time.Time
+	go func() {
+		for terms.count() == 0 {
+			time.Sleep(5 * time.Millisecond)
+		}
+		cancelled = time.Now()
+		cancel()
+	}()
+	s := &sink{serve: allowAll}
+	if _, err := h.Prompt(ctx, Request{ThreadID: "thr_1", Agent: "fake", Dir: dir}, "hold", s); !errors.Is(err, context.Canceled) {
+		t.Fatalf("the cancelled turn: %v", err)
+	}
+	terms.mu.Lock()
+	defer terms.mu.Unlock()
+	if len(terms.killedAt) != 1 {
+		t.Fatalf("%d terminals killed, want the one", len(terms.killedAt))
+	}
+	if took := terms.killedAt[0].Sub(cancelled); took > 500*time.Millisecond {
+		t.Errorf("the terminal was killed %s after the cancel, want within 500 ms", took)
+	}
+	if terms.released.Load() != 0 {
+		t.Error("a cancel released the terminal; its session is the agent's until it releases it")
+	}
+	if got := s.Text0(); got != "exited 0" {
+		t.Errorf("the agent read %q, want its terminal's exit", got)
+	}
+}
+
+// TestAnUnresponsiveACPAgentIsKilledAfter5s_REQ_ACP_008: an agent that does not end its turn
+// after session/cancel is killed 5 s later — the default — and the turn ends cancelled.
+func TestAnUnresponsiveACPAgentIsKilledAfter5s_REQ_ACP_008(t *testing.T) {
+	t.Parallel()
+	h := newHost(t, nil)
+	dir := workDir(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	time.AfterFunc(300*time.Millisecond, cancel)
+	start := time.Now()
+	stop, err := h.Prompt(ctx, Request{ThreadID: "thr_1", Agent: "fake", Dir: dir}, "deaf", &sink{})
+	took := time.Since(start) - 300*time.Millisecond
+	if stop != "cancelled" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("the turn ended %q, %v", stop, err)
+	}
+	if took < 5*time.Second || took > 6500*time.Millisecond {
+		t.Errorf("the agent was killed %s after the cancel, want 5 s", took)
+	}
+	if h.Running("thr_1") {
+		t.Error("the unresponsive agent is still running")
+	}
+}
+
+// TestATerminalStartedDuringACancelIsKilled_REQ_ACP_008: a terminal whose session was still
+// starting when the turn was cancelled is not missed by the cancel's sweep — it is killed as it
+// is registered, so no command of the agent's outlives the cancel by more than 500 ms.
+func TestATerminalStartedDuringACancelIsKilled_REQ_ACP_008(t *testing.T) {
+	t.Parallel()
+	terms := &fakeTerms{hold: true, entered: make(chan struct{}, 1), gate: make(chan struct{})}
+	h := newHost(t, func(c *Config) { c.Terminals = terms })
+	dir := workDir(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	var opened time.Time
+	go func() {
+		<-terms.entered
+		cancel()
+		// The cancel's sweep runs while the terminal is still starting.
+		time.Sleep(100 * time.Millisecond)
+		terms.mu.Lock()
+		opened = time.Now()
+		terms.mu.Unlock()
+		close(terms.gate)
+	}()
+	if _, err := h.Prompt(ctx, Request{ThreadID: "thr_1", Agent: "fake", Dir: dir}, "hold", &sink{serve: allowAll}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("the cancelled turn: %v", err)
+	}
+	terms.mu.Lock()
+	defer terms.mu.Unlock()
+	if len(terms.killedAt) != 1 {
+		t.Fatalf("%d terminals killed, want the one that started during the cancel", len(terms.killedAt))
+	}
+	if took := terms.killedAt[0].Sub(opened); took > 500*time.Millisecond {
+		t.Errorf("the late terminal was killed %s after it started, want within 500 ms", took)
+	}
+	terms.hold, terms.entered = false, nil
+	terms.mu.Unlock()
+
+	// The next turn's terminals run: the sweep ended with the cancelled turn.
+	if _, err := h.Prompt(t.Context(), Request{ThreadID: "thr_1", Agent: "fake", Dir: dir}, "hold", &sink{serve: allowAll}); err != nil {
+		t.Fatalf("the next turn: %v", err)
+	}
+	terms.mu.Lock()
+	if len(terms.killedAt) != 1 {
+		t.Errorf("%d terminals killed, want the next turn's left running", len(terms.killedAt))
 	}
 }

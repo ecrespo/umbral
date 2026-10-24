@@ -177,3 +177,49 @@ func TestThreadCreateSaysWhenItsWorktreeWasRefused_REQ_WT_008(t *testing.T) {
 		t.Errorf("stderr %q, want the refusal, escaped", errOut)
 	}
 }
+
+// TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007: `umb thread create --agent` asks for
+// a hosted thread; the daemon's answer says `unobserved`, and stderr tells the user — where a
+// script's stdout, the id alone, is not read — that Umbral records neither the agent's own
+// network traffic nor its file reads, and when the agent did not start, why. A thread of
+// Umbral's own says nothing.
+func TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007(t *testing.T) {
+	t.Parallel()
+	var asked map[string]any
+	d := serveRecordingDaemon(t, map[string]fakeReply{
+		"thread.create": func(params map[string]any) (any, string) {
+			asked = params
+			if params["agent"] == nil {
+				return map[string]any{"id": "thr_own", "agent": nil, "egress_visibility": "observed"}, ""
+			}
+			return map[string]any{
+				"id": "thr_1", "agent": "opencode", "egress_visibility": "unobserved",
+				"agent_unavailable": map[string]any{"reason": "launch_failed", "message": "exit 1\x1b[2J"},
+			}, ""
+		},
+	})
+	var stdout, stderr bytes.Buffer
+	requireExit(t, run([]string{"thread", "create", "/work", "--agent", "opencode", "--socket", d.socket, "--no-autostart"}, &stdout, &stderr), exitOK, &stderr)
+	if asked["agent"] != "opencode" {
+		t.Errorf("thread.create was sent %v, want agent opencode", asked)
+	}
+	if stdout.String() != "thr_1\n" {
+		t.Errorf("stdout %q, want the id alone", stdout.String())
+	}
+	errOut := stderr.String()
+	for _, want := range []string{"opencode", "unobserved", "network traffic", "file reads", "launch_failed"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr %q lacks %q", errOut, want)
+		}
+	}
+	if strings.Contains(errOut, "\x1b") {
+		t.Errorf("stderr %q carries the daemon's escape", errOut)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	requireExit(t, run([]string{"thread", "create", "/work", "--socket", d.socket, "--no-autostart"}, &stdout, &stderr), exitOK, &stderr)
+	if stderr.Len() != 0 || stdout.String() != "thr_own\n" {
+		t.Errorf("Umbral's own thread printed %q and said %q", stdout.String(), stderr.String())
+	}
+}
