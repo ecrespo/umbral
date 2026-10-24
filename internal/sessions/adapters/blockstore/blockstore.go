@@ -53,10 +53,10 @@ func (s *Store) Create(ctx context.Context, block domain.Block) error {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO blocks(id, session_id, origin, thread_id, command, cwd, host,
+		INSERT INTO blocks(id, session_id, origin, thread_id, via, command, cwd, host,
 		                   state, started_at, output_bytes, output_truncated)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`,
-		block.ID, block.SessionID, string(block.Origin), nullString(block.ThreadID),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`,
+		block.ID, block.SessionID, string(block.Origin), nullString(block.ThreadID), via(block.Via),
 		block.Command, block.CWD, block.Host,
 		string(block.State), block.StartedAt.UTC().UnixMilli())
 	if err != nil {
@@ -161,3 +161,11 @@ func boolToInt(value bool) int {
 
 // Store implements the sessions module's BlockStore port.
 var _ ports.BlockStore = (*Store)(nil)
+
+// via is the block's `via`: `shell` unless it came through an ACP terminal.
+func via(v domain.BlockVia) string {
+	if v == "" {
+		return string(domain.ViaShell)
+	}
+	return string(v)
+}

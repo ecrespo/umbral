@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.63 |
-| **Date** | 2026-10-23 |
+| **Version** | 1.64 |
+| **Date** | 2026-10-24 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
 | **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
@@ -994,7 +994,7 @@ with `run_command` from T-F1-10. Delta `2026-09-builtin-tools`:
   in the thread's cwd, owned by the thread, its input held by the agent, and reused after, so
   the shell's state carries over. A thread whose cwd changes — it moved into its worktree, or
   back out once the worktree was merged or discarded (REQ-WT-002) — has that shell closed and a
-  new one started in the new cwd at its next command. The command — one line — is typed as the agent; the block
+  new one started in the new cwd at its next command. The command — one line, with no control character, which the shell's line editor would act on even inside quotes — is typed as the agent; the block
   it opens is marked origin `agent` with the thread, and the call returns when that block
   closes, with the exit code and the last 64 KiB of output, marked not persisted when the
   block's row could not be written. 120 s by default, 600 at most. Cancelling sends SIGTERM to
@@ -1258,12 +1258,41 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   is `other` — the kind's risk and `decision = unmediated`, then
   published. Every write precedes its notification (DD-007), and a failed write ends the turn
   `storage_error` with the process killed.
-- **What the agent asks of Umbral.** Permissions, `fs/*` and `terminal/*` reach a `Mediator`
-  port. Until T-F2-08 the mediator refuses every one: a permission is answered with the agent's
-  `reject_once` option (never an `allow_always` one), a file request and a terminal request with
-  an error. A hosted call's row stays `unmediated` even when its permission was refused: in F2a
-  the refusal is not tied to a row, which T-F2-08 does. Umbral's own tool calls now record their
-  `decision` as well.
+- **What the agent asks of Umbral** (delta `2026-10-acp-mediation`). Permissions, `fs/*` and
+  `terminal/create` go to the sink of the turn running when they arrive — the agent runtime's,
+  which holds the thread's mode, rules, write root and approval queue; one arriving between turns
+  is refused.
+  - *Permissions* are decided per target: an `edit`, `delete` or `move` on each location,
+    resolved like `write_file`'s; an `execute` as `run_command` on `raw_input.command` in its
+    `cwd` or `workdir`; a `fetch` on `raw_input.url`; a call naming nothing, or of any other kind,
+    asks. The strictest verdict wins, under the tool `acp:<kind>`, so a remembered approval
+    matches the same kind and target. Umbral answers `allow_once` or `reject_once`, never
+    `allow_always`, and the reported call's row takes the `decision` (`allow`, `deny`, `ask` with
+    its approval) — a target Umbral cannot resolve is `deny`; a call never asked about stays
+    `unmediated`. Umbral's own calls record their
+    `decision` too.
+  - *Files* need an absolute path. A read is `ReadOnly` and asks outside the write root in every
+    mode; a write is `WriteFS`, its approval showing `write_file`'s diff, and is not asked again
+    when an allowed permission of the same turn listed its path. Both are performed by Umbral on
+    the decided target with `read_file`'s and `write_file`'s guards (16 MiB, non-blocking open,
+    atomic rename), a read returning at most 4 MiB; each is a row of its own,
+    `acp:fs/read_text_file` or `acp:fs/write_text_file`.
+  - *Terminals.* `terminal/create` is `Exec` on its line — command and args quoted for a POSIX
+    shell, `env` as an `env NAME=value` prefix — in its `cwd`, and asks for a cwd outside the write
+    root even when a rule allows the line. A control character in the command, an argument or
+    `env` is refused before anything is decided: the shell's line editor would act on it. The
+    policy also decides the same words with whitespace, separators, quotes and backslashes inside
+    each made `_` — its command normaliser reads no quotes — and the strictest verdict stands; a
+    terminal naming a program that runs a script it is given (a shell, busybox, PowerShell, `ssh`,
+    `eval`, `watch`, `su`, `script`, `flock`) or `env` with an option outside a safe few always
+    asks — a floor, like the destructive list, not a sandbox. At most `[acp] max_terminals` live per thread, counted
+    before anything is asked. Allowed, it is `sessions.StartTerminal`: a new session owned by the
+    thread, with shell integration, no pane and bash (else zsh; never fish, whose quoting differs,
+    and refused without either), whose one command is typed as the agent and recorded as a block with `origin = agent` and `via = acp`; it is never taken
+    for the thread's PTY. `terminal/output` serves the stream stripped to plain text, its last
+    MiB at most and `outputByteLimit`'s tail, with the exit code once the block closed;
+    `kill` stops the command's process group and keeps the shell; `release`, the agent's exit or
+    its close end the session. Its row is `acp:terminal/create`.
 - **Ending.** A line on the agent's stdout that is not a JSON-RPC 2.0 object (or is over 16 MiB)
   ends the connection at once: the SDK alone would log it and read on. The process exiting, that,
   or `[acp] silence_timeout` without a message end the turn `agent_error`, kill the process and
@@ -1782,3 +1811,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.61 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-full-auto` (T-F2-05): DD-006 step 4 and §5.3's `full-auto` column; §5.3 says when a turn decides under it, how the flag follows the worktree, and that an agent's terminal is refused the methods that land, drop or approve its work |
 | 1.62 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-panel-threads` (T-F2-06): §5.3e lists every thread of the focused workspace, switches with up and down, keeps a transcript per thread and creates the panel's thread in the focused workspace |
 | 1.63 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-acp-client` (T-F2-07): §3.2 and §5.2 add `acp`; §5.1 lays out `internal/acp` and adds `[acp]` and `[[acp.agents]]`; DD-012 makes a hosted ACP thread the level-1 authority of its pane; §5.3f describes the host |
+| 1.64 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-acp-mediation` (T-F2-08): §5.3f — the running turn mediates a hosted agent's permissions, files and terminals; the `Mediator` port is gone |

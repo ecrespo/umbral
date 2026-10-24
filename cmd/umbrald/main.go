@@ -417,7 +417,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// The host of `[[acp.agents]]` (T-F2-07). It is closed after the runtime, which cancels
 	// every turn first, so a hosted agent's turn ends `cancelled` rather than killed.
 	var runtimeRef atomic.Pointer[agents.Runtime]
-	acpHost, err := newACP(settings.ACP, filepath.Dir(socket), providers, func(threadID string) bool {
+	acpHost, err := newACP(settings.ACP, filepath.Dir(socket), providers, sessionService, func(threadID string) bool {
 		rt := runtimeRef.Load()
 		return rt != nil && rt.AwaitingApproval(threadID)
 	}, logger)

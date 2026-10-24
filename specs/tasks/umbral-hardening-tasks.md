@@ -97,7 +97,11 @@ its matrix lists commands.
   - `2026-10-umb-mcp-panel`: the catalog's descriptions reaching the system prompt without
     tainting the turn; `umb skill`/`umb mcp` from the agent's own PTY guarded only by patterns,
     not refused by the daemon; `umb mcp remove` not being destructive; which `env_refs` a `cli`
-    client may set.
+    client may set;
+  - `2026-10-acp-mediation` (added 2026-10-24): the command normaliser reads no quotes, so a
+    `run_command` line the model writes — `env 'A=x y' rm -rf /` — hides its program from the
+    destructive floor (an ACP terminal is decided on its words as well); `run_command` in a zsh
+    PTY loses a last line printed without a newline (`PROMPT_SP`).
 - **REQ:** REQ-SEC-005, REQ-SKL-005, REQ-CLI-008
 - **Files:** `changes/<YYYY-MM>-<slug>/` per decision; code only where a decision asks for it
 - **Depends on:** —

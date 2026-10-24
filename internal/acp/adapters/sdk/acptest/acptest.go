@@ -7,6 +7,7 @@ package acptest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -229,6 +230,71 @@ func (a *agent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResp
 			answer = "selected " + string(resp.Outcome.Selected.OptionId)
 		}
 		a.say(ctx, sid, acp.UpdateAgentMessageText(answer))
+	case "edit":
+		// Asks to edit fields[1], writes fields[2:] joined to it and reads it back.
+		path, content := arg(fields, 1), strings.Join(fields[min(2, len(fields)):], " ")
+		resp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
+			SessionId: sid,
+			ToolCall: acp.ToolCallUpdate{
+				ToolCallId: "call-edit", Title: acp.Ptr("edit " + path), Kind: acp.Ptr(acp.ToolKindEdit),
+				Locations: []acp.ToolCallLocation{{Path: path}},
+			},
+			Options: []acp.PermissionOption{
+				{OptionId: "once", Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce},
+				{OptionId: "reject", Name: "Reject", Kind: acp.PermissionOptionKindRejectOnce},
+			},
+		})
+		said := []string{"cancelled"}
+		if err == nil && resp.Outcome.Selected != nil {
+			said = []string{"selected " + string(resp.Outcome.Selected.OptionId)}
+		}
+		if _, err := a.conn.WriteTextFile(ctx, acp.WriteTextFileRequest{SessionId: sid, Path: path, Content: content}); err != nil {
+			said = append(said, "write error "+errCode(err))
+		} else {
+			said = append(said, "written")
+		}
+		if r, err := a.conn.ReadTextFile(ctx, acp.ReadTextFileRequest{SessionId: sid, Path: path}); err != nil {
+			said = append(said, "read error "+errCode(err))
+		} else {
+			said = append(said, "read "+r.Content)
+		}
+		a.say(ctx, sid, acp.UpdateAgentMessageText(strings.Join(said, "; ")))
+	case "terminals":
+		// Creates N terminals running `sleep 9` and keeps them; says each id or error code.
+		n, _ := strconv.Atoi(arg(fields, 1))
+		var said []string
+		for range n {
+			resp, err := a.conn.CreateTerminal(ctx, acp.CreateTerminalRequest{SessionId: sid, Command: "sleep", Args: []string{"9"}})
+			if err != nil {
+				said = append(said, "error "+errCode(err))
+				continue
+			}
+			said = append(said, resp.TerminalId)
+		}
+		a.say(ctx, sid, acp.UpdateAgentMessageText(strings.Join(said, " ")))
+	case "release":
+		_, err := a.conn.ReleaseTerminal(ctx, acp.ReleaseTerminalRequest{SessionId: sid, TerminalId: arg(fields, 1)})
+		answer := "released"
+		if err != nil {
+			answer = "error " + errCode(err)
+		}
+		a.say(ctx, sid, acp.UpdateAgentMessageText(answer))
+	case "term":
+		// Runs fields[1] with fields[2:] in a terminal of 8 bytes of output, waits, reads and
+		// releases it.
+		limit := 8
+		resp, err := a.conn.CreateTerminal(ctx, acp.CreateTerminalRequest{
+			SessionId: sid, Command: arg(fields, 1), Args: fields[min(2, len(fields)):], OutputByteLimit: &limit,
+			Env: []acp.EnvVariable{{Name: "GREETING", Value: "a b"}},
+		})
+		if err != nil {
+			a.say(ctx, sid, acp.UpdateAgentMessageText("error "+errCode(err)))
+			break
+		}
+		exit, _ := a.conn.WaitForTerminalExit(ctx, acp.WaitForTerminalExitRequest{SessionId: sid, TerminalId: resp.TerminalId})
+		out, _ := a.conn.TerminalOutput(ctx, acp.TerminalOutputRequest{SessionId: sid, TerminalId: resp.TerminalId})
+		_, _ = a.conn.ReleaseTerminal(ctx, acp.ReleaseTerminalRequest{SessionId: sid, TerminalId: resp.TerminalId})
+		a.say(ctx, sid, acp.UpdateAgentMessageText(fmt.Sprintf("exit=%d output=%s truncated=%v", deref(exit.ExitCode), out.Output, out.Truncated)))
 	case "read":
 		path := ""
 		if len(fields) > 1 {
@@ -240,6 +306,14 @@ func (a *agent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResp
 		} else {
 			a.say(ctx, sid, acp.UpdateAgentMessageText(resp.Content))
 		}
+	case "write":
+		// Writes fields[2:] joined to the path fields[1].
+		_, err := a.conn.WriteTextFile(ctx, acp.WriteTextFileRequest{SessionId: sid, Path: arg(fields, 1), Content: strings.Join(fields[min(2, len(fields)):], " ")})
+		answer := "written"
+		if err != nil {
+			answer = "error: " + err.Error()
+		}
+		a.say(ctx, sid, acp.UpdateAgentMessageText(answer))
 	case "slow":
 		ms, n := 100, 3
 		if len(fields) > 2 {
@@ -294,4 +368,26 @@ func (a *agent) report() string {
 	}
 	blob, _ := json.Marshal(r)
 	return string(blob)
+}
+
+func arg(fields []string, i int) string {
+	if i < len(fields) {
+		return fields[i]
+	}
+	return ""
+}
+
+func errCode(err error) string {
+	var re *acp.RequestError
+	if errors.As(err, &re) {
+		return strconv.Itoa(re.Code)
+	}
+	return err.Error()
+}
+
+func deref(p *int) int {
+	if p == nil {
+		return -1
+	}
+	return *p
 }

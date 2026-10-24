@@ -125,7 +125,7 @@ func TestStopsAtMaxSteps_REQ_AGT_008(t *testing.T) {
 // TestAskModeReadOnlyTools_REQ_AGT_009: in `ask` mode the model is offered ReadOnly tools
 // only, and a call to another one is refused by the policy without running.
 func TestAskModeReadOnlyTools_REQ_AGT_009(t *testing.T) {
-	r := newRig(t, callTool("write_file", `{"path":"x"}`), answer("ok"))
+	r := newRig(t, callTool("write_file", `{"path":"x","content":"x"}`), answer("ok"))
 	th := r.thread(t, domain.CreateParams{Mode: secdomain.ModeAsk})
 	r.send(t, th.ID, "write", "")
 	offered := r.models.requests()[0].Request.Tools

@@ -28,8 +28,8 @@ func TestFullAutoOnlyInsideAWorktree_REQ_ORC_004(t *testing.T) {
 	}
 	wts := &fakeWorktrees{root: t.TempDir(), repo: repo}
 	r := newRigWith(t, func(c *Config) { c.Worktrees = wts },
-		callTool("write_file", `{"path":"out.txt"}`), callTool("run", `{"path":"make"}`), answer("done"),
-		callTool("write_file", `{"path":"out.txt"}`), answer("asked"))
+		callTool("write_file", `{"path":"out.txt","content":"x"}`), callTool("run", `{"path":"make"}`), answer("done"),
+		callTool("write_file", `{"path":"out.txt","content":"x"}`), answer("asked"))
 
 	if _, err := r.rt.Create(t.Context(), domain.CreateParams{Cwd: repo, Mode: secdomain.ModeFullAuto}); !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf("thread.create with full-auto: %v, want a validation error", err)

@@ -46,12 +46,19 @@ type process struct {
 	killOnce sync.Once
 	// turn serialises prompts: a thread runs one turn at a time anyway.
 	turn sync.Mutex
+
+	// terminals are the agent's terminals not released yet, by their id; opening counts the
+	// ones being created, which the cap counts too (REQ-ACP-005).
+	termMu    sync.Mutex
+	terminals map[string]*terminal
+	opening   int
+	nextTerm  int
 }
 
 func newProcess(h *Host, req Request, iso domain.Isolation) *process {
 	p := &process{
 		h: h, thread: req.ThreadID, agent: req.Agent, dir: req.Dir, iso: iso,
-		exited: make(chan struct{}), invalid: make(chan struct{}),
+		exited: make(chan struct{}), invalid: make(chan struct{}), terminals: map[string]*terminal{},
 	}
 	p.client = &client{p: p}
 	p.client.touch()
@@ -155,6 +162,7 @@ func (p *process) kill() {
 			}
 		}
 		_ = os.RemoveAll(p.iso.Root)
+		p.releaseTerminals()
 	})
 }
 

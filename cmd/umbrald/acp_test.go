@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -274,5 +275,115 @@ func TestAnACPAgentThatDoesNotStartKeepsItsThread_REQ_ACP_001(t *testing.T) {
 	sendAndFinish(t, ctx, stream, thread.ID, "again")
 	if got := lastAnswer(t, ctx, stream, thread.ID); got != "echo: again" {
 		t.Errorf("the next send answered %q, want the agent relaunched", got)
+	}
+}
+
+// TestACPTerminalIsAnAuditedBlock_REQ_ACP_005: a hosted agent's terminal is decided as Exec —
+// it asks in normal mode, through Umbral's approval queue — and once approved runs in a new
+// session the thread owns, as a block with origin agent, the thread's id and via acp; the
+// agent reads its exit and output, and its request is a tool call row of its own.
+func TestACPTerminalIsAnAuditedBlock_REQ_ACP_005(t *testing.T) {
+	stream, ctx := acpDaemon(t)
+	dir := t.TempDir()
+	var thread acpThread
+	if err := stream.Call(ctx, "thread.create", map[string]any{"cwd": dir, "agent": "fake"}, &thread); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Call(ctx, "thread.send", map[string]any{"thread_id": thread.ID, "text": `term printf from-acp`}, nil); err != nil {
+		t.Fatal(err)
+	}
+	asked := ""
+	for done := false; !done; {
+		select {
+		case n, ok := <-stream.Notifications():
+			if !ok {
+				t.Fatalf("the stream ended: %v", stream.Err())
+			}
+			switch n.Method {
+			case "approval.requested":
+				var a struct{ ID, Tool, Summary string }
+				_ = n.Decode(&a)
+				asked = a.Tool + " " + a.Summary
+				if err := stream.Call(ctx, "approval.respond", map[string]any{"approval_id": a.ID, "decision": "approve", "scope": "once"}, nil); err != nil {
+					t.Fatal(err)
+				}
+			case "thread.turn_finished":
+				done = true
+			}
+		case <-ctx.Done():
+			t.Fatal("the turn did not finish")
+		}
+	}
+	if asked != `acp:terminal/create env 'GREETING=a b' printf from-acp` {
+		t.Errorf("asked %q, want the terminal's command line", asked)
+	}
+	if got := lastAnswer(t, ctx, stream, thread.ID); got != "exit=0 output=from-acp truncated=false" {
+		t.Errorf("the agent read %q", got)
+	}
+
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(os.Getenv("XDG_DATA_HOME"), "umbral", "umbral.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var origin, blockThread, via, owner, command string
+	if err := db.QueryRowContext(ctx, `
+		SELECT b.origin, b.thread_id, b.via, s.owner_thread_id, b.command
+		FROM blocks b JOIN sessions s ON s.id = b.session_id WHERE b.thread_id = ?`, thread.ID).
+		Scan(&origin, &blockThread, &via, &owner, &command); err != nil {
+		t.Fatal(err)
+	}
+	if origin != "agent" || blockThread != thread.ID || via != "acp" || owner != thread.ID || !strings.Contains(command, "from-acp") {
+		t.Errorf("block origin %s thread %s via %s in a session of %s, command %q", origin, blockThread, via, owner, command)
+	}
+	var tool, decision, rowVia, status string
+	if err := db.QueryRowContext(ctx, `SELECT tool, decision, via, status FROM tool_calls WHERE thread_id = ? AND tool = 'acp:terminal/create'`, thread.ID).
+		Scan(&tool, &decision, &rowVia, &status); err != nil {
+		t.Fatal(err)
+	}
+	if decision != "ask" || rowVia != "acp" || status != "ok" {
+		t.Errorf("the terminal's row: decision %s via %s status %s, want ask, acp, ok", decision, rowVia, status)
+	}
+}
+
+// TestACPFilesAreMediatedInTheDaemon_REQ_ACP_004: against the daemon's own tool registry, an
+// `edit` permission inside an auto-edit thread's write root is allowed unasked, the write it
+// covers is performed by Umbral, and the read back is ReadOnly; each is a row decided `allow`.
+func TestACPFilesAreMediatedInTheDaemon_REQ_ACP_004(t *testing.T) {
+	stream, ctx := acpDaemon(t)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "notes.txt")
+	var thread acpThread
+	if err := stream.Call(ctx, "thread.create", map[string]any{"cwd": dir, "agent": "fake", "mode": "auto-edit"}, &thread); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range sendAndFinish(t, ctx, stream, thread.ID, "edit "+file+" from the agent") {
+		if n.Method == "approval.requested" {
+			t.Errorf("asked: %s", n.Params)
+		}
+	}
+	if got := lastAnswer(t, ctx, stream, thread.ID); got != "selected once; written; read from the agent" {
+		t.Errorf("the agent read %q", got)
+	}
+	if b, err := os.ReadFile(file); err != nil || string(b) != "from the agent" {
+		t.Errorf("the file holds %q (%v)", b, err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(os.Getenv("XDG_DATA_HOME"), "umbral", "umbral.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	for _, tool := range []string{"acp:edit", "acp:fs/write_text_file", "acp:fs/read_text_file"} {
+		var decision string
+		if err := db.QueryRowContext(ctx, `SELECT decision FROM tool_calls WHERE thread_id = ? AND tool = ?`, thread.ID, tool).Scan(&decision); err != nil {
+			t.Errorf("%s: %v", tool, err)
+			continue
+		}
+		if decision != "allow" {
+			t.Errorf("%s decided %q, want allow", tool, decision)
+		}
 	}
 }

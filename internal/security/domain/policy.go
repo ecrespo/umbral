@@ -344,6 +344,10 @@ func WriteRoot(cwd string, isRepo func(dir string) bool) string {
 	}
 }
 
+// WithinWriteRoot reports whether the action's target is inside its write root, as the mode
+// step decides it: a hosted agent's file read asks outside it (REQ-ACP-004).
+func WithinWriteRoot(a Action) bool { return withinWriteRoot(a) }
+
 // withinWriteRoot resolves the target against the cwd (or the root) lexically and reports
 // whether it stays inside the root. Symlinks are the caller's to resolve before asking: this
 // sees paths only.

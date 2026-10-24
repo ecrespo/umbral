@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Sentinel errors. The api layer maps them to JSON-RPC codes with errors.Is, so the rule
@@ -240,6 +241,10 @@ func ValidateAgentCommand(command string) error {
 		return fmt.Errorf("%w: the command is empty", ErrValidation)
 	case strings.ContainsAny(command, "\r\n"):
 		return fmt.Errorf("%w: the command is more than one line; join the lines with && or ;", ErrValidation)
+	case strings.IndexFunc(command, unicode.IsControl) >= 0:
+		// The line is typed into the shell's line editor, which acts on a control character even
+		// inside quotes (Ctrl-U erases the line so far): what ran would not be what was decided.
+		return fmt.Errorf("%w: the command holds a control character; write it with printf escapes instead", ErrValidation)
 	case len(command)+1 > MaxInputBytes:
 		return fmt.Errorf("%w: the command is %d bytes, at most %d are allowed", ErrValidation, len(command), MaxInputBytes-1)
 	}

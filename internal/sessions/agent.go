@@ -57,9 +57,19 @@ func (s *Service) RunForThread(ctx context.Context, threadID, cwd, command strin
 	if err := s.awaitIntegration(ctx, live); err != nil {
 		return domain.AgentRun{}, err
 	}
+	return s.runAgent(ctx, live, &agentRun{threadID: threadID, via: domain.ViaShell, done: make(chan domain.AgentRun, 1)}, command)
+}
 
-	run := &agentRun{threadID: threadID, done: make(chan domain.AgentRun, 1)}
+// runAgent types command into live as the agent and waits for its block, as RunForThread
+// describes; run says whose command it is and what it comes through.
+func (s *Service) runAgent(ctx context.Context, live *liveSession, run *agentRun, command string) (domain.AgentRun, error) {
+	typed := func(err error) {
+		if run.typed != nil {
+			run.typed <- err
+		}
+	}
 	if err := s.claimPTY(ctx, live, run); err != nil {
+		typed(err)
 		return domain.AgentRun{}, err
 	}
 	sessionID := live.snapshotState().ID
@@ -81,8 +91,10 @@ func (s *Service) RunForThread(ctx context.Context, threadID, cwd, command strin
 	}
 	if err := s.Input(ctx, sessionID, line, domain.InputOwnerAgent); err != nil {
 		release()
+		typed(err)
 		return domain.AgentRun{}, err
 	}
+	typed(nil)
 
 	select {
 	case result := <-run.done:
@@ -231,7 +243,7 @@ func (s *Service) threadSession(ctx context.Context, threadID, cwd string) (*liv
 	var stale *liveSession
 	for _, live := range s.live {
 		live.mu.RLock()
-		mine := live.session.OwnerThreadID == threadID && live.session.State == domain.StateAlive
+		mine := live.session.OwnerThreadID == threadID && live.session.State == domain.StateAlive && !live.terminal
 		same := live.threadCwd == cwd
 		live.mu.RUnlock()
 		if mine && same {
