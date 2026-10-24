@@ -123,3 +123,28 @@ func TestATerminalsPolicyLineKeepsItsWords_REQ_ACP_005(t *testing.T) {
 		}
 	}
 }
+
+// TestATerminalThatRunsAScriptIsFlagged_REQ_ACP_005: a word that is itself shell syntax — a
+// shell's `-c` script, `eval`'s, `env -S`'s — is read by the command normaliser without its
+// quotes, so the policy cannot see what it runs; such a terminal is flagged, so it asks.
+func TestATerminalThatRunsAScriptIsFlagged_REQ_ACP_005(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		args    []string
+		want    bool
+	}{
+		{"sh", []string{"-c", "env 'A=x y' rm -rf /"}, true},
+		{"/bin/bash", []string{"-lc", "make"}, true},
+		{"env", []string{"-S", "rm -rf /"}, true},
+		{"env", []string{"--split-string=rm -rf /"}, true},
+		{"sudo", []string{"zsh", "-c", "x"}, true},
+		{"eval", []string{"rm -rf /"}, true},
+		{"xargs", []string{"sh", "-c", "x"}, true},
+		{"go", []string{"test", "./..."}, false},
+		{"git", []string{"commit", "-m", "fix bash"}, false},
+	} {
+		if got := InterpretsScript(tc.command, tc.args); got != tc.want {
+			t.Errorf("InterpretsScript(%q, %q) = %v, want %v", tc.command, tc.args, got, tc.want)
+		}
+	}
+}

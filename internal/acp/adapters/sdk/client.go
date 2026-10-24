@@ -265,7 +265,10 @@ func (c *client) CreateTerminal(ctx context.Context, req acp.CreateTerminalReque
 		return acp.CreateTerminalResponse{}, err
 	}
 	var started ports.Terminal
-	err = c.serve(ctx, domain.Request{Method: domain.MethodTerminal, Command: command, Policy: policy, Cwd: cwd},
+	err = c.serve(ctx, domain.Request{
+		Method: domain.MethodTerminal, Command: command, Policy: policy, Cwd: cwd,
+		Script: domain.InterpretsScript(req.Command, req.Args),
+	},
 		func(ctx context.Context, target string) (string, error) {
 			var err error
 			started, err = terms.Start(ctx, p.thread, cwd, target)

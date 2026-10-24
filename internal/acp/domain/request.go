@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode"
@@ -24,7 +25,9 @@ type Request struct {
 	Content string
 	Command string
 	Policy  string
-	Cwd     string
+	// Script marks a terminal whose words hold shell syntax of their own (InterpretsScript).
+	Script bool
+	Cwd    string
 }
 
 // Input is what a tool call's raw input names that a permission is decided on (delta
@@ -117,6 +120,34 @@ func PolicyLine(command string, args []string, env [][2]string) string {
 		words = append(words, policyBreaks.ReplaceAllString(w, "_"))
 	}
 	return strings.Join(words, " ")
+}
+
+// scriptShells are the programs whose `-c` operand is a script.
+var scriptShells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "fish": true}
+
+// InterpretsScript reports whether a terminal's words hold shell syntax of their own: a shell
+// with a `-c` flag, `eval`, or `env -S`. The command normaliser reads such a script without its
+// quotes, so neither line shows the policy what it runs; the terminal then asks (delta
+// `2026-10-acp-mediation`, decision 7). It errs towards asking: any word naming one counts.
+func InterpretsScript(command string, args []string) bool {
+	words := append([]string{command}, args...)
+	shell, env := false, false
+	for _, w := range words {
+		base := filepath.Base(w)
+		switch {
+		case base == "eval":
+			return true
+		case scriptShells[base]:
+			shell = true
+		case base == "env":
+			env = true
+		case shell && strings.HasPrefix(w, "-") && !strings.HasPrefix(w, "--") && strings.Contains(w, "c"):
+			return true
+		case env && (strings.HasPrefix(w, "-S") || strings.HasPrefix(w, "--split-string")):
+			return true
+		}
+	}
+	return false
 }
 
 // CheckTerminal refuses a terminal whose command, arguments or environment hold a control

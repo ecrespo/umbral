@@ -155,6 +155,9 @@ func toolArgs(ec ports.ExternalToolCall) json.RawMessage {
 // decide on: an edit without locations, an execute without a command, a kind ACP lacks.
 const reasonNoTarget = "no_target"
 
+// reasonScript is a terminal whose words hold a script the policy cannot read: it asks.
+const reasonScript = "script"
+
 // The built-in tools' input keys a hosted agent's request is decided and recorded by.
 const (
 	argPath    = "path"
@@ -432,6 +435,9 @@ func (s *externalSink) requestDecision(ctx context.Context, tool string, op port
 				return secdomain.Action{}, secdomain.Decision{}, nil, fmt.Errorf("%w: %w", ports.ErrDenied, err)
 			}
 			d = s.decide([]secdomain.Action{a, pa}, false).decision
+		}
+		if d.Verdict == secdomain.VerdictAllow && op.Script {
+			d = secdomain.Decision{Verdict: secdomain.VerdictAsk, Reason: reasonScript}
 		}
 		if d.Verdict == secdomain.VerdictAllow && !secdomain.WithinWriteRoot(secdomain.Action{Target: a.Cwd, WriteRoot: a.WriteRoot}) {
 			// REQ-ACP-005: a terminal outside the write root asks, whatever allowed the line.

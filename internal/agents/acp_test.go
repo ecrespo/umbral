@@ -507,3 +507,31 @@ func TestATerminalIsDecidedOnTheWordsTheShellSees_REQ_ACP_005(t *testing.T) {
 	}
 	r.finished(t)
 }
+
+// TestATerminalThatRunsAScriptAsks_REQ_ACP_005: a terminal whose words hold a script the policy
+// cannot read — `sh -c "env 'A=x y' rm -rf /"` — asks even under full-auto in the worktree.
+func TestATerminalThatRunsAScriptAsks_REQ_ACP_005(t *testing.T) {
+	repo := realDir(t)
+	wts := &fakeWorktrees{root: realDir(t), repo: repo}
+	errs := make(chan error, 1)
+	r := acpRig(t, wts, func(ctx context.Context, req ports.ExternalRequest, sink ports.ExternalSink) {
+		errs <- sink.Request(ctx, ports.ExternalOp{
+			Method: ports.OpTerminal, Command: `sh -c 'env '"'"'A=x y'"'"' rm -rf /'`,
+			Policy: "sh -c env__A=x_y__rm_-rf__", Script: true, Cwd: req.Dir,
+		}, func(context.Context, string) (string, error) { return "started", nil })
+	})
+	th := r.thread(t, domain.CreateParams{Cwd: repo, Agent: "fake", Worktree: true, Mode: secdomain.ModeNormal})
+	if _, err := r.rt.Update(t.Context(), th.ID, domain.UpdateParams{Mode: modePtr(secdomain.ModeFullAuto)}); err != nil {
+		t.Fatal(err)
+	}
+	r.sendOnly(t, th.ID)
+	a := r.requested(t)
+	if a.Tool != "acp:terminal/create" || a.Reason != reasonScript {
+		t.Errorf("approval %s (%s), want the script terminal asked as a script", a.Tool, a.Reason)
+	}
+	r.respond(t, a, false)
+	if err := <-errs; !errors.Is(err, ports.ErrDenied) {
+		t.Errorf("the refused terminal: %v", err)
+	}
+	r.finished(t)
+}

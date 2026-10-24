@@ -75,7 +75,9 @@ runs, or how a terminal ends. Nothing said what happens to a request that arrive
    separators, quotes and backslashes inside it into `_` — and the strictest verdict stands: the
    command normaliser splits without reading quotes, so `env 'A=x y' rm -rf /` alone reads as the
    command `y`, and `rm 'x;y' -rf /` as two harmless ones, while the shell runs `rm -rf /`. The
-   approval shows the line as typed. A cwd outside the write root asks even when a
+   approval shows the line as typed. A word that is shell syntax of its own — a shell's `-c`
+   script, `eval`'s operand, `env -S`'s — is read by the normaliser without its quotes in either
+   line, so a terminal holding one asks whatever else allows it (`reason = script`). A cwd outside the write root asks even when a
    remembered rule allows the line (REQ-ACP-005). Its row is `acp:terminal/create`, ended `ok`
    once the command's line is written to the shell; a claim or write that fails is the request's
    error and closes the session. A terminal session is never taken for the thread's own PTY.
@@ -126,11 +128,13 @@ floor, which the policy line closes. All were fixed with tests that fail without
   `TestFullAutoDecidesACPPermissions_REQ_ORC_004`,
   `TestAnACPTerminalOutsideTheWriteRootAsks_REQ_ACP_005`,
   `TestAnUndecidablePermissionIsRecordedDenied_REQ_ACP_007`,
-  `TestATerminalIsDecidedOnTheWordsTheShellSees_REQ_ACP_005`.
+  `TestATerminalIsDecidedOnTheWordsTheShellSees_REQ_ACP_005`,
+  `TestATerminalThatRunsAScriptAsks_REQ_ACP_005`.
 - `internal/acp/domain`: `TestACPKindsMapToRisks_REQ_ACP_003`,
   `TestACallsInputNamesItsTargets_REQ_ACP_003`, `TestATerminalsCommandLineIsQuoted_REQ_ACP_005`,
   `TestATerminalsControlCharactersAreRefused_REQ_ACP_005`,
-  `TestATerminalsPolicyLineKeepsItsWords_REQ_ACP_005`.
+  `TestATerminalsPolicyLineKeepsItsWords_REQ_ACP_005`,
+  `TestATerminalThatRunsAScriptIsFlagged_REQ_ACP_005`.
 - `internal/sessions`: `TestATerminalRunsOnlyInAPOSIXShell_REQ_ACP_005`;
   `internal/sessions/domain`: `TestAnAgentCommandWithAControlCharacterIsRefused_REQ_ACP_005`.
 - `cmd/umbrald`, against the daemon's own tool registry: `TestACPFilesAreMediatedInTheDaemon_REQ_ACP_004`.

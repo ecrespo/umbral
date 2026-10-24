@@ -1282,7 +1282,8 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
     root even when a rule allows the line. A control character in the command, an argument or
     `env` is refused before anything is decided: the shell's line editor would act on it. The
     policy also decides the same words with whitespace, separators, quotes and backslashes inside
-    each made `_` — its command normaliser reads no quotes — and the strictest verdict stands. At most `[acp] max_terminals` live per thread, counted
+    each made `_` — its command normaliser reads no quotes — and the strictest verdict stands; a
+    terminal holding a script of its own (a shell's `-c`, `eval`, `env -S`) always asks. At most `[acp] max_terminals` live per thread, counted
     before anything is asked. Allowed, it is `sessions.StartTerminal`: a new session owned by the
     thread, with shell integration, no pane and bash (else zsh; never fish, whose quoting differs,
     and refused without either), whose one command is typed as the agent and recorded as a block with `origin = agent` and `via = acp`; it is never taken

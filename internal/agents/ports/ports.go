@@ -331,6 +331,8 @@ type ExternalOp struct {
 	Command string
 	// Policy is a terminal's line with one token per word the shell sees, decided with Command.
 	Policy string
+	// Script marks a terminal whose words hold shell syntax the policy cannot read; it asks.
+	Script bool
 	Cwd    string
 }
 

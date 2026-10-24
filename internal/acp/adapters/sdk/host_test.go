@@ -785,6 +785,14 @@ func TestAnACPTerminalServesItsOutputAndExit_REQ_ACP_005(t *testing.T) {
 	if len(terms.started) != 1 {
 		t.Errorf("%d terminals started, want none for the refused one", len(terms.started)-1)
 	}
+	// A shell's `-c` script is flagged for the turn, which asks for it whatever else allows it.
+	script := &sink{}
+	if _, err := promptWith(t, h, dir, "term sh -c true", script); err != nil {
+		t.Fatal(err)
+	}
+	if len(script.asked) != 1 || !script.asked[0].Script || s.asked[0].Script {
+		t.Errorf("a script terminal decided %+v and a plain one %+v; only the script is flagged", script.asked, s.asked)
+	}
 }
 
 // TestACPFileRequestsArePerformedOnTheDecidedTarget_REQ_ACP_004: a file read or write runs on
