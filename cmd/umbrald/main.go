@@ -519,11 +519,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		// worktree.* (T-F2-03): the engine, and the runtime's word on when a thread's may change.
 		Worktrees:       worktreeEngine,
 		WorktreeThreads: runtime,
-		// A client inside an agent's terminal is refused what lands, drops or approves the
-		// agent's own work (REQ-ORC-004).
-		AgentPeer: agentPeer(sessionService.AgentShellPIDs, proctree.Ancestors, unix.Getsid),
-		Bus:       eventBus,
-		Logger:    logger,
+		// A client inside an agent's terminal, or inside a hosted ACP agent, is refused what
+		// lands, drops or approves the agent's own work (REQ-ORC-004).
+		AgentPeer: agentPeer(func() []int {
+			return append(sessionService.AgentShellPIDs(), acpHost.AgentPIDs()...)
+		}, proctree.Ancestors, unix.Getsid),
+		Bus:    eventBus,
+		Logger: logger,
 		// The first live setting: `limits.set` rewrites it in this file and applies it to
 		// new connections without a restart (REQ-CLI-007, Tech Design §5.1).
 		MaxMessageBytes: settings.MaxMessageBytes,

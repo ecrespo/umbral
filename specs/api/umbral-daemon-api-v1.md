@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.51 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.52 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -133,7 +133,8 @@ before the daemon starts.
 The kind a client claims is not what an agent's command can be told from: anything a turn runs
 can open the socket. So the daemon also asks the kernel which process connected (`SO_PEERCRED`,
 `LOCAL_PEERPID`), and refuses a client running **inside an agent's terminal** — a thread's PTY
-shell is its process or one of its parents, or leads its POSIX session — the methods that would
+shell, or a hosted ACP agent's process (§5.19), is its process or one of its parents, or leads
+its POSIX session — the methods that would
 land, drop or approve the agent's own work, change what decides for it, or start a process
 outside its terminal, with `PERMISSION_DENIED`, whatever its kind (REQ-ORC-004, delta `2026-10-full-auto`):
 `worktree.merge`, `worktree.discard`, `worktree.close_group`, `approval.respond`, `thread.update`,
@@ -145,9 +146,15 @@ outside its terminal, with `PERMISSION_DENIED`, whatever its kind (REQ-ORC-004, 
 
 - This holds in every mode: an `umb skill install`, `umb mcp add` or `umb worktree merge` the
   user approved in an agent's turn now fails there, and the user runs it in their own pane.
+- A hosted agent counts from its launch, before it speaks ACP, and leads its own session, so a
+  process it starts and leaves behind is still its own. On Linux, when it exits, everything
+  left in its session is killed before it stops counting; on macOS it counts until its thread's
+  agent is closed (delta `2026-10-hosted-agent-peer`). Its
+  isolated `HOME` sits under the runtime directory, beside the socket and its token, so it can
+  find and dial the daemon: the refusal is what stops it.
 - The verdict taken when the connection starts holds for the connection, so a process that
   connects and leaves the socket to a child is still refused.
-- While any agent's terminal is open, a peer whose process cannot be read — no pid, or one that
+- While any agent's terminal is open or any hosted agent runs, a peer whose process cannot be read — no pid, or one that
   has exited — is refused them too. Only Linux and macOS report a peer's pid; elsewhere every
   client is refused them once the check is wired.
 - Not recognised: a process that leaves its session with `setsid` and then forks away from its
@@ -1625,3 +1632,4 @@ printf '%s\n' \
 | 1.49 | 2026-10-24 | Additive within `protocol_version = 1`. Delta `2026-10-acp-mediation` (T-F2-08): §4 `ToolCall` names the rows of a hosted agent's file and terminal requests (REQ-ACP-004, REQ-ACP-005) |
 | 1.50 | 2026-10-24 | Additive within `protocol_version = 1`. Delta `2026-10-acp-cancel-traces` (T-F2-09): §5.21 says how a hosted thread's turn is cancelled and when the answer comes (REQ-ACP-008) |
 | 1.51 | 2026-10-24 | No change to the protocol. T-HRD-03: `skill.*` was numbered §5.37 like `api.schema`; it moves to §5.42 after `worktree.*`, and §4 `Skill` and §6 `skill.changed` point there. No other section is renumbered |
+| 1.52 | 2026-10-24 | No change to the wire. Delta `2026-10-hosted-agent-peer` (T-HRD-05): §2 "An agent's terminal" counts a hosted ACP agent's process and its session, from its launch |

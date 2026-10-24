@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.67 |
+| **Version** | 1.68 |
 | **Date** | 2026-10-24 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -884,12 +884,13 @@ allows it as in `normal`.
 - **An agent's terminal cannot land its own work.** The destructive pattern `umb_worktree_change`
   is a textual barrier a line built by expansion escapes. So `internal/api` reads the connecting
   process from the kernel (`SO_PEERCRED`, `LOCAL_PEERPID`) and refuses a client inside an agent's
-  terminal — a thread's live PTY shell is the process or a parent of it, or leads its POSIX
-  session — every method marked `userOnly` (API §2 "An agent's terminal"): `worktree.merge`,
+  terminal — a thread's live PTY shell, or a hosted ACP agent's process, is the process or a
+  parent of it, or leads its POSIX session — every method marked `userOnly` (API §2 "An agent's terminal"): `worktree.merge`,
   `discard` and `close_group`, `approval.respond`, `thread.update`, the skill, MCP and rule
   changes, `session.input`, and every method that starts a process (`session.create`,
   `pane.split`, `tab.create`, `workspace.create`, `layout.apply`). `cmd/umbrald` composes the check
-  from `sessions.Service.AgentShellPIDs`, `proctree.Ancestors` and `getsid`; the verdict taken
+  from `sessions.Service.AgentShellPIDs`, the ACP host's `AgentPIDs` (delta
+  `2026-10-hosted-agent-peer`), `proctree.Ancestors` and `getsid`; the verdict taken
   as the connection starts holds for it, and a peer that cannot be read while an agent's
   terminal is open is refused. Only Linux and macOS report a peer's pid. A process that calls
   `setsid` and then forks away from its parents escapes it, and so does a command handed to a
@@ -1230,8 +1231,19 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
     and nothing else. An `env_refs` key the manifest reserves as the agent's own configuration
     (for OpenCode `OPENCODE_*`: `OPENCODE_CONFIG_CONTENT`, `OPENCODE_PERMISSION`, …) stops the
     daemon at start, since it would set a permission around the generated file;
-  - the process gets its own process group, which a kill ends whole;
-  - its stderr is discarded, as an MCP server's is: it holds the `env_refs`' credentials, and a
+  - the process leads its own session, and so its own process group, which a kill ends whole,
+    and has no controlling terminal. It counts for the agent's-terminal check of §5.3 from its
+    launch. On Linux, when it exits, every process left in its session — whatever its
+    process group, found in `/proc` — is killed and then it stops counting, all while it is
+    still an unreaped zombie (`waitid` with `WNOWAIT`), so nothing reaches a process that
+    reused its pid; each is signalled through a pidfd after its session is read again, and a
+    signal a close would send after that is skipped. A session not seen empty within 2 s keeps
+    the pid listed for good (fail closed). A pid is counted, not set, so an older agent's
+    release never unlists a newer one that reused it. macOS has no `WNOWAIT`:
+    there it counts until the thread's agent is closed, so what it left is refused until then,
+    and a child it left behind is not killed (delta `2026-10-hosted-agent-peer`);
+  - its stderr is `/dev/null`, as an MCP server's is discarded — a pipe would keep the exit
+    from being seen while a child of the agent still held it: it holds the `env_refs`' credentials, and a
     provider's error often prints the key it refused (Art. 7). No log line and no
     `agent_unavailable.message` carries it. An error the agent answers a request with is
     reported by its JSON-RPC code alone, for the same reason.
@@ -1845,3 +1857,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.65 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-acp-cancel-traces` (T-F2-09): §5.3f — a cancel kills the terminals' commands before `session/cancel`, a hosted turn's spans, the disclosure; §5.3e the panel's hosted-thread row and notice; §9.4 `umb thread create --agent` |
 | 1.66 | 2026-10-24 | E. Crespo (assisted draft) | T-HRD-03, references only: §9.4's `umb skill` points at API §5.42, where `skill.*` moved from the duplicated §5.37 |
 | 1.67 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-deb-package` (T-PKG-03): §9.3 the Debian package — layout, `Depends`, version scheme, maintainer scripts, reproducibility and its verification |
+| 1.68 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-hosted-agent-peer` (T-HRD-05): §5.3 the agent's-terminal check counts hosted ACP agents; §5.3f a hosted agent leads its own session, and its group is killed when it exits |

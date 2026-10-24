@@ -70,6 +70,13 @@ type Host struct {
 	mu     sync.Mutex
 	closed bool
 	agents map[string]*process // thread id → its running agent
+
+	// pids counts, per pid, the agent processes started and not yet ended with their session,
+	// whether or not their handshake finished: an agent can dial the daemon before it speaks
+	// ACP. A count, because a pid listed until close may be reused by a newer agent before then,
+	// and the older one's release must not unlist the newer.
+	pidMu sync.Mutex
+	pids  map[int]int
 }
 
 // New builds a host.
@@ -101,7 +108,7 @@ func New(cfg Config) (*Host, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
-	h := &Host{cfg: cfg, entries: map[string]domain.Entry{}, agents: map[string]*process{}}
+	h := &Host{cfg: cfg, entries: map[string]domain.Entry{}, agents: map[string]*process{}, pids: map[int]int{}}
 	for _, e := range cfg.Entries {
 		if err := e.Validate(); err != nil {
 			return nil, fmt.Errorf("acp: %w", err)
@@ -341,8 +348,9 @@ func (h *Host) launch(ctx context.Context, req Request) (*process, error) {
 	cmd := exec.Command(entry.Command, entry.Args...) //nolint:noctx,gosec // outlives the request; the user's own [[acp.agents]] entry
 	cmd.Dir = req.Dir
 	cmd.Env = domain.Environment(h.cfg.Environ(), iso, m, refs)
-	// Its own process group, so the shells and servers it starts end with it.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Its own session, and so its own process group: the shells and servers it starts end with
+	// it, and a process it leaves behind is still known by its session for REQ-ORC-004.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	p := newProcess(h, req, iso)
 	if err := p.start(cmd); err != nil {
 		_ = os.RemoveAll(iso.Root)
@@ -407,4 +415,30 @@ func (h *Host) Running(threadID string) bool {
 	defer h.mu.Unlock()
 	p := h.agents[threadID]
 	return p != nil && p.alive()
+}
+
+// AgentPIDs lists the hosted agents' processes. Each leads its own session, so a client is
+// inside a hosted agent when one of these is its process, a parent, or its session's leader:
+// the daemon refuses it what it refuses an agent's terminal (REQ-ORC-004, delta
+// `2026-10-hosted-agent-peer`).
+func (h *Host) AgentPIDs() []int {
+	h.pidMu.Lock()
+	defer h.pidMu.Unlock()
+	out := make([]int, 0, len(h.pids))
+	for pid := range h.pids {
+		out = append(out, pid)
+	}
+	return out
+}
+
+func (h *Host) trackPID(pid int, live bool) {
+	h.pidMu.Lock()
+	defer h.pidMu.Unlock()
+	if live {
+		h.pids[pid]++
+		return
+	}
+	if h.pids[pid]--; h.pids[pid] <= 0 {
+		delete(h.pids, pid)
+	}
 }
