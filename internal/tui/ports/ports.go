@@ -64,9 +64,13 @@ type Daemon interface {
 	// Blocks lists a session's blocks, newest first.
 	Blocks(ctx context.Context, sessionID string, limit int) ([]sessdomain.Block, error)
 
-	// CreateThread starts an agent thread working in cwd, in the default mode
-	// (`thread.create`).
-	CreateThread(ctx context.Context, cwd string) (threadID string, err error)
+	// CreateThread starts an agent thread working in cwd, in the default mode, belonging to
+	// workspaceID, or to none when it is "" (`thread.create`, REQ-ORC-003).
+	CreateThread(ctx context.Context, cwd, workspaceID string) (threadID string, err error)
+	// Threads lists the threads that are not ephemeral, of every workspace, with the
+	// workspace the daemon has focused (`session.snapshot`): the panel shows the focused
+	// workspace's (REQ-ORC-003).
+	Threads(ctx context.Context) (ThreadList, error)
 	// Send sends a message to a thread, with its attachments (`thread.send`). The adapter
 	// gives every call a fresh client_msg_id (REQ-AGT-015); the panel never retries a send,
 	// so there is no second call that would need the first one's.
@@ -114,6 +118,28 @@ type Approval struct {
 	Reason   string
 	Summary  string
 	Diff     string
+}
+
+// ThreadList is the daemon's threads and its focused workspace, "" when none is focused.
+// Seq is the snapshot's envelope `seq` (API §5.3): listings are asked for concurrently, and
+// one older than the last applied is stale.
+type ThreadList struct {
+	Seq         uint64
+	WorkspaceID string
+	Threads     []Thread
+}
+
+// Thread is a thread as the panel lists it (API §4's Thread): WorkspaceID and WorktreeID are
+// "" for none.
+type Thread struct {
+	ID          string
+	Title       string
+	WorkspaceID string
+	WorktreeID  string
+	// Attention is `attention_state`; State is the thread's `state`.
+	Attention string
+	State     string
+	Queued    bool
 }
 
 // McpServer is an MCP server as the panel shows it (API §4's McpServer): LastError is ""
@@ -169,6 +195,12 @@ const (
 	// from what it stored before it published (DD-007).
 	EventMcpServerState
 	EventSkillChanged
+	// EventAttentionChanged is a thread's attention state changing
+	// (`thread.attention_changed`), and EventWorkspaceFocused the daemon's focused workspace
+	// changing (`workspace.focused`, or `workspace.closed`, which can move it). The panel
+	// lists its threads again on either.
+	EventAttentionChanged
+	EventWorkspaceFocused
 )
 
 // Event is one thing that happened, flattened so the model does not decode JSON.

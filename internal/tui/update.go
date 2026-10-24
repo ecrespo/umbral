@@ -293,14 +293,16 @@ func (m *Model) applyEvent(msg daemonEventMsg) tea.Cmd {
 		m.status = "the daemon dropped a subscription; re-attaching"
 		return tea.Batch(m.subscribeCmd(ev.SessionID), m.waitForEvent())
 
-	case ports.EventThreadDelta, ports.EventToolCall, ports.EventApprovalRequested, ports.EventTurnFinished:
+	case ports.EventThreadDelta, ports.EventToolCall, ports.EventApprovalRequested, ports.EventTurnFinished,
+		ports.EventAttentionChanged, ports.EventWorkspaceFocused:
 		wasOpen := m.agent.open
-		m.applyAgentEvent(ev)
+		relist := m.applyAgentEvent(ev)
 		if m.agent.open && !wasOpen {
 			// An approval opened the panel: the panes just got narrower, and the extensions
 			// view is listed as at every opening.
-			return tea.Batch(m.resize(m.width, m.height), m.loadExtensionsCmd(), m.waitForEvent())
+			return tea.Batch(m.resize(m.width, m.height), m.loadExtensionsCmd(), relist, m.waitForEvent())
 		}
+		return tea.Batch(relist, m.waitForEvent())
 
 	case ports.EventMcpServerState:
 		return tea.Batch(m.loadServersCmd(), m.waitForEvent())

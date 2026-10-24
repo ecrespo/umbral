@@ -41,6 +41,11 @@ type fakeDaemon struct {
 	servers []ports.McpServer
 	skills  []ports.Skill
 	listed  int
+	// list is what the thread listing answers; workspaces are the workspace each
+	// thread.create was given, "" for none.
+	list       ports.ThreadList
+	workspaces []string
+	listings   int
 }
 
 func newFakeDaemon() *fakeDaemon {
@@ -411,6 +416,12 @@ func keyPress(t *testing.T, s string) tea.KeyPressMsg {
 	switch s {
 	case "enter":
 		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "up":
+		return tea.KeyPressMsg{Code: tea.KeyUp}
+	case "down":
+		return tea.KeyPressMsg{Code: tea.KeyDown}
+	case keyEsc:
+		return tea.KeyPressMsg{Code: tea.KeyEscape}
 	case "ctrl+b", "ctrl+p", "ctrl+g", "ctrl+t", "ctrl+n", "ctrl+s", "ctrl+o", "ctrl+c", "ctrl+q":
 		return tea.KeyPressMsg{Code: rune(s[len(s)-1]), Mod: tea.ModCtrl}
 	default:

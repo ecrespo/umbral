@@ -143,14 +143,15 @@ func (m *Model) resizeSessionCmd(sessionID string, size sessdomain.Size) tea.Cmd
 	}
 }
 
-// createThreadCmd starts the panel's thread in the focused pane's directory.
-func (m *Model) createThreadCmd(cwd string) tea.Cmd {
+// createThreadCmd starts the panel's thread in the focused pane's directory, in the focused
+// workspace (REQ-ORC-003).
+func (m *Model) createThreadCmd(cwd, workspaceID string) tea.Cmd {
 	daemon := m.daemon
 	return func() tea.Msg {
 		ctx, cancel := withTimeout()
 		defer cancel()
 
-		id, err := daemon.CreateThread(ctx, cwd)
+		id, err := daemon.CreateThread(ctx, cwd, workspaceID)
 		if err != nil {
 			return threadFailedMsg{err: err}
 		}
@@ -242,6 +243,18 @@ func (m *Model) loadApprovalsCmd() tea.Cmd {
 
 		list, err := daemon.Approvals(ctx)
 		return approvalsLoadedMsg{approvals: list, err: err}
+	}
+}
+
+// loadThreadsCmd lists the threads and the focused workspace (REQ-ORC-003).
+func (m *Model) loadThreadsCmd() tea.Cmd {
+	daemon := m.daemon
+	return func() tea.Msg {
+		ctx, cancel := withTimeout()
+		defer cancel()
+
+		list, err := daemon.Threads(ctx)
+		return threadsLoadedMsg{list: list, err: err}
 	}
 }
 
