@@ -933,7 +933,7 @@ allows it as in `normal`.
   program from stdin reads a here-document's or here-string's, or asks. ssh's `-o ProxyCommand`
   and its kin are scripts, the keyword split as OpenSSH splits it, and its `-F` asks; strace's
   `-o '|cmd'` or `--output` is a script; a cluster of short flags is read letter by letter; and
-  PowerShell's parameters are read after `-`, `--` or `/`, its encoded ones asking. Three things make a line ask with no pattern,
+  PowerShell's parameters are read after `-`, `--`, `/` or a Unicode dash, its encoded ones asking. Three things make a line ask with no pattern,
   named in the trace (delta `2026-10-shell-parser`): `dynamic_word`, a word built at run time — a
   variable, a command, process or arithmetic substitution, `$'…'`, a brace expansion, an unquoted
   glob — or arguments taken from stdin (`xargs`, `parallel`) or split from a string (`env -S`);
