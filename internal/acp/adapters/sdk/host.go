@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -170,7 +171,9 @@ func (h *Host) Check(agent, dir string) error {
 
 // findProjectConfig returns the first of the manifest's project configuration entries found in
 // dir or a directory above it, up to the repository's top — the nearest directory holding a
-// `.git` — or, outside a repository, up to the root. "" is none.
+// `.git` git itself would take for a repository — or, outside a repository, up to the root. ""
+// is none. A `.git` git would refuse does not stop the search: the agent, asking git for its
+// top, would read on past it.
 func findProjectConfig(m domain.Manifest, dir string) (string, error) {
 	dir = filepath.Clean(dir)
 	for {
@@ -184,7 +187,7 @@ func findProjectConfig(m domain.Manifest, dir string) (string, error) {
 				return "", fmt.Errorf("acp: look for %s: %w", p, err)
 			}
 		}
-		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+		if isGitEntry(filepath.Join(dir, ".git")) {
 			return "", nil
 		}
 		parent := filepath.Dir(dir)
@@ -193,6 +196,56 @@ func findProjectConfig(m domain.Manifest, dir string) (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// isGitEntry reports whether p is a `.git` git would take for a repository: a gitdir, a symlink
+// to one, or a file `gitdir: <dir>` naming one.
+func isGitEntry(p string) bool {
+	info, err := os.Stat(p)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		return isGitDir(p)
+	}
+	if !info.Mode().IsRegular() || info.Size() > 4096 {
+		return false
+	}
+	raw, err := os.ReadFile(p) //nolint:gosec // a .git file in the thread's own directory tree
+	if err != nil {
+		return false
+	}
+	target, ok := strings.CutPrefix(strings.TrimSpace(string(raw)), "gitdir: ")
+	if !ok || target == "" {
+		return false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(p), target)
+	}
+	return isGitDir(target)
+}
+
+// isGitDir reports whether dir is a gitdir as git checks one: `HEAD`, and `objects` and `refs` in
+// the directory its `commondir` names — a linked worktree's has no objects of its own — or in
+// dir itself.
+func isGitDir(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err != nil { //nolint:gosec // only whether it exists, as git checks it
+		return false
+	}
+	common := dir
+	if raw, err := os.ReadFile(filepath.Join(dir, "commondir")); err == nil { //nolint:gosec // a gitdir's own commondir
+		c := strings.TrimSpace(string(raw))
+		if !filepath.IsAbs(c) {
+			c = filepath.Join(dir, c)
+		}
+		common = c
+	}
+	for _, name := range []string{"objects", "refs"} {
+		if _, err := os.Stat(filepath.Join(common, name)); err != nil { //nolint:gosec // only whether it exists, as git checks it
+			return false
+		}
+	}
+	return true
 }
 
 // Open launches the thread's agent and opens its session, if it is not running already.
@@ -295,11 +348,11 @@ func (h *Host) launch(ctx context.Context, req Request) (*process, error) {
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("initialize: %w", err)
+			return replyError("initialize", err)
 		}
 		sess, err := p.conn.NewSession(ctx, acp.NewSessionRequest{Cwd: req.Dir, McpServers: []acp.McpServer{}})
 		if err != nil {
-			return fmt.Errorf("session/new: %w", err)
+			return replyError("session/new", err)
 		}
 		p.session = sess.SessionId
 		return nil

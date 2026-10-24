@@ -239,6 +239,7 @@ has shown what the shared pieces look like.
   - `TestASilentACPAgentEndsTheTurn_REQ_ACP_006`;
   - `TestAnAgentWaitingOnUmbralIsNotSilent_REQ_ACP_006`;
   - `TestAPendingApprovalPausesTheSilenceTimer_REQ_ACP_006`;
+  - `TestAnACPAgentsErrorTextIsNotRepeated_REQ_ACP_006`;
   - `TestAnAgentWithoutAManifestIsRefused_REQ_ACP_009`;
   - `TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009`;
   - `TestTheOpenCodeManifestAsksForEveryPermission_REQ_ACP_009`;
@@ -462,7 +463,7 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | REQ-ACP-003 | T-F2-08 | `TestACPPermissionEntersTheApprovalQueue_REQ_ACP_003`, `TestACPNeverSelectsAllowAlways_REQ_ACP_003`, `TestACPKindsMapToRisks_REQ_ACP_003` |
 | REQ-ACP-004 | T-F2-08 | `TestACPWriteOutsideTheWorktreeAsks_REQ_ACP_004`, `TestACPReadOutsideTheWorktreeAsks_REQ_ACP_004`, `TestACPReadInsideTheWorktreeIsReadOnly_REQ_ACP_004`, `TestACPWriteCoveredByAPermissionIsNotAskedTwice_REQ_ACP_004` |
 | REQ-ACP-005 | T-F2-01, T-F2-08 | `TestACPTerminalIsAnAuditedBlock_REQ_ACP_005`, `TestACPTerminalsAreCapped_REQ_ACP_005` |
-| REQ-ACP-006 | T-F2-07 | `TestAnACPAgentCrashEndsTheTurn_REQ_ACP_006`, `TestASilentACPAgentEndsTheTurn_REQ_ACP_006`, `TestAnAgentWaitingOnUmbralIsNotSilent_REQ_ACP_006`, `TestAPendingApprovalPausesTheSilenceTimer_REQ_ACP_006`, `TestAnInvalidACPMessageEndsTheTurn_REQ_ACP_006`, `TestAnACPAgentErrorEndsTheTurnAndKeepsTheThread_REQ_ACP_006` |
+| REQ-ACP-006 | T-F2-07 | `TestAnACPAgentCrashEndsTheTurn_REQ_ACP_006`, `TestASilentACPAgentEndsTheTurn_REQ_ACP_006`, `TestAnAgentWaitingOnUmbralIsNotSilent_REQ_ACP_006`, `TestAPendingApprovalPausesTheSilenceTimer_REQ_ACP_006`, `TestAnInvalidACPMessageEndsTheTurn_REQ_ACP_006`, `TestAnACPAgentErrorEndsTheTurnAndKeepsTheThread_REQ_ACP_006`, `TestAnACPAgentsErrorTextIsNotRepeated_REQ_ACP_006` |
 | REQ-ACP-007 | T-F2-01, T-F2-08, T-F2-09 | `TestAnACPTurnHasATrace_REQ_ACP_007`, `TestAnACPThreadIsMarkedUnobserved_REQ_ACP_007`, `TestACPToolCallsAreRecordedWithTheirDecision_REQ_ACP_007`, `TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007` |
 | REQ-ACP-008 | T-F2-09 | `TestACPCancelStopsWithin500ms_REQ_ACP_008`, `TestAnUnresponsiveACPAgentIsKilledAfter5s_REQ_ACP_008` |
 | REQ-ACP-009 | T-F2-07 | `TestAnAgentWithoutAManifestIsRefused_REQ_ACP_009`, `TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009`, `TestTheOpenCodeManifestAsksForEveryPermission_REQ_ACP_009`, `TestARepositoryAgentConfigIsRefused_REQ_ACP_009`, `TestTheUsersGlobalAgentConfigIsNotRead_REQ_ACP_009`, `TestABadACPEntryStopsTheDaemon_REQ_ACP_009` |

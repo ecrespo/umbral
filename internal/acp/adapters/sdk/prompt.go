@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -58,7 +59,13 @@ func (h *Host) Prompt(ctx context.Context, req Request, text string, sink ports.
 				return "", err
 			}
 			if r.err != nil {
-				return "", h.agentError(ctx, p, r.err.Error())
+				// A connection that ended with the process answers before its exit is seen; the
+				// exit is the better reason.
+				select {
+				case <-p.exited:
+				case <-time.After(exitGrace):
+				}
+				return "", h.agentError(ctx, p, replyError("session/prompt", r.err).Error())
 			}
 			if ctx.Err() != nil {
 				return string(acp.StopReasonCancelled), ctx.Err()
@@ -107,6 +114,17 @@ func (h *Host) Prompt(ctx context.Context, req Request, text string, sink ports.
 			}
 		}
 	}
+}
+
+// replyError is the agent's error answer to method without the agent's own text: its message
+// and data are the agent's to write, and could carry the credentials its env references hold,
+// so only the JSON-RPC code reaches a log or a client (Art. 7).
+func replyError(method string, err error) error {
+	var reqErr *acp.RequestError
+	if errors.As(err, &reqErr) {
+		return fmt.Errorf("%s: the agent answered error %d", method, reqErr.Code)
+	}
+	return fmt.Errorf("%s: %w", method, err)
 }
 
 // exitGrace is how long an exited agent's answer is waited for before its exit ends the turn.

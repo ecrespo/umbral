@@ -38,7 +38,11 @@ tool call's row is named, or how the Mediator behaves before T-F2-08.
    turn ends `agent_error`.
 4. **A repository configuration is looked for up to the repository's top.** OpenCode reads
    `opencode.json`, `opencode.jsonc` and `.opencode/` from the directory up to the git top, so
-   the check walks up to the nearest directory holding `.git`, or to `/` outside a repository.
+   the check walks up to the nearest directory holding a `.git` git would take for one — a
+   gitdir (`HEAD`, and `objects` and `refs` there or in the directory its `commondir` names, as
+   a linked worktree's), a symlink to one, or a `gitdir:` file naming one — or
+   to `/` outside a repository. A `.git` git would refuse does not stop it, since the agent,
+   asking git for its top, reads on past it.
 5. **The launch directory is where Umbral's turn would run:** the active worktree's directory
    matching `cwd` (the worktree's top when `cwd` is the repository's), or `cwd` itself, which is
    then the write root — not the repository around it — as REQ-ACP-001 says.
@@ -87,7 +91,9 @@ tool call's row is named, or how the Mediator behaves before T-F2-08.
     `max_turn_requests` → `max_steps`, `cancelled` → `cancelled`, anything else `agent_error`.
 17. **The agent's stderr is discarded.** It holds the `env_refs`' credentials, and a provider's
     error often prints the key it refused; like an MCP server's, it reaches no log and no
-    `agent_unavailable.message` (Art. 7).
+    `agent_unavailable.message` (Art. 7). For the same reason an error the agent answers a
+    request with — `initialize`, `session/new` or `session/prompt` — is logged and reported by
+    its JSON-RPC code alone, never its message or data.
 18. **A manifest reserves the agent's own configuration variables.** OpenCode reads
     `OPENCODE_CONFIG_CONTENT`, `OPENCODE_CONFIG_DIR`, `OPENCODE_PERMISSION` and more, any of which
     would set a permission around the generated file. An `env_refs` key with a manifest's prefix

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,10 +108,21 @@ func workDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	// A repository's top, so the search for a project configuration stops here.
-	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o700); err != nil {
+	gitDir(t, filepath.Join(dir, ".git"))
+	return dir
+}
+
+// gitDir makes a directory git takes for a repository's: HEAD, objects and refs.
+func gitDir(t *testing.T, dir string) {
+	t.Helper()
+	for _, d := range []string{"objects", "refs"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return dir
 }
 
 func prompt(t *testing.T, h *Host, dir, text string) (*sink, string, error) {
@@ -162,6 +174,43 @@ func TestAnACPAgentCrashEndsTheTurn_REQ_ACP_006(t *testing.T) {
 	if err != nil || stop != "end_turn" || s.Text0() != "echo: again" {
 		t.Fatalf("the next prompt: %q, stop %q, err %v; want the agent relaunched", s.Text0(), stop, err)
 	}
+}
+
+// TestAnACPAgentsErrorTextIsNotRepeated_REQ_ACP_006: an agent that answers its prompt with an
+// error ends the turn `agent_error`; the error's message and data are the agent's to write, so
+// only its code is in what is logged and sent to clients (Art. 7).
+func TestAnACPAgentsErrorTextIsNotRepeated_REQ_ACP_006(t *testing.T) {
+	t.Parallel()
+	logs := &lockedBuilder{b: &strings.Builder{}}
+	h := newHost(t, func(c *Config) { c.Logger = slog.New(slog.NewTextHandler(logs, nil)) })
+	_, _, err := prompt(t, h, workDir(t), "fail")
+	if !errors.Is(err, domain.ErrAgent) || !strings.Contains(err.Error(), "-32001") {
+		t.Fatalf("an error answer ended the turn with %v, want the agent's error with its code", err)
+	}
+	if strings.Contains(err.Error(), acptest.StderrSecret) {
+		t.Errorf("the turn's error repeats the agent's text: %v", err)
+	}
+	if strings.Contains(logs.String(), acptest.StderrSecret) {
+		t.Errorf("the log repeats the agent's text: %s", logs.String())
+	}
+}
+
+// lockedBuilder is a strings.Builder safe for a logger's concurrent writes.
+type lockedBuilder struct {
+	mu sync.Mutex
+	b  *strings.Builder
+}
+
+func (l *lockedBuilder) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuilder) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 // TestAnInvalidACPMessageEndsTheTurn_REQ_ACP_006: a line that is not JSON-RPC ends the turn at
@@ -385,6 +434,68 @@ func TestARepositoryAgentConfigIsRefused_REQ_ACP_009(t *testing.T) {
 		if err := h.Check("fake", sub); !errors.As(err, &refusal) || refusal.Reason != domain.ReasonProjectConfig {
 			t.Errorf("%s above the directory: %v, want a project_config refusal", name, err)
 		}
+	}
+
+	// A `.git` git would refuse is not a repository's top: the search goes on past it, as the
+	// agent's own would; a valid gitfile stops it.
+	top := workDir(t)
+	if err := os.WriteFile(filepath.Join(top, "opencode.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{"empty": "", "bogus": "gitdir: /nonexistent\n"} {
+		sub := filepath.Join(top, name)
+		if err := os.Mkdir(sub, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sub, ".git"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var refusal *domain.Refusal
+		if err := h.Check("fake", sub); !errors.As(err, &refusal) || refusal.Reason != domain.ReasonProjectConfig {
+			t.Errorf("an %s .git between the directory and opencode.json: %v, want a project_config refusal", name, err)
+		}
+	}
+	linked := filepath.Join(top, "linked")
+	gitDir(t, filepath.Join(top, "real-git"))
+	if err := os.Mkdir(linked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: ../real-git\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Check("fake", linked); err != nil {
+		t.Errorf("a gitfile naming a repository's gitdir is its top: %v, want no refusal", err)
+	}
+	// What `git worktree add` writes: a gitdir with HEAD, refs and a commondir, and no objects of
+	// its own; and a `.git` that is a symlink to a gitdir, which git follows.
+	wt := filepath.Join(top, "wt")
+	wtGit := filepath.Join(top, "real-git", "worktrees", "wt")
+	if err := os.MkdirAll(filepath.Join(wtGit, "refs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{"HEAD": "ref: refs/heads/wt\n", "commondir": "../..\n"} {
+		if err := os.WriteFile(filepath.Join(wtGit, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(wt, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+wtGit+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Check("fake", wt); err != nil {
+		t.Errorf("a linked worktree's gitfile is its top: %v, want no refusal", err)
+	}
+	symlinked := filepath.Join(top, "symlinked")
+	if err := os.Mkdir(symlinked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(top, "real-git"), filepath.Join(symlinked, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Check("fake", symlinked); err != nil {
+		t.Errorf("a .git symlinked to a gitdir is its top: %v, want no refusal", err)
 	}
 
 	dir := workDir(t)

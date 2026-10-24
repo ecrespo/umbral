@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -140,7 +141,8 @@ func (a *agent) say(ctx context.Context, sid acp.SessionId, u acp.SessionUpdate)
 	_ = a.conn.SessionUpdate(ctx, acp.SessionNotification{SessionId: sid, Update: u})
 }
 
-// StderrSecret is what `crash` writes to stderr, which must reach no log and no client.
+// StderrSecret is what `crash` writes to stderr and `fail` puts in its error, which must reach
+// no log and no client.
 const StderrSecret = "acptest-stderr-credential-marker" //nolint:gosec // a marker, not a credential
 
 // Prompt acts out the prompt's first word:
@@ -148,6 +150,7 @@ const StderrSecret = "acptest-stderr-credential-marker" //nolint:gosec // a mark
 //	report          answers a Report as JSON
 //	stream          a thought, two text chunks and an `execute` tool call that completes
 //	crash           a text chunk, StderrSecret on stderr, then the process exits 3
+//	fail            a JSON-RPC error whose message and data hold StderrSecret
 //	silent          nothing, until cancelled
 //	garbage         a line that is not JSON-RPC, then nothing
 //	ask             a permission request; answers allowed, rejected or cancelled
@@ -197,6 +200,12 @@ func (a *agent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResp
 		fmt.Fprintln(os.Stderr, "401 Unauthorized: invalid api key "+StderrSecret)
 		time.Sleep(50 * time.Millisecond)
 		os.Exit(3)
+	case "fail":
+		// What a provider's error tends to say, as the agent's own JSON-RPC error.
+		return acp.PromptResponse{}, &acp.RequestError{
+			Code: -32001, Message: "upstream 401: invalid api key " + StderrSecret,
+			Data: map[string]any{"key": StderrSecret},
+		}
 	case "silent":
 		<-ctx.Done()
 	case "garbage":
@@ -269,7 +278,15 @@ func (a *agent) report() string {
 		b, _ := os.ReadFile(path) // #nosec G304 G703 -- a test agent reading the file its manifest named
 		r.Config = string(b)
 	}
-	if dir, err := os.UserConfigDir(); err == nil {
+	// Where OpenCode looks on every platform: XDG_CONFIG_HOME, else ~/.config. os.UserConfigDir
+	// is ~/Library/Application Support on macOS, which OpenCode never reads.
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			dir = filepath.Join(home, ".config")
+		}
+	}
+	if dir != "" {
 		entries, _ := os.ReadDir(dir)
 		for _, e := range entries {
 			r.GlobalConfig = append(r.GlobalConfig, e.Name())

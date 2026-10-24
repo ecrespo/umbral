@@ -1231,17 +1231,20 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   - the process gets its own process group, which a kill ends whole;
   - its stderr is discarded, as an MCP server's is: it holds the `env_refs`' credentials, and a
     provider's error often prints the key it refused (Art. 7). No log line and no
-    `agent_unavailable.message` carries it.
+    `agent_unavailable.message` carries it. An error the agent answers a request with is
+    reported by its JSON-RPC code alone, for the same reason.
 - **Lifetime.** The process runs until it fails, its thread's launch directory changes (a
   worktree made or left — the next send relaunches in the new one) or the daemon stops; F2a
   does not stop an idle agent.
 - **Refusals.** `thread.create` checks the entry, the manifest, the `config` keys and the
-  repository configuration in `cwd` and above it, up to the nearest `.git`, before writing
-  anything. Every launch checks them again in the launch directory: the worktree comes from the
-  same repository, and the agent itself could have written `opencode.json` since the last one.
-  Found in a worktree `thread.create` has just made, the thread and its worktree are kept and the
-  answer carries `agent_unavailable.reason = project_config`; found at a later launch, the turn
-  ends `agent_error` and the reason is logged (PRD F2 0.6, REQ-ACP-009).
+  repository configuration in `cwd` and above it, up to the nearest `.git` git would take for a
+  repository (a gitdir — `HEAD`, and `objects` and `refs` there or under its `commondir`, as a
+  linked worktree's — a symlink to one, or a `gitdir:` file naming one),
+  before writing anything. Every launch checks them again in the launch directory: the worktree
+  comes from the same repository, and the agent itself could have written `opencode.json` since
+  the last one. Found in a worktree `thread.create` has just made, the thread and its worktree are
+  kept and the answer carries `agent_unavailable.reason = project_config`; found at a later
+  launch, the turn ends `agent_error` and the reason is logged (PRD F2 0.6, REQ-ACP-009).
 - **Handshake.** `initialize` advertises `fs.readTextFile`, `fs.writeTextFile` and `terminal`, then
   `session/new` opens a session in the launch directory with no MCP server. A relaunch opens a new
   session; `session/load` is not used in F2a. Its deadline is `[acp] silence_timeout`, so a
