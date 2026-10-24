@@ -57,11 +57,20 @@ func endSession(sid int) bool {
 	}
 }
 
-// killInSession sends SIGKILL to pid only if, once a pidfd holds it, it is still in sid.
+// killInSession sends SIGKILL to pid only if, once a pidfd holds it, it is still in sid. Where
+// no pidfd can be had (an old kernel, a full descriptor table) the session is read again and
+// the pid signalled directly: the agent is an unreaped zombie, so sid is not reused, and a
+// process still in it is the agent's. Either way a session not emptied keeps the pid listed.
 func killInSession(pid, sid int) {
 	fd, err := unix.PidfdOpen(pid, 0)
+	if err == unix.ESRCH {
+		return
+	}
 	if err != nil {
-		return // gone already, or no pidfd: not signalled blind
+		if s, live, ok := procSession(pid); ok && live && s == sid {
+			_ = unix.Kill(pid, unix.SIGKILL)
+		}
+		return
 	}
 	defer func() { _ = unix.Close(fd) }()
 	if s, live, ok := procSession(pid); ok && live && s == sid {
