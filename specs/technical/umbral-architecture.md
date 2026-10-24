@@ -931,7 +931,9 @@ allows it as in `normal`.
   program of an interpreter (`python -c`, `perl -e`, `node -e`, awk) is not shell; its words are
   read with the separator split the normaliser used before the parser, and one reading its
   program from stdin reads a here-document's or here-string's, or asks. ssh's `-o ProxyCommand`
-  and its kin are scripts, and its `-F` asks; strace's `-o '|cmd'` is a script. Three things make a line ask with no pattern,
+  and its kin are scripts, the keyword split as OpenSSH splits it, and its `-F` asks; strace's
+  `-o '|cmd'` or `--output` is a script; a cluster of short flags is read letter by letter; and
+  PowerShell's parameters are read after `-`, `--` or `/`, its encoded ones asking. Three things make a line ask with no pattern,
   named in the trace (delta `2026-10-shell-parser`): `dynamic_word`, a word built at run time — a
   variable, a command, process or arithmetic substitution, `$'…'`, a brace expansion, an unquoted
   glob — or arguments taken from stdin (`xargs`, `parallel`) or split from a string (`env -S`);

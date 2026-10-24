@@ -438,6 +438,24 @@ var destructiveEvasions = []string{
 	`python3 - <<< 'import os; os.system("umb skill install x")'`,
 	`perl < /dev/stdin`,
 	`pwsh -EncodedCommand cgBtACAALQByAGYAIAAvAA==`,
+	// The third review of PR #53: ssh_config's own splitting, flag clusters, long spellings,
+	// unknown interpreter flags, PowerShell's parameter forms.
+	`ssh -o 'ProxyCommand = rm -rf /' host uptime`,
+	"ssh -o 'ProxyCommand\trm -rf /' host uptime",
+	`ssh -vo ProxyCommand='rm -rf /' host uptime`,
+	`ssh -voProxyCommand='rm -rf /' host uptime`,
+	`strace -fo '|rm -rf /' true`,
+	`strace --output='|rm -rf /' true`,
+	`echo 'import os; os.system("rm -rf /")' | python3 -q -`,
+	`echo 'system("rm -rf /")' | perl -w`,
+	`echo 'rm -rf /' | pwsh -Command -`,
+	`echo 'rm -rf /' | pwsh -File -`,
+	`pwsh --EncodedCommand cgBtACAALQByAGYAIAAvAA==`,
+	`pwsh /enc cgBtACAALQByAGYAIAAvAA==`,
+	`pwsh -EncodedArguments cgBtACAALQByAGYAIAAvAA==`,
+	`ssh host -o ProxyCommand='rm -rf /' uptime`,
+	`ssh -o '1ProxyCommand=rm -rf /' host uptime`,
+	`ltrace --output '|rm -rf /' true`,
 	`powershell -enc cgBtACAALQByAGYAIAAvAA==`,
 	"node <<'EOF'\nrequire('child_process').execSync('rm -rf /')\nEOF",
 	// A line the parser cannot read is not read as harmless.
@@ -482,6 +500,10 @@ func TestDestructiveEvasionsAsk_REQ_SEC_005(t *testing.T) {
 		`ssh -o ConnectTimeout=5 host uptime`,
 		`python3 ./tool.py`,
 		`python3 -m pytest`,
+		`ssh -vo ConnectTimeout=5 host uptime`,
+		`strace -fo trace.log make`,
+		`pwsh -File ./build.ps1`,
+		`pwsh -ExecutionPolicy Bypass -File ./build.ps1`,
 	}
 	for _, cmd := range harmless {
 		d := Decide(exec(cmd), ModeNormal, allowEverything, false)

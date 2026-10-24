@@ -123,14 +123,20 @@ Both paths into the normaliser were affected: the line `run_command` is asked to
      `{ …; } > /dev/sda`, a subshell, a loop, `exec > /dev/sda`, a bare `> /dev/sda`, and
      `>& file`.
    - ssh's `-o ProxyCommand`, `LocalCommand`, `KnownHostsCommand` and `RemoteCommand`, attached
-     (`-oKey=value`) or not, are scripts. `-o Match` or `Include`, and `-F` with a config file
-     other than `/dev/null`, are dynamic words, since a config can hold a ProxyCommand.
-   - strace's or ltrace's `-o '|cmd'` or `-o '!cmd'` pipes its output to a command, read as a
-     script.
+     (`-oKey=value`) or not, are scripts, before or after the host. The keyword ends at the first
+     whitespace or `=`, as OpenSSH splits it; a keyword that is not alphabetic, `-o Match` or
+     `Include`, and `-F` with a config file other than `/dev/null`, are dynamic words, since a
+     config can hold a ProxyCommand.
+   - strace's or ltrace's `-o '|cmd'`, `-o '!cmd'` or `--output=…` pipes its output to a
+     command, read as a script.
+   - A cluster of short flags (`-vo`, `-fo`) is read letter by letter: the first letter that takes
+     a value takes the rest of the word or the next one.
    - An interpreter given no inline program, no module and no script file, or `-` or a stdin
      path, reads its program from stdin. That program comes from a here-document or here-string,
      read with the separator split, or else asks as `stdin_script`.
-   - PowerShell's `-EncodedCommand` is a dynamic word.
+   - PowerShell's parameters are read after `-`, `--` or `/`, in any abbreviation.
+     `-EncodedCommand` and `-EncodedArguments` are dynamic words; `-Command -` and `-File -` read
+     the program from stdin.
    - `trap`'s first operand, and the `-c`/`--command` value of `su`, `runuser`, `script` and
      `flock`, are scripts. Without one, `su`, `runuser` and `script` read stdin, and `flock` runs
      the command after its lock file.
@@ -144,7 +150,8 @@ Both paths into the normaliser were affected: the line `run_command` is asked to
 
    An automated security review of the first draft found the option, wrapper-table and
    interpreter gaps, and a second review of the pushed branch the ssh, strace and interpreter-stdin
-   ones. Spec-guardian found the remaining items above: the redirections the first
+   ones, and a third the ssh keyword splitting, flag clusters, `--output` and PowerShell's
+   parameter forms. Spec-guardian found the remaining items above: the redirections the first
    draft lost (five of which `develop` caught), input redirections, ssh, `sudo -s`, history,
    zsh, prompt variables, arithmetic and the launchers. Each case is in the evasion table, red
    against the draft before it.
@@ -194,7 +201,7 @@ Both paths into the normaliser were affected: the line `run_command` is asked to
 ## Verification
 
 - `TestDestructiveEvasionsAsk_REQ_SEC_005`:
-  - 107 evasions ask as destructive and never `always`, in `normal`, `auto-edit` and `full-auto`;
+  - 123 evasions ask as destructive and never `always`, in `normal`, `auto-edit` and `full-auto`;
   - 19 lines that hold patterns or separators only as quoted data stay allowed;
   - the trace names `rm_recursive`, `dynamic_word`, `stdin_script` or `unparseable`.
 - `TestARunCommandEvasionAsks_REQ_SEC_005`: six of the evasions, asked of the runtime as
