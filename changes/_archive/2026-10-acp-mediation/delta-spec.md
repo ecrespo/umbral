@@ -77,12 +77,18 @@ runs, or how a terminal ends. Nothing said what happens to a request that arrive
    command `y`, and `rm 'x;y' -rf /` as two harmless ones, while the shell runs `rm -rf /`. The
    approval shows the line as typed. A word that is shell syntax of its own — a shell's `-c`
    script, `eval`'s operand, `env -S`'s — is read by the normaliser without its quotes in either
-   line, so a terminal holding one asks whatever else allows it (`reason = script`). The check
-   fails closed: any word naming a shell (every `…sh` with or without a version — `ssh` too, whose
-   remote command is a script — busybox, fish, PowerShell) followed by a flag holding `c` or
-   `--command`, `eval`, or `env` with any option but `-i`, `-0`, `-u`, `--ignore-environment`,
-   `--null` and `--unset=`. An interpreter's own code (`python -c`, `perl -e`) is not shell
-   syntax the normaliser reads: what it does is outside the destructive list, as any program's is. A cwd outside the write root asks even when a
+   line, so a terminal that may hold one asks whatever else allows it (`reason = script`). The
+   check reads no flag grammar and skips no word, so it fails closed: any word naming a program
+   that runs a script it is given — a POSIX or C shell by name (`sh`, `bash`, `zsh`, `dash`, `ash`,
+   `ksh`, `mksh`, `yash`, `posh`, `rbash`, `tcsh`, `csh`, with or without a version), fish,
+   xonsh, elvish, nu, busybox, PowerShell, `cmd`, `ssh` (whose remote command is one), `eval`, or
+   a runner whose operand is a shell line (`watch`, `su`, `script`, `flock`) — in any case,
+   `.exe` or not, whatever its flags, or
+   `env` followed by any option but `-i`, `-0`, `-u`, `--ignore-environment`, `--null` and
+   `--unset=`, compared whole. An interpreter's own code (`python -c`, `perl -e`) is not shell
+   syntax the normaliser reads: what it does is outside the destructive list, as any program's is.
+   The list is a floor like the destructive list it guards, not a sandbox, and it errs towards
+   asking; a real shell tokenizer for every command line is T-HRD-02's. A cwd outside the write root asks even when a
    remembered rule allows the line (REQ-ACP-005). Its row is `acp:terminal/create`, ended `ok`
    once the command's line is written to the shell; a claim or write that fails is the request's
    error and closes the session. A terminal session is never taken for the thread's own PTY.
