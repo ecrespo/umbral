@@ -426,6 +426,20 @@ var destructiveEvasions = []string{
 	`ash -c 'rm -rf /'`,
 	`busybox ash -c 'rm -rf /'`,
 	`mksh -c 'umb skill install x'`,
+	// ssh options that run a local command, a config file that may, wrappers' piped output, and
+	// an interpreter reading its program from stdin (security review of PR #53).
+	`ssh -o ProxyCommand='rm -rf /' host uptime`,
+	`ssh -oLocalCommand='umb skill install x' -o PermitLocalCommand=yes host uptime`,
+	`ssh -o 'KnownHostsCommand rm -rf /' host uptime`,
+	`ssh -F ./evil_config host uptime`,
+	`strace -o '|rm -rf /' true`,
+	`ltrace -o '!umb skill install x' true`,
+	`echo 'import os; os.system("rm -rf /")' | python3`,
+	`python3 - <<< 'import os; os.system("umb skill install x")'`,
+	`perl < /dev/stdin`,
+	`pwsh -EncodedCommand cgBtACAALQByAGYAIAAvAA==`,
+	`powershell -enc cgBtACAALQByAGYAIAAvAA==`,
+	"node <<'EOF'\nrequire('child_process').execSync('rm -rf /')\nEOF",
 	// A line the parser cannot read is not read as harmless.
 	`rm -rf / )(`,
 }
@@ -465,6 +479,9 @@ func TestDestructiveEvasionsAsk_REQ_SEC_005(t *testing.T) {
 		`tmux ls`,
 		`crontab -l`,
 		`taskset -p 1234`,
+		`ssh -o ConnectTimeout=5 host uptime`,
+		`python3 ./tool.py`,
+		`python3 -m pytest`,
 	}
 	for _, cmd := range harmless {
 		d := Decide(exec(cmd), ModeNormal, allowEverything, false)

@@ -122,6 +122,15 @@ Both paths into the normaliser were affected: the line `run_command` is asked to
    - Output redirections count on every statement, not only on a simple command:
      `{ …; } > /dev/sda`, a subshell, a loop, `exec > /dev/sda`, a bare `> /dev/sda`, and
      `>& file`.
+   - ssh's `-o ProxyCommand`, `LocalCommand`, `KnownHostsCommand` and `RemoteCommand`, attached
+     (`-oKey=value`) or not, are scripts. `-o Match` or `Include`, and `-F` with a config file
+     other than `/dev/null`, are dynamic words, since a config can hold a ProxyCommand.
+   - strace's or ltrace's `-o '|cmd'` or `-o '!cmd'` pipes its output to a command, read as a
+     script.
+   - An interpreter given no inline program, no module and no script file, or `-` or a stdin
+     path, reads its program from stdin. That program comes from a here-document or here-string,
+     read with the separator split, or else asks as `stdin_script`.
+   - PowerShell's `-EncodedCommand` is a dynamic word.
    - `trap`'s first operand, and the `-c`/`--command` value of `su`, `runuser`, `script` and
      `flock`, are scripts. Without one, `su`, `runuser` and `script` read stdin, and `flock` runs
      the command after its lock file.
@@ -134,7 +143,8 @@ Both paths into the normaliser were affected: the line `run_command` is asked to
      caught, such as `os.system('rm -rf /')`.
 
    An automated security review of the first draft found the option, wrapper-table and
-   interpreter gaps. Spec-guardian found the remaining items above: the redirections the first
+   interpreter gaps, and a second review of the pushed branch the ssh, strace and interpreter-stdin
+   ones. Spec-guardian found the remaining items above: the redirections the first
    draft lost (five of which `develop` caught), input redirections, ssh, `sudo -s`, history,
    zsh, prompt variables, arithmetic and the launchers. Each case is in the evasion table, red
    against the draft before it.
@@ -184,8 +194,8 @@ Both paths into the normaliser were affected: the line `run_command` is asked to
 ## Verification
 
 - `TestDestructiveEvasionsAsk_REQ_SEC_005`:
-  - 95 evasions ask as destructive and never `always`, in `normal`, `auto-edit` and `full-auto`;
-  - 16 lines that hold patterns or separators only as quoted data stay allowed;
+  - 107 evasions ask as destructive and never `always`, in `normal`, `auto-edit` and `full-auto`;
+  - 19 lines that hold patterns or separators only as quoted data stay allowed;
   - the trace names `rm_recursive`, `dynamic_word`, `stdin_script` or `unparseable`.
 - `TestARunCommandEvasionAsks_REQ_SEC_005`: six of the evasions, asked of the runtime as
   commands, each ask as destructive.
