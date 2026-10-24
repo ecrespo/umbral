@@ -84,7 +84,9 @@ requirement is broken. Only the scenario's description is wrong.
    - §9's stricter rule, only each task's files, which the test asserts and only run 1 met;
    - k of n runs.
 
-   Which one closes F2a is the Tech Lead's call.
+   Which one closes F2a is the Tech Lead's call. *Answered by delta `2026-10-f2a-close`
+   (2026-10-24): the daemon's properties in every run, and at least one run completing every task
+   within its files.*
 
 ## Tests
 

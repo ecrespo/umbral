@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
-| **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`; nothing below is implemented yet |
-| **Version** | 0.7 |
+| **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`. Slice F2a implemented and closed on 2026-10-24 (delta `2026-10-f2a-close`); F2b … F2f not started |
+| **Version** | 0.8 |
 | **Date** | 2026-10-22 |
 | **Reviewers** | spec-guardian (Analyze and two verify passes); Tech Lead, ratified 2026-10-22 |
 | **Source** | `docs/ARCHITECTURE.md` §5.4–5.8 and §10 (F2 ADE row); `specs/prd/umbral-mvp.md` §5.2–5.3; Plan 1.14 §4 |
@@ -253,7 +253,7 @@ The F1 budgets (REQ-TERM-001, REQ-TERM-006, REQ-BLK-006, idle memory) keep apply
 
 | Slice | Content | Closes when |
 |---|---|---|
-| **F2a Orchestration** | WT, ORC, ACP, XAG, RTR | **US-F2-001 passes** — the phase's exit criterion |
+| **F2a Orchestration** | WT, ORC, ACP, XAG, RTR | **US-F2-001 passes** — the phase's exit criterion: the daemon's properties hold in every run measured and at least one run completes every task within its files (delta `2026-10-f2a-close`). Closed 2026-10-24 |
 | F2b Agent in the terminal | FTU, LLM-009, AAI | US-F2-002 ≥ 70 %; Active AI offline only |
 | F2c Desktop | DSK, PKG-004/005/007 | the desktop QA walk (`docs/qa/f2-desktop.md`) with no failing step |
 | F2d Durability and remote | HND, RMT | an upgrade with live panes and a remote host survive a dropped link, measured |
@@ -345,3 +345,4 @@ Still open, with the draft's default:
 | 0.5 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-worktree-methods` (T-F2-03): REQ-WT-001's worktrees sit beside the daemon's database, which is `$XDG_DATA_HOME/umbral` by default, so a daemon given `--db` keeps them with its data |
 | 0.6 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-acp-client` (T-F2-07): REQ-ACP-009's `project_config` refusal is a `VALIDATION_ERROR` when found before anything is written, `agent_unavailable` when found only in the new worktree and `agent_error` at a later launch; env references may not name the agent's own configuration variables (`OPENCODE_*`), and the agent's stderr is discarded |
 | 0.7 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-usf2-live` (T-F2-12): §9's US-F2-001 no longer says the scenario runs offline — the hosted agent's model calls stay local, but at start OpenCode fetches its provider package and a model catalogue, its own unobserved traffic; Q-F2-01 says the same |
+| 0.8 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-f2a-close`: §8 says what "US-F2-001 passes" means — the daemon's properties in every run and one run completing every task within its files — and F2a is closed; the status line no longer says nothing is implemented |
