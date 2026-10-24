@@ -200,7 +200,7 @@ has shown what the shared pieces look like.
 - **Depends on:** T-F2-03, T-F2-04
 - **Done:** `TestAgentPanelListsEveryThread_REQ_ORC_003` (harness) is green.
 
-### [ ] T-F2-07 · ACP client: manifest, launch, session, prompt
+### [x] 2026-10-23 T-F2-07 · ACP client: manifest, launch, session, prompt
 - **What:**
   - the `internal/acp` module on `github.com/coder/acp-go-sdk`, with `.go-arch-lint.yml` rules;
   - **config:** `[[acp.agents]]` and `[acp]` in `config.toml`;
@@ -215,7 +215,8 @@ has shown what the shared pieces look like.
     onto `thread.delta` and the persisted messages;
   - **errors:** `agent_error` on exit, invalid ACP, or `silence_timeout` with no pending approval
     and no outstanding agent request;
-  - `stop_reason = agent_error` is added to API §6 and §7;
+  - `stop_reason = agent_error` is added to API §6 (§7's "any stop_reason but cancelled" already
+    covers it);
   - DD-012 is revised: a hosted ACP thread is the level-1 authority of the pane that owns it.
 - **REQ:** REQ-ACP-001, REQ-ACP-002, REQ-ACP-006, REQ-ACP-009
 - **Files:**
@@ -225,8 +226,9 @@ has shown what the shared pieces look like.
   - `cmd/umbrald/…`
   - `go.mod`
   - `.go-arch-lint.yml`
-  - `specs/api/umbral-daemon-api-v1.md` (§5.19, §6, §7)
-  - `specs/technical/umbral-architecture.md` (DD-012, §5.1, §5.2)
+  - `specs/api/umbral-daemon-api-v1.md` (§3, §4, §5.19, §5.20, §6; §7 needed no change)
+  - `specs/technical/umbral-architecture.md` (DD-012, §3.2, §5.1, §5.2, §5.3f)
+  - `specs/prd/umbral-f2.md` (REQ-ACP-009, 0.6)
 - **Depends on:** T-F2-03
 - **Done:** these tests are green with a fake ACP agent in Go, and `task schema` is green:
   - `TestAnACPAgentIsLaunchedInItsWorktree_REQ_ACP_001`;
@@ -237,6 +239,7 @@ has shown what the shared pieces look like.
   - `TestASilentACPAgentEndsTheTurn_REQ_ACP_006`;
   - `TestAnAgentWaitingOnUmbralIsNotSilent_REQ_ACP_006`;
   - `TestAPendingApprovalPausesTheSilenceTimer_REQ_ACP_006`;
+  - `TestAnACPAgentsErrorTextIsNotRepeated_REQ_ACP_006`;
   - `TestAnAgentWithoutAManifestIsRefused_REQ_ACP_009`;
   - `TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009`;
   - `TestTheOpenCodeManifestAsksForEveryPermission_REQ_ACP_009`;
@@ -455,15 +458,15 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | REQ-ORC-003 | T-F2-01, T-F2-03, T-F2-06 | `TestAgentPanelListsEveryThread_REQ_ORC_003`, `TestThePanelsThreadJoinsTheFocusedWorkspace_REQ_ORC_003`, `TestThePanelListsAgainWhenAThreadChanges_REQ_ORC_003`, `TestATurnStartedElsewhereIsSeen_REQ_ORC_003`, `TestTheThreadListAgainstARealDaemon_REQ_ORC_003`, `TestUnknownWorkspaceIsRefused_REQ_ORC_003`, `TestAThreadKeepsItsWorkspaceAndWorktree_REQ_ORC_003` |
 | REQ-ORC-004 | T-F2-01, T-F2-05, T-F2-08 | `TestMigration0007KeepsF1Rows_REQ_ORC_004`, `TestFullAutoOnlyInsideAWorktree_REQ_ORC_004`, `TestFullAutoStillAsksForNetworkAndDestructive_REQ_ORC_004`, `TestFullAutoStillAsksWhenTainted_REQ_ORC_004`, `TestALeftWorktreeClearsFullAuto_REQ_ORC_004`, `TestFullAutoAllowsWritesAndCommandsInsideTheWriteRoot_REQ_ORC_004`, `TestFullAutoFollowsTheWorktreeRow_REQ_ORC_004`, `TestAThreadInFullAutoSaysSo_REQ_ORC_004`, `TestExplainShowsFullAuto_REQ_ORC_004`, `TestAnAgentsTerminalCannotLandItsOwnWork_REQ_ORC_004`, `TestAnUnreadablePeerIsTakenForAnAgents_REQ_ORC_004`, `TestAgentShellsAreKnown_REQ_ORC_004`, `TestAClientInsideAnAgentsTerminalIsKnown_REQ_ORC_004`, `TestFullAutoDecidesACPPermissions_REQ_ORC_004` |
 | REQ-ORC-005 | T-F2-04 | `TestLocalCallsQueuePerProvider_REQ_ORC_005`, `TestQueueTimeIsNotFirstTokenTime_REQ_ORC_005`, `TestACallCancelledInTheQueueIsNotSent_REQ_ORC_005`, `TestAReloadKeepsTheLocalDefault_REQ_ORC_005`, `TestOnlyAWaitingCallSaysItIsQueued_REQ_ORC_005`, `TestATimedOutCallHoldsItsPlaceUntilItsRequestCloses_REQ_ORC_005`, `TestAWaitForTheProviderDoesNotStall_REQ_ORC_005`, `TestASentCallStallsAgain_REQ_ORC_005`, `TestACompactionWaitingForItsProviderDoesNotStall_REQ_ORC_005`, `TestMaxParallelIsReadPerProvider_REQ_ORC_005` |
-| REQ-ACP-001 | T-F2-07 | `TestAnACPAgentIsLaunchedInItsWorktree_REQ_ACP_001`, `TestAnACPThreadWithoutAWorktreeRunsInItsDirectory_REQ_ACP_001` |
-| REQ-ACP-002 | T-F2-07 | `TestAnACPThreadStreamsLikeAnyOther_REQ_ACP_002`, `TestAnACPThreadIsItsPanesStateAuthority_REQ_ACP_002` |
+| REQ-ACP-001 | T-F2-07 | `TestAnACPAgentIsLaunchedInItsWorktree_REQ_ACP_001`, `TestAnACPThreadWithoutAWorktreeRunsInItsDirectory_REQ_ACP_001`, `TestAnACPAgentIsLaunchedInItsDirectory_REQ_ACP_001`, `TestTheACPAgentsAreRead_REQ_ACP_001`, `TestAnACPAgentThatDoesNotStartKeepsItsThread_REQ_ACP_001` |
+| REQ-ACP-002 | T-F2-07 | `TestAnACPThreadStreamsLikeAnyOther_REQ_ACP_002`, `TestAnACPThreadIsItsPanesStateAuthority_REQ_ACP_002` (pins DD-012's resolver for a hosted thread's pane; no hosted thread owns a pane session before T-F2-08's terminals), `TestAnACPTurnStreamsItsReports_REQ_ACP_002`, `TestAHostedToolCallIsNamedFromACPsKinds_REQ_ACP_002` |
 | REQ-ACP-003 | T-F2-08 | `TestACPPermissionEntersTheApprovalQueue_REQ_ACP_003`, `TestACPNeverSelectsAllowAlways_REQ_ACP_003`, `TestACPKindsMapToRisks_REQ_ACP_003` |
 | REQ-ACP-004 | T-F2-08 | `TestACPWriteOutsideTheWorktreeAsks_REQ_ACP_004`, `TestACPReadOutsideTheWorktreeAsks_REQ_ACP_004`, `TestACPReadInsideTheWorktreeIsReadOnly_REQ_ACP_004`, `TestACPWriteCoveredByAPermissionIsNotAskedTwice_REQ_ACP_004` |
 | REQ-ACP-005 | T-F2-01, T-F2-08 | `TestACPTerminalIsAnAuditedBlock_REQ_ACP_005`, `TestACPTerminalsAreCapped_REQ_ACP_005` |
-| REQ-ACP-006 | T-F2-07 | `TestAnACPAgentCrashEndsTheTurn_REQ_ACP_006`, `TestASilentACPAgentEndsTheTurn_REQ_ACP_006`, `TestAnAgentWaitingOnUmbralIsNotSilent_REQ_ACP_006`, `TestAPendingApprovalPausesTheSilenceTimer_REQ_ACP_006` |
+| REQ-ACP-006 | T-F2-07 | `TestAnACPAgentCrashEndsTheTurn_REQ_ACP_006`, `TestASilentACPAgentEndsTheTurn_REQ_ACP_006`, `TestAnAgentWaitingOnUmbralIsNotSilent_REQ_ACP_006`, `TestAPendingApprovalPausesTheSilenceTimer_REQ_ACP_006`, `TestAnInvalidACPMessageEndsTheTurn_REQ_ACP_006`, `TestAnACPAgentErrorEndsTheTurnAndKeepsTheThread_REQ_ACP_006`, `TestAnACPAgentsErrorTextIsNotRepeated_REQ_ACP_006` |
 | REQ-ACP-007 | T-F2-01, T-F2-08, T-F2-09 | `TestAnACPTurnHasATrace_REQ_ACP_007`, `TestAnACPThreadIsMarkedUnobserved_REQ_ACP_007`, `TestACPToolCallsAreRecordedWithTheirDecision_REQ_ACP_007`, `TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007` |
 | REQ-ACP-008 | T-F2-09 | `TestACPCancelStopsWithin500ms_REQ_ACP_008`, `TestAnUnresponsiveACPAgentIsKilledAfter5s_REQ_ACP_008` |
-| REQ-ACP-009 | T-F2-07 | `TestAnAgentWithoutAManifestIsRefused_REQ_ACP_009`, `TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009`, `TestTheOpenCodeManifestAsksForEveryPermission_REQ_ACP_009`, `TestARepositoryAgentConfigIsRefused_REQ_ACP_009`, `TestTheUsersGlobalAgentConfigIsNotRead_REQ_ACP_009` |
+| REQ-ACP-009 | T-F2-07 | `TestAnAgentWithoutAManifestIsRefused_REQ_ACP_009`, `TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009`, `TestTheOpenCodeManifestAsksForEveryPermission_REQ_ACP_009`, `TestARepositoryAgentConfigIsRefused_REQ_ACP_009`, `TestTheUsersGlobalAgentConfigIsNotRead_REQ_ACP_009`, `TestABadACPEntryStopsTheDaemon_REQ_ACP_009` |
 | REQ-XAG-001 | T-F2-10 | `TestAPaneRunningOpenCodeIsLabelled_REQ_XAG_001`, `TestDetectionNeverSetsState_REQ_XAG_001`, `TestBuiltinManifestsCompile_REQ_XAG_001`, `TestBuiltinsRecogniseTheAgentsAndNothingElse_REQ_XAG_001`, `TestSubtreeFindsAnAgentUnderTheShell_REQ_XAG_001`, `TestSubtreeOfANonexistentProcessIsEmpty_REQ_XAG_001`, `TestAnAgentThatIsThePanesRootIsLabelled_REQ_XAG_001` |
 | REQ-XAG-002 | T-F2-10 | `TestALocalManifestOverridesByName_REQ_XAG_002`, `TestAnInvalidManifestIsSkippedAndReported_REQ_XAG_002`, `TestManifestValidation_REQ_XAG_002`, `TestOverlayReplacesByName_REQ_XAG_002` |
 | REQ-XAG-003 | T-F2-10 | `TestAgentExplainNamesTheRule_REQ_XAG_003`, `TestDetectionIsDeterministic_REQ_XAG_003`, `TestAgentExplainOverTheWire_REQ_XAG_003`, `TestUmbAgentExplain_REQ_XAG_003` |
@@ -513,4 +516,5 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | 2026-10-23 | T-F2-05 | done | `thread.update` enters `full-auto` only with an active worktree, checked by the runtime and again in the store's write; `thread.create` refuses it. The flag sits beside the thread's own mode and migration 0008's triggers clear it when the worktree leaves `active`. A turn reads its cwd, write root and effective mode together (`agents.TurnPlace`), so `full-auto` always decides inside a worktree: writes and commands whose cwd is inside it run unasked, `Network`, destructive patterns and taint still ask; `policy.explain` shows it. The daemon now refuses a client inside an agent's terminal — found by the kernel's peer pid, its parents and its POSIX session — the methods that land, drop or approve the agent's work, with `PERMISSION_DENIED`. Every new test was mutated and reddened. The spec-guardian review (FIX FIRST) found a peer that exited after connecting let through, `pane.split` with a command and `session.input` as routes around the check (an automated security review then added `session.create` and `env` in a split or layout, so every process-starting method is refused), the test covering 8 of the methods, and an Exec with no cwd allowed; all are fixed with mutated tests. Open for the Tech Lead: the refused list reaches F1 surfaces (an approved `umb skill install`, `umb mcp add` or `umb worktree merge` in a turn now fails in every mode) and awaits ratification; an Exec's cwd is the turn's, not the shell's current one; `setsid` plus a fork, or a launcher outside the terminal, escapes the check. Delta `2026-10-full-auto`. |
 | 2026-10-23 | T-F2-03 … T-F2-05 | reviewed | The Tech Lead reviewed the second batch and ratified decision 8 of delta `2026-10-full-auto`, the refused-method list as written, over narrowing it to the worktree methods. The `umb ai` flake found during T-F2-04 was assigned to T-HRD-03 and fixed in the same PR (`client.NewUnboundedStream`). |
 | 2026-10-23 | T-F2-06 | done | The panel lists the focused workspace's threads from one `session.snapshot` (none focused: the threads of none), each with attention, `queued`, worktree, pending approvals and title; up and down switch the selected thread, which is viewed, shown, sent to and stopped; transcripts are kept per thread from this run; the panel's own thread is created in the focused workspace. Delta `2026-10-panel-threads`, self-approved under the standing F2 instruction, folded into Tech 1.62 §5.3e. A thread is running once its events arrive or a listing says so, whoever started the turn; listings carry their snapshot `seq` and an older one is dropped; views of unlisted threads are released. spec-guardian asked for fixes first (a turn started elsewhere unseen, the wire mapping untested); fixed, and sixteen mutations each reddened a test, one against a real daemon. |
+| 2026-10-23 | T-F2-07 | done | `internal/acp` hosts `[[acp.agents]]` on acp-go-sdk: one process per thread, launched through the built-in OpenCode manifest (`"*"` and every named permission `ask`, no MCP, no plugin) in an isolated `acp/<thread>/` home under the runtime directory, with `PATH`, `LANG`, the isolation, `OPENCODE_CONFIG` and the entry's resolved `env_refs` only; `initialize` then `session/new` in the worktree or the thread's directory; `thread.send` sends `session/prompt`, chunks and tool calls are persisted and published like Umbral's own (`acp:<kind>`, `via = acp`, `unmediated`); an exit, a non-ACP line or `[acp] silence_timeout` ends the turn `agent_error` and the next send relaunches. `thread.create` takes `agent`, refuses it with `data.reason` before writing, and answers `agent_unavailable` when the agent does not start. Until T-F2-08 every permission, file and terminal request is refused. Delta `2026-10-acp-client`, self-approved under the standing F2 instruction, folded into API 1.48 and Tech 1.63. Twenty-two mutations each reddened a test, five of them against a real daemon. The spec-guardian pass (FIX FIRST) was applied: the agent's stderr is discarded, `OPENCODE_*` env refs stop the daemon, a hosted call's kind is ACP's closed set, an answer just before an exit is not `agent_error`, and PRD F2 0.6 amends REQ-ACP-009's `project_config` response. |
 | — | — | — | — |

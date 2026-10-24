@@ -42,6 +42,8 @@ type Config struct {
 	// Worktrees is the worktree engine: a thread with an active worktree runs its turns there
 	// (REQ-WT-002). Nil makes no worktree and runs every thread in its own directory.
 	Worktrees ports.Worktrees
+	// Agents hosts the threads created with an `agent` (REQ-ACP-001); nil refuses them.
+	Agents ports.ExternalAgents
 	// NewID makes a type-prefixed ULID (store.NewID).
 	NewID func(prefix string) string
 	// Metrics counts what the runtime measures.
@@ -226,17 +228,53 @@ func (r *Runtime) Create(ctx context.Context, p domain.CreateParams) (domain.Thr
 		ID: r.cfg.NewID(prefixThread), Title: p.Title, Mode: p.Mode, Model: p.Model, ModelClass: p.ModelClass,
 		Cwd: filepath.Clean(p.Cwd), State: domain.StateIdle, AttentionState: "idle", Ephemeral: p.Ephemeral,
 		MaxSteps: p.MaxSteps, BudgetTokens: p.BudgetTokens, CreatedAt: now, UpdatedAt: now,
-		WorkspaceID: p.Workspace,
+		WorkspaceID: p.Workspace, EgressVisibility: domain.EgressObserved,
 	}
 	if p.Worktree && r.cfg.Worktrees == nil {
 		return domain.Thread{}, fmt.Errorf("%w: worktrees are not available", domain.ErrValidation)
 	}
+	if p.Agent != "" {
+		if r.cfg.Agents == nil {
+			return domain.Thread{}, fmt.Errorf("%w: hosted agents are not available", domain.ErrValidation)
+		}
+		// Refused before anything is written. A worktree is made from the same repository, so
+		// its configuration is checked here too, and again as the agent is launched in it.
+		if err := r.cfg.Agents.Check(ctx, p.Agent, t.Cwd); err != nil {
+			return domain.Thread{}, err
+		}
+		t.Agent, t.EgressVisibility = p.Agent, domain.EgressUnobserved
+	}
 	if err := r.cfg.Store.CreateThread(ctx, t); err != nil {
 		return domain.Thread{}, err
 	}
-	if !p.Worktree {
-		return t, nil
+	if p.Worktree {
+		var err error
+		if t, err = r.createWorktree(ctx, t, now); err != nil {
+			return domain.Thread{}, err
+		}
 	}
+	if t.Agent != "" {
+		// The thread is kept when its agent does not start: the next thread.send launches it
+		// again, as after a crash (REQ-ACP-006), and the answer says why it is not running.
+		if err := r.openAgent(ctx, t); err != nil {
+			t.AgentUnavailable = err
+		}
+	}
+	return t, nil
+}
+
+// openAgent launches a hosted thread's agent where its turns run (REQ-ACP-001): in its active
+// worktree, or in its own directory.
+func (r *Runtime) openAgent(ctx context.Context, t domain.Thread) error {
+	place, err := r.place(ctx, t)
+	if err != nil {
+		return err
+	}
+	return r.cfg.Agents.Open(ctx, ports.ExternalRequest{ThreadID: t.ID, Agent: t.Agent, Dir: place.Cwd})
+}
+
+// createWorktree makes the thread's worktree as thread.create asked (REQ-WT-001).
+func (r *Runtime) createWorktree(ctx context.Context, t domain.Thread, now int64) (domain.Thread, error) {
 	// The worktree's row points at the thread, so the thread is written first. When git refuses
 	// the worktree, the thread keeps working without isolation and says why (REQ-WT-008); any
 	// other failure takes it back.
@@ -337,6 +375,11 @@ func TurnPlace(ctx context.Context, wts ports.Worktrees, isRepo func(string) boo
 			}
 			return Place{Cwd: worktreeCwd(w, thread.Cwd), WriteRoot: w.Path, Mode: mode}, nil
 		}
+	}
+	if thread.Agent != "" {
+		// A hosted agent without a worktree has the thread's directory as its write root
+		// (REQ-ACP-001), not the repository around it.
+		return Place{Cwd: thread.Cwd, WriteRoot: thread.Cwd, Mode: thread.Mode}, nil
 	}
 	return Place{Cwd: thread.Cwd, WriteRoot: secdomain.WriteRoot(thread.Cwd, isRepo), Mode: thread.Mode}, nil
 }
@@ -466,7 +509,11 @@ func (r *Runtime) Send(ctx context.Context, p ports.SendParams) (ports.SendResul
 	if closed {
 		return ports.SendResult{}, errors.New("agents: the runtime is closed")
 	}
-	if !r.cfg.Models.Available(ctx, thread.ModelClass, thread.Model) {
+	if thread.Agent != "" {
+		if r.cfg.Agents == nil {
+			return ports.SendResult{}, fmt.Errorf("%w: hosted agents are not available", domain.ErrValidation)
+		}
+	} else if !r.cfg.Models.Available(ctx, thread.ModelClass, thread.Model) {
 		return ports.SendResult{}, fmt.Errorf("%w: class %q, model %q", domain.ErrProviderUnavailable, thread.ModelClass, thread.Model)
 	}
 	content, attachments, err := r.userContent(ctx, thread, p)
@@ -535,6 +582,15 @@ func (r *Runtime) TurnEnd(threadID, turnID string) (string, bool) {
 		return "", false
 	}
 	return end.state, true
+}
+
+// AwaitingApproval reports whether the thread's running turn waits for an approval: a hosted
+// agent is not silent then (REQ-ACP-006).
+func (r *Runtime) AwaitingApproval(threadID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t := r.turns[threadID]
+	return t != nil && t.live.awaiting
 }
 
 func (r *Runtime) threadLock(id string) *sync.Mutex {
@@ -609,7 +665,7 @@ func (r *Runtime) start(thread domain.Thread, msg domain.Message, slot *slots.Ti
 		defer close(t.done)
 		defer cancel()
 		defer slot.Release()
-		t.stop, t.ended = r.runTurn(ctx, thread, msg.TurnID, slot)
+		t.stop, t.ended = r.runTurn(ctx, thread, msg, slot)
 		r.mu.Lock()
 		if r.turns[thread.ID] == t {
 			delete(r.turns, thread.ID)

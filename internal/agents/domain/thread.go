@@ -35,6 +35,17 @@ const (
 	StopProviderError   StopReason = "provider_error"
 	StopStorageError    StopReason = "storage_error"
 	StopContextOverflow StopReason = "context_overflow"
+	// StopAgentError is an ACP agent that exited, sent something that is not ACP, or fell
+	// silent (REQ-ACP-006).
+	StopAgentError StopReason = "agent_error"
+)
+
+// Egress visibility (`threads.egress_visibility`, REQ-ACP-007): whether Umbral sees the
+// thread's network traffic. Umbral's own agent's is all its own model calls and `fetch_url`;
+// a hosted ACP agent's process sends what it likes.
+const (
+	EgressObserved   = "observed"
+	EgressUnobserved = "unobserved"
 )
 
 // Model classes (`threads.model_class`).
@@ -85,6 +96,13 @@ type Thread struct {
 	// thread was made without one and works in its own directory. Set by Create only, never
 	// stored.
 	WorktreeRefusal error
+	// Agent is the `[[acp.agents]]` entry hosting the thread, "" for Umbral's own agent
+	// (REQ-ACP-001); EgressVisibility is EgressUnobserved for such a thread (REQ-ACP-007).
+	Agent            string
+	EgressVisibility string
+	// AgentUnavailable is why thread.create could not start the thread's agent once the
+	// thread was written; the next thread.send tries again. Set by Create only, never stored.
+	AgentUnavailable error
 }
 
 // CreateParams is thread.create's input (API §5.19).
@@ -102,6 +120,9 @@ type CreateParams struct {
 	// Worktree makes the thread's worktree with it (REQ-WT-001): a thread git refuses one to
 	// is not created.
 	Worktree bool
+	// Agent hosts the thread in an `[[acp.agents]]` entry instead of Umbral's own agent
+	// (REQ-ACP-001).
+	Agent string
 }
 
 // Validate fills the defaults and checks the bounds.
@@ -113,6 +134,9 @@ func (p CreateParams) Validate() (CreateParams, error) {
 		// A new thread's worktree is not active until thread.create has made it; full-auto is
 		// entered afterwards with thread.update (delta `2026-10-full-auto`).
 		return p, fmt.Errorf("%w: a thread enters full-auto with thread.update once its worktree is active", ErrValidation)
+	}
+	if p.Agent != "" && (p.Model != "" || p.ModelClass != "") {
+		return p, fmt.Errorf("%w: an ACP thread's model is its agent's: model and model_class are not set with agent", ErrValidation)
 	}
 	if !validMode(p.Mode) {
 		return p, fmt.Errorf("%w: mode %q is not ask, normal or auto-edit", ErrValidation, p.Mode)

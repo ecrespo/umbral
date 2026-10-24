@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.62 |
+| **Version** | 1.63 |
 | **Date** | 2026-10-23 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -121,6 +121,7 @@ flowchart LR
 | `integrations` | socket + env | external state reports, display metadata, authority | INT-* |
 | `notify` | client channel | normalization, rate limit, typed reasons | NTF-* |
 | `worktrees` | the `git` CLI ≥ 2.34 + SQLite | a thread's worktree outside the repository: create, diff with stable hunk ids, squash merge, discard, missing detection | WT-* (F2) |
+| `acp` | `github.com/coder/acp-go-sdk` over stdio | third-party agents hosted through a manifest: launch in an isolated home, `initialize`, `session/new`, prompt, the silence timer | ACP-* (F2) |
 | `obs` | OpenTelemetry Go, `log/slog` | traces, metrics | OBS-* |
 
 ### 3.3 Main flow: US-003 scenario ("fix it")
@@ -402,7 +403,10 @@ sequenceDiagram
 ### DD-012: One state authority per pane, with a fixed precedence
 
 - **Decision:** the attention state of a pane comes from exactly one source, in this order:
-  1. Umbral's own agent, for the panes of its threads (it cannot be displaced);
+  1. Umbral's own agent, for the panes of its threads (it cannot be displaced). A thread hosted by
+     an ACP agent is the same authority for the pane whose live session it owns: its attention
+     state is written by the same runtime, turn by turn, and its terminals are sessions outside
+     the workspace tree (REQ-ACP-002, delta `2026-10-acp-client`);
   2. an external integration that reported with `pane.report_state` and has not released authority;
   3. Umbral's own derivation from the block lifecycle (`running` → `working`, closed → `idle`).
 - **Rationale:** the failure mode to avoid is two sources disagreeing. Screen heuristics are
@@ -597,6 +601,10 @@ internal/waits/              # pinned waits
 internal/integrations/       # external reports and metadata: domain (a report's rules), ports,
                              # adapters/reportstore (pane_state_reports), the service that
                              # announces pane.state_changed (delta `2026-10-integration-surface`)
+internal/acp/                # hosted ACP agents (delta `2026-10-acp-client`): domain (entries,
+                             # manifests, the environment allowlist, kind→risk, stop reasons),
+                             # ports (Secrets, Mediator, Sink), adapters/sdk (the host on
+                             # acp-go-sdk) and adapters/sdk/acptest (a fake agent for tests)
 shell/                       # bash, zsh, fish bootstrap
 testdata/vt/                 # VT conformance suite
 ```
@@ -661,6 +669,18 @@ It covers the repository's hooks and signing. When it passes, the commit's whole
 group is killed and the merge is refused `commit_failed` (REQ-WT-004). A value out of range
 stops the daemon naming the key. Not live: a change needs a restart (delta
 `2026-10-worktree-engine`).
+
+`[acp]` and `[[acp.agents]]` are the third-party agents the daemon hosts (REQ-ACP-001). They
+need arrays and tables, which the rest of the file's subset refuses, so their lines are split
+out and read with `go-toml`, strictly: an unknown key or a value of the wrong type stops the
+daemon naming its line. `[acp] silence_timeout` is whole seconds, 5 to 86400 (600), and
+`max_terminals` 1 to 32 (4). Each `[[acp.agents]]` has a `name` (lowercase letters, digits and
+dashes), a `command`, optional `args`, `manifest` (its name when absent), `env_refs` mapping a
+variable to `keyring:<path>` or `env:<VAR>` and never to a value — `PATH`, `HOME`, `LANG`, `XDG_*`
+and `UMBRAL_*` are Umbral's to set — and `config`, merged into the configuration the manifest
+generates under the keys the manifest allows (for OpenCode `model`, `small_model`, `provider`,
+`enabled_providers`, `disabled_providers`). A manifest that does not exist is not a start error:
+`thread.create` refuses the entry `no_manifest`. Not live (delta `2026-10-acp-client`).
 
 `[otel] endpoint` (unset by default) exports traces and metrics over OTLP/HTTP (REQ-OBS-003).
 - **Local only.** It must be an `http://` or `https://` base URL, with no path, query,
@@ -787,6 +807,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `waits` | `ports` and `domain` of `agents` and `sessions`, plus `bus`; never `api`. It reads the store only through the agents runtime, and its own domain reuses the sessions domain's escape-sequence stripper (delta `2026-10-wait-engine`) |
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api`. The tree resolves a pane's state in DD-012's order (`workspaces/domain.ResolveAttention`); `integrations` writes the external reports and announces every change. It hears the changes it did not make — blocks, integration verdicts, exits, thread attention — through events `cmd/umbrald` subscribes it to, and re-reads the whole tree on each (delta `2026-10-integration-surface`). Display metadata is written by `integrations` and read by the tree into a `Pane`'s `metadata`, never on the state path: `ResolveAttention`, the rollup, waits and notifications do not read it, and a written report is announced as `pane.updated` only (delta `2026-10-display-metadata`). Third-party agent detection lives here too (delta `2026-10-agent-detection`): `integrations/adapters/manifests` reads the local manifests and `integrations/adapters/proctree` the process table, without running a command; the detector reaches a pane's shell pid through `integrations/ports.Shells`, which `cmd/umbrald` satisfies with the sessions service, and keeps its labels in memory, keyed by session, for the tree to read through `workspaces/ports.AgentLabels` — never on the state path |
 | `notify` | `bus` and stdlib only; it is a sink and imports no other module. `api` implements its `Deliverer` port — the foreground client of API §5.35 — and is handed to it by `cmd/umbrald` once the server exists; `cmd/umbrald` adapts `integrations`' `Notifier` port to it for an external `blocked`. Both modules deliver outside their locks, and `api` through a per-connection queue, so a client that stops reading stalls no source (delta `2026-10-notifications`) |
+| `acp` | its own `ports` and `domain`, and `security/domain` for a kind's risk; its adapters use `acp-go-sdk`. It imports no other module. The agents runtime reaches it through a port of its own, `agents/ports.ExternalAgents`, which `cmd/umbrald` adapts, as it does `Worktrees`; `config` reads its entries into `acp/domain.Entry` (delta `2026-10-acp-client`) |
 | `worktrees` | its own `ports` and `domain`; its adapters run the `git` binary and use `store`. It imports no other module. Its `ports` publish `Worktrees`, the inbound port `api` serves as `worktree.*`; the agents runtime reaches a thread's worktree through a port of its own, `agents/ports.Worktrees`, which `cmd/umbrald` adapts, and decides through `agents/ports.WorktreeThreads` when one may change: never while the thread's turn runs (T-F2-03). Reading a worktree to show it runs with fsmonitor, filter drivers, external diff and textconv off. Landing it runs as the user's `git commit` would — hooks and signing included — in a session with no terminal, killed whole at `[worktrees] commit_timeout` (delta `2026-10-worktree-engine`) |
 | `security` | stdlib, `go-keyring` in its adapter, `bus` in its ports (to name `rules.update_rejected`) and the root `llmgw/domain` (for the egress record a rejection writes). Its root holds policy.explain, which reads a thread's mode, directory and rules through its own `ExplainSource` port and asks the same pure `Decide` a turn uses; `cmd/umbrald` adapts the agent thread store to that port and hands both the runtime and the explainer one `isRepo`, so an explanation and a turn agree about the write root (delta `2026-10-policy-explain`). Its root also holds the `Rules` manager of signed bundles (DD-016), which reaches storage through its own `RuleStore` port and replaces the active set's base through `RuleBase`. `tools/rulesign` depends on `security/domain` only (delta `2026-10-signed-rule-bundles`) |
 | `context` | its own `ports` and `domain`, `store` and `bus` in its adapters, and `bus` in its ports, to name `skill.changed` (delta `2026-10-skill-store`) |
@@ -1185,6 +1206,72 @@ and the column that separates it, and do the same for the block list.
     not refused or malformed ones) and the skills its successful `skill_load` calls named
     (`args.name`) are gathered once each, and its end adds one row,
     `mcp tools: … · skills loaded: …`, before `turn ended`. A turn that used neither adds none.
+
+### 5.3f Hosted ACP agents (T-F2-07)
+
+A thread created with `agent` (API §5.19) is hosted by a third-party agent that speaks the Agent
+Client Protocol, `internal/acp/adapters/sdk` on `github.com/coder/acp-go-sdk`. The runtime keeps
+everything else of the thread — the store, the turn's slot, attention, waits, cancel — and swaps
+the model loop for one `session/prompt` (delta `2026-10-acp-client`).
+
+- **Launch.** One process per thread, started in the directory its turns run in: the active
+  worktree's directory matching `cwd`, or `cwd` itself, which is then its write root
+  (REQ-ACP-001). The launch goes through the entry's manifest (REQ-ACP-009):
+  - the generated configuration — for OpenCode `"*"` and every named permission `ask`, the
+    wildcard first since its last matching rule wins, no MCP server, no plugin, no autoupdate, no
+    sharing, plus the entry's allowed `config` keys — is written to the thread's isolated home;
+  - that home is `acp/<thread_id>/` of the daemon's runtime directory: `home`, `config`, `data`,
+    `cache` and `state`, made `0700` afresh at every launch and removed when the process ends;
+  - the environment is `PATH` and `LANG` of the daemon's, `HOME` and `XDG_*` of the isolation,
+    the manifest's variable naming the configuration (`OPENCODE_CONFIG`) and the entry's resolved
+    `env_refs` — resolved like an MCP server's, the keyring or the env fallback of REQ-SEC-012 —
+    and nothing else. An `env_refs` key the manifest reserves as the agent's own configuration
+    (for OpenCode `OPENCODE_*`: `OPENCODE_CONFIG_CONTENT`, `OPENCODE_PERMISSION`, …) stops the
+    daemon at start, since it would set a permission around the generated file;
+  - the process gets its own process group, which a kill ends whole;
+  - its stderr is discarded, as an MCP server's is: it holds the `env_refs`' credentials, and a
+    provider's error often prints the key it refused (Art. 7). No log line and no
+    `agent_unavailable.message` carries it. An error the agent answers a request with is
+    reported by its JSON-RPC code alone, for the same reason.
+- **Lifetime.** The process runs until it fails, its thread's launch directory changes (a
+  worktree made or left — the next send relaunches in the new one) or the daemon stops; F2a
+  does not stop an idle agent.
+- **Refusals.** `thread.create` checks the entry, the manifest, the `config` keys and the
+  repository configuration in `cwd` and above it, up to the nearest `.git` git would take for a
+  repository (a gitdir — `HEAD`, and `objects` and `refs` there or under its `commondir`, as a
+  linked worktree's — a symlink to one, or a `gitdir:` file naming one),
+  before writing anything. Every launch checks them again in the launch directory: the worktree
+  comes from the same repository, and the agent itself could have written `opencode.json` since
+  the last one. Found in a worktree `thread.create` has just made, the thread and its worktree are
+  kept and the answer carries `agent_unavailable.reason = project_config`; found at a later
+  launch, the turn ends `agent_error` and the reason is logged (PRD F2 0.6, REQ-ACP-009).
+- **Handshake.** `initialize` advertises `fs.readTextFile`, `fs.writeTextFile` and `terminal`, then
+  `session/new` opens a session in the launch directory with no MCP server. A relaunch opens a new
+  session; `session/load` is not used in F2a. Its deadline is `[acp] silence_timeout`, so a
+  `thread.create` with `agent` can wait that long for an agent that starts but does not answer.
+- **A turn.** The persisted user message is the prompt, rendered as Umbral's own turn renders it:
+  an attachment is read by Umbral and its text goes to the agent, whose own model call Umbral
+  neither sees nor redacts (the thread is `egress_visibility = unobserved`). Message chunks are appended to the turn's
+  assistant message, made at the first chunk or tool call, and published as `thread.delta`;
+  thought chunks are published, not kept; each tool call and update is written to `tool_calls`
+  with `via = acp`, `tool = acp:<kind>` — a kind outside API §4's nine, `switch_mode` included,
+  is `other` — the kind's risk and `decision = unmediated`, then
+  published. Every write precedes its notification (DD-007), and a failed write ends the turn
+  `storage_error` with the process killed.
+- **What the agent asks of Umbral.** Permissions, `fs/*` and `terminal/*` reach a `Mediator`
+  port. Until T-F2-08 the mediator refuses every one: a permission is answered with the agent's
+  `reject_once` option (never an `allow_always` one), a file request and a terminal request with
+  an error. A hosted call's row stays `unmediated` even when its permission was refused: in F2a
+  the refusal is not tied to a row, which T-F2-08 does. Umbral's own tool calls now record their
+  `decision` as well.
+- **Ending.** A line on the agent's stdout that is not a JSON-RPC 2.0 object (or is over 16 MiB)
+  ends the connection at once: the SDK alone would log it and read on. The process exiting, that,
+  or `[acp] silence_timeout` without a message end the turn `agent_error`, kill the process and
+  leave the next send to relaunch it (REQ-ACP-006). The silence clock restarts while a request of
+  the agent's is unanswered or an approval of the thread is pending. A cancelled turn sends
+  `session/cancel`; the process is killed if the turn has not ended 5 s later (REQ-ACP-008; the
+  terminals' 500 ms is T-F2-09's). The daemon stops the runtime before the host, so a shutdown
+  ends a hosted turn `cancelled`.
 
 ### 5.4 Error Handling
 
@@ -1694,3 +1781,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.60 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-parallel-turns` (T-F2-04): §5.1 adds `[agents] max_concurrent_turns` and a provider's `max_parallel`; DD-004's walk queues each call per provider before its first-token clock; §5.2 adds `slots`; §5.3d's runtime holds turns over the limit, `queued`, in arrival order |
 | 1.61 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-full-auto` (T-F2-05): DD-006 step 4 and §5.3's `full-auto` column; §5.3 says when a turn decides under it, how the flag follows the worktree, and that an agent's terminal is refused the methods that land, drop or approve its work |
 | 1.62 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-panel-threads` (T-F2-06): §5.3e lists every thread of the focused workspace, switches with up and down, keeps a transcript per thread and creates the panel's thread in the focused workspace |
+| 1.63 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-acp-client` (T-F2-07): §3.2 and §5.2 add `acp`; §5.1 lays out `internal/acp` and adds `[acp]` and `[[acp.agents]]`; DD-012 makes a hosted ACP thread the level-1 authority of its pane; §5.3f describes the host |

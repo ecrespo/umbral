@@ -33,7 +33,7 @@ func New(st *store.Store) (*Store, error) {
 
 const threadColumns = `id, title, mode, COALESCE(model, ''), model_class, cwd, state, attention_state,
 	ephemeral, max_steps, budget_tokens, tokens_used, cost_micro_usd, created_at, updated_at,
-	COALESCE(workspace_id, ''), COALESCE(worktree_id, ''), queued, full_auto`
+	COALESCE(workspace_id, ''), COALESCE(worktree_id, ''), queued, full_auto, COALESCE(agent, ''), egress_visibility`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -42,7 +42,7 @@ func scanThread(row scanner) (domain.Thread, error) {
 	var mode, state string
 	err := row.Scan(&t.ID, &t.Title, &mode, &t.Model, &t.ModelClass, &t.Cwd, &state, &t.AttentionState,
 		&t.Ephemeral, &t.MaxSteps, &t.BudgetTokens, &t.TokensUsed, &t.CostMicroUSD, &t.CreatedAt, &t.UpdatedAt,
-		&t.WorkspaceID, &t.WorktreeID, &t.Queued, &t.FullAuto)
+		&t.WorkspaceID, &t.WorktreeID, &t.Queued, &t.FullAuto, &t.Agent, &t.EgressVisibility)
 	t.Mode, t.State = secdomain.Mode(mode), domain.State(state)
 	return t, err
 }
@@ -51,10 +51,12 @@ func scanThread(row scanner) (domain.Thread, error) {
 func (s *Store) CreateThread(ctx context.Context, t domain.Thread) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO threads(id, title, mode, model, model_class, cwd, state, attention_state, ephemeral,
-		                    max_steps, budget_tokens, tokens_used, cost_micro_usd, created_at, updated_at, workspace_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+		                    max_steps, budget_tokens, tokens_used, cost_micro_usd, created_at, updated_at, workspace_id,
+		                    agent, egress_visibility)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)`,
 		t.ID, t.Title, string(t.Mode), nullable(t.Model), t.ModelClass, t.Cwd, string(t.State), t.AttentionState,
-		t.Ephemeral, t.MaxSteps, t.BudgetTokens, t.CreatedAt, t.UpdatedAt, nullable(t.WorkspaceID))
+		t.Ephemeral, t.MaxSteps, t.BudgetTokens, t.CreatedAt, t.UpdatedAt, nullable(t.WorkspaceID),
+		nullable(t.Agent), egressVisibility(t.EgressVisibility))
 	if err != nil {
 		return fmt.Errorf("threadstore: create thread: %w", err)
 	}
@@ -325,12 +327,13 @@ func (s *Store) SaveToolCall(ctx context.Context, c domain.ToolCall) error {
 	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO tool_calls(id, thread_id, message_id, tool, risk, args_json, status, result_summary, result_json,
-		                       block_id, started_at, ended_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                       block_id, started_at, ended_at, via, decision)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET status = excluded.status, result_summary = excluded.result_summary,
-			result_json = excluded.result_json, block_id = excluded.block_id, ended_at = excluded.ended_at`,
+			result_json = excluded.result_json, block_id = excluded.block_id, ended_at = excluded.ended_at,
+			tool = excluded.tool, risk = excluded.risk, args_json = excluded.args_json, decision = excluded.decision`,
 		c.ID, c.ThreadID, c.MessageID, c.Tool, c.Risk, args, string(c.Status), nullable(c.ResultSummary), resultJSON,
-		nullable(c.BlockID), c.StartedAt, c.EndedAt)
+		nullable(c.BlockID), c.StartedAt, c.EndedAt, via(c.Via), nullable(c.Decision))
 	if err != nil {
 		return fmt.Errorf("threadstore: save tool call: %w", err)
 	}
@@ -422,7 +425,7 @@ func (s *Store) Messages(ctx context.Context, threadID string) ([]domain.Message
 func (s *Store) ToolCalls(ctx context.Context, threadID string) ([]domain.ToolCall, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, thread_id, message_id, tool, risk, args_json, status, COALESCE(result_summary, ''),
-		       COALESCE(result_json, ''), COALESCE(block_id, ''), started_at, ended_at
+		       COALESCE(result_json, ''), COALESCE(block_id, ''), started_at, ended_at, via, COALESCE(decision, '')
 		FROM tool_calls WHERE thread_id = ? ORDER BY started_at, rowid`, threadID)
 	if err != nil {
 		return nil, fmt.Errorf("threadstore: tool calls: %w", err)
@@ -434,7 +437,7 @@ func (s *Store) ToolCalls(ctx context.Context, threadID string) ([]domain.ToolCa
 		var args, status, resultJSON string
 		var ended sql.NullInt64
 		if err := rows.Scan(&c.ID, &c.ThreadID, &c.MessageID, &c.Tool, &c.Risk, &args, &status, &c.ResultSummary,
-			&resultJSON, &c.BlockID, &c.StartedAt, &ended); err != nil {
+			&resultJSON, &c.BlockID, &c.StartedAt, &ended, &c.Via, &c.Decision); err != nil {
 			return nil, fmt.Errorf("threadstore: tool calls: %w", err)
 		}
 		c.Args, c.Status = json.RawMessage(args), domain.ToolStatus(status)
@@ -473,6 +476,22 @@ func (s *Store) Rules(ctx context.Context, threadID string) ([]secdomain.Rule, e
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// egressVisibility is the column's value; a thread of Umbral's own agent is observed.
+func egressVisibility(v string) string {
+	if v == "" {
+		return domain.EgressObserved
+	}
+	return v
+}
+
+// via is `tool_calls.via`; a call of Umbral's own agent is Umbral's.
+func via(v string) string {
+	if v == "" {
+		return domain.ViaUmbral
+	}
+	return v
 }
 
 func nullable(s string) any {

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 
 	agentsdomain "github.com/ecrespo/umbral/internal/agents/domain"
+	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	wtdomain "github.com/ecrespo/umbral/internal/worktrees/domain"
 	wtports "github.com/ecrespo/umbral/internal/worktrees/ports"
 )
@@ -386,7 +387,8 @@ func worktreesDomainError(err error) (int, string, bool) {
 // reasonRunning is `data.reason` of a worktree change refused because the thread's turn runs.
 const reasonRunning = "running"
 
-// worktreeErrorData fills `data.reason`, `data.paths` and `data.output` (§3).
+// worktreeErrorData fills `data.reason`, `data.paths` and `data.output` (§3): a worktree
+// refusal's, or a hosted agent's (REQ-ACP-009).
 func worktreeErrorData(err error, data *errorData) {
 	var refusal *wtdomain.Refusal
 	switch {
@@ -396,5 +398,9 @@ func worktreeErrorData(err error, data *errorData) {
 		data.Output = refusal.Output
 	case errors.Is(err, agentsdomain.ErrTurnRunning):
 		data.Reason = reasonRunning
+	}
+	var agent *agentsports.AgentRefusal
+	if errors.As(err, &agent) {
+		data.Reason = agent.Reason
 	}
 }

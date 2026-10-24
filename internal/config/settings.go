@@ -59,6 +59,9 @@ type Settings struct {
 	// threads, run at once; one over it is held, queued, until a turn ends (REQ-ORC-002).
 	// Read at start.
 	MaxConcurrentTurns int
+	// ACP is `[acp]` and `[[acp.agents]]`: the third-party agents Umbral hosts and their
+	// limits (REQ-ACP-001, REQ-ACP-005, REQ-ACP-006). Read at start.
+	ACP ACP
 }
 
 // DefaultMaxConcurrentTurns is REQ-ORC-002's default.
@@ -161,7 +164,7 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 	settings := Settings{
 		MaxMessageBytes: DefaultMaxMessageBytes, Retention: DefaultRetention(), NotificationsEnabled: true,
 		RulesURL: DefaultRulesURL, Stall: DefaultStall(), WorktreeCommitTimeoutS: DefaultWorktreeCommitTimeoutS,
-		MaxConcurrentTurns: DefaultMaxConcurrentTurns,
+		MaxConcurrentTurns: DefaultMaxConcurrentTurns, ACP: DefaultACP(),
 	}
 
 	raw, err := os.ReadFile(path) // #nosec G304 -- the path is the daemon's own config location
@@ -172,7 +175,11 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 		return settings, fmt.Errorf("config: read %s: %w", path, err)
 	}
 
-	values, err := parseTOMLSubset(string(raw))
+	rest, acpText := splitACP(string(raw))
+	if settings.ACP, err = parseACP(acpText); err != nil {
+		return Settings{}, fmt.Errorf("%w: %s: %w", ErrSettingsInvalid, path, err)
+	}
+	values, err := parseTOMLSubset(rest)
 	if err != nil {
 		return settings, fmt.Errorf("%w: %s: %w", ErrSettingsInvalid, path, err)
 	}

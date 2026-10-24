@@ -252,3 +252,65 @@ type Metrics interface {
 	// REQ-OBS-004).
 	WaitStalled()
 }
+
+// ErrAgentFailed is a hosted agent that failed its turn: it exited, sent something that is not
+// ACP, or fell silent (REQ-ACP-006). The turn ends `agent_error`.
+var ErrAgentFailed = errors.New("agents: the hosted agent failed")
+
+// ErrAgentRefused is a hosted agent that may not run where it was asked to: no such entry, no
+// manifest, a repository's own configuration of it (REQ-ACP-009). errors.As finds the
+// *AgentRefusal.
+var ErrAgentRefused = errors.New("agents: the hosted agent was refused")
+
+// AgentRefusal is why a hosted agent may not run, with the reason API §5.19 gives in
+// `data.reason`.
+type AgentRefusal struct {
+	Reason string
+	Detail string
+}
+
+func (r *AgentRefusal) Error() string { return r.Detail }
+
+// Is makes errors.Is(err, ErrAgentRefused) true for every refusal.
+func (r *AgentRefusal) Is(target error) bool { return target == ErrAgentRefused }
+
+// ExternalAgents hosts the threads created with an `agent` (REQ-ACP-001): third-party agents
+// that speak ACP. cmd/umbrald wires internal/acp in.
+type ExternalAgents interface {
+	// Check refuses an agent that may not run in dir, before anything is written.
+	Check(ctx context.Context, agent, dir string) error
+	// Open launches the thread's agent in dir and opens its session.
+	Open(ctx context.Context, req ExternalRequest) error
+	// Prompt runs one turn of the thread's agent, launching it again if it is not running, and
+	// returns how the turn ended. A turn the agent failed is ErrAgentFailed.
+	Prompt(ctx context.Context, req ExternalRequest, text string, sink ExternalSink) (domain.StopReason, error)
+	// Close stops the thread's agent.
+	Close(threadID string)
+}
+
+// ExternalRequest names a thread's agent and the directory it runs in.
+type ExternalRequest struct {
+	ThreadID string
+	Agent    string
+	Dir      string
+}
+
+// ExternalToolCall is a tool call a hosted agent reports, as its updates left it so far.
+type ExternalToolCall struct {
+	// ID is the agent's own id for the call, unique within its session.
+	ID       string
+	Title    string
+	Kind     string
+	Risk     string
+	Status   string // pending, in_progress, completed, failed
+	RawInput []byte
+	Output   string
+}
+
+// ExternalSink is where a hosted agent's turn reports: the runtime persists each report
+// before it publishes it (DD-007). An error is a write that failed and ends the turn.
+type ExternalSink interface {
+	Text(text string) error
+	Thought(text string)
+	ToolCall(call ExternalToolCall) error
+}

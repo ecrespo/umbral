@@ -36,6 +36,8 @@ type turnRun struct {
 	turnID string
 	// slot is the turn's place under max_concurrent_turns; run waits for it first.
 	slot *slots.Ticket
+	// prompt is the user's message as persisted: what a hosted agent is sent.
+	prompt string
 	// cwd and writeRoot are where the turn runs, read once as it starts: the thread's own, or
 	// its active worktree's (REQ-WT-002).
 	cwd       string
@@ -71,10 +73,11 @@ type turnRun struct {
 // answers without asking for one or a limit stops it (REQ-AGT-008).
 // It returns how the turn ended: its stop reason, and the moment its end was written, 0 when
 // the write failed.
-func (r *Runtime) runTurn(ctx context.Context, thread domain.Thread, turnID string, slot *slots.Ticket) (domain.StopReason, int64) {
+func (r *Runtime) runTurn(ctx context.Context, thread domain.Thread, msg domain.Message, slot *slots.Ticket) (domain.StopReason, int64) {
+	turnID := msg.TurnID
 	// The turn's span holds everything below: model calls, tools and log lines (REQ-OBS-001).
 	ctx, endSpan := r.cfg.Tracer.Turn(ctx, thread.ID, turnID)
-	t := &turnRun{r: r, thread: thread, turnID: turnID, slot: slot}
+	t := &turnRun{r: r, thread: thread, turnID: turnID, slot: slot, prompt: msg.Content}
 	stop := t.run(ctx)
 
 	// A cancelled turn — thread.cancel, or the daemon closing — leaves the thread stopped
@@ -110,6 +113,9 @@ func (r *Runtime) runTurn(ctx context.Context, thread domain.Thread, turnID stri
 func (t *turnRun) run(ctx context.Context) domain.StopReason {
 	if err := t.takeSlot(ctx); err != nil {
 		return t.stopFor(ctx, err)
+	}
+	if t.thread.Agent != "" {
+		return t.runExternal(ctx)
 	}
 	if err := t.prepare(ctx); err != nil {
 		return t.stopFor(ctx, err)
@@ -194,6 +200,10 @@ func (t *turnRun) stopFor(ctx context.Context, err error) domain.StopReason {
 		return domain.StopContextOverflow
 	case errors.Is(err, errBudget):
 		return domain.StopBudget
+	case errors.Is(err, ports.ErrAgentFailed), errors.Is(err, ports.ErrAgentRefused):
+		t.r.cfg.Logger.WarnContext(ctx, "a turn stopped: the hosted agent failed", slog.String("thread", t.thread.ID),
+			slog.String("turn", t.turnID), slog.String("agent", t.thread.Agent), slog.Any("error", err))
+		return domain.StopAgentError
 	case errors.Is(err, errRepairFailed):
 		t.r.cfg.Logger.WarnContext(ctx, "a turn stopped: a tool call was invalid after its repair", slog.String("thread", t.thread.ID),
 			slog.String("turn", t.turnID), slog.String("model", t.servedModel()))
@@ -542,6 +552,7 @@ func (t *turnRun) callTool(ctx context.Context, c domain.ToolCall) error {
 
 	decision := cfg.Policy().Decide(action, t.mode, t.rules, t.tainted)
 	grant := toolsdomain.Grant{Action: action, Decision: decision}
+	c.Decision = verdictDecision(decision.Verdict)
 	switch decision.Verdict {
 	case secdomain.VerdictDeny:
 		return t.finishTool(ctx, c, domain.ToolDeniedByPolicy, "denied by policy: "+decision.Reason, "", false)
@@ -593,4 +604,16 @@ func firstLine(s string) string {
 		line = string([]rune(line)[:min(len([]rune(line)), 200)])
 	}
 	return line
+}
+
+// verdictDecision is `tool_calls.decision` for the policy's verdict (REQ-ACP-007).
+func verdictDecision(v secdomain.Verdict) string {
+	switch v {
+	case secdomain.VerdictAllow:
+		return domain.DecisionAllow
+	case secdomain.VerdictDeny:
+		return domain.DecisionDeny
+	default:
+		return domain.DecisionAsk
+	}
 }
