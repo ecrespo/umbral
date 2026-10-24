@@ -8,14 +8,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/ecrespo/umbral/internal/bus"
@@ -306,10 +303,16 @@ func (s *Service) Catalog(ctx context.Context) ([]domain.CatalogEntry, error) {
 }
 
 // ReadSkill implements the tools module's SkillReader: an enabled skill's SKILL.md, or one
-// file of its stored bundle (REQ-SKL-004). file is checked as a bundle entry and opened
-// through an os.Root on the skill's directory, so no component — a `..`, a link swapped into
-// the stored copy — can lead out of it.
+// file of its stored bundle (REQ-SKL-004). The stored copy is read once, as install read the
+// bundle — regular files and directories only, no link followed — and checked against the
+// digest installed; the entry is served from that same read, so nothing changed after install
+// and nothing changed between the check and the use reaches the agent (REQ-SKL-005, delta
+// `2026-10-hrd02-open-questions` Q3).
 func (s *Service) ReadSkill(ctx context.Context, name, file string) ([]byte, error) {
+	// Under the lock that serialises changes, so a reinstall in progress is not mistaken for an
+	// edited copy.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	sk, err := s.get(ctx, s.cfg.DB.DB(), name)
 	if err != nil {
 		return nil, err
@@ -324,34 +327,22 @@ func (s *Service) ReadSkill(ctx context.Context, name, file string) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	root, err := os.OpenRoot(s.path(sk.Name))
+	if entry == "" {
+		entry = domain.SkillFileName // `.` is the bundle's root
+	}
+	b, err := readDir(s.path(sk.Name))
 	if err != nil {
-		return nil, fmt.Errorf("skills: open %s: %w", name, err)
+		// The detail names paths under the data directory; it goes to the log, not to the model.
+		s.cfg.Logger.WarnContext(ctx, "the stored copy of a skill does not read as a bundle", slog.String("skill", sk.Name), slog.Any("error", err))
+		return nil, fmt.Errorf("%w: the stored copy of skill %s cannot be read as a bundle; reinstall it", domain.ErrSkillValidation, name)
 	}
-	defer func() { _ = root.Close() }()
-	f, err := root.OpenFile(filepath.FromSlash(entry), os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			// `2026-09-skills-cli` decision 5: a file that is not there is VALIDATION_ERROR.
-			return nil, fmt.Errorf("%w: skill %s has no file %s", domain.ErrSkillValidation, name, entry)
-		}
-		return nil, fmt.Errorf("%w: skill %s: %s cannot be read inside the bundle: %w", domain.ErrSkillValidation, name, entry, err)
+	if b.SHA256 != sk.SHA256 {
+		return nil, fmt.Errorf("%w: the stored copy of skill %s changed after it was installed; reinstall it", domain.ErrSkillValidation, name)
 	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("skills: stat %s/%s: %w", name, entry, err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%w: %s in skill %s is not a file", domain.ErrSkillValidation, entry, name)
-	}
-	// Install bounded every file at MaxSkillFileBytes; the bound holds if the copy was changed.
-	data, err := io.ReadAll(io.LimitReader(f, domain.MaxSkillFileBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("skills: read %s/%s: %w", name, entry, err)
-	}
-	if len(data) > domain.MaxSkillFileBytes {
-		return nil, fmt.Errorf("%w: %s in skill %s is larger than 1 MiB", domain.ErrSkillValidation, entry, name)
+	data, ok := b.Contents[entry]
+	if !ok {
+		// `2026-09-skills-cli` decision 5: a file that is not there is VALIDATION_ERROR.
+		return nil, fmt.Errorf("%w: skill %s has no file %s", domain.ErrSkillValidation, name, entry)
 	}
 	return data, nil
 }

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.70 |
+| **Version** | 1.71 |
 | **Date** | 2026-10-24 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -998,9 +998,14 @@ with `run_command` from T-F1-10. Delta `2026-09-builtin-tools`:
   tainted (REQ-SEC-006).
 - **`skill_load` reads an installed skill** (REQ-SKL-004, delta `2026-10-skill-catalog`):
   `{name, file?}`, ReadOnly, its target `name` or `name/file`. It serves an enabled skill only —
-  `SKILL.md` whole, or one file of the stored bundle checked as a bundle entry and opened
-  through an `os.Root` on the skill's directory, a regular file of at most 1 MiB — cut at
-  256 KiB as `read_file` cuts; a file the bundle lacks is `VALIDATION_ERROR`. Its
+  `SKILL.md` whole, or one file of the stored bundle checked as a bundle entry — cut at
+  256 KiB as `read_file` cuts; a file the bundle lacks is `VALIDATION_ERROR`. Each load reads
+  the stored copy once, under the store's lock, as install read the bundle (regular files and
+  directories only, a link in the copy refusing the load, the bundle limits), checks that read
+  against the installed digest and serves the entry from it (`.` is `SKILL.md`); a copy changed
+  after install, or one that no longer reads as a bundle, is `VALIDATION_ERROR` naming the skill
+  and telling the user to reinstall it, the reader's detail logged rather than sent to the model
+  (delta `2026-10-skill-load-digest`). Its
   result is tainted (REQ-SKL-005, REQ-SEC-006); a refusal is a tool error in the daemon's own
   words. Each turn's system prompt lists the catalog — every enabled skill by name, at most 64,
   its description made one line (whitespace collapsed, control and format characters dropped)
@@ -1890,3 +1895,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.68 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-hosted-agent-peer` (T-HRD-05): §5.3 the agent's-terminal check counts hosted ACP agents; §5.3f a hosted agent leads its own session, and its group is killed when it exits |
 | 1.69 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-shell-parser` (T-HRD-06): §5.2 `security/domain` may use the shell parser; §5.3 the destructive floor parses the line as bash does, reads `setsid` and `systemd-run` as wrappers and `ssh`, here-documents and `alias` as scripts, and asks for a word built at run time, a script read from stdin or a line it cannot parse; the Constitution check names the Art. 3 amendment |
 | 1.70 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-rules-mcp-patterns` (T-HRD-07): §5.3's built-in destructive list gains `umb_rules_change` and `umb_mcp_remove` |
+| 1.71 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-skill-load-digest` (T-HRD-08): §5.3b `skill_load` reads the stored copy once, checks its digest and serves the entry from that read; a changed copy is `VALIDATION_ERROR` naming the skill |
