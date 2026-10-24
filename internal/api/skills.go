@@ -45,7 +45,7 @@ func skillStore(c *conn) (ctxports.Skills, error) {
 	return c.server.cfg.Skills, nil
 }
 
-// skillMethods is §5.37. Every client kind may call them: `umb skill` is how skills are
+// skillMethods is §5.42. Every client kind may call them: `umb skill` is how skills are
 // installed (decision 7).
 func skillMethods() map[string]method {
 	return map[string]method{

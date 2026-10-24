@@ -156,7 +156,7 @@ func TestInstallAsksOrNeedsYes_REQ_SKL_001(t *testing.T) {
 }
 
 // TestSkillCommandsMirrorTheMethods_REQ_SKL_003: list, show, enable, disable and remove call
-// the skill.* method of the same name with API §5.37's params, print its result — JSON with
+// the skill.* method of the same name with API §5.42's params, print its result — JSON with
 // --json — and exit as REQ-CLI-004 says, a daemon error being exit 1.
 func TestSkillCommandsMirrorTheMethods_REQ_SKL_003(t *testing.T) {
 	t.Parallel()

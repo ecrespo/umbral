@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.65 |
+| **Version** | 1.66 |
 | **Date** | 2026-10-24 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1600,7 +1600,7 @@ is exit 1 before anything is read or sent. There is no `--json`: the output is t
 
 **`umb skill`** (REQ-SKL-001, REQ-SKL-003; deltas `2026-09-skills-cli` and `2026-10-umb-skill`).
 `umb skill install PATH [--yes] [--replace]`, `list`, `show NAME [--body]`, `enable NAME`,
-`disable NAME` and `remove NAME`, each one `skill.*` method of API Spec §5.37.
+`disable NAME` and `remove NAME`, each one `skill.*` method of API Spec §5.42.
 
 - **The path.** A local `PATH` is made absolute against `umb`'s working directory, because the
   daemon's means nothing to the user. A remote one (`://`, `git@`, `user@host:path`) is sent as
@@ -1828,3 +1828,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.63 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-acp-client` (T-F2-07): §3.2 and §5.2 add `acp`; §5.1 lays out `internal/acp` and adds `[acp]` and `[[acp.agents]]`; DD-012 makes a hosted ACP thread the level-1 authority of its pane; §5.3f describes the host |
 | 1.64 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-acp-mediation` (T-F2-08): §5.3f — the running turn mediates a hosted agent's permissions, files and terminals; the `Mediator` port is gone |
 | 1.65 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-acp-cancel-traces` (T-F2-09): §5.3f — a cancel kills the terminals' commands before `session/cancel`, a hosted turn's spans, the disclosure; §5.3e the panel's hosted-thread row and notice; §9.4 `umb thread create --agent` |
+| 1.66 | 2026-10-24 | E. Crespo (assisted draft) | T-HRD-03, references only: §9.4's `umb skill` points at API §5.42, where `skill.*` moved from the duplicated §5.37 |

@@ -113,7 +113,7 @@ its matrix lists commands.
 - **Done:** each question names its answer and where it was decided; `task ci` green on any code
   that answer required.
 
-### [ ] T-HRD-03 · Three defects known when F1 closed
+### [x] 2026-10-24 T-HRD-03 · Three defects known when F1 closed
 - **What** (delta `2026-10-f1-close`):
   - `fetch_url` follows four redirects where Tech §5.3 allows five: `CheckRedirect` refuses at
     `len(via) >= fetchMaxHops`, and `via` already holds the first request;
@@ -131,12 +131,35 @@ its matrix lists commands.
 - **REQ:** REQ-AGT-018, REQ-API-005, REQ-API-004, REQ-CLI-001
 - **Files:** `internal/tools/adapters/builtin/fetch.go`, its test, the macOS flake's test file,
   `specs/api/umbral-daemon-api-v1.md`; for the `umb ai` item `internal/client/stream.go`, its test
-  and `cmd/umb/ai.go`
+  and `cmd/umb/ai.go`. Written as `internal/tools/adapters/builtin/fetch.go` and `fetch_test.go`,
+  `internal/api/blocks.go` and `blocks_fit_test.go`, the API and Tech specs, and comments citing
+  §5.42 in `cmd/umb/skill.go`, `skill_test.go`, `internal/api/skills.go`, `skills_wire_test.go`
+  and `internal/tui/adapters/daemon/daemon.go`
 - **Depends on:** —
 - **Done:** a test that follows exactly five redirects and refuses the sixth, seen red first; the
   flake's cause found and fixed, with the test green over repeated runs on macOS; one §5.37, with
   every reference to the renumbered section updated and `task schema` green;
   `TestUmbAiStreamsALongAnswer_REQ_CLI_001` green over repeated runs at `-cpu 1,2,4`.
+- **Result** (2026-10-24):
+  - **`fetch_url`:** `CheckRedirect` now refuses at `len(via) > 5`.
+    `TestFetchUrlFollowsFiveRedirects_REQ_AGT_018` was red first, refusing the fifth redirect, and
+    it reddens again when a sixth is allowed. The rules fetcher already counted right.
+  - **The macOS timeout:** the failing subtest was `block.get plain … (shift 1)`. The test client
+    gives a reply 5 s, and the reply was not ready in time. The likely cause, measured on Linux and
+    not on macOS, was `plainPrefix`, which cut
+    a transcript by bisection over `json.Marshal`. That is about twenty encodings of a megabyte
+    per response, 1.2 s per subtest under `-race` on an idle Linux machine.
+    - **The fix:** one pass adds up each rune's escaped width, and the encoder confirms the cut
+      twice, falling back to the bisection if they ever disagree. This brings the subtest to
+      0.5 s.
+    - **Tests:** `TestAPlainCutMatchesTheEncoder_REQ_API_005` checks every character JSON escapes
+      at every room. `TestAPlainCutEncodesAFewTimes_REQ_API_005` was red at 20 encodings.
+    - **Mutations:** a wrong width for `<`, and dropping the encoder's check, each redden a test.
+    - **macOS:** the `macos-latest` race job was green on four attempts of PR #49's CI run
+      40115764015 (jobs 120936592057, 120939053485, 120940287137, 120942499138).
+  - **API §5.37:** `skill.*` is now §5.42, after `worktree.*`, in API 1.51. §4 `Skill`, §6
+    `skill.changed`, Tech §9.4 and the code comments point there, and `task schema` is green. No
+    other section moved.
 
 ### [x] 2026-10-23 T-HRD-04 · A client that stops reading holds up no other
 - **What** (delta `2026-10-slow-client-queue`, approved by the Tech Lead on 2026-10-23):
@@ -164,7 +187,7 @@ its matrix lists commands.
 | REQ-TUI-001, 002, 003, 004 | T-REL-02 (walk) | `docs/qa/f1-tui.md`; the harness tests are F1's |
 | REQ-SEC-011, REQ-SEC-013 | T-HRD-01 (the key) | a bundle signed with the project key accepted, any other refused |
 | REQ-SEC-005, REQ-SKL-005, REQ-CLI-008 | T-HRD-02 (decisions) | per decision |
-| REQ-AGT-018, REQ-API-005, REQ-API-004, REQ-CLI-001 | T-HRD-03 | a five-redirect test; the macOS flake over repeated runs; `task schema`; TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001 |
+| REQ-AGT-018, REQ-API-005, REQ-API-004, REQ-CLI-001 | T-HRD-03 | TestFetchUrlFollowsFiveRedirects_REQ_AGT_018; TestAPlainCutMatchesTheEncoder_REQ_API_005, TestAPlainCutEncodesAFewTimes_REQ_API_005 and the macOS job over repeated runs; `task schema`; TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001 |
 | REQ-API-006 | T-HRD-04 | TestASlowClientHoldsUpNoOtherClient_REQ_API_006, TestASlowClientIsClosedNotTrimmed_REQ_API_006 |
 
 ## Execution log
@@ -176,3 +199,4 @@ its matrix lists commands.
 | 2026-10-22 | T-HRD-03 | revised | Its `REQ_AGT_007` item — a late interrupt eating the first byte of the agent's next command — fixed by delta `2026-10-agent-pty-settle` (PR #27, `TestALateInterruptDoesNotEatTheNextCommand_REQ_AGT_007`) and replaced by the `REQ_API_005` macOS read timeout seen on PR #26 (delta `2026-10-f1-close`, revised). The task stays open for the other three items. |
 | 2026-10-23 | T-HRD-03 | revised | The Tech Lead added the `umb ai` stream overflow found during T-F2-04 (`TestUmbAiStreamsALongAnswer_REQ_CLI_001`, 3 failures in 300 runs at `-cpu 2`, none at `-cpu 1`); fixed by `client.NewUnboundedStream`, 900 runs green at `-cpu 1,2,4` afterwards. The task stays open for its other three items. |
 | 2026-10-23 | T-HRD-04 | done | Added and approved by the Tech Lead (delta `2026-10-slow-client-queue`) after the T-HRD-03 review found that `Server.broadcast` wrote every client's socket on the dispatch goroutine: one client that stopped reading stopped every other's notifications. Each connection now has an outbox and its own writer; past 8 MiB it is closed. The new test blocked the dispatcher for 20 s before the change. A write deadline, also proposed, was dropped: with the outbox it would only disconnect a suspended TUI. |
+| 2026-10-24 | T-HRD-03 | done | Its last three items are closed. `fetch_url` follows five redirects and refuses the sixth. The `REQ_API_005` macOS timeout was `plainPrefix` encoding a megabyte about twenty times per cut; it is now one pass checked by the encoder, 1.2 s to 0.5 s per subtest under `-race`. macOS was green on four attempts of PR #49's CI. `skill.*` moved from the second §5.37 to §5.42 (API 1.51). Each fix was red first, and each was mutated to red again. |

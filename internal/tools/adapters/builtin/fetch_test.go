@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -67,6 +68,32 @@ func TestFetchMarksTaint_REQ_SEC_006(t *testing.T) {
 	}
 	if !strings.Contains((fetchURL{}).Spec().Description, "untrusted") {
 		t.Error("the tool's description does not tell the model its content is untrusted")
+	}
+}
+
+// TestFetchUrlFollowsFiveRedirects_REQ_AGT_018: fetch_url follows five redirects and refuses
+// the sixth (Tech §5.3). Go's CheckRedirect is handed the requests already made, the first one
+// included, so the fifth redirect arrives with five of them.
+func TestFetchUrlFollowsFiveRedirects_REQ_AGT_018(t *testing.T) {
+	t.Parallel()
+
+	chain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// /hop/N redirects to /hop/N-1; /hop/0 is the page.
+		left, err := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/hop/"))
+		if err != nil || left == 0 {
+			_, _ = io.WriteString(w, "arrived")
+			return
+		}
+		http.Redirect(w, r, "/hop/"+strconv.Itoa(left-1), http.StatusFound)
+	}))
+	defer chain.Close()
+
+	f := newFetchURL(FetchConfig{Forbidden: allowOnly(chain), Egress: &memEgress{}, Redact: redactKeys})
+	if res, err := fetch(t, f, chain.URL+"/hop/5"); err != nil || !strings.Contains(res.Text, "arrived") {
+		t.Errorf("five redirects: err = %v, text %q; want the page", err, res.Text)
+	}
+	if res, err := fetch(t, f, chain.URL+"/hop/6"); err == nil || strings.Contains(res.Text, "arrived") {
+		t.Errorf("six redirects: err = %v, text %q; want the sixth refused", err, res.Text)
 	}
 }
 
