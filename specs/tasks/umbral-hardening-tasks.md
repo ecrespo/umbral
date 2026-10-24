@@ -155,6 +155,8 @@ its matrix lists commands.
     - **Tests:** `TestAPlainCutMatchesTheEncoder_REQ_API_005` checks every character JSON escapes
       at every room. `TestAPlainCutEncodesAFewTimes_REQ_API_005` was red at 20 encodings.
     - **Mutations:** a wrong width for `<`, and dropping the encoder's check, each redden a test.
+    - **macOS:** the `macos-latest` race job was green on four attempts of PR #49's CI run
+      40115764015 (jobs 120936592057, 120939053485, 120940287137, 120942499138).
   - **API §5.37:** `skill.*` is now §5.42, after `worktree.*`, in API 1.51. §4 `Skill`, §6
     `skill.changed`, Tech §9.4 and the code comments point there, and `task schema` is green. No
     other section moved.
@@ -197,4 +199,4 @@ its matrix lists commands.
 | 2026-10-22 | T-HRD-03 | revised | Its `REQ_AGT_007` item — a late interrupt eating the first byte of the agent's next command — fixed by delta `2026-10-agent-pty-settle` (PR #27, `TestALateInterruptDoesNotEatTheNextCommand_REQ_AGT_007`) and replaced by the `REQ_API_005` macOS read timeout seen on PR #26 (delta `2026-10-f1-close`, revised). The task stays open for the other three items. |
 | 2026-10-23 | T-HRD-03 | revised | The Tech Lead added the `umb ai` stream overflow found during T-F2-04 (`TestUmbAiStreamsALongAnswer_REQ_CLI_001`, 3 failures in 300 runs at `-cpu 2`, none at `-cpu 1`); fixed by `client.NewUnboundedStream`, 900 runs green at `-cpu 1,2,4` afterwards. The task stays open for its other three items. |
 | 2026-10-23 | T-HRD-04 | done | Added and approved by the Tech Lead (delta `2026-10-slow-client-queue`) after the T-HRD-03 review found that `Server.broadcast` wrote every client's socket on the dispatch goroutine: one client that stopped reading stopped every other's notifications. Each connection now has an outbox and its own writer; past 8 MiB it is closed. The new test blocked the dispatcher for 20 s before the change. A write deadline, also proposed, was dropped: with the outbox it would only disconnect a suspended TUI. |
-| 2026-10-24 | T-HRD-03 | done | Its last three items are closed. `fetch_url` follows five redirects and refuses the sixth. The `REQ_API_005` macOS timeout was `plainPrefix` encoding a megabyte about twenty times per cut; it is now one pass checked by the encoder, 1.2 s to 0.5 s per subtest under `-race`. `skill.*` moved from the second §5.37 to §5.42 (API 1.51). Each fix was red first, and each was mutated to red again. |
+| 2026-10-24 | T-HRD-03 | done | Its last three items are closed. `fetch_url` follows five redirects and refuses the sixth. The `REQ_API_005` macOS timeout was `plainPrefix` encoding a megabyte about twenty times per cut; it is now one pass checked by the encoder, 1.2 s to 0.5 s per subtest under `-race`. macOS was green on four attempts of PR #49's CI. `skill.*` moved from the second §5.37 to §5.42 (API 1.51). Each fix was red first, and each was mutated to red again. |
