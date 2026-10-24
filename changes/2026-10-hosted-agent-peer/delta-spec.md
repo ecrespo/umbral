@@ -63,6 +63,10 @@ its thread owns.
      - **Survivors forgotten.** A bounded scan could forget the pid while processes survived.
        Zombies are now ignored, the scan runs until a 2 s deadline, and a session not seen
        empty keeps the pid listed (fail closed).
+     - **No pidfd.** Where none can be had (a kernel before 5.3, a full descriptor table), a
+       member is not signalled by its bare pid. A later review asked for that fallback, and the
+       one after it showed that a pid read from `/proc` may be reused by the time of the kill.
+       The member stays, so the session is not empty and the agent's pid stays listed.
    - **No controlling terminal.** With `Setsid` the agent has none, where before it shared the
      daemon's when the daemon ran in a terminal.
 4. **The residual of `2026-10-full-auto` stays.** A process that calls `setsid` again and forks

@@ -61,7 +61,10 @@ func endSession(sid int) bool {
 func killInSession(pid, sid int) {
 	fd, err := unix.PidfdOpen(pid, 0)
 	if err != nil {
-		return // gone already, or no pidfd: not signalled blind
+		// Gone already, or no pidfd (a kernel before 5.3, a full descriptor table): never
+		// signalled by its bare number, which may be reused; it is left in the session, which
+		// is then not seen empty, so the agent's pid stays listed (fail closed).
+		return
 	}
 	defer func() { _ = unix.Close(fd) }()
 	if s, live, ok := procSession(pid); ok && live && s == sid {
