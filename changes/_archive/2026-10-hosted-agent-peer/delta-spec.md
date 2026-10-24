@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-10-24`, awaiting the Tech Lead |
+| **Status** | `RATIFIED 2026-10-24 by the Tech Lead ("ratifico el delta y haz el merge del PR")`; folded into API 1.52 §2 and Tech 1.68 §5.3 and §5.3f, and archived |
 | **Date** | 2026-10-24 |
 | **Task** | T-HRD-05 |
 | **REQ** | REQ-ORC-004, REQ-ACP-009 (no change to their text) |
