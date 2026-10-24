@@ -102,6 +102,11 @@ its matrix lists commands.
     `run_command` line the model writes — `env 'A=x y' rm -rf /` — hides its program from the
     destructive floor (an ACP terminal is decided on its words as well); `run_command` in a zsh
     PTY loses a last line printed without a newline (`PROMPT_SP`).
+  - `2026-10-usf2-live` (added 2026-10-24): a hosted OpenCode is not offline — its empty isolated
+    cache makes it install its provider package from npm and fetch a model catalogue at start —
+    and whether the manifest should switch that off; a hosted agent learns the main copy and its
+    sibling threads' worktrees from git and may read them, unmediated by design. (Its third
+    question, what "US-F2-001 passes" means, belongs to the F2a close rather than here.)
 - **REQ:** REQ-SEC-005, REQ-SKL-005, REQ-CLI-008
 - **Files:** `changes/<YYYY-MM>-<slug>/` per decision; code only where a decision asks for it
 - **Depends on:** —

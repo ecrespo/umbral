@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -142,6 +143,28 @@ func (a *agent) say(ctx context.Context, sid acp.SessionId, u acp.SessionUpdate)
 	_ = a.conn.SessionUpdate(ctx, acp.SessionNotification{SessionId: sid, Update: u})
 }
 
+// Time is the prompt word that measures Umbral's answer to fs/read_text_file (NFR-F2-03).
+const Time = "time"
+
+// timeReads makes n reads of path and summarizes how long each took to be answered.
+func (a *agent) timeReads(ctx context.Context, sid acp.SessionId, n, path string) string {
+	count, err := strconv.Atoi(n)
+	if err != nil || count < 1 {
+		return "error: time needs a count"
+	}
+	took := make([]time.Duration, 0, count)
+	for range count {
+		start := time.Now()
+		if _, err := a.conn.ReadTextFile(ctx, acp.ReadTextFileRequest{SessionId: sid, Path: path}); err != nil {
+			return "error: " + err.Error()
+		}
+		took = append(took, time.Since(start))
+	}
+	slices.Sort(took)
+	at := func(pct int) time.Duration { return took[max((len(took)*pct+99)/100-1, 0)] }
+	return fmt.Sprintf("p50=%dus p95=%dus max=%dus", at(50).Microseconds(), at(95).Microseconds(), took[len(took)-1].Microseconds())
+}
+
 // StderrSecret is what `crash` writes to stderr and `fail` puts in its error, which must reach
 // no log and no client.
 const StderrSecret = "acptest-stderr-credential-marker" //nolint:gosec // a marker, not a credential
@@ -156,6 +179,8 @@ const StderrSecret = "acptest-stderr-credential-marker" //nolint:gosec // a mark
 //	garbage         a line that is not JSON-RPC, then nothing
 //	ask             a permission request; answers allowed, rejected or cancelled
 //	read PATH       fs/read_text_file; answers the content or the error
+//	time N PATH     N fs/read_text_file of PATH, one after another; answers how long Umbral
+//	                took to answer them, `p50=…us p95=…us max=…us`, or the first error
 //	slow MS N       N text chunks, MS milliseconds apart
 //	stop REASON     ends the turn with that stop reason
 //
@@ -323,6 +348,8 @@ func (a *agent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResp
 		} else {
 			a.say(ctx, sid, acp.UpdateAgentMessageText(resp.Content))
 		}
+	case Time:
+		a.say(ctx, sid, acp.UpdateAgentMessageText(a.timeReads(ctx, sid, arg(fields, 1), arg(fields, 2))))
 	case "write":
 		// Writes fields[2:] joined to the path fields[1].
 		_, err := a.conn.WriteTextFile(ctx, acp.WriteTextFileRequest{SessionId: sid, Path: arg(fields, 1), Content: strings.Join(fields[min(2, len(fields)):], " ")})

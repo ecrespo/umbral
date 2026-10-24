@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`; nothing below is implemented yet |
-| **Version** | 0.6 |
+| **Version** | 0.7 |
 | **Date** | 2026-10-22 |
 | **Reviewers** | spec-guardian (Analyze and two verify passes); Tech Lead, ratified 2026-10-22 |
 | **Source** | `docs/ARCHITECTURE.md` §5.4–5.8 and §10 (F2 ADE row); `specs/prd/umbral-mvp.md` §5.2–5.3; Plan 1.14 §4 |
@@ -275,8 +275,10 @@ independent of F2 and can close alongside F2a.
   or reports a conflict without losing either side; every turn of every thread has a trace; every
   write, command and fetch of the ACP thread was a `session/request_permission` decided by Umbral's
   policy engine and recorded in `tool_calls`. The ACP agent is OpenCode pointed at the same local
-  Ollama, so the whole scenario runs offline; its thread still reads `egress_visibility = unobserved`
-  (REQ-ACP-007), because Umbral does not see its own model calls.
+  Ollama, so its model calls stay on the machine; anything else its own process sends is its own
+  traffic — measured on OpenCode 1.18.33, its provider package from npm and a model catalogue at
+  start — and its thread reads `egress_visibility = unobserved` (REQ-ACP-007), because Umbral
+  sees neither (delta `2026-10-usf2-live`).
 - **US-F2-002 — interactive programs.** The agent is asked to "answer the prompts": a `psql` session
   waiting for a query, then `git rebase -i` opening an editor with three picks to squash into one.
 
@@ -284,8 +286,10 @@ independent of F2 and can close alongside F2a.
 
 Decided by the Tech Lead on 2026-10-22:
 
-- **Q-F2-01 — the reference ACP agent is OpenCode**, pointed at the local Ollama, so US-F2-001 runs
-  offline.
+- **Q-F2-01 — the reference ACP agent is OpenCode**, pointed at the local Ollama, so its model
+  calls stay local. *(0.7: the live run found that the agent's own process still fetches its
+  provider package and a model catalogue at start — see §9; whether that should be switched off is
+  T-HRD-02's.)*
 - **Q-F2-02 — Art. 4 and hosted agents.** A hosted agent's own network traffic (its model calls,
   an allowed `fetch` and anything else its process sends) and its file reads are disclosed, not
   audited: the thread's `egress_visibility = unobserved` (REQ-ACP-007). This is written
@@ -340,3 +344,4 @@ Still open, with the draft's default:
 | 0.4 | 2026-10-22 | E. Crespo (assisted draft) | spec-guardian verify pass (FIX FIRST: N-01…N-10 and the partly closed F-items) applied. REQ-ACP-009 forces `ask` on every permission, isolates the agent's `HOME`/XDG and refuses a repository-level agent config; the Art. 4 amendment covers all of a hosted agent's own network; ACP-003 maps `move`/`read`/`search`/`think`; ACP-004 does not decide a write twice and gives `fs/*`/`terminal/create` their own `tool_calls` row; ACP-006's timer pauses on the agent's outstanding requests (default 600 s); ACP-007 records a `decision`; WT-004's `commit_failed` and `commit_timeout`; WT-007's report uses `worktrees.state`; ORC-004 clears `full-auto` without forcing `normal` and covers ACP threads; ACP-001 without a worktree; DD-012 for ACP threads in ACP-002 |
 | 0.5 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-worktree-methods` (T-F2-03): REQ-WT-001's worktrees sit beside the daemon's database, which is `$XDG_DATA_HOME/umbral` by default, so a daemon given `--db` keeps them with its data |
 | 0.6 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-acp-client` (T-F2-07): REQ-ACP-009's `project_config` refusal is a `VALIDATION_ERROR` when found before anything is written, `agent_unavailable` when found only in the new worktree and `agent_error` at a later launch; env references may not name the agent's own configuration variables (`OPENCODE_*`), and the agent's stderr is discarded |
+| 0.7 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-usf2-live` (T-F2-12): §9's US-F2-001 no longer says the scenario runs offline — the hosted agent's model calls stay local, but at start OpenCode fetches its provider package and a model catalogue, its own unobserved traffic; Q-F2-01 says the same |
