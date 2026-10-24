@@ -140,8 +140,21 @@ func TestATerminalThatRunsAScriptIsFlagged_REQ_ACP_005(t *testing.T) {
 		{"sudo", []string{"zsh", "-c", "x"}, true},
 		{"eval", []string{"rm -rf /"}, true},
 		{"xargs", []string{"sh", "-c", "x"}, true},
+		{"busybox", []string{"sh", "-c", "x"}, true},
+		{"/usr/bin/mksh", []string{"-c", "x"}, true},
+		{"ash", []string{"-ec", "x"}, true},
+		{"sh5", []string{"-c", "x"}, true},
+		{"tcsh", []string{"-c", "x"}, true},
+		{"fish", []string{"--command=x"}, true},
+		{"pwsh", []string{"-Command", "x"}, true},
+		{"env", []string{"-iS", "rm -rf /"}, true},
+		{"env", []string{"--split", "rm -rf /"}, true},
+		{"env", []string{"-vS", "x"}, true},
+		{"env", []string{"-i", "-u", "HOME", "A=b", "make"}, false},
+		{"env", []string{"--unset=HOME", "make"}, false},
 		{"go", []string{"test", "./..."}, false},
 		{"git", []string{"commit", "-m", "fix bash"}, false},
+		{"make", []string{"shell"}, false},
 	} {
 		if got := InterpretsScript(tc.command, tc.args); got != tc.want {
 			t.Errorf("InterpretsScript(%q, %q) = %v, want %v", tc.command, tc.args, got, tc.want)

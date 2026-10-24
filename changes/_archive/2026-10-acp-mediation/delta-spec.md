@@ -77,7 +77,12 @@ runs, or how a terminal ends. Nothing said what happens to a request that arrive
    command `y`, and `rm 'x;y' -rf /` as two harmless ones, while the shell runs `rm -rf /`. The
    approval shows the line as typed. A word that is shell syntax of its own — a shell's `-c`
    script, `eval`'s operand, `env -S`'s — is read by the normaliser without its quotes in either
-   line, so a terminal holding one asks whatever else allows it (`reason = script`). A cwd outside the write root asks even when a
+   line, so a terminal holding one asks whatever else allows it (`reason = script`). The check
+   fails closed: any word naming a shell (every `…sh` with or without a version — `ssh` too, whose
+   remote command is a script — busybox, fish, PowerShell) followed by a flag holding `c` or
+   `--command`, `eval`, or `env` with any option but `-i`, `-0`, `-u`, `--ignore-environment`,
+   `--null` and `--unset=`. An interpreter's own code (`python -c`, `perl -e`) is not shell
+   syntax the normaliser reads: what it does is outside the destructive list, as any program's is. A cwd outside the write root asks even when a
    remembered rule allows the line (REQ-ACP-005). Its row is `acp:terminal/create`, ended `ok`
    once the command's line is written to the shell; a claim or write that fails is the request's
    error and closes the session. A terminal session is never taken for the thread's own PTY.

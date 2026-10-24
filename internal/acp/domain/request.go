@@ -122,28 +122,52 @@ func PolicyLine(command string, args []string, env [][2]string) string {
 	return strings.Join(words, " ")
 }
 
-// scriptShells are the programs whose `-c` operand is a script.
-var scriptShells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "fish": true}
+// scriptShell matches a program whose `-c` (or `--command`) operand is a script: every
+// `…sh` with a version or none — sh, bash, dash, ash, mksh, yash, tcsh, rbash, sh5, and ssh, whose
+// remote command is one — and busybox, fish and PowerShell. It errs towards matching.
+var scriptShell = regexp.MustCompile(`^([a-z]*sh[0-9.]*|busybox|fish|pwsh|powershell)$`)
 
-// InterpretsScript reports whether a terminal's words hold shell syntax of their own: a shell
-// with a `-c` flag, `eval`, or `env -S`. The command normaliser reads such a script without its
-// quotes, so neither line shows the policy what it runs; the terminal then asks (delta
-// `2026-10-acp-mediation`, decision 7). It errs towards asking: any word naming one counts.
+// safeEnvOption is an `env` option that cannot make env read a script: anything else — `-S`,
+// `--split-string`, a bundle holding either, an abbreviation — is taken for one.
+func safeEnvOption(w string) bool {
+	switch {
+	case w == "-i", w == "-0", w == "-", w == "--", w == "--ignore-environment", w == "--null":
+		return true
+	case strings.HasPrefix(w, "-u"), strings.HasPrefix(w, "--unset="):
+		return true
+	}
+	return false
+}
+
+// InterpretsScript reports whether a terminal's words may hold shell syntax of their own: a shell
+// with a `c` flag or `--command`, `eval`, or `env` with any option outside the safe ones. The
+// command normaliser reads such a script without its quotes, so neither line shows the policy
+// what it runs; the terminal then asks (delta `2026-10-acp-mediation`, decision 7). It fails
+// closed: any word naming a shell counts, and an unknown env option is taken for `-S`.
 func InterpretsScript(command string, args []string) bool {
 	words := append([]string{command}, args...)
-	shell, env := false, false
-	for _, w := range words {
+	shell := false
+	for i := 0; i < len(words); i++ {
+		w := words[i]
 		base := filepath.Base(w)
 		switch {
 		case base == "eval":
 			return true
-		case scriptShells[base]:
-			shell = true
 		case base == "env":
-			env = true
-		case shell && strings.HasPrefix(w, "-") && !strings.HasPrefix(w, "--") && strings.Contains(w, "c"):
+			for i+1 < len(words) && strings.HasPrefix(words[i+1], "-") {
+				i++
+				if !safeEnvOption(words[i]) {
+					return true
+				}
+				if words[i] == "-u" {
+					i++
+				}
+			}
+		case scriptShell.MatchString(base):
+			shell = true
+		case shell && strings.HasPrefix(w, "--command"):
 			return true
-		case env && (strings.HasPrefix(w, "-S") || strings.HasPrefix(w, "--split-string")):
+		case shell && strings.HasPrefix(w, "-") && !strings.HasPrefix(w, "--") && strings.Contains(strings.ToLower(w), "c"):
 			return true
 		}
 	}
