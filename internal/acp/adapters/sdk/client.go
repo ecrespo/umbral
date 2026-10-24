@@ -257,7 +257,7 @@ func (c *client) CreateTerminal(ctx context.Context, req acp.CreateTerminalReque
 	if terms == nil {
 		return acp.CreateTerminalResponse{}, terminalError("umbral does not run terminals for this agent")
 	}
-	command, cwd, err := p.terminalCommand(req)
+	command, policy, cwd, err := p.terminalCommand(req)
 	if err != nil {
 		return acp.CreateTerminalResponse{}, err
 	}
@@ -265,7 +265,7 @@ func (c *client) CreateTerminal(ctx context.Context, req acp.CreateTerminalReque
 		return acp.CreateTerminalResponse{}, err
 	}
 	var started ports.Terminal
-	err = c.serve(ctx, domain.Request{Method: domain.MethodTerminal, Command: command, Cwd: cwd},
+	err = c.serve(ctx, domain.Request{Method: domain.MethodTerminal, Command: command, Policy: policy, Cwd: cwd},
 		func(ctx context.Context, target string) (string, error) {
 			var err error
 			started, err = terms.Start(ctx, p.thread, cwd, target)

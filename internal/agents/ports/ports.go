@@ -329,7 +329,9 @@ type ExternalOp struct {
 	Path    string
 	Content string
 	Command string
-	Cwd     string
+	// Policy is a terminal's line with one token per word the shell sees, decided with Command.
+	Policy string
+	Cwd    string
 }
 
 // ErrDenied is a hosted agent's request the policy or the user did not allow.

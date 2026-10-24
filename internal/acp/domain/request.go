@@ -16,12 +16,14 @@ const (
 )
 
 // Request is one of the agent's requests of Umbral: a file read or write by its absolute Path
-// (a write with its Content, for the approval's diff), or a terminal's Command line in Cwd.
+// (a write with its Content, for the approval's diff), or a terminal's Command line in Cwd with
+// its PolicyLine, which the policy decides as well.
 type Request struct {
 	Method  string
 	Path    string
 	Content string
 	Command string
+	Policy  string
 	Cwd     string
 }
 
@@ -90,6 +92,29 @@ func CommandLine(command string, args []string, env [][2]string) string {
 	words = append(words, Quote(command))
 	for _, a := range args {
 		words = append(words, Quote(a))
+	}
+	return strings.Join(words, " ")
+}
+
+// policyBreaks are the characters the policy's command normaliser splits a line at or strips,
+// without reading quotes: whitespace, its separators, quotes and the backslash.
+var policyBreaks = regexp.MustCompile("[\\s;&|`(){}'\"\\\\]")
+
+// PolicyLine is a terminal's line as the policy's normaliser must read it: one token per word
+// the shell will see, each such character inside a word made `_`. The normaliser splits on
+// spaces and separators without reading quotes, so the quoted line alone could hide the program
+// — `env 'A=x y' rm -rf /` reads as the command `y` — from the destructive floor (delta
+// `2026-10-acp-mediation`, decision 7).
+func PolicyLine(command string, args []string, env [][2]string) string {
+	words := make([]string, 0, 2+len(env)+len(args))
+	if len(env) > 0 {
+		words = append(words, "env")
+		for _, kv := range env {
+			words = append(words, policyBreaks.ReplaceAllString(kv[0]+"="+kv[1], "_"))
+		}
+	}
+	for _, w := range append([]string{command}, args...) {
+		words = append(words, policyBreaks.ReplaceAllString(w, "_"))
 	}
 	return strings.Join(words, " ")
 }

@@ -767,6 +767,10 @@ func TestAnACPTerminalServesItsOutputAndExit_REQ_ACP_005(t *testing.T) {
 	if len(s.asked) != 1 || s.asked[0].Method != domain.MethodTerminal || s.asked[0].Command != want || s.asked[0].Cwd != dir {
 		t.Errorf("the turn decided %+v, want the terminal %q in %s", s.asked, want, dir)
 	}
+	// The policy decides the words the shell will see as well, one token each.
+	if len(s.asked) == 1 && s.asked[0].Policy != "env GREETING=a_b printf hello" {
+		t.Errorf("the policy line is %q", s.asked[0].Policy)
+	}
 	if got := s.Text0(); got != "exit=0 output=tf hello truncated=true" {
 		t.Errorf("the agent read %q", got)
 	}

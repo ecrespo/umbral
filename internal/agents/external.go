@@ -424,6 +424,15 @@ func (s *externalSink) requestDecision(ctx context.Context, tool string, op port
 			return secdomain.Action{}, secdomain.Decision{}, nil, fmt.Errorf("%w: %w", ports.ErrDenied, err)
 		}
 		d := s.t.r.cfg.Policy().Decide(a, s.t.mode, s.t.rules, s.t.tainted)
+		if op.Policy != "" && op.Policy != op.Command {
+			// The line as the normaliser must read it, one token per word the shell sees: the
+			// strictest verdict stands, and the approval shows the line as typed.
+			pa, err := s.action(tool, "run_command", s.env(op.Cwd), map[string]string{argCommand: op.Policy})
+			if err != nil {
+				return secdomain.Action{}, secdomain.Decision{}, nil, fmt.Errorf("%w: %w", ports.ErrDenied, err)
+			}
+			d = s.decide([]secdomain.Action{a, pa}, false).decision
+		}
 		if d.Verdict == secdomain.VerdictAllow && !secdomain.WithinWriteRoot(secdomain.Action{Target: a.Cwd, WriteRoot: a.WriteRoot}) {
 			// REQ-ACP-005: a terminal outside the write root asks, whatever allowed the line.
 			d = secdomain.Decision{Verdict: secdomain.VerdictAsk, Reason: secdomain.ReasonOutsideWriteRoot}

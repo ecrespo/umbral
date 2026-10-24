@@ -102,3 +102,24 @@ func TestATerminalsControlCharactersAreRefused_REQ_ACP_005(t *testing.T) {
 		t.Errorf("a plain terminal was refused: %v", err)
 	}
 }
+
+// TestATerminalsPolicyLineKeepsItsWords_REQ_ACP_005: the policy's command normaliser splits on
+// spaces and separators without reading quotes, so the policy line has one token per word the
+// shell will see — the program stays the program, whatever a quoted word holds.
+func TestATerminalsPolicyLineKeepsItsWords_REQ_ACP_005(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		args    []string
+		env     [][2]string
+		want    string
+	}{
+		{"rm", []string{"-rf", "/"}, [][2]string{{"A", "x y"}}, "env A=x_y rm -rf /"},
+		{"rm", []string{"x;y", "-rf", "/"}, nil, "rm x_y -rf /"},
+		{"git", []string{"commit", "-m", `it's "done" (a|b) && \ok`}, nil, "git commit -m it_s__done___a_b______ok"},
+		{"printf", []string{"plain"}, nil, "printf plain"},
+	} {
+		if got := PolicyLine(tc.command, tc.args, tc.env); got != tc.want {
+			t.Errorf("PolicyLine(%q, %q, %q) = %q, want %q", tc.command, tc.args, tc.env, got, tc.want)
+		}
+	}
+}

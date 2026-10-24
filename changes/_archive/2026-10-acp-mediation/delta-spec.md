@@ -70,7 +70,12 @@ runs, or how a terminal ends. Nothing said what happens to a request that arrive
    the block — erases a last line printed without a newline. The line is typed into the shell's
    line editor, which acts on a control character even inside quotes (Ctrl-U erases what came
    before it), so a control character in the command, an argument or `env` is an ACP error before
-   anything is decided; `run_command`'s commands are refused one for the same reason. A cwd outside the write root asks even when a
+   anything is decided; `run_command`'s commands are refused one for the same reason. The policy
+   also decides the *policy line* — the same words, each made one token by turning whitespace,
+   separators, quotes and backslashes inside it into `_` — and the strictest verdict stands: the
+   command normaliser splits without reading quotes, so `env 'A=x y' rm -rf /` alone reads as the
+   command `y`, and `rm 'x;y' -rf /` as two harmless ones, while the shell runs `rm -rf /`. The
+   approval shows the line as typed. A cwd outside the write root asks even when a
    remembered rule allows the line (REQ-ACP-005). Its row is `acp:terminal/create`, ended `ok`
    once the command's line is written to the shell; a claim or write that fails is the request's
    error and closes the session. A terminal session is never taken for the thread's own PTY.
@@ -95,6 +100,10 @@ runs, or how a terminal ends. Nothing said what happens to a request that arrive
 - The plain text is a stripping of the stream, not the emulator's screen: a program that redraws
   a line (a progress bar) shows every version of it. The block's own output, recorded at its end,
   is the emulator's.
+- The command normaliser reads no quotes, so a `run_command` line the model writes itself —
+  `env 'A=x y' rm -rf /` — still hides its program from the destructive floor. An ACP terminal
+  is safe because Umbral builds its words; the model's own lines need a real tokenizer, left to
+  the Hardening phase (T-HRD-02).
 - Seen while testing and not changed here: `run_command` in a zsh PTY loses a last line printed
   without a newline, for the same `PROMPT_SP` reason. It is the thread's own shell, the user's
   choice, and is left to the Hardening phase.
@@ -104,7 +113,8 @@ runs, or how a terminal ends. Nothing said what happens to a request that arrive
 The spec-guardian pass found the real tool registry refusing `write_file`'s action without a
 content — every `edit` permission and `fs/*` request was rejected while the tests' fake registry
 accepted them — and a terminal's line holding control characters the shell's line editor would
-act on. Both were fixed with tests that fail without the fix; decisions 4 and 7 carry the rest.
+act on. A security review then found the quoted line hiding its program from the destructive
+floor, which the policy line closes. All were fixed with tests that fail without the fix; decisions 4 and 7 carry the rest.
 
 ## Tests
 
@@ -115,10 +125,12 @@ act on. Both were fixed with tests that fail without the fix; decisions 4 and 7 
   `TestACPToolCallsAreRecordedWithTheirDecision_REQ_ACP_007`,
   `TestFullAutoDecidesACPPermissions_REQ_ORC_004`,
   `TestAnACPTerminalOutsideTheWriteRootAsks_REQ_ACP_005`,
-  `TestAnUndecidablePermissionIsRecordedDenied_REQ_ACP_007`.
+  `TestAnUndecidablePermissionIsRecordedDenied_REQ_ACP_007`,
+  `TestATerminalIsDecidedOnTheWordsTheShellSees_REQ_ACP_005`.
 - `internal/acp/domain`: `TestACPKindsMapToRisks_REQ_ACP_003`,
   `TestACallsInputNamesItsTargets_REQ_ACP_003`, `TestATerminalsCommandLineIsQuoted_REQ_ACP_005`,
-  `TestATerminalsControlCharactersAreRefused_REQ_ACP_005`.
+  `TestATerminalsControlCharactersAreRefused_REQ_ACP_005`,
+  `TestATerminalsPolicyLineKeepsItsWords_REQ_ACP_005`.
 - `internal/sessions`: `TestATerminalRunsOnlyInAPOSIXShell_REQ_ACP_005`;
   `internal/sessions/domain`: `TestAnAgentCommandWithAControlCharacterIsRefused_REQ_ACP_005`.
 - `cmd/umbrald`, against the daemon's own tool registry: `TestACPFilesAreMediatedInTheDaemon_REQ_ACP_004`.

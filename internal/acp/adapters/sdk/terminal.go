@@ -90,17 +90,18 @@ func (p *process) releaseTerminals() {
 	}
 }
 
-// terminalCommand is the request's command line and directory, or why there is none.
-func (p *process) terminalCommand(req acp.CreateTerminalRequest) (command, cwd string, err error) {
+// terminalCommand is the request's command line, its policy line and its directory, or why
+// there is none.
+func (p *process) terminalCommand(req acp.CreateTerminalRequest) (command, policy, cwd string, err error) {
 	env := make([][2]string, 0, len(req.Env))
 	for _, v := range req.Env {
 		if !domain.ValidEnvName(v.Name) {
-			return "", "", terminalError("%q is not a variable name", v.Name)
+			return "", "", "", terminalError("%q is not a variable name", v.Name)
 		}
 		env = append(env, [2]string{v.Name, v.Value})
 	}
 	if err := domain.CheckTerminal(req.Command, req.Args, env); err != nil {
-		return "", "", terminalError("%v", err)
+		return "", "", "", terminalError("%v", err)
 	}
 	cwd = p.dir
 	if req.Cwd != nil && *req.Cwd != "" {
@@ -109,7 +110,7 @@ func (p *process) terminalCommand(req acp.CreateTerminalRequest) (command, cwd s
 			cwd = filepath.Join(p.dir, cwd)
 		}
 	}
-	return domain.CommandLine(req.Command, req.Args, env), filepath.Clean(cwd), nil
+	return domain.CommandLine(req.Command, req.Args, env), domain.PolicyLine(req.Command, req.Args, env), filepath.Clean(cwd), nil
 }
 
 // tail is the end of s in at most limit bytes, cut on a character boundary.

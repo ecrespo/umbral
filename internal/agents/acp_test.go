@@ -474,3 +474,36 @@ func TestAnUndecidablePermissionIsRecordedDenied_REQ_ACP_007(t *testing.T) {
 		t.Errorf("row decided %q, want deny", row.Decision)
 	}
 }
+
+// TestATerminalIsDecidedOnTheWordsTheShellSees_REQ_ACP_005: a quoted word holding spaces or a
+// separator must not hide the program from the destructive floor — `env 'A=x y' rm -rf /`
+// runs rm — so under full-auto, in the worktree, both terminals ask, shown as typed.
+func TestATerminalIsDecidedOnTheWordsTheShellSees_REQ_ACP_005(t *testing.T) {
+	repo := realDir(t)
+	wts := &fakeWorktrees{root: realDir(t), repo: repo}
+	errs := make(chan error, 2)
+	r := acpRig(t, wts, func(ctx context.Context, req ports.ExternalRequest, sink ports.ExternalSink) {
+		for _, op := range []ports.ExternalOp{
+			{Method: ports.OpTerminal, Command: `env 'A=x y' rm -rf /`, Policy: "env A=x_y rm -rf /", Cwd: req.Dir},
+			{Method: ports.OpTerminal, Command: `rm 'x;y' -rf /`, Policy: "rm x_y -rf /", Cwd: req.Dir},
+		} {
+			errs <- sink.Request(ctx, op, func(context.Context, string) (string, error) { return "started", nil })
+		}
+	})
+	th := r.thread(t, domain.CreateParams{Cwd: repo, Agent: "fake", Worktree: true, Mode: secdomain.ModeNormal})
+	if _, err := r.rt.Update(t.Context(), th.ID, domain.UpdateParams{Mode: modePtr(secdomain.ModeFullAuto)}); err != nil {
+		t.Fatal(err)
+	}
+	r.sendOnly(t, th.ID)
+	for _, want := range []string{`env 'A=x y' rm -rf /`, `rm 'x;y' -rf /`} {
+		a := r.requested(t)
+		if a.Summary != want || a.Reason != secdomain.ReasonDestructive {
+			t.Errorf("approval on %q (%s), want %q as destructive", a.Summary, a.Reason, want)
+		}
+		r.respond(t, a, false)
+		if err := <-errs; !errors.Is(err, ports.ErrDenied) {
+			t.Errorf("the refused terminal: %v", err)
+		}
+	}
+	r.finished(t)
+}
