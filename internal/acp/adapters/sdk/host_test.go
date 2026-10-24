@@ -31,6 +31,37 @@ type sink struct {
 	thoughts []string
 	calls    []domain.ToolCall
 	fail     error
+	// permit decides permissions, refusing when nil; serve decides requests, refusing when nil.
+	permit func(ctx context.Context, call domain.ToolCall) (bool, error)
+	serve  func(ctx context.Context, req domain.Request, perform func(context.Context, string) (string, error)) error
+	asked  []domain.Request
+}
+
+func (s *sink) Permission(ctx context.Context, call domain.ToolCall) (bool, error) {
+	if s.permit == nil {
+		return false, nil
+	}
+	return s.permit(ctx, call)
+}
+
+func (s *sink) Request(ctx context.Context, req domain.Request, perform func(context.Context, string) (string, error)) error {
+	s.mu.Lock()
+	s.asked = append(s.asked, req)
+	s.mu.Unlock()
+	if s.serve == nil {
+		return errors.New("refused")
+	}
+	return s.serve(ctx, req, perform)
+}
+
+// allowAll performs every request on the target it names: a file's path, a terminal's line.
+func allowAll(ctx context.Context, req domain.Request, perform func(context.Context, string) (string, error)) error {
+	target := req.Path
+	if req.Method == domain.MethodTerminal {
+		target = req.Command
+	}
+	_, err := perform(ctx, target)
+	return err
 }
 
 func (s *sink) Text(t string) error {
@@ -128,11 +159,16 @@ func gitDir(t *testing.T, dir string) {
 
 func prompt(t *testing.T, h *Host, dir, text string) (*sink, string, error) {
 	t.Helper()
+	s := &sink{}
+	stop, err := promptWith(t, h, dir, text, s)
+	return s, stop, err
+}
+
+func promptWith(t *testing.T, h *Host, dir, text string, s *sink) (string, error) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	s := &sink{}
-	stop, err := h.Prompt(ctx, Request{ThreadID: "thr_1", Agent: "fake", Dir: dir}, text, s)
-	return s, stop, err
+	return h.Prompt(ctx, Request{ThreadID: "thr_1", Agent: "fake", Dir: dir}, text, s)
 }
 
 func report(t *testing.T, h *Host, dir string) acptest.Report {
@@ -243,29 +279,20 @@ func TestASilentACPAgentEndsTheTurn_REQ_ACP_006(t *testing.T) {
 	}
 }
 
-// slowMediator answers permissions after a delay, longer than the silence timeout.
-type slowMediator struct {
-	Refuse
-	delay time.Duration
-}
-
-func (m slowMediator) Permission(ctx context.Context, _ ports.PermissionRequest) (bool, error) {
-	select {
-	case <-time.After(m.delay):
-	case <-ctx.Done():
-	}
-	return false, nil
-}
-
 // TestAnAgentWaitingOnUmbralIsNotSilent_REQ_ACP_006: while Umbral has not answered the agent's
 // permission request, the agent is waiting, not silent, however long the answer takes.
 func TestAnAgentWaitingOnUmbralIsNotSilent_REQ_ACP_006(t *testing.T) {
 	t.Parallel()
-	h := newHost(t, func(c *Config) {
-		c.SilenceTimeout = 200 * time.Millisecond
-		c.Mediator = slowMediator{delay: time.Second}
-	})
-	s, stop, err := prompt(t, h, workDir(t), "ask")
+	h := newHost(t, func(c *Config) { c.SilenceTimeout = 200 * time.Millisecond })
+	// The turn answers the permission after a delay longer than the silence timeout.
+	s := &sink{permit: func(ctx context.Context, _ domain.ToolCall) (bool, error) {
+		select {
+		case <-time.After(time.Second):
+		case <-ctx.Done():
+		}
+		return false, nil
+	}}
+	stop, err := promptWith(t, h, workDir(t), "ask", s)
 	if err != nil || stop != "end_turn" {
 		t.Fatalf("the turn ended %q, %v while the agent waited on Umbral, want it to go on", stop, err)
 	}
@@ -608,5 +635,179 @@ func TestACancelledACPTurnSendsSessionCancel_REQ_ACP_008(t *testing.T) {
 	}
 	if !h.Running("thr_1") {
 		t.Error("an agent that ended its cancelled turn was killed")
+	}
+}
+
+// fakeTerms starts terminals that ended at once, printing what they were given.
+type fakeTerms struct {
+	mu       sync.Mutex
+	started  []string
+	cwds     []string
+	released atomic.Int32
+}
+
+func (f *fakeTerms) Start(_ context.Context, _, cwd, command string) (ports.Terminal, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.started, f.cwds = append(f.started, command), append(f.cwds, cwd)
+	return &fakeTerm{f: f, out: "output of " + command}, nil
+}
+
+type fakeTerm struct {
+	f   *fakeTerms
+	out string
+}
+
+func (t *fakeTerm) Output() (string, *domain.TerminalExit) {
+	zero := 0
+	return t.out, &domain.TerminalExit{Code: &zero}
+}
+
+func (t *fakeTerm) Wait(context.Context) (domain.TerminalExit, error) {
+	zero := 0
+	return domain.TerminalExit{Code: &zero}, nil
+}
+func (t *fakeTerm) Kill()                         {}
+func (t *fakeTerm) Release(context.Context) error { t.f.released.Add(1); return nil }
+
+// fakeFiles records the targets it is asked to read and write.
+type fakeFiles struct {
+	mu      sync.Mutex
+	targets []string
+}
+
+func (f *fakeFiles) Read(target string, _, _ int) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.targets = append(f.targets, target)
+	return "content of " + target, nil
+}
+
+func (f *fakeFiles) Write(target, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.targets = append(f.targets, target)
+	return nil
+}
+
+// TestACPNeverSelectsAllowAlways_REQ_ACP_003: an allowed permission selects the agent's
+// `allow_once` option even when `allow_always` is listed first, and a refused one its
+// `reject_once`; the turn decided on the call the agent described.
+func TestACPNeverSelectsAllowAlways_REQ_ACP_003(t *testing.T) {
+	t.Parallel()
+	h := newHost(t, nil)
+	dir := workDir(t)
+	for allow, want := range map[bool]string{true: "selected once", false: "selected reject"} {
+		var seen []domain.ToolCall
+		s := &sink{permit: func(_ context.Context, call domain.ToolCall) (bool, error) {
+			seen = append(seen, call)
+			return allow, nil
+		}}
+		if _, err := promptWith(t, h, dir, "ask", s); err != nil {
+			t.Fatal(err)
+		}
+		if s.Text0() != want {
+			t.Errorf("allowed %v: the agent read %q, want %q", allow, s.Text0(), want)
+		}
+		if len(seen) != 1 || seen[0].Kind != "edit" || seen[0].ID != "call-ask" {
+			t.Errorf("the turn decided %+v, want the agent's edit call", seen)
+		}
+	}
+	// Between turns there is no turn to decide: nothing is asked, and nothing allowed.
+	if _, err := promptWith(t, h, dir, "ask", &sink{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestACPTerminalsAreCapped_REQ_ACP_005: a thread has at most `[acp] max_terminals` terminals
+// not released; the next is an ACP error decided before the turn is asked, and a release frees
+// a place.
+func TestACPTerminalsAreCapped_REQ_ACP_005(t *testing.T) {
+	t.Parallel()
+	terms := &fakeTerms{}
+	h := newHost(t, func(c *Config) { c.Terminals, c.MaxTerminals = terms, 2 })
+	dir := workDir(t)
+	s := &sink{serve: allowAll}
+	if _, err := promptWith(t, h, dir, "terminals 3", s); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Text0(); got != "term_1 term_2 error -32000" {
+		t.Errorf("three terminals under a cap of two: %q", got)
+	}
+	if len(s.asked) != 2 || len(terms.started) != 2 {
+		t.Errorf("the turn was asked %d times and %d started; the third must be refused before either", len(s.asked), len(terms.started))
+	}
+	s = &sink{serve: allowAll}
+	if _, err := promptWith(t, h, dir, "release term_1", s); err != nil || s.Text0() != "released" {
+		t.Fatalf("release: %q, %v", s.Text0(), err)
+	}
+	s = &sink{serve: allowAll}
+	if _, err := promptWith(t, h, dir, "terminals 1", s); err != nil || s.Text0() != "term_3" {
+		t.Errorf("a terminal after a release: %q, %v", s.Text0(), err)
+	}
+	h.Close("thr_1")
+	if got := terms.released.Load(); got != 3 {
+		t.Errorf("%d terminals released once the agent was closed, want all 3", got)
+	}
+}
+
+// TestAnACPTerminalServesItsOutputAndExit_REQ_ACP_005: the turn decides the terminal's quoted
+// command line in the session directory; the agent then reads its exit and the tail of its
+// output within its outputByteLimit, and releases it.
+func TestAnACPTerminalServesItsOutputAndExit_REQ_ACP_005(t *testing.T) {
+	t.Parallel()
+	terms := &fakeTerms{}
+	h := newHost(t, func(c *Config) { c.Terminals = terms })
+	dir := workDir(t)
+	s := &sink{serve: allowAll}
+	if _, err := promptWith(t, h, dir, "term printf hello", s); err != nil {
+		t.Fatal(err)
+	}
+	want := `env 'GREETING=a b' printf hello`
+	if len(s.asked) != 1 || s.asked[0].Method != domain.MethodTerminal || s.asked[0].Command != want || s.asked[0].Cwd != dir {
+		t.Errorf("the turn decided %+v, want the terminal %q in %s", s.asked, want, dir)
+	}
+	if got := s.Text0(); got != "exit=0 output=tf hello truncated=true" {
+		t.Errorf("the agent read %q", got)
+	}
+	if terms.released.Load() != 1 {
+		t.Error("the terminal was not released")
+	}
+
+	refused := &sink{}
+	if _, err := promptWith(t, h, dir, "term true", refused); err != nil || !strings.HasPrefix(refused.Text0(), "error ") {
+		t.Errorf("a refused terminal: %q, %v", refused.Text0(), err)
+	}
+	if len(terms.started) != 1 {
+		t.Errorf("%d terminals started, want none for the refused one", len(terms.started)-1)
+	}
+}
+
+// TestACPFileRequestsArePerformedOnTheDecidedTarget_REQ_ACP_004: a file read or write runs on
+// the target the turn decided on — a path with its links resolved — not on the agent's own
+// string, and a refused one does not run.
+func TestACPFileRequestsArePerformedOnTheDecidedTarget_REQ_ACP_004(t *testing.T) {
+	t.Parallel()
+	files := &fakeFiles{}
+	h := newHost(t, func(c *Config) { c.Files = files })
+	dir := workDir(t)
+	resolved := func(ctx context.Context, req domain.Request, perform func(context.Context, string) (string, error)) error {
+		_, err := perform(ctx, "/resolved"+req.Path)
+		return err
+	}
+	s := &sink{serve: resolved}
+	if _, err := promptWith(t, h, dir, "read /a/b.txt", s); err != nil || s.Text0() != "content of /resolved/a/b.txt" {
+		t.Errorf("read: %q, %v", s.Text0(), err)
+	}
+	s = &sink{serve: resolved}
+	if _, err := promptWith(t, h, dir, "write /a/c.txt some text", s); err != nil || s.Text0() != "written" {
+		t.Errorf("write: %q, %v", s.Text0(), err)
+	}
+	s = &sink{}
+	if _, err := promptWith(t, h, dir, "write /a/d.txt x", s); err != nil || !strings.HasPrefix(s.Text0(), "error") {
+		t.Errorf("a refused write: %q, %v", s.Text0(), err)
+	}
+	if got := files.targets; len(got) != 2 || got[0] != "/resolved/a/b.txt" || got[1] != "/resolved/a/c.txt" {
+		t.Errorf("performed on %v", got)
 	}
 }

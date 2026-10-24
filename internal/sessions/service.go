@@ -83,6 +83,9 @@ type liveSession struct {
 	// threadCwd is the cwd a thread's PTY was started for (RunForThread), "" for any other
 	// session. Guarded by mu.
 	threadCwd string
+	// terminal marks an ACP terminal's session (StartTerminal): the thread owns it, but it is
+	// not the thread's PTY, which RunForThread must neither reuse nor close.
+	terminal bool
 
 	seq     uint64
 	cleanup func() error
@@ -128,9 +131,16 @@ type liveSession struct {
 // once it opens; the closed block arrives on done.
 type agentRun struct {
 	threadID string
-	claimed  bool
-	blockID  string
-	done     chan domain.AgentRun
+	// via is what the command comes through, which its block records.
+	via domain.BlockVia
+	// out, when set, receives a copy of the block's raw output as it arrives.
+	out func([]byte)
+	// typed, when set, receives whether the command was handed to the shell: nil once its line
+	// is written, or why it was not.
+	typed   chan error
+	claimed bool
+	blockID string
+	done    chan domain.AgentRun
 	// unsaved is set when the block's row failed to be written or closed.
 	unsaved bool
 	// abandoned is a cancelled run whose block did not close in time. It keeps the PTY busy

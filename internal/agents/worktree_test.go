@@ -60,8 +60,8 @@ func worktreeRig(t *testing.T) (*rig, *fakeWorktrees) {
 	}
 	wts := &fakeWorktrees{root: t.TempDir(), repo: repo}
 	r := newRigWith(t, func(c *Config) { c.Worktrees = wts },
-		callTool("write_file", `{"path":"out.txt"}`), answer("written"),
-		callTool("write_file", `{"path":"out.txt"}`), answer("written"))
+		callTool("write_file", `{"path":"out.txt","content":"x"}`), answer("written"),
+		callTool("write_file", `{"path":"out.txt","content":"x"}`), answer("written"))
 	return r, wts
 }
 

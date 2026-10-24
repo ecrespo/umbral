@@ -34,8 +34,12 @@ type Config struct {
 	// directory, so nothing of it outlives the machine's session.
 	Dir     string
 	Secrets ports.Secrets
-	// Mediator answers the agent's requests of Umbral; nil refuses every one of them.
-	Mediator ports.Mediator
+	// Files performs the file requests a turn allowed; nil refuses them.
+	Files ports.Files
+	// Terminals runs the terminals a turn allowed; nil refuses them.
+	Terminals ports.Terminals
+	// MaxTerminals is `[acp] max_terminals`; zero is domain.DefaultMaxTerminals.
+	MaxTerminals int
 	// Pending reports whether an approval of the thread is pending, which pauses the silence
 	// timer (REQ-ACP-006); nil is never.
 	Pending func(threadID string) bool
@@ -79,8 +83,8 @@ func New(cfg Config) (*Host, error) {
 	if cfg.Manifests == nil {
 		cfg.Manifests = domain.Builtin()
 	}
-	if cfg.Mediator == nil {
-		cfg.Mediator = Refuse{}
+	if cfg.MaxTerminals <= 0 {
+		cfg.MaxTerminals = domain.DefaultMaxTerminals
 	}
 	if cfg.Pending == nil {
 		cfg.Pending = func(string) bool { return false }
@@ -108,22 +112,6 @@ func New(cfg Config) (*Host, error) {
 		h.entries[e.Name] = e
 	}
 	return h, nil
-}
-
-// Refuse is the mediator that allows nothing.
-type Refuse struct{}
-
-// Permission refuses.
-func (Refuse) Permission(context.Context, ports.PermissionRequest) (bool, error) { return false, nil }
-
-// ReadFile refuses.
-func (Refuse) ReadFile(context.Context, string, string) (string, error) {
-	return "", errors.New("umbral does not serve file reads to this agent")
-}
-
-// WriteFile refuses.
-func (Refuse) WriteFile(context.Context, string, string, string) error {
-	return errors.New("umbral does not serve file writes to this agent")
 }
 
 // lookup is an entry and its manifest, or why there is none.

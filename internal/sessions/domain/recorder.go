@@ -63,8 +63,10 @@ type Recorder struct {
 	current *Block
 	plain   PlainText
 	stored  int64
-	// claim is the thread the next block to start belongs to (REQ-AGT-003), or "".
-	claim string
+	// claim is the thread the next block to start belongs to (REQ-AGT-003), or "", and
+	// claimVia what the command comes through.
+	claim    string
+	claimVia BlockVia
 }
 
 // NewRecorder builds a recorder. It starts with no open block, which is the state a shell
@@ -79,7 +81,11 @@ func NewRecorder(cfg RecorderConfig) *Recorder {
 // Claim gives the next block to start to the agent working for threadID: its origin is
 // `agent` and it carries the thread (REQ-AGT-003). Only that block: the claim is spent when it
 // opens.
-func (r *Recorder) Claim(threadID string) { r.claim = threadID }
+func (r *Recorder) Claim(threadID string) { r.ClaimVia(threadID, ViaShell) }
+
+// ClaimVia is Claim for a command that comes through via: an ACP terminal's is `acp`
+// (REQ-ACP-005).
+func (r *Recorder) ClaimVia(threadID string, via BlockVia) { r.claim, r.claimVia = threadID, via }
 
 // CWD reports the working directory the shell last announced through OSC 7.
 func (r *Recorder) CWD() string { return r.cwd }
@@ -142,6 +148,7 @@ func (r *Recorder) start(actions []Action) []Action {
 		ID:        r.cfg.NewID(),
 		SessionID: r.cfg.SessionID,
 		Origin:    OriginUser,
+		Via:       ViaShell,
 		Command:   r.pendingCommand,
 		CWD:       r.cwd,
 		Host:      r.cfg.Host,
@@ -149,7 +156,7 @@ func (r *Recorder) start(actions []Action) []Action {
 		StartedAt: r.cfg.Now(),
 	}
 	if r.claim != "" {
-		block.Origin, block.ThreadID = OriginAgent, r.claim
+		block.Origin, block.ThreadID, block.Via = OriginAgent, r.claim, r.claimVia
 		r.claim = ""
 	}
 	r.pendingCommand = ""

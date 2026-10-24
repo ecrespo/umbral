@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.25 |
-| **Date** | 2026-10-22 |
+| **Version** | 1.26 |
+| **Date** | 2026-10-24 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
 | **Related Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -119,7 +119,8 @@ migration **0002**, not 0001; §5 says why.
 
 Migration **0007** (F2) records how an agent block was run. A command a hosted ACP agent runs
 through `terminal/create` is a block like any other agent block, with `via = 'acp'`; `origin`
-keeps its `CHECK` (REQ-ACP-005).
+keeps its `CHECK` (REQ-ACP-005). Its session is one of its own, `owner_thread_id` set, never the
+thread's PTY; a user block, and every block written before 0007, is `via = 'shell'`.
 
 ```sql
 -- migration 0007 (T-F2-01)
@@ -907,3 +908,4 @@ earlier drafts named.
 | 1.23 | 2026-10-18 | delta `2026-10-skill-store` (T-F1-34): §6 step 9 settles a replace interrupted between its renames, and the skills directory sits beside the database |
 | 1.24 | 2026-10-22 | delta `2026-10-orchestration-schema` (T-F2-01): migration `0007_orchestration` — §2.4g `worktrees`, the F2 columns of §2.5, §2.7 and §2.2 with their `CHECK`s in the `ALTER` (§2.5 corrects the claim that SQLite cannot add one), §5's 0007 row, §6 step 3 recovers a queued turn |
 | 1.25 | 2026-10-23 | delta `2026-10-full-auto` (T-F2-05): migration `0008_full_auto` — §2.5's two triggers that clear `full_auto` when its worktree leaves `active`, and §5's 0008 row |
+| 1.26 | 2026-10-24 | delta `2026-10-acp-mediation` (T-F2-08): §2.2 — an ACP terminal's block lives in a session of its own, owned by the thread; no schema change |

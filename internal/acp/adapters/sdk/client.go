@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -168,13 +169,29 @@ func (c *client) known(u acp.ToolCallUpdate) domain.ToolCall {
 	return call
 }
 
+// current is the running turn's sink, nil between turns.
+func (c *client) current() ports.Sink {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sink
+}
+
+// errNoTurn answers a request that arrives between turns: there is no turn to own its row or
+// its approval (delta `2026-10-acp-mediation`, decision 1).
+var errNoTurn = errors.New("umbral serves this agent's requests only while one of its turns runs")
+
 // RequestPermission answers with the agent's own `allow_once` option for an allow and its
-// `reject_once` option otherwise, and never with an `allow_always` one (REQ-ACP-003).
+// `reject_once` option otherwise, and never with an `allow_always` one (REQ-ACP-003). The
+// running turn decides; between turns, nothing is allowed.
 func (c *client) RequestPermission(ctx context.Context, req acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
 	defer c.request()()
-	allowed, err := c.p.h.cfg.Mediator.Permission(ctx, ports.PermissionRequest{ThreadID: c.p.thread, Call: c.known(req.ToolCall)})
-	if err != nil || ctx.Err() != nil {
-		return acp.RequestPermissionResponse{Outcome: acp.RequestPermissionOutcome{Cancelled: &acp.RequestPermissionOutcomeCancelled{}}}, nil
+	allowed := false
+	if sink := c.current(); sink != nil {
+		ok, err := sink.Permission(ctx, c.known(req.ToolCall))
+		if err != nil || ctx.Err() != nil {
+			return acp.RequestPermissionResponse{Outcome: acp.RequestPermissionOutcome{Cancelled: &acp.RequestPermissionOutcomeCancelled{}}}, nil
+		}
+		allowed = ok
 	}
 	want := acp.PermissionOptionKindRejectOnce
 	if allowed {
@@ -191,9 +208,27 @@ func (c *client) RequestPermission(ctx context.Context, req acp.RequestPermissio
 	return acp.RequestPermissionResponse{Outcome: acp.RequestPermissionOutcome{Cancelled: &acp.RequestPermissionOutcomeCancelled{}}}, nil
 }
 
+// serve hands req to the running turn, which decides it and, allowed, runs perform.
+func (c *client) serve(ctx context.Context, req domain.Request, perform func(context.Context, string) (string, error)) error {
+	sink := c.current()
+	if sink == nil {
+		return errNoTurn
+	}
+	return sink.Request(ctx, req, perform)
+}
+
 func (c *client) ReadTextFile(ctx context.Context, req acp.ReadTextFileRequest) (acp.ReadTextFileResponse, error) {
 	defer c.request()()
-	content, err := c.p.h.cfg.Mediator.ReadFile(ctx, c.p.thread, req.Path)
+	files := c.p.h.cfg.Files
+	if files == nil {
+		return acp.ReadTextFileResponse{}, errors.New("umbral does not serve file reads to this agent")
+	}
+	var content string
+	err := c.serve(ctx, domain.Request{Method: domain.MethodReadFile, Path: req.Path}, func(_ context.Context, target string) (string, error) {
+		var err error
+		content, err = files.Read(target, deref(req.Line), deref(req.Limit))
+		return fmt.Sprintf("read %d bytes", len(content)), err
+	})
 	if err != nil {
 		return acp.ReadTextFileResponse{}, err
 	}
@@ -202,35 +237,106 @@ func (c *client) ReadTextFile(ctx context.Context, req acp.ReadTextFileRequest) 
 
 func (c *client) WriteTextFile(ctx context.Context, req acp.WriteTextFileRequest) (acp.WriteTextFileResponse, error) {
 	defer c.request()()
-	return acp.WriteTextFileResponse{}, c.p.h.cfg.Mediator.WriteFile(ctx, c.p.thread, req.Path, req.Content)
+	files := c.p.h.cfg.Files
+	if files == nil {
+		return acp.WriteTextFileResponse{}, errors.New("umbral does not serve file writes to this agent")
+	}
+	return acp.WriteTextFileResponse{}, c.serve(ctx,
+		domain.Request{Method: domain.MethodWriteFile, Path: req.Path, Content: req.Content},
+		func(_ context.Context, target string) (string, error) {
+			return fmt.Sprintf("wrote %d bytes", len(req.Content)), files.Write(target, req.Content)
+		})
 }
 
-// errNoTerminals answers terminal requests until T-F2-08 runs them in Umbral sessions.
-var errNoTerminals = errors.New("umbral does not run terminals for this agent yet")
-
-func (c *client) CreateTerminal(context.Context, acp.CreateTerminalRequest) (acp.CreateTerminalResponse, error) {
+// CreateTerminal runs the command in a new session of the thread's once the turn allows it,
+// within `[acp] max_terminals` (REQ-ACP-005).
+func (c *client) CreateTerminal(ctx context.Context, req acp.CreateTerminalRequest) (acp.CreateTerminalResponse, error) {
 	defer c.request()()
-	return acp.CreateTerminalResponse{}, errNoTerminals
+	p := c.p
+	terms := p.h.cfg.Terminals
+	if terms == nil {
+		return acp.CreateTerminalResponse{}, terminalError("umbral does not run terminals for this agent")
+	}
+	command, cwd, err := p.terminalCommand(req)
+	if err != nil {
+		return acp.CreateTerminalResponse{}, err
+	}
+	if err := p.reserveTerminal(); err != nil {
+		return acp.CreateTerminalResponse{}, err
+	}
+	var started ports.Terminal
+	err = c.serve(ctx, domain.Request{Method: domain.MethodTerminal, Command: command, Cwd: cwd},
+		func(ctx context.Context, target string) (string, error) {
+			var err error
+			started, err = terms.Start(ctx, p.thread, cwd, target)
+			return "started", err
+		})
+	if err != nil {
+		p.unreserve()
+		return acp.CreateTerminalResponse{}, err
+	}
+	limit := defaultOutputLimit
+	if req.OutputByteLimit != nil && *req.OutputByteLimit > 0 {
+		limit = min(*req.OutputByteLimit, defaultOutputLimit)
+	}
+	id := p.addTerminal(&terminal{term: started, limit: limit})
+	return acp.CreateTerminalResponse{TerminalId: id}, nil
 }
 
-func (c *client) KillTerminal(context.Context, acp.KillTerminalRequest) (acp.KillTerminalResponse, error) {
+func (c *client) TerminalOutput(_ context.Context, req acp.TerminalOutputRequest) (acp.TerminalOutputResponse, error) {
 	defer c.request()()
-	return acp.KillTerminalResponse{}, errNoTerminals
+	t, err := c.p.terminal(req.TerminalId)
+	if err != nil {
+		return acp.TerminalOutputResponse{}, err
+	}
+	out, exit := t.term.Output()
+	out, truncated := tail(out, t.limit)
+	resp := acp.TerminalOutputResponse{Output: out, Truncated: truncated}
+	if exit != nil {
+		resp.ExitStatus = &acp.TerminalExitStatus{ExitCode: exit.Code}
+	}
+	return resp, nil
 }
 
-func (c *client) TerminalOutput(context.Context, acp.TerminalOutputRequest) (acp.TerminalOutputResponse, error) {
+// WaitForTerminalExit waits for the command to end; the agent is waiting on Umbral meanwhile,
+// so its silence is not counted (REQ-ACP-006).
+func (c *client) WaitForTerminalExit(ctx context.Context, req acp.WaitForTerminalExitRequest) (acp.WaitForTerminalExitResponse, error) {
 	defer c.request()()
-	return acp.TerminalOutputResponse{}, errNoTerminals
+	t, err := c.p.terminal(req.TerminalId)
+	if err != nil {
+		return acp.WaitForTerminalExitResponse{}, err
+	}
+	exit, err := t.term.Wait(ctx)
+	if err != nil {
+		return acp.WaitForTerminalExitResponse{}, err
+	}
+	return acp.WaitForTerminalExitResponse{ExitCode: exit.Code}, nil
 }
 
-func (c *client) ReleaseTerminal(context.Context, acp.ReleaseTerminalRequest) (acp.ReleaseTerminalResponse, error) {
+func (c *client) KillTerminal(_ context.Context, req acp.KillTerminalRequest) (acp.KillTerminalResponse, error) {
 	defer c.request()()
-	return acp.ReleaseTerminalResponse{}, errNoTerminals
+	t, err := c.p.terminal(req.TerminalId)
+	if err != nil {
+		return acp.KillTerminalResponse{}, err
+	}
+	t.term.Kill()
+	return acp.KillTerminalResponse{}, nil
 }
 
-func (c *client) WaitForTerminalExit(context.Context, acp.WaitForTerminalExitRequest) (acp.WaitForTerminalExitResponse, error) {
+func (c *client) ReleaseTerminal(ctx context.Context, req acp.ReleaseTerminalRequest) (acp.ReleaseTerminalResponse, error) {
 	defer c.request()()
-	return acp.WaitForTerminalExitResponse{}, errNoTerminals
+	t := c.p.removeTerminal(req.TerminalId)
+	if t == nil {
+		return acp.ReleaseTerminalResponse{}, terminalError("no terminal %q", req.TerminalId)
+	}
+	return acp.ReleaseTerminalResponse{}, t.term.Release(ctx)
+}
+
+func deref(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 func rawJSON(v any) []byte {

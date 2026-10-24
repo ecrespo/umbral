@@ -305,7 +305,35 @@ type ExternalToolCall struct {
 	Status   string // pending, in_progress, completed, failed
 	RawInput []byte
 	Output   string
+	// Locations are the paths the call says it touches.
+	Locations []string
+	// Command, Cwd and URL are what the call's raw input names, for deciding its permission:
+	// an `execute` call's command line and directory, a `fetch` call's URL.
+	Command string
+	Cwd     string
+	URL     string
 }
+
+// The requests a hosted agent makes of Umbral that a turn decides and records (REQ-ACP-004,
+// REQ-ACP-005).
+const (
+	OpReadFile  = "fs/read_text_file"
+	OpWriteFile = "fs/write_text_file" //nolint:gosec // G101: an ACP method name, not a credential
+	OpTerminal  = "terminal/create"
+)
+
+// ExternalOp is one of a hosted agent's requests of Umbral: a file read or write by its absolute
+// Path (a write with its Content, for the approval's diff), or a terminal's Command line in Cwd.
+type ExternalOp struct {
+	Method  string
+	Path    string
+	Content string
+	Command string
+	Cwd     string
+}
+
+// ErrDenied is a hosted agent's request the policy or the user did not allow.
+var ErrDenied = errors.New("agents: the request was not allowed")
 
 // ExternalSink is where a hosted agent's turn reports: the runtime persists each report
 // before it publishes it (DD-007). An error is a write that failed and ends the turn.
@@ -313,4 +341,13 @@ type ExternalSink interface {
 	Text(text string) error
 	Thought(text string)
 	ToolCall(call ExternalToolCall) error
+	// Permission decides the agent's `session/request_permission` for call, through the
+	// policy engine and, for an ask, the approval queue (REQ-ACP-003). It allows once or not
+	// at all.
+	Permission(ctx context.Context, call ExternalToolCall) (bool, error)
+	// Request decides op and records it as a tool call of its own; allowed, it runs perform
+	// with the target the decision was made on — a file's path with its links resolved, or
+	// the command line — and records how that went (REQ-ACP-004, REQ-ACP-005). A request not
+	// allowed is ErrDenied and perform is not run.
+	Request(ctx context.Context, op ExternalOp, perform func(ctx context.Context, target string) (string, error)) error
 }

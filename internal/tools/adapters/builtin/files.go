@@ -379,3 +379,39 @@ func replace(target string, data []byte) error {
 	}
 	return root.Rename(tmp, rel)
 }
+
+// maxACPRead bounds what ReadText returns: an ACP agent's whole answer is one JSON-RPC line,
+// which the host reads up to 16 MiB (delta `2026-10-acp-mediation`, decision 6).
+const maxACPRead = 4 << 20
+
+// ReadText is `fs/read_text_file` for a hosted ACP agent: the raw content of target — a path
+// the policy decided on, links already resolved — or, from line (1-based), limit of its lines
+// (0 is the rest). It has read_file's guards: a regular file of at most 16 MiB, opened without
+// blocking, and text.
+func ReadText(target string, line, limit int) (string, error) {
+	data, err := readBounded(target)
+	if err != nil {
+		return "", err
+	}
+	if binary(data) {
+		return "", fmt.Errorf("%s is not a text file", target)
+	}
+	text := string(data)
+	if line > 1 || limit > 0 {
+		lines := strings.SplitAfter(text, "\n")
+		first := min(max(line, 1), len(lines)+1)
+		last := len(lines)
+		if limit > 0 {
+			last = min(last, first-1+limit)
+		}
+		text = strings.Join(lines[first-1:max(last, first-1)], "")
+	}
+	if len(text) > maxACPRead {
+		return "", fmt.Errorf("%s is larger than %d MiB; read it with line and limit", target, maxACPRead>>20)
+	}
+	return text, nil
+}
+
+// WriteText is `fs/write_text_file` for a hosted ACP agent: target's content replaced as
+// write_file replaces it, through the target the policy decided on.
+func WriteText(target, content string) error { return replace(target, []byte(content)) }

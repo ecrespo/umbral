@@ -19,3 +19,86 @@ func TestAHostedToolCallIsNamedFromACPsKinds_REQ_ACP_002(t *testing.T) {
 		t.Errorf("an unknown kind is %s, want Exec", Risk(Kind("switch_mode")))
 	}
 }
+
+// TestACPKindsMapToRisks_REQ_ACP_003: every ACP kind maps to REQ-ACP-003's risk; `fetch` is
+// Network, and a kind ACP lacks is Exec, never looser than a command.
+func TestACPKindsMapToRisks_REQ_ACP_003(t *testing.T) {
+	t.Parallel()
+	for kind, want := range map[string]string{
+		"edit": "WriteFS", "delete": "WriteFS", "move": "WriteFS",
+		"execute": "Exec", "fetch": "Network",
+		"read": "ReadOnly", "search": "ReadOnly", "think": "ReadOnly",
+		"other": "Exec", "switch_mode": "Exec", "": "Exec",
+	} {
+		if got := string(Risk(Kind(kind))); got != want {
+			t.Errorf("kind %q is %s, want %s", kind, got, want)
+		}
+	}
+}
+
+// TestACallsInputNamesItsTargets_REQ_ACP_003: an execute's command (a string, or an array
+// joined), its cwd or workdir, and a fetch's url are read from the raw input; anything else
+// is no target.
+func TestACallsInputNamesItsTargets_REQ_ACP_003(t *testing.T) {
+	t.Parallel()
+	for raw, want := range map[string]Input{
+		`{"command":"go test ./...","cwd":"/r"}`:       {Command: "go test ./...", Cwd: "/r"},
+		`{"command":["git","status"],"workdir":"sub"}`: {Command: "git status", Cwd: "sub"},
+		`{"url":"https://example.com/"}`:               {URL: "https://example.com/"},
+		`{"command":42}`:                               {},
+		`not json`:                                     {},
+		``:                                             {},
+	} {
+		if got := ParseInput([]byte(raw)); got != want {
+			t.Errorf("ParseInput(%s) = %+v, want %+v", raw, got, want)
+		}
+	}
+}
+
+// TestATerminalsCommandLineIsQuoted_REQ_ACP_005: a terminal's command and args are quoted for
+// a POSIX shell, so an argument is one word whatever it holds, and env is an `env` prefix the
+// destructive list sees through.
+func TestATerminalsCommandLineIsQuoted_REQ_ACP_005(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		cmd  string
+		args []string
+		env  [][2]string
+		want string
+	}{
+		{"go", []string{"test", "./..."}, nil, "go test ./..."},
+		{"echo", []string{"a b", "it's", "$HOME", ""}, nil, `echo 'a b' 'it'"'"'s' '$HOME' ''`},
+		{"make", nil, [][2]string{{"CGO_ENABLED", "0"}, {"X", "a b"}}, `env CGO_ENABLED=0 'X=a b' make`},
+	} {
+		if got := CommandLine(c.cmd, c.args, c.env); got != c.want {
+			t.Errorf("CommandLine(%q, %q, %q) = %s, want %s", c.cmd, c.args, c.env, got, c.want)
+		}
+	}
+}
+
+// TestATerminalsControlCharactersAreRefused_REQ_ACP_005: the line is typed into an interactive
+// shell, whose line editor acts on a control character even inside quotes — Ctrl-U erases what
+// came before it — so the line the policy decided would not be the one that runs.
+func TestATerminalsControlCharactersAreRefused_REQ_ACP_005(t *testing.T) {
+	for name, tc := range map[string]struct {
+		command string
+		args    []string
+		env     [][2]string
+	}{
+		"erase in an arg":   {"echo", []string{"\x15rm -rf ~ #"}, nil},
+		"start of line":     {"echo\x01", nil, nil},
+		"tab completes":     {"echo", []string{"a\tb"}, nil},
+		"delete":            {"echo", []string{"a\x7f"}, nil},
+		"in an env value":   {"echo", nil, [][2]string{{"A", "x\x15y"}}},
+		"in an env name":    {"echo", nil, [][2]string{{"A\x01", "x"}}},
+		"a newline":         {"echo", []string{"a\nrm -rf ~"}, nil},
+		"a C1 control byte": {"echo", []string{"a\u009bb"}, nil},
+	} {
+		if err := CheckTerminal(tc.command, tc.args, tc.env); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if err := CheckTerminal("printf", []string{"héllo wörld", "it's"}, [][2]string{{"GREETING", "a b"}}); err != nil {
+		t.Errorf("a plain terminal was refused: %v", err)
+	}
+}

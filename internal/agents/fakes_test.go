@@ -550,9 +550,19 @@ func (f *fakeTools) Action(env toolsdomain.Env, call toolsdomain.Call) (secdomai
 	if t.actionErr != nil {
 		return secdomain.Action{}, t.actionErr
 	}
-	var in struct{ Path string }
-	if err := json.Unmarshal(call.Input, &in); err != nil || (in.Path == "" && !t.optional) {
+	var in struct {
+		Path, Command string
+		Content       *string
+	}
+	if err := json.Unmarshal(call.Input, &in); err != nil || (in.Path == "" && in.Command == "" && !t.optional) {
 		return secdomain.Action{}, toolsdomain.ErrInvalidInput
+	}
+	// write_file's schema requires its content, as the real registry checks before Action.
+	if call.Tool == "write_file" && in.Content == nil {
+		return secdomain.Action{}, toolsdomain.ErrInvalidInput
+	}
+	if in.Path == "" {
+		in.Path = in.Command
 	}
 	return secdomain.Action{ThreadID: env.ThreadID, Tool: call.Tool, Risk: t.risk, Target: in.Path, Cwd: env.Cwd, WriteRoot: env.WriteRoot}, nil
 }

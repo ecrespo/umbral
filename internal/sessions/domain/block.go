@@ -31,6 +31,17 @@ const (
 	OriginAgent BlockOrigin = "agent"
 )
 
+// BlockVia says through what an agent's command came (Data Model §2.2): the thread's own
+// run_command, or a hosted ACP agent's terminal (REQ-ACP-005).
+type BlockVia string
+
+const (
+	// ViaShell is a command typed in the thread's own PTY, and every user block.
+	ViaShell BlockVia = "shell"
+	// ViaACP is a command a hosted ACP agent ran in one of its terminals.
+	ViaACP BlockVia = "acp"
+)
+
 // Output limits from the Data Model.
 const (
 	// MaxOutputPlainBytes caps the searchable plain text kept in the block row
@@ -56,6 +67,7 @@ type Block struct {
 	SessionID string
 	Origin    BlockOrigin
 	ThreadID  string
+	Via       BlockVia
 	Command   string
 	CWD       string
 	Host      string

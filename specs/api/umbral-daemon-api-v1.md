@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.48 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.49 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -438,6 +438,7 @@ method and the ordering that produced it, so one handed to a different method is
 - `risk`: `ReadOnly` | `WriteFS` | `Exec` | `Network`
 - `status`: `pending` | `ok` | `error` | `denied_by_user` | `denied_by_policy` | `invalid_args`
 - A hosted agent's call (REQ-ACP-007) is named `acp:<kind>` after the kind it reports — `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `other`, any other kind it sends (`switch_mode` included) named `other` — never after its free-text title; its `args` are `{title, raw_input?}`, the agent's own description; its `risk` is REQ-ACP-003's for the kind; and it is `pending` until the agent reports it `completed` (`ok`) or `failed` (`error`)
+- A request a hosted agent makes of Umbral is a call of its own (REQ-ACP-004, REQ-ACP-005): `acp:fs/read_text_file` and `acp:fs/write_text_file` with `args` `{path}` and `{path, bytes}`, `acp:terminal/create` with `{command, cwd}`; it ends `ok`, `error`, `denied_by_policy` or `denied_by_user`, and an approval for it points at it
 
 ### Approval
 ```json
@@ -1615,3 +1616,4 @@ printf '%s\n' \
 | 1.46 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-full-auto` (T-F2-05): §4 `Thread.mode` gains `full-auto`; §5.19 refuses it at creation; §5.22 enters and leaves it; §5.36 explains it; §2 "An agent's terminal" refuses a client inside one the methods that land, drop or approve its work, with `PERMISSION_DENIED` (§3, §5.41) |
 | 1.47 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-slow-client-queue` (T-HRD-04): §6 says control notifications travel through a per-connection queue in dispatch order; §8 gains its 8 MiB limit, past which the connection is closed (REQ-API-006) |
 | 1.48 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-acp-client` (T-F2-07): §4 `Thread` gains `agent` and `egress_visibility`, and `ToolCall` names a hosted agent's calls `acp:<kind>`; §5.19 `thread.create` takes `agent`, refuses it with `data.reason` `unknown_agent`, `no_manifest`, `config_key` or `project_config`, and answers `agent_unavailable` when the agent does not start; §5.20 sends a hosted thread's message as `session/prompt` and maps its updates and stop reasons; §6 gains `stop_reason = agent_error` (REQ-ACP-001, 002, 006, 009) |
+| 1.49 | 2026-10-24 | Additive within `protocol_version = 1`. Delta `2026-10-acp-mediation` (T-F2-08): §4 `ToolCall` names the rows of a hosted agent's file and terminal requests (REQ-ACP-004, REQ-ACP-005) |

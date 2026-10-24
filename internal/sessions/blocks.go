@@ -34,7 +34,7 @@ func (s *Service) recordOutput(live *liveSession, chunk []byte) {
 	// The claim is handed over here, on the goroutine that owns the recorder.
 	live.mu.Lock()
 	if live.agent != nil && !live.agent.claimed {
-		live.recorder.Claim(live.agent.threadID)
+		live.recorder.ClaimVia(live.agent.threadID, live.agent.via)
 		live.agent.claimed = true
 	}
 	live.mu.Unlock()
@@ -77,6 +77,20 @@ func (s *Service) deliverAgentBlock(live *liveSession, action domain.Action) {
 		live.agent.done <- domain.AgentRun{Block: action.Block, Output: action.Plain, Persisted: !live.agent.unsaved}
 	}
 	live.agent = nil
+}
+
+// tapAgentOutput hands the agent's run a copy of its block's output, if the run asked for it.
+func (s *Service) tapAgentOutput(live *liveSession, action domain.Action) {
+	live.mu.RLock()
+	var out func([]byte)
+	if run := live.agent; run != nil && run.blockID != "" {
+		// Output only arrives for the open block, which is the run's once it has an id.
+		out = run.out
+	}
+	live.mu.RUnlock()
+	if out != nil {
+		out(append([]byte(nil), action.Data...))
+	}
 }
 
 // markAgentUnsaved records that the agent's block has no complete row.
@@ -138,6 +152,7 @@ func (s *Service) applyBlockAction(live *liveSession, action domain.Action) {
 		// Action.Data aliases the scanner's view of the PTY buffer, which the next read
 		// overwrites, so this append is the copy that makes it ours.
 		live.pendingRaw = append(live.pendingRaw, action.Data...)
+		s.tapAgentOutput(live, action)
 		if len(live.pendingRaw) >= chunkFlushBytes {
 			s.flushChunk(live)
 		}
