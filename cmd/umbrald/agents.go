@@ -52,6 +52,8 @@ type agentDeps struct {
 	skills *skills.Service
 	// worktrees is the worktree engine a thread's turns run in (T-F2-03).
 	worktrees agentsports.Worktrees
+	// agents hosts the threads created with an `agent` (T-F2-07).
+	agents agentsports.ExternalAgents
 }
 
 // newRuntime wires the agent runtime (T-F1-13) to the modules it reaches through their ports:
@@ -90,6 +92,7 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, *registry.Re
 		Skills:  catalog,
 
 		Worktrees: d.worktrees,
+		Agents:    d.agents,
 
 		MaxCostMicroUSD: d.maxCost,
 		StallLocal:      d.stallLocal,

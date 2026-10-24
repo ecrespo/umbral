@@ -32,6 +32,8 @@ Migration `0008_full_auto` keeps the flag from outliving its worktree: its trigg
 
 `threads.workspace_id` is written at creation and must name a workspace; `threads.worktree_id` records the thread's latest worktree whatever its state, set by [[internal/agents/adapters/threadstore/threadstore.go#Store#SetWorktree]]. Whether a turn runs in it is the `worktrees` row's state, not this column.
 
+`threads.agent` and `threads.egress_visibility` are written at creation by [[internal/agents/adapters/threadstore/threadstore.go#Store#CreateThread]]: a hosted thread names its entry and is `unobserved`, every other `observed`. [[internal/agents/adapters/threadstore/threadstore.go#Store#SaveToolCall]] writes `tool_calls.via` and `decision` on every row, so `NULL` in either still means a row from before 0007.
+
 `worktrees.thread_id` has no cascade. A thread holding a worktree cannot be deleted, not even by the retention job ([[internal/store/migration0007_test.go#TestRetentionKeepsAThreadWithAWorktree_REQ_WT_001]]).
 
 [[internal/store/recovery.go#Store#Recover]] stops a thread whose turn was held `queued`, the same way as a running one.

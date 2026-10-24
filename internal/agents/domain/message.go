@@ -63,7 +63,26 @@ type ToolCall struct {
 	BlockID   string
 	StartedAt int64
 	EndedAt   *int64
+	// Via is who ran the call, ViaUmbral or ViaACP; Decision how it was decided, "" for a row
+	// from before migration 0007 (REQ-ACP-007).
+	Via      string
+	Decision string
 }
+
+// Who ran a tool call (`tool_calls.via`).
+const (
+	ViaUmbral = "umbral"
+	ViaACP    = "acp"
+)
+
+// How a tool call was decided (`tool_calls.decision`). Unmediated is a call an ACP agent ran
+// without asking Umbral.
+const (
+	DecisionAllow      = "allow"
+	DecisionDeny       = "deny"
+	DecisionAsk        = "ask"
+	DecisionUnmediated = "unmediated"
+)
 
 // Usage is what a turn consumed (`thread.turn_finished`'s usage).
 type Usage struct {

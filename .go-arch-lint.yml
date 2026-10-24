@@ -146,6 +146,9 @@ components:
   worktrees-domain:   { in: internal/worktrees/domain }
   worktrees-ports:    { in: internal/worktrees/ports }
   worktrees-adapters: { in: internal/worktrees/adapters/** }
+  acp-domain:   { in: internal/acp/domain }
+  acp-ports:    { in: internal/acp/ports }
+  acp-adapters: { in: internal/acp/adapters/** }
   waits-ports:  { in: internal/waits/ports }
 
   integrations-domain:   { in: internal/integrations/domain }
@@ -400,6 +403,8 @@ deps:
     mayDependOn:
       - sessions-domain
       - agents-domain
+      # [[acp.agents]] entries are read into the acp domain's Entry (T-F2-07).
+      - acp-domain
       - tools-domain
       - context-domain
       - llmgw-domain
@@ -588,6 +593,10 @@ deps:
       - worktrees-ports
       - worktrees-adapters
       - worktrees-domain
+      # The host of [[acp.agents]], wired to the runtime (T-F2-07).
+      - acp-adapters
+      - acp-ports
+      - acp-domain
 
 
   # --- the workspace tree (Tech Design §5.2) ----------------------------------
@@ -710,6 +719,27 @@ deps:
       - worktrees-ports
       - worktrees-domain
       - worktrees-adapters
+
+  # --- hosted ACP agents (Tech Design §5.2, T-F2-07) ---------------------------
+  # `acp` -> its own ports and domain, and the security domain for a tool kind's risk; its
+  # adapters reach the ACP SDK. It imports no other module: the agents runtime reaches it
+  # through agents/ports.ExternalAgents, which `cmd` adapts.
+  acp-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - security-domain
+
+  acp-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - acp-domain
+
+  acp-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - acp-adapters
+      - acp-ports
+      - acp-domain
 
   # --- the integration surface (Tech Design §5.2, T-F1-25) --------------------
   # `integrations` -> ports of `workspaces` and `store`, plus `bus`; never `agents` or `api`.

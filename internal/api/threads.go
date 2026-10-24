@@ -41,6 +41,11 @@ type Thread struct {
 	// latest worktree, whatever its state (REQ-WT-002). Null for none.
 	WorkspaceID *string `json:"workspace_id"`
 	WorktreeID  *string `json:"worktree_id"`
+	// Agent is the `[[acp.agents]]` entry hosting the thread, null for Umbral's own agent
+	// (REQ-ACP-001); EgressVisibility is `unobserved` for such a thread, whose own network
+	// traffic Umbral does not see (REQ-ACP-007).
+	Agent            *string `json:"agent"`
+	EgressVisibility string  `json:"egress_visibility"`
 }
 
 func toWireThread(t agentsdomain.Thread) Thread {
@@ -50,7 +55,16 @@ func toWireThread(t agentsdomain.Thread) Thread {
 		MaxSteps: t.MaxSteps, BudgetTokens: t.BudgetTokens, TokensUsed: t.TokensUsed, CostMicroUSD: t.CostMicroUSD,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, Stalled: t.Stalled, Queued: t.Queued,
 		WorkspaceID: emptyAsNull(t.WorkspaceID), WorktreeID: emptyAsNull(t.WorktreeID),
+		Agent: emptyAsNull(t.Agent), EgressVisibility: egressVisibility(t.EgressVisibility),
 	}
+}
+
+// egressVisibility is a thread's `egress_visibility`; Umbral's own agent's is observed.
+func egressVisibility(v string) string {
+	if v == "" {
+		return agentsdomain.EgressObserved
+	}
+	return v
 }
 
 // MessageAttachment is `attachments[]` of a Message.
@@ -192,6 +206,8 @@ type createThreadParams struct {
 	// worktree with it (REQ-WT-001).
 	Workspace string `json:"workspace" api:"optional"`
 	Worktree  bool   `json:"worktree" api:"optional"`
+	// Agent hosts the thread in an `[[acp.agents]]` entry (REQ-ACP-001).
+	Agent string `json:"agent" api:"optional"`
 }
 
 func handleThreadCreate(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -217,7 +233,7 @@ func handleThreadCreate(ctx context.Context, c *conn, raw json.RawMessage) (any,
 	t, err := svc.Create(ctx, agentsdomain.CreateParams{
 		Mode: secdomain.Mode(p.Mode), Model: p.Model, ModelClass: p.ModelClass, Cwd: p.CWD, Title: p.Title,
 		Ephemeral: p.Ephemeral, MaxSteps: p.MaxSteps, BudgetTokens: p.BudgetTokens,
-		Workspace: p.Workspace, Worktree: p.Worktree,
+		Workspace: p.Workspace, Worktree: p.Worktree, Agent: p.Agent,
 	})
 	if err != nil {
 		return nil, err
@@ -234,14 +250,39 @@ func handleThreadCreate(ctx context.Context, c *conn, raw json.RawMessage) (any,
 		}
 		result.WorktreeRefused = &WorktreeRefusal{Reason: data.Reason, Message: msg}
 	}
+	if t.AgentUnavailable != nil {
+		result.AgentUnavailable = agentUnavailable(t.AgentUnavailable)
+	}
 	return result, nil
+}
+
+// agentUnavailable is `agent_unavailable` of thread.create: why the thread's agent did not
+// start once the thread was written. A refusal keeps its reason; anything else is
+// `launch_failed`.
+func agentUnavailable(err error) *AgentUnavailable {
+	var refusal *agentsports.AgentRefusal
+	if errors.As(err, &refusal) {
+		return &AgentUnavailable{Reason: refusal.Reason, Message: refusal.Detail}
+	}
+	return &AgentUnavailable{Reason: reasonLaunchFailed, Message: err.Error()}
+}
+
+// reasonLaunchFailed is an agent that could not be started or did not complete its handshake.
+const reasonLaunchFailed = "launch_failed"
+
+// AgentUnavailable is `agent_unavailable` of thread.create (REQ-ACP-001): the thread exists,
+// its agent is not running, and the next thread.send launches it again.
+type AgentUnavailable struct {
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
 }
 
 // createThreadResult is thread.create's answer: the Thread, and why it has no worktree when
 // one was asked for and git refused it (§5.19, REQ-WT-008).
 type createThreadResult struct {
 	Thread
-	WorktreeRefused *WorktreeRefusal `json:"worktree_refused,omitempty"`
+	WorktreeRefused  *WorktreeRefusal  `json:"worktree_refused,omitempty"`
+	AgentUnavailable *AgentUnavailable `json:"agent_unavailable,omitempty"`
 }
 
 // WorktreeRefusal is `worktree_refused` of thread.create: the reason worktree.create would have
@@ -604,7 +645,7 @@ func agentsDomainError(err error) (int, string, bool) {
 	switch {
 	case errors.Is(err, agentsdomain.ErrNotFound):
 		return codeNotFound, domainNotFound, true
-	case errors.Is(err, agentsdomain.ErrValidation):
+	case errors.Is(err, agentsdomain.ErrValidation), errors.Is(err, agentsports.ErrAgentRefused):
 		return codeValidationError, domainValidationError, true
 	case errors.Is(err, agentsdomain.ErrConflict):
 		return codeConflict, domainConflict, true

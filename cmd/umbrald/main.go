@@ -22,11 +22,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/ecrespo/umbral/internal/agents"
 	"github.com/ecrespo/umbral/internal/api"
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/config"
@@ -412,9 +414,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// turn in one (REQ-WT-006).
 	worktreeEngine := newWorktrees(ctx, db, time.Duration(settings.WorktreeCommitTimeoutS)*time.Second, logger)
 
+	// The host of `[[acp.agents]]` (T-F2-07). It is closed after the runtime, which cancels
+	// every turn first, so a hosted agent's turn ends `cancelled` rather than killed.
+	var runtimeRef atomic.Pointer[agents.Runtime]
+	acpHost, err := newACP(settings.ACP, filepath.Dir(socket), providers, func(threadID string) bool {
+		rt := runtimeRef.Load()
+		return rt != nil && rt.AwaitingApproval(threadID)
+	}, logger)
+	if err != nil {
+		logger.Error("cannot build the ACP host", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer acpHost.Shutdown()
+
 	// The agent runtime (T-F1-13). Its turns run on the daemon's context; closing it waits
 	// for each to record how it ended.
 	runtime, tools, err := newRuntime(ctx, agentDeps{
+		agents:    runtimeAgents{host: acpHost},
 		worktrees: runtimeWorktrees{svc: worktreeEngine},
 		logger:    logger, db: db, bus: eventBus, gateway: models, egress: egress,
 		terminal: sessionService, blocks: blockReader, metrics: metrics, tracer: agentTracer{telemetry},
@@ -428,6 +444,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitCantCreate
 	}
 	defer runtime.Close()
+	runtimeRef.Store(runtime)
 	// Output from a thread's own pane keeps its turn from being marked stalled (T-F1-31).
 	go followThreadOutput(ctx, eventBus.Subscribe(sessports.KindBlockStarted), eventBus.Subscribe(sessports.KindSessionOutput), runtime)
 

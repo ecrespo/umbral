@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.47 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.48 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -258,8 +258,9 @@ absent one. The field is present on `INTERNAL_ERROR` only (Art. 7).
 A worktree request the daemon refuses (§5.41) carries `data.reason`, a stable word naming why, on
 `VALIDATION_ERROR` when the request is at fault and on `CONFLICT` when the repository's or the
 thread's state is. A `conflict` refusal carries `data.paths`, the conflicting paths, and a
-`commit_failed` one `data.output`, the first 4 KiB of git's error output (REQ-WT-004). The fields
-are absent on every other error.
+`commit_failed` one `data.output`, the first 4 KiB of git's error output (REQ-WT-004). A
+`thread.create` whose `agent` is refused carries `data.reason` too, on `VALIDATION_ERROR` (§5.19,
+REQ-ACP-009). The fields are absent on every other error.
 
 ```json
 {"jsonrpc":"2.0","id":9,"error":{"code":-32003,"message":"worktree: conflict: a.txt",
@@ -404,6 +405,8 @@ method and the ordering that produced it, so one handed to a different method is
 - `queued`: `true` while the thread's turn is accepted but held for a slot under `[agents] max_concurrent_turns` (REQ-ORC-002). The thread is `running` and `working` meanwhile; the turn starts when a turn of any thread ends, in the order the sends arrived, and `queued` is `false` from then on. A held turn is never `stalled`
 - `workspace_id`: the workspace the thread was created in, `null` for none (REQ-ORC-003)
 - `worktree_id`: the thread's latest worktree, whatever its state, `null` for none. While that worktree is `active` the thread's turns run in it: the worktree is their write root and their cwd is the worktree's directory matching `cwd`, or the worktree's top when it has none; `cwd` itself does not change (REQ-WT-002)
+- `agent`: the `[[acp.agents]]` entry hosting the thread, `null` for Umbral's own agent (REQ-ACP-001). A hosted thread's turns are its agent's: it runs where Umbral's turns would — the active worktree's directory, or `cwd` without one, which is then its write root — and its `model` and `model_class` are not Umbral's to choose
+- `egress_visibility`: `observed` | `unobserved` (REQ-ACP-007). `unobserved` for a hosted thread: Umbral does not see the agent's own network traffic — its model calls and anything else its process sends — nor its file reads, so `egress_log` and `usage` hold none of them
 
 ### Worktree
 ```json
@@ -434,6 +437,7 @@ method and the ordering that produced it, so one handed to a different method is
 ```
 - `risk`: `ReadOnly` | `WriteFS` | `Exec` | `Network`
 - `status`: `pending` | `ok` | `error` | `denied_by_user` | `denied_by_policy` | `invalid_args`
+- A hosted agent's call (REQ-ACP-007) is named `acp:<kind>` after the kind it reports — `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `other`, any other kind it sends (`switch_mode` included) named `other` — never after its free-text title; its `args` are `{title, raw_input?}`, the agent's own description; its `risk` is REQ-ACP-003's for the kind; and it is `pending` until the agent reports it `completed` (`ok`) or `failed` (`error`)
 
 ### Approval
 ```json
@@ -667,8 +671,8 @@ a bareword character. A client offering a search box SHALL quote what the user t
 is not already a valid expression. A malformed query returns `VALIDATION_ERROR`.
 
 ### 5.19 `thread.create`
-**Params:** `{mode?:"normal", model?, model_class?:"code", cwd, title?, ephemeral?:false, max_steps?:1-200, budget_tokens?, workspace?, worktree?:false}`.
-**Result:** `Thread`, plus `worktree_refused?: {reason, message}` when a worktree was asked for and git refused it.
+**Params:** `{mode?:"normal", model?, model_class?:"code", cwd, title?, ephemeral?:false, max_steps?:1-200, budget_tokens?, workspace?, worktree?:false, agent?}`.
+**Result:** `Thread`, plus `worktree_refused?: {reason, message}` when a worktree was asked for and git refused it, and `agent_unavailable?: {reason, message}` when the thread's agent did not start.
 
 - `workspace` is an open workspace (`w<n>`) the thread belongs to (REQ-ORC-003); another is
   `VALIDATION_ERROR`. `umb thread create` sends the pane's own, `UMBRAL_WORKSPACE_ID`, unless told
@@ -683,6 +687,20 @@ is not already a valid expression. A malformed query returns `VALIDATION_ERROR`.
     moves nothing a turn uses. `worktree.create` on an existing thread stays interactive (§2).
 - `mode: "full-auto"` is `VALIDATION_ERROR`: a thread enters it with `thread.update` once its
   worktree is active (§5.22).
+- `agent` names an `[[acp.agents]]` entry of `config.toml` that hosts the thread (REQ-ACP-001):
+  - Refused with `VALIDATION_ERROR` before anything is written, with `data.reason` (§3):
+    `unknown_agent` (no such entry), `no_manifest` (no manifest makes it ask before every side
+    effect), `config_key` (its `config` sets a key the manifest does not allow), `project_config`
+    (`cwd`, or a directory above it up to the repository's top, holds the agent's own
+    configuration — for OpenCode `opencode.json`, `opencode.jsonc` or `.opencode/`) (REQ-ACP-009).
+    `model` or `model_class` with `agent` is `VALIDATION_ERROR` as well.
+  - Once written, the thread's worktree is made if one was asked for, and the agent is launched
+    where its turns will run, with `initialize` and `session/new`. When it does not start the
+    thread is kept and the answer carries `agent_unavailable`: `project_config` when the worktree
+    holds the agent's configuration, `launch_failed` otherwise. The next `thread.send` launches it
+    again, as after a crash (§5.20).
+  - The answer's `egress_visibility` is `unobserved`, which is what a client shows the user at
+    creation (REQ-ACP-007).
 
 ### 5.20 `thread.send` — REQ-AGT-001, REQ-AGT-015, REQ-CTX-002, REQ-CLI-001
 **Params:** `{thread_id, text (1-100000 chars), attachments?:[{kind, ref | data_b64}], client_msg_id?}`.
@@ -722,6 +740,19 @@ until a running turn ends, and held turns start in the order the daemon admitted
 turn: a second send to its thread is `CONFLICT`, `thread.cancel` drops it (§5.21), and a daemon
 stop recovers it `stopped` (Data Model §6). Its first `thread.delta` or `thread.tool_call` shows
 it started; no other notification says so.
+
+**A hosted thread** (`agent`, §5.19) sends the persisted message to its agent as `session/prompt`,
+launching the agent first when it is not running — never started, crashed, or ended by a previous
+turn's `agent_error`; a relaunch opens a new ACP session, so the agent does not remember earlier
+turns. The agent's message chunks are `thread.delta` `text` and the turn's assistant message, its
+thought chunks `thread.delta` `reasoning` and not kept, and its tool calls `thread.tool_call` (§4
+`ToolCall`); plans and command lists are not mapped (REQ-ACP-002). ACP's stop reasons map onto §6's:
+`end_turn` and `refusal` → `end_turn`, `max_tokens` → `budget`, `max_turn_requests` → `max_steps`,
+`cancelled` → `cancelled`. `PROVIDER_UNAVAILABLE` and `BUDGET_EXCEEDED` do not apply: Umbral neither
+routes nor prices the agent's model calls. A turn ends `agent_error` when the agent exits, sends a
+line that is not a JSON-RPC 2.0 message, sends nothing for `[acp] silence_timeout` while no approval
+of its thread is pending and no request it made of Umbral is unanswered, or is refused at the
+relaunch (REQ-ACP-006); the thread keeps its history.
 
 **Errors:**
 - `CONFLICT`: a turn is already running or held (not raised for a duplicate `client_msg_id`).
@@ -1418,7 +1449,7 @@ share the name; only the envelope one is the subject of REQ-API-002.
 `session.snapshot` reports the envelope `seq` it contains, and a client applies only the events
 above it — for the notifications that snapshot actually carries. §5.3 says which.
 
-`stop_reason`: `end_turn` | `cancelled` | `max_steps` | `budget` | `tool_error` | `provider_error` | `storage_error` | `context_overflow`. `storage_error`: a write failed, so the turn stopped without running or announcing what it could not record (Analyze C-01). `context_overflow`: what must be sent does not fit the model's window even compacted (REQ-CTX-004). Delta `2026-09-agent-runtime`.
+`stop_reason`: `end_turn` | `cancelled` | `max_steps` | `budget` | `tool_error` | `provider_error` | `storage_error` | `context_overflow` | `agent_error`. `agent_error`: a hosted ACP agent exited, sent a message that is not ACP, or fell silent (REQ-ACP-006, §5.20). `storage_error`: a write failed, so the turn stopped without running or announcing what it could not record (Analyze C-01). `context_overflow`: what must be sent does not fit the model's window even compacted (REQ-CTX-004). Delta `2026-09-agent-runtime`.
 
 `session.unsubscribed`'s `reason`: `slow_client`.
 
@@ -1583,3 +1614,4 @@ printf '%s\n' \
 | 1.45 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-parallel-turns` (T-F2-04): §4 `Thread` gains `queued`; §5.20 holds a turn over `[agents] max_concurrent_turns` and starts held turns in arrival order, and `CONFLICT` covers a held turn; §5.21 drops a held turn; §7's `running` covers a held turn |
 | 1.46 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-full-auto` (T-F2-05): §4 `Thread.mode` gains `full-auto`; §5.19 refuses it at creation; §5.22 enters and leaves it; §5.36 explains it; §2 "An agent's terminal" refuses a client inside one the methods that land, drop or approve its work, with `PERMISSION_DENIED` (§3, §5.41) |
 | 1.47 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-slow-client-queue` (T-HRD-04): §6 says control notifications travel through a per-connection queue in dispatch order; §8 gains its 8 MiB limit, past which the connection is closed (REQ-API-006) |
+| 1.48 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-acp-client` (T-F2-07): §4 `Thread` gains `agent` and `egress_visibility`, and `ToolCall` names a hosted agent's calls `acp:<kind>`; §5.19 `thread.create` takes `agent`, refuses it with `data.reason` `unknown_agent`, `no_manifest`, `config_key` or `project_config`, and answers `agent_unavailable` when the agent does not start; §5.20 sends a hosted thread's message as `session/prompt` and maps its updates and stop reasons; §6 gains `stop_reason = agent_error` (REQ-ACP-001, 002, 006, 009) |

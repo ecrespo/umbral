@@ -7,14 +7,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ecrespo/umbral/internal/acp/adapters/sdk/acptest"
 	"github.com/ecrespo/umbral/internal/client"
 	"github.com/ecrespo/umbral/internal/mcp/adapters/sdk/sdktest"
 )
 
 // TestMain lets this test binary double as an MCP server: started with sdktest.ChildEnv set,
-// it serves the test server on stdio instead of running tests.
+// it serves the test server on stdio instead of running tests. Started with acptest.Arg it is
+// an ACP agent instead.
 func TestMain(m *testing.M) {
 	sdktest.Serve()
+	acptest.Serve()
 	os.Exit(m.Run())
 }
 

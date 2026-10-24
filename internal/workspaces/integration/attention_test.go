@@ -72,6 +72,44 @@ func TestPaneStateFollowsItsAuthority_DD_012(t *testing.T) {
 	expect("a session that exited", domain.AttentionUnknown, "", "")
 }
 
+// TestAnACPThreadIsItsPanesStateAuthority_REQ_ACP_002: a thread hosted by an ACP agent is the
+// level-1 authority of the pane whose live session it owns, exactly as Umbral's own thread is
+// (DD-012): an external report does not displace it, and the pane follows its attention.
+func TestAnACPThreadIsItsPanesStateAuthority_REQ_ACP_002(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	tree := h.newWorkspace(t, "acp")
+	paneID, sessionID := tree.RootPane.ID, tree.RootPane.SessionID
+	db := h.store.DB()
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(t.Context(), query, args...); err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+	}
+	expect := func(step string, state domain.AttentionState) {
+		t.Helper()
+		pane, err := h.GetPane(t.Context(), paneID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pane.AttentionState != state || pane.StateSource != domain.SourceAgent || pane.ThreadID != "thr_acp" {
+			t.Errorf("%s: pane is (%s, %q, thread %q), want (%s, %q, thr_acp)", step,
+				pane.AttentionState, pane.StateSource, pane.ThreadID, state, domain.SourceAgent)
+		}
+	}
+
+	exec(`INSERT INTO pane_state_reports(pane_id, source, state, updated_at)
+	      VALUES (?, 'opencode-hook', 'done', 10)`, paneID)
+	exec(`INSERT INTO threads(id, cwd, attention_state, agent, egress_visibility, created_at, updated_at)
+	      VALUES ('thr_acp', '/tmp', 'working', 'opencode', 'unobserved', 1, 1)`)
+	exec(`UPDATE sessions SET owner_thread_id = 'thr_acp' WHERE id = ?`, sessionID)
+	expect("the ACP thread over a report", domain.AttentionWorking)
+
+	exec(`UPDATE threads SET attention_state = 'blocked' WHERE id = 'thr_acp'`)
+	expect("the ACP thread waiting on an approval", domain.AttentionBlocked)
+}
+
 // TestPaneStateReportsFollowAMove: a report belongs to the pane, not to its identifier, so a
 // pane moved to another workspace keeps it under its new id (REQ-WS-007).
 func TestPaneStateReportsFollowAMove(t *testing.T) {
