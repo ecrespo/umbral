@@ -172,10 +172,10 @@ its matrix lists commands.
 - **Depends on:** T-HRD-05
 - **Done:** a table of evasions — `env -S`, `env 'A=x y' rm -rf /`, `$(…)`, `setsid -f umb skill install x` — asks on both paths, each red first; the existing pattern tests stay green.
 
-### [ ] T-HRD-07 · Destructive patterns for `umb rules` and `umb mcp remove`
+### [x] 2026-10-24 T-HRD-07 · Destructive patterns for `umb rules` and `umb mcp remove`
 - **What:** Q2 and Q6: built-in patterns `umb_rules_change` (`umb rules key add|rotate|remove`, `rollback`, `reset`) and `umb_mcp_remove`, defence in depth for the Tech §5.3 residual; the daemon's refusal stays the control, and an approved command still ends `PERMISSION_DENIED` when the peer check sees the caller. Tech §5.3's list gains both. (delta `2026-10-hrd02-open-questions`).
 - **REQ:** REQ-SEC-005, REQ-CLI-008
-- **Files:** `internal/security/domain/policy_destructive.go`, `policy_test.go`, Tech §5.3
+- **Files:** `internal/security/domain/policy_destructive.go`, `policy_test.go`, Tech §5.3. Written as two entries of `DefaultDestructivePatterns` and their lines in `TestDestructiveAlwaysAsk_REQ_SEC_005`; delta `2026-10-rules-mcp-patterns`
 - **Depends on:** T-HRD-06
 - **Done:** each command matches its pattern and `umb rules status`/`umb mcp list` do not; `policy_test.go`'s `umb mcp remove x` moves to the destructive list.
 
@@ -289,7 +289,7 @@ its matrix lists commands.
 | REQ-SEC-011, REQ-SEC-013 | T-HRD-01 (the key) | a bundle signed with the project key accepted, any other refused |
 | REQ-SEC-005, REQ-SKL-005, REQ-CLI-008 | T-HRD-02 (decisions) | per decision |
 | REQ-ORC-004 (hosted agents) | T-HRD-05 | TestAHostedAgentIsRefusedTheUsersMethods_REQ_ORC_004, TestAHostedAgentIsKnownByItsSession_REQ_ORC_004, TestAHostedAgentsExitEndsWhatItLeft_REQ_ORC_004, TestAReusedPidStaysListedForItsNewerAgent_REQ_ORC_004 |
-| REQ-SEC-005, REQ-ACP-003 | T-HRD-06, T-HRD-07 | TestDestructiveEvasionsAsk_REQ_SEC_005, TestARunCommandEvasionAsks_REQ_SEC_005, TestAnACPExecuteEvasionAsks_REQ_ACP_003; the new patterns |
+| REQ-SEC-005, REQ-ACP-003 | T-HRD-06, T-HRD-07 | TestDestructiveEvasionsAsk_REQ_SEC_005, TestARunCommandEvasionAsks_REQ_SEC_005, TestAnACPExecuteEvasionAsks_REQ_ACP_003; TestDestructiveAlwaysAsk_REQ_SEC_005 (the new patterns) |
 | REQ-SKL-005 | T-HRD-08, T-HRD-09 | an edited stored copy refused; the delimited catalog block |
 | REQ-AGT-007 (zsh) | T-HRD-10 | `printf x` returned whole in a zsh thread PTY |
 | REQ-ACP-009, REQ-ACP-007 | T-HRD-11, T-HRD-12 | fixed manifest variables; the disclosure's worktree sentence |
@@ -312,3 +312,4 @@ its matrix lists commands.
 | 2026-10-24 | T-HRD-05 … T-HRD-12 | added | The code those answers need, Q12 (T-HRD-05) first. Spec-guardian's review found that the socket is reachable from a hosted agent's `HOME`, so a hosted agent can call `userOnly` methods today. |
 | 2026-10-24 | T-HRD-05 | done | Delta `2026-10-hosted-agent-peer` (API 1.52 §2, Tech 1.68). The hole was measured first: a fake hosted agent found the socket from its `HOME`, read the token and reached `skill.install`, which answered `VALIDATION_ERROR` for its empty params. The ACP host now lists its agents' pids from launch, the agents lead their own sessions, and when an agent exits its whole session is killed — on Linux before the zombie is reaped, so a reused pid is never signalled or forgotten; on macOS the pid stays listed until close; members are signalled through pidfds, a session not seen empty in 2 s keeps the pid listed, and pids are counted — with the agent's stderr `/dev/null`, since a discarding pipe held by a child hid the exit. The agent's call answers `PERMISSION_DENIED`. Each piece was mutated back and its test went red. |
 | 2026-10-24 | T-HRD-06 | done | Delta `2026-10-shell-parser` (Tech 1.69 §5.2, §5.3). The normaliser parses the line with `mvdan.cc/sh/v3/syntax`, the one vendor a domain may use; 95 evasions — quoted separators, `env -S`, substitutions, globs, braces, launchers, shell options, interpreters, carriers, redirections on any statement, history, prompt variables, arithmetic — ask on both paths, each red first; nine mutations each redden the table. The vendor is a proposed Art. 3 amendment and REQ-SEC-005/REQ-ORC-004 gain a sentence, both for the Tech Lead. A word built at run time now asks, which costs `always` for lines with variables or globs. |
+| 2026-10-24 | T-HRD-07 | done | Delta `2026-10-rules-mcp-patterns` (Tech 1.70 §5.3), on top of T-HRD-06's branch. `umb_rules_change` and `umb_mcp_remove` join the built-in list; ten command lines ask, `umb rules status`, `umb rules key list` and `echo umb rules reset` do not; `umb mcp remove x` moved from the harmless list. Removing `rollback` or `remove` from a pattern reddens the test. |
