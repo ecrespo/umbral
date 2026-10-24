@@ -80,7 +80,8 @@ runs, or how a terminal ends. Nothing said what happens to a request that arrive
    line, so a terminal that may hold one asks whatever else allows it (`reason = script`). The
    check reads no flag grammar and skips no word, so it fails closed: any word naming a program
    that runs a script it is given — a POSIX or C shell by name (`sh`, `bash`, `zsh`, `dash`, `ash`,
-   `ksh`, `mksh`, `yash`, `posh`, `rbash`, `tcsh`, `csh`, with or without a version), fish,
+   `ksh`, `mksh`, `oksh`, `osh`, `ysh`, `hush`, `yash`, `posh`, `rbash`, `rzsh`, `tcsh`, `csh`,
+   with or without a version or a suffix such as `-static`), fish,
    xonsh, elvish, nu, busybox, PowerShell, `cmd`, `ssh` (whose remote command is one), `eval`, or
    a runner whose operand is a shell line (`watch`, `su`, `script`, `flock`) — in any case,
    `.exe` or not, whatever its flags, or
