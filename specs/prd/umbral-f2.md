@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`. Slice F2a implemented and closed on 2026-10-24 (delta `2026-10-f2a-close`); F2b … F2f not started |
-| **Version** | 0.8 |
+| **Version** | 0.9 |
 | **Date** | 2026-10-22 |
 | **Reviewers** | spec-guardian (Analyze and two verify passes); Tech Lead, ratified 2026-10-22 |
 | **Source** | `docs/ARCHITECTURE.md` §5.4–5.8 and §10 (F2 ADE row); `specs/prd/umbral-mvp.md` §5.2–5.3; Plan 1.14 §4 |
@@ -163,7 +163,7 @@ makes it ask (spike T-F2-00). So Umbral:
   - record every ACP turn as an OTel trace, with one span per agent tool call and one per mediated request;
   - record each tool call the agent reports in `tool_calls`, with `via = acp`, the risk REQ-ACP-003 maps its kind to, and its `decision`: `allow`, `deny` or `ask` with its approval when Umbral decided it, `unmediated` when the agent ran it without asking (reads, searches);
   - set the thread's `egress_visibility = unobserved`;
-  - show the user, when the thread is created, that Umbral does not record the agent's own network traffic (its model calls and anything else its process sends) or its file reads.
+  - show the user, when the thread is created, that Umbral does not record the agent's own network traffic (its model calls and anything else its process sends) or its file reads, and that the agent can read the repository's main copy and every other thread's worktree.
 - **REQ-ACP-008** · MUST · event — WHEN the user invokes `thread.cancel` on an ACP thread, THE SYSTEM SHALL send `session/cancel`, terminate the thread's ACP terminals within 500 ms, and terminate the agent process if it has not ended the turn within 5 s.
 - **REQ-ACP-009** · MUST · ubiquitous — THE SYSTEM SHALL launch an ACP agent only through a manifest that declares how to make the agent ask before every side effect, and SHALL refuse with `VALIDATION_ERROR` an `[[acp.agents]]` entry whose agent has no such manifest. The manifest:
   - generates a configuration that sets **every** permission the agent has to `ask` — a wildcard where the agent supports one, otherwise the full list. For OpenCode that covers at least `edit`, `bash`, `webfetch`, `websearch`, `external_directory`, `task` and every MCP tool, and the generated configuration declares no MCP servers and no plugins of its own;
@@ -346,3 +346,4 @@ Still open, with the draft's default:
 | 0.6 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-acp-client` (T-F2-07): REQ-ACP-009's `project_config` refusal is a `VALIDATION_ERROR` when found before anything is written, `agent_unavailable` when found only in the new worktree and `agent_error` at a later launch; env references may not name the agent's own configuration variables (`OPENCODE_*`), and the agent's stderr is discarded |
 | 0.7 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-usf2-live` (T-F2-12): §9's US-F2-001 no longer says the scenario runs offline — the hosted agent's model calls stay local, but at start OpenCode fetches its provider package and a model catalogue, its own unobserved traffic; Q-F2-01 says the same |
 | 0.8 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-f2a-close`: §8 says what "US-F2-001 passes" means — the daemon's properties in every run and one run completing every task within its files — and F2a is closed; the status line no longer says nothing is implemented |
+| 0.9 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-hrd02-open-questions` (T-HRD-02, Q11): REQ-ACP-007's disclosure says a hosted agent can read the main copy and every other thread's worktree |
