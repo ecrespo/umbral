@@ -172,6 +172,21 @@ tasks:
       - go build -ldflags '{{.LDFLAGS}}' -o {{.BIN}}/umb ./cmd/umb
       - go build -ldflags '{{.LDFLAGS}}' -o {{.BIN}}/umbral-tui ./cmd/umbral-tui
 
+  deb:
+    desc: 'T-PKG-03: build umbral_<version>_<arch>.deb into ./dist and verify it (REQ-PKG-001/002/003)'
+    deps: [build]
+    cmds:
+      - rm -rf {{.ROOT_DIR}}/dist
+      - packaging/deb/build.sh {{.BIN}} {{.VERSION}} {{.ROOT_DIR}}/dist
+      - packaging/deb/check.sh {{.ROOT_DIR}}/dist/umbral_*.deb
+      - packaging/deb/check_selftest.sh {{.ROOT_DIR}}/dist/umbral_*.deb
+
+  deb:smoke:
+    desc: 'T-PKG-03: install the .deb in a clean Ubuntu 26.04 container and use it (needs docker)'
+    deps: [deb]
+    cmds:
+      - packaging/deb/smoke.sh {{.ROOT_DIR}}/dist/umbral_*.deb
+
   roundtrip:
     desc: F0 exit criterion 4 against a real daemon, using only the CLI (T-F0-20)
     deps: [build]
@@ -183,7 +198,7 @@ tasks:
   clean:
     desc: Remove build and coverage artifacts
     cmds:
-      - rm -rf {{.BIN}} coverage.out
+      - rm -rf {{.BIN}} {{.ROOT_DIR}}/dist coverage.out
 
   # --- everything -------------------------------------------------------------
   ci:
