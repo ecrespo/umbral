@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.22 |
+| **Version** | 1.23 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
 | **Last updated** | 2026-10-23 |
@@ -214,7 +214,7 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 - **REQ-SEC-002** · MUST · event — WHEN a request is sent to a remote provider, or a tool sends one off the machine (`fetch_url`), THE SYSTEM SHALL record in `egress_log` the destination host, bytes sent, SHA-256 of the payload, provider and thread.
 - **REQ-SEC-003** · MUST · unwanted — IF a socket connection does not present the valid local token in `system.hello`, THEN THE SYSTEM SHALL reply `UNAUTHORIZED` and close the connection.
 - **REQ-SEC-004** · MUST · unwanted — IF the configuration contains a plaintext API key, THEN THE SYSTEM SHALL reject that provider entry and indicate that `keyring:<path>` must be used.
-- **REQ-SEC-005** · MUST · ubiquitous — THE SYSTEM SHALL require approval for commands matching the destructive-pattern list (`rm -rf`, `git push --force`, `mkfs`, `dd of=`, `kubectl delete`, …), regardless of `allow` rules and the thread mode.
+- **REQ-SEC-005** · MUST · ubiquitous — THE SYSTEM SHALL require approval for commands matching the destructive-pattern list (`rm -rf`, `git push --force`, `mkfs`, `dd of=`, `kubectl delete`, …), regardless of `allow` rules and the thread mode. A command line the system cannot read statically — a word built at run time, a script read from stdin, or a line it cannot parse — SHALL count as matching the list (delta `2026-10-shell-parser`).
 - **REQ-SEC-006** · MUST · state — WHILE a turn's context contains content marked as untrusted (results from `fetch_url`, from MCP servers with `trust = untrusted`, or from `skill_load` — the skill descriptions in the catalog are not in this list, because they are capped at 256 characters, shown to the user at install and listed by `umb skill list`; delta `2026-09-skills-cli`), THE SYSTEM SHALL require approval for tools with risk `Exec` and `Network`.
 - **REQ-SEC-007** · MUST · ubiquitous — THE SYSTEM SHALL create the socket with permissions `0600` in `$XDG_RUNTIME_DIR/umbral/`.
 - **REQ-SEC-008** · MUST · unwanted — IF the operating system keyring is unavailable when the daemon starts (headless Linux without Secret Service, locked keychain), THEN THE SYSTEM SHALL start without aborting, disable the providers whose credential is `keyring:<path>`, mark their models `health = down` with reason `keyring_unavailable`, and show that reason in `umb status`.
@@ -499,6 +499,7 @@ TUI as text:
 | 1.20 | 2026-10-04 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cost-cap`: REQ-AGT-008 stops a turn at the thread's cost cap too, checked before every priced call, and `thread.send` answers `BUDGET_EXCEEDED` past it |
 | 1.21 | 2026-10-22 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cli-thread-wait` (T-F1-38): REQ-CLI-009, `umb thread` over `thread.create`, `send`, `wait`, `get` and `cancel` |
 | 1.22 | 2026-10-23 | E. Crespo (assisted draft) | Ratifies delta `2026-10-slow-client-queue` (T-HRD-04): REQ-API-006, a client that stops reading holds up no other and is closed past the queue limit |
+| 1.23 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-shell-parser` (T-HRD-06): REQ-SEC-005 counts a command line the system cannot read statically as matching the destructive list |
 
 ## Approvals
 

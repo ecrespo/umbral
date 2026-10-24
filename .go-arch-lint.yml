@@ -2,7 +2,8 @@
 # CI runs `task arch`; a new layer violation or import cycle breaks the build.
 #
 # The rules, restated from Tech Design §5.2:
-#   */domain        -> the standard library and other */domain
+#   */domain        -> the standard library and other */domain (security's domain may also
+#                      use mvdan.cc/sh/v3/syntax, delta `2026-10-shell-parser`)
 #   */ports         -> its own domain and other */domain
 #   */adapters      -> its own ports, its own domain and external libraries
 #   agents          -> ports of sessions, tools, context, llmgw, security, store
@@ -156,6 +157,9 @@ components:
   integrations-adapters: { in: internal/integrations/adapters/** }
   notify-domain:         { in: internal/notify/domain }
   notify-ports:          { in: internal/notify/ports }
+vendors:
+  shell-syntax: { in: mvdan.cc/sh/v3/syntax }
+
 deps:
   # --- domain: the standard library and other domains, nothing else -----------
   sessions-domain:
@@ -198,8 +202,13 @@ deps:
       - tools-domain
       - context-domain
       - security-domain
+  # The one exception to "domain: the standard library only": the destructive-command floor
+  # reads a command line with a real shell parser, mvdan.cc/sh's syntax package, which does no
+  # I/O and imports nothing outside its module (delta `2026-10-shell-parser`).
   security-domain:
     anyVendorDeps: false
+    canUse:
+      - shell-syntax
     mayDependOn:
       - sessions-domain
       - agents-domain

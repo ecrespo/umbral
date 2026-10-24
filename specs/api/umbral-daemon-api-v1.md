@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.52 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.53 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -814,7 +814,7 @@ relaunch (REQ-ACP-006); the thread keeps its history.
   sets the flag; a thread without one is `VALIDATION_ERROR`. While the flag is set and the
   worktree is active, a turn decides under `full-auto` (Tech Design §5.3): `WriteFS` inside the
   worktree and `Exec` whose cwd is inside it are allowed unasked; `Network`, the destructive
-  patterns and a tainted turn still ask. Any other `mode` sets it and clears the flag. When the
+  patterns (and a command line the policy cannot read statically) and a tainted turn still ask. Any other `mode` sets it and clears the flag. When the
   worktree leaves `active` (merged, discarded, missing) the flag clears in the same write, and the
   thread is back in its own mode.
 - A client inside an agent's terminal is refused `thread.update` (`PERMISSION_DENIED`, §2).
@@ -1153,7 +1153,7 @@ Delta `2026-10-policy-explain` (T-F1-28):
   - `tainted` is the caller's: the thread's current taint belongs to a running turn, not to the thread.
 - **The trace.**
   - It has seven entries in DD-006's order, preceded by `exposure` (delta `2026-09-policy-precedence`). Every entry is evaluated, and exactly one is `decided`.
-  - `detail` names what matched: the destructive pattern, the rule as `tool pattern`, or the mode.
+  - `detail` names what matched: the destructive pattern, the rule as `tool pattern`, or the mode. When no pattern matched but the line cannot be read statically, the destructive step's `detail` is `dynamic_word`, `stdin_script` or `unparseable` (Tech Design §5.3); a rule file may not name a pattern with one of these (delta `2026-10-shell-parser`).
   - A step that matched and did not decide carries `note: "overridden by <step>"`. `mode_default` always matches.
   - `reason` is absent for an allow. `allow_always: false` means an approval of this action is never remembered as `always`, which is the case for a destructive command.
 - **Callers.** Every client kind may call it, under `policy_explain`. On the CLI it is `umb policy explain --tool T --risk R (--mode M | --thread ID) [--tainted] [--] TARGET…`. The positionals are joined into the target with single spaces, and after `--` they may look like flags. A command that relies on shell quoting is passed as one quoted argument.
@@ -1633,3 +1633,4 @@ printf '%s\n' \
 | 1.50 | 2026-10-24 | Additive within `protocol_version = 1`. Delta `2026-10-acp-cancel-traces` (T-F2-09): §5.21 says how a hosted thread's turn is cancelled and when the answer comes (REQ-ACP-008) |
 | 1.51 | 2026-10-24 | No change to the protocol. T-HRD-03: `skill.*` was numbered §5.37 like `api.schema`; it moves to §5.42 after `worktree.*`, and §4 `Skill` and §6 `skill.changed` point there. No other section is renumbered |
 | 1.52 | 2026-10-24 | No change to the wire. Delta `2026-10-hosted-agent-peer` (T-HRD-05): §2 "An agent's terminal" counts a hosted ACP agent's process and its session, from its launch |
+| 1.53 | 2026-10-24 | No change to the wire. Delta `2026-10-shell-parser` (T-HRD-06): §5.22 full-auto still asks for a command line the policy cannot read statically; §5.36 the destructive step's `detail` may be `dynamic_word`, `stdin_script` or `unparseable`, names a rule file may not use |

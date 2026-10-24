@@ -107,6 +107,10 @@ func ParseRules(data []byte) (RuleDocument, error) {
 		destructive[i] = wireRule{Name: d.Name, Pattern: d.Pattern}
 	}
 	if doc.Rules.Destructive, err = compile(destructive, "destructive", func(name string, expr *regexp.Regexp, _ int) (DestructivePattern, error) {
+		if name == UnknownDynamicWord || name == UnknownStdinScript || name == UnknownUnparseable {
+			// The trace names a line the floor cannot read with these; a pattern may not.
+			return DestructivePattern{}, fmt.Errorf("the name %q is reserved", name)
+		}
 		return DestructivePattern{Name: name, Expr: expr}, nil
 	}); err != nil {
 		return RuleDocument{}, err

@@ -74,6 +74,12 @@ The operator reaches the manager through `rules.*` in [[internal/api/rules.go]] 
 
 Storage goes through the `RuleStore` port, implemented over migration 0006 by [[internal/security/adapters/rules/store.go#Store]], which keeps `cmd/umbrald` the only place that wires SQLite to the manager.
 
+## The destructive floor reads a line as bash does
+
+A command is matched against the destructive patterns after bash's own parser has read it, so quotes and separators cannot hide a program; what the line does not show asks (delta `2026-10-shell-parser`).
+
+[[internal/security/domain/policy_destructive.go#MatchDestructive]] walks every simple command the `mvdan.cc/sh/v3/syntax` parser finds, inside substitutions too, drops wrappers and launchers such as `setsid` and `systemd-run` (reading a flag their table lacks both ways), and reads a script handed to a shell, `eval`, `watch`, `ssh`, `trap`, `su -c` or a here-document as a line of its own; an interpreter's inline program is scanned with the old separator split. With no pattern matching, [[internal/security/domain/policy_destructive.go#UnknownDynamicWord]], [[internal/security/domain/policy_destructive.go#UnknownStdinScript]] or [[internal/security/domain/policy_destructive.go#UnknownUnparseable]] still asks and names the reason in the trace; arithmetic, history expansion, prompt variables and `tmux`/`screen` count as dynamic, output redirections count on any statement, and [[internal/security/domain/ruleset.go#ParseRules]] keeps those three names out of rule files. It is the one domain package allowed a vendor, which `.go-arch-lint.yml` grants to `security-domain` alone. Both `run_command` and an ACP `execute` permission are decided through it.
+
 ## Waits are inventoried and stalls only inform
 
 Every wait is registered before it subscribes, so a leaking script hits the 32-per-connection limit as an error, never a dropped connection; a stall is announced, never acted on (DD-017).
