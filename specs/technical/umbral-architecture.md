@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.66 |
+| **Version** | 1.67 |
 | **Date** | 2026-10-24 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1738,11 +1738,26 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 - **Windows (F2):** `umbral.ico` plus the MSIX `Assets/` set.
 - **macOS (F2):** the layers in `macos/icon-composer-layers/` are assembled in Icon Composer
   into `appicon.icon`; `umbral.icns` is the fallback for macOS ≤ 15.
+- **Debian package (release 0.1, delta `2026-10-deb-package`):** one package, `umbral`, built by
+  `packaging/deb/build.sh` with `dpkg-deb` from binaries already built. `umbrald`, `umb` and
+  `umbral-tui` go in `/usr/bin`, the kit's eleven `hicolor` files and `.desktop` file in
+  `/usr/share` as they are (REQ-PKG-006), and the licence in `/usr/share/doc/umbral/copyright`.
+  `Depends: libc6 (>= N)`, N the newest `GLIBC_` symbol version the binaries reference, since
+  libghostty-vt is static; `Recommends: git`. The version comes from `git describe`: only a
+  `vMAJOR.MINOR.PATCH` tag is a release, a prerelease maps to `~`, commits after a tag to
+  `+N.gHASH`, and an untagged build to `0.0.0+git.HASH`, below every release. `postinst` and
+  `postrm` run `gtk-update-icon-cache` and `update-desktop-database` where they exist. Modes and
+  mtimes (`SOURCE_DATE_EPOCH`, the commit's time) are fixed, so one commit builds one package.
+  The maintainer is GitHub's no-reply address.
 - **Verification:** `scripts/icons_check.sh`, run by `task icons` and by the `icons` CI job.
   It verifies `CHECKSUMS.sha256`, regenerates the kit with `build.py` and compares every
   artifact byte for byte, then validates the `.desktop` file and asserts the release 0.1
   launcher. The regeneration step is what REQ-PKG-006 needs: checking the checksums alone
-  would pass a source edit committed together with its new checksum.
+  would pass a source edit committed together with its new checksum. The package is verified
+  by the `deb` CI job and `task deb`/`task deb:smoke`: `packaging/deb/check.sh` compares what
+  `dpkg -c` lists with the kit, its selftest proves it rejects four broken packages and checks
+  the version ordering, and `smoke.sh` installs and uses it in a clean Ubuntu 26.04 container.
+  `task ci` does not run them, because they need `dpkg-deb` and docker.
 
 ## 10. Open Questions
 
@@ -1829,3 +1844,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.64 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-acp-mediation` (T-F2-08): §5.3f — the running turn mediates a hosted agent's permissions, files and terminals; the `Mediator` port is gone |
 | 1.65 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-acp-cancel-traces` (T-F2-09): §5.3f — a cancel kills the terminals' commands before `session/cancel`, a hosted turn's spans, the disclosure; §5.3e the panel's hosted-thread row and notice; §9.4 `umb thread create --agent` |
 | 1.66 | 2026-10-24 | E. Crespo (assisted draft) | T-HRD-03, references only: §9.4's `umb skill` points at API §5.42, where `skill.*` moved from the duplicated §5.37 |
+| 1.67 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-deb-package` (T-PKG-03): §9.3 the Debian package — layout, `Depends`, version scheme, maintainer scripts, reproducibility and its verification |

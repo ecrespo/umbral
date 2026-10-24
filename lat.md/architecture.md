@@ -257,3 +257,11 @@ Labels — name and declared state source, nothing of the process — live in me
 [[internal/llmgw/policy.go#Router#plan]] drops a candidate that is not in the catalog, is down, lacks a capability in [[internal/llmgw/policy.go#Needs]], or sits behind an open breaker, then orders the kept ones with [[internal/llmgw/policy.go#compareBy]]: `local-first`, `cost` (an unpriced remote model last) or `quality` (declared order). The dropped ones follow in declared order.
 
 The [[internal/llmgw/policy.go#breakers]] count the failures a call falls back on and open after `breaker_failures` in a row for `breaker_cooldown`. After it, the next real call is the one probe: its first event closes the breaker at once and a failure reopens it. While a breaker is open only the probe counts, and each opening and closing is logged by [[internal/llmgw/router.go#Router#breakerMoved]]. A 4xx, an unsupported request or a cancel counts nothing.
+
+## The .deb ships the branding kit as it is
+
+[[packaging/deb/build.sh]] stages the three binaries, the eleven `hicolor` files and the `.desktop` entry copied from the kit, never regenerated (REQ-PKG-006), so the package carries what the `icons` job proved.
+
+libghostty-vt is linked statically, so `Depends` names only the newest glibc symbol version the binaries reference. Only a `vMAJOR.MINOR.PATCH` tag is a release; an untagged build becomes `0.0.0+git.<hash>` and a prerelease `~rc`, so apt upgrades from either to the release. Modes and mtimes are fixed, so one commit builds one package. [[packaging/deb/postinst]] and [[packaging/deb/postrm]] refresh the icon cache and the desktop database only where the tools exist, so a minimal system installs without them.
+
+[[packaging/deb/check.sh]] reads the package back with `dpkg -c` and compares each file with the kit; [[packaging/deb/check_selftest.sh]] proves it rejects four broken packages; and [[packaging/deb/smoke.sh]] installs it in a clean Ubuntu 26.04 container, lets `umb` autostart the installed daemon, and checks the icon cache before and after removal. `task deb` and `task deb:smoke` run them, as does the CI `deb` job.

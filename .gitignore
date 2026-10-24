@@ -53,3 +53,6 @@ umbral-repo-en.zip
 .lat-build
 .mcp.json
 graphify-out/
+
+# Packages built by `task deb` (T-PKG-03)
+/dist/

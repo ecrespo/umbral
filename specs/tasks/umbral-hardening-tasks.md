@@ -47,14 +47,36 @@ its matrix lists commands.
   name, because the validator does not know which binary release 0.1 ships. Checksums
   regenerated, closing A-15.
 
-### [ ] T-PKG-03 · Installation in the `.deb`
+### [x] 2026-10-24 T-PKG-03 · Installation in the `.deb`
 - **What:** ship the hicolor tree and the `.desktop` file in the package; postinst triggers refresh
   `gtk-update-icon-cache` and `update-desktop-database`.
 - **REQ:** REQ-PKG-001, REQ-PKG-002
-- **Files:** `packaging/deb/**`
+- **Files:** `packaging/deb/**`. Written as `packaging/deb/build.sh`, `postinst`, `postrm`,
+  `check.sh`, `check_selftest.sh` and `smoke.sh`; `task deb` and `task deb:smoke` in
+  `Taskfile.yml`; the `deb` job in `.github/workflows/ci.yml`
 - **Depends on:** T-PKG-02
 - **Done:** `dpkg -c umbral_*.deb` lists the 11 icon files and the `.desktop` file; smoke test in an
   Ubuntu 26.04 container.
+
+### [ ] T-PKG-06 · `umbrald` as a `systemd --user` service
+- **What:** a `systemd --user` unit for `umbrald`, shipped in the `.deb` under
+  `/usr/lib/systemd/user/` and not enabled by default; `umb` keeps autostarting the daemon
+  when the unit is not in use (Tech §9, delta `2026-10-deb-package`).
+- **REQ:** Tech §9 (0.1 distribution); no REQ
+- **Files:** `packaging/deb/**`, `packaging/systemd/`
+- **Depends on:** T-PKG-03
+- **Done:** in the Ubuntu 26.04 smoke container with a user manager, `systemctl --user start
+  umbrald` serves `umb status`, a stop leaves no process, and `dpkg -c` lists the unit.
+
+### [ ] T-PKG-07 · tar.gz archives and the `launchd` plist
+- **What:** the Linux and macOS tar.gz archives of the three binaries, the Linux one with the
+  kit's `share/` tree, and a `launchd` agent plist for `umbrald` in the macOS one (Tech §9,
+  Plan's Hardening phase, delta `2026-10-deb-package`).
+- **REQ:** Tech §9 (0.1 distribution); REQ-PKG-001, REQ-PKG-002 for the Linux archive's `share/`
+- **Files:** `packaging/tar/**`, `packaging/launchd/`
+- **Depends on:** T-PKG-03
+- **Done:** each archive is built in CI on its OS and unpacks to binaries that print their
+  version; the plist passes `plutil -lint`.
 
 ### [ ] T-REL-01 · A week of the TUI as the main terminal, before release 0.1
 - **What:** the TUI used for one week as the main terminal without blocking regressions —
@@ -180,9 +202,9 @@ its matrix lists commands.
 
 | REQ | Tasks | Verification |
 |---|---|---|
-| REQ-PKG-001 | T-PKG-01, T-PKG-03 | `icons` job, `dpkg -c` |
-| REQ-PKG-002 | T-PKG-02, T-PKG-03 | `desktop-file-validate` |
-| REQ-PKG-003 | T-PKG-02 | `.desktop` review in CI |
+| REQ-PKG-001 | T-PKG-01, T-PKG-03 | `icons` job; the `deb` job's `packaging/deb/check.sh` (`dpkg -c`, each file compared with the kit), `check_selftest.sh` and `smoke.sh` |
+| REQ-PKG-002 | T-PKG-02, T-PKG-03 | `desktop-file-validate`, on the kit's file and on the packaged one |
+| REQ-PKG-003 | T-PKG-02, T-PKG-03 | `.desktop` review in CI; `packaging/deb/check.sh` step 3 on the packaged file |
 | REQ-PKG-006 | T-PKG-01 | the `icons` job regenerates the kit with `build.py` and compares byte for byte; checksums alone would pass a source edit committed with its new checksum |
 | REQ-TUI-001, 002, 003, 004 | T-REL-02 (walk) | `docs/qa/f1-tui.md`; the harness tests are F1's |
 | REQ-SEC-011, REQ-SEC-013 | T-HRD-01 (the key) | a bundle signed with the project key accepted, any other refused |
@@ -200,3 +222,5 @@ its matrix lists commands.
 | 2026-10-23 | T-HRD-03 | revised | The Tech Lead added the `umb ai` stream overflow found during T-F2-04 (`TestUmbAiStreamsALongAnswer_REQ_CLI_001`, 3 failures in 300 runs at `-cpu 2`, none at `-cpu 1`); fixed by `client.NewUnboundedStream`, 900 runs green at `-cpu 1,2,4` afterwards. The task stays open for its other three items. |
 | 2026-10-23 | T-HRD-04 | done | Added and approved by the Tech Lead (delta `2026-10-slow-client-queue`) after the T-HRD-03 review found that `Server.broadcast` wrote every client's socket on the dispatch goroutine: one client that stopped reading stopped every other's notifications. Each connection now has an outbox and its own writer; past 8 MiB it is closed. The new test blocked the dispatcher for 20 s before the change. A write deadline, also proposed, was dropped: with the outbox it would only disconnect a suspended TUI. |
 | 2026-10-24 | T-HRD-03 | done | Its last three items are closed. `fetch_url` follows five redirects and refuses the sixth. The `REQ_API_005` macOS timeout was `plainPrefix` encoding a megabyte about twenty times per cut; it is now one pass checked by the encoder, 1.2 s to 0.5 s per subtest under `-race`. macOS was green on four attempts of PR #49's CI. `skill.*` moved from the second §5.37 to §5.42 (API 1.51). Each fix was red first, and each was mutated to red again. |
+| 2026-10-24 | T-PKG-03 | done | Delta `2026-10-deb-package` (Tech 1.67 §9.3). `task deb` builds `umbral_<version>_<arch>.deb` with `dpkg-deb` from the built binaries and the kit's files as they are; libghostty-vt is static, so it depends on `libc6 (>= 2.36)` alone. `check.sh` was red on an empty package first; `check_selftest.sh` shows it rejects a missing icon, an icon not the kit's, a `.desktop` naming another icon and a postinst that refreshes nothing. In an `ubuntu:26.04` container the package installed, `umb` autostarted the installed `umbrald` and read its status, the icon cache listed the icon, and after removal it no longer did. The `systemd --user` unit, the tar.gz archives and the `launchd` plist became T-PKG-06 and T-PKG-07. |
+| 2026-10-24 | T-PKG-06, T-PKG-07 | added | Delta `2026-10-deb-package`, ratified by the Tech Lead: the `systemd --user` unit, the tar.gz archives and the `launchd` plist Tech §9 and the Plan name for 0.1, which no task owned. |
