@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -496,6 +497,24 @@ func TestARepositoryAgentConfigIsRefused_REQ_ACP_009(t *testing.T) {
 	}
 	if err := h.Check("fake", symlinked); err != nil {
 		t.Errorf("a .git symlinked to a gitdir is its top: %v, want no refusal", err)
+	}
+	// A commondir that is a FIFO would block a plain read for good: it is no gitdir, and the
+	// search goes on without waiting.
+	fifo := filepath.Join(top, "fifo")
+	gitDir(t, filepath.Join(fifo, ".git"))
+	if err := syscall.Mkfifo(filepath.Join(fifo, ".git", "commondir"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checked := make(chan error, 1)
+	go func() { checked <- h.Check("fake", fifo) }()
+	select {
+	case err := <-checked:
+		var fifoRefusal *domain.Refusal
+		if !errors.As(err, &fifoRefusal) || fifoRefusal.Reason != domain.ReasonProjectConfig {
+			t.Errorf("a gitdir whose commondir is a FIFO: %v, want a project_config refusal", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a commondir that is a FIFO blocked the check")
 	}
 
 	dir := workDir(t)

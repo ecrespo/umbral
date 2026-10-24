@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -208,14 +209,11 @@ func isGitEntry(p string) bool {
 	if info.IsDir() {
 		return isGitDir(p)
 	}
-	if !info.Mode().IsRegular() || info.Size() > 4096 {
+	raw, ok := readGitFile(p)
+	if !ok {
 		return false
 	}
-	raw, err := os.ReadFile(p) //nolint:gosec // a .git file in the thread's own directory tree
-	if err != nil {
-		return false
-	}
-	target, ok := strings.CutPrefix(strings.TrimSpace(string(raw)), "gitdir: ")
+	target, ok := strings.CutPrefix(raw, "gitdir: ")
 	if !ok || target == "" {
 		return false
 	}
@@ -225,23 +223,49 @@ func isGitEntry(p string) bool {
 	return isGitDir(target)
 }
 
+// maxGitFile bounds a `.git` file or a `commondir`: either is one short path.
+const maxGitFile = 4096
+
+// readGitFile reads p, trimmed, if it is a regular file of at most maxGitFile bytes. The tree is
+// the agent's to write, so p is opened without blocking — a FIFO would wait for a writer for
+// good — and its type is checked on the open file, not on a path that could change under it.
+func readGitFile(p string) (string, bool) {
+	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // a git file in the thread's own directory tree
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxGitFile {
+		return "", false
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, maxGitFile+1))
+	if err != nil || len(raw) > maxGitFile {
+		return "", false
+	}
+	return strings.TrimSpace(string(raw)), true
+}
+
 // isGitDir reports whether dir is a gitdir as git checks one: `HEAD`, and `objects` and `refs` in
 // the directory its `commondir` names — a linked worktree's has no objects of its own — or in
 // dir itself.
 func isGitDir(dir string) bool {
-	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err != nil { //nolint:gosec // only whether it exists, as git checks it
+	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err != nil {
 		return false
 	}
 	common := dir
-	if raw, err := os.ReadFile(filepath.Join(dir, "commondir")); err == nil { //nolint:gosec // a gitdir's own commondir
-		c := strings.TrimSpace(string(raw))
+	if _, err := os.Lstat(filepath.Join(dir, "commondir")); err == nil {
+		c, ok := readGitFile(filepath.Join(dir, "commondir"))
+		if !ok || c == "" {
+			return false
+		}
 		if !filepath.IsAbs(c) {
 			c = filepath.Join(dir, c)
 		}
 		common = c
 	}
 	for _, name := range []string{"objects", "refs"} {
-		if _, err := os.Stat(filepath.Join(common, name)); err != nil { //nolint:gosec // only whether it exists, as git checks it
+		if _, err := os.Stat(filepath.Join(common, name)); err != nil {
 			return false
 		}
 	}
