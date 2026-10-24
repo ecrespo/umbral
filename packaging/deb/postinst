@@ -1,0 +1,17 @@
+#!/bin/sh
+# Refreshes what a launcher reads to find Umbral's icon and .desktop entry (T-PKG-03).
+# hicolor-icon-theme and desktop-file-utils also trigger on these directories where they are
+# installed; running the tools here covers a system where they are present without the
+# triggers, and the guard covers one where they are absent, which must not fail the install.
+set -e
+
+if [ "$1" = "configure" ]; then
+	if command -v gtk-update-icon-cache >/dev/null 2>&1 && [ -f /usr/share/icons/hicolor/index.theme ]; then
+		gtk-update-icon-cache --quiet --force /usr/share/icons/hicolor || true
+	fi
+	if command -v update-desktop-database >/dev/null 2>&1; then
+		update-desktop-database --quiet /usr/share/applications || true
+	fi
+fi
+
+exit 0

@@ -60,6 +60,39 @@ jobs:
       - name: Checksums, reproducible regeneration and .desktop validation
         run: ./scripts/icons_check.sh
 
+  deb:
+    name: Debian package (T-PKG-03, REQ-PKG-001, 002, 003)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the package version comes from git describe
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Zig, which builds libghostty-vt
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Build libghostty-vt (cgo dependency of the sessions emulator)
+        run: ./scripts/build_libghostty.sh
+      - run: echo "PKG_CONFIG_PATH=$HOME/.local/ghostty-vt/share/pkgconfig" >> "$GITHUB_ENV"
+      - name: The .desktop validator
+        run: sudo apt-get update && sudo apt-get install -y desktop-file-utils
+      - name: Build the binaries and the package
+        run: |
+          version="$(git describe --tags --always)"
+          for bin in umbrald umb umbral-tui; do
+            go build -ldflags "-s -w -X main.version=$version" -o "bin/$bin" "./cmd/$bin"
+          done
+          packaging/deb/build.sh bin "$version" dist
+      - name: dpkg -c lists the 11 icons and the .desktop file, and the checker still bites
+        run: |
+          packaging/deb/check.sh dist/umbral_*.deb
+          packaging/deb/check_selftest.sh dist/umbral_*.deb
+      - name: Install and use it in a clean Ubuntu 26.04 container
+        run: packaging/deb/smoke.sh dist/umbral_*.deb
+
   lint:
     name: Lint (Art. 1)
     runs-on: ubuntu-latest

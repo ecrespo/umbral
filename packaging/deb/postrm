@@ -1,0 +1,17 @@
+#!/bin/sh
+# Drops Umbral's icon and .desktop entry from the caches postinst refreshed (T-PKG-03), on a
+# removal and on an install or upgrade that dpkg abandoned after unpacking.
+set -e
+
+case "$1" in
+remove | purge | abort-install | abort-upgrade)
+	if command -v gtk-update-icon-cache >/dev/null 2>&1 && [ -f /usr/share/icons/hicolor/index.theme ]; then
+		gtk-update-icon-cache --quiet --force /usr/share/icons/hicolor || true
+	fi
+	if command -v update-desktop-database >/dev/null 2>&1; then
+		update-desktop-database --quiet /usr/share/applications || true
+	fi
+	;;
+esac
+
+exit 0
