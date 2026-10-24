@@ -138,11 +138,11 @@ var wrappers = map[string]wrapper{
 			"-T", "--time", "-a", "--all", "-F", "--no-fork", "-r", "--root", "-w", "--wd", "--preserve-credentials"),
 	},
 	"strace": {
-		flags: set("-o", "-p", "-e", "-s", "-u", "-E", "-P", "-I", "-b", "-a", "-O", "-S", "-X"),
+		flags: set("-o", "--output", "-p", "-e", "-s", "-u", "-E", "-P", "-I", "-b", "-a", "-O", "-S", "-X"),
 		noArg: set("-f", "-ff", "-c", "-C", "-d", "-D", "-F", "-h", "-i", "-k", "-q", "-qq", "-r", "-t", "-tt", "-ttt", "-T",
 			"-v", "-V", "-w", "-x", "-xx", "-y", "-yy", "-z", "-Z"),
 	},
-	"ltrace": {flags: set("-o", "-p", "-e", "-s", "-u", "-a", "-n", "-l"), noArg: set("-f", "-c", "-C", "-i", "-S", "-t", "-tt", "-ttt", "-T")},
+	"ltrace": {flags: set("-o", "--output", "-p", "-e", "-s", "-u", "-a", "-n", "-l"), noArg: set("-f", "-c", "-C", "-i", "-S", "-t", "-tt", "-ttt", "-T")},
 	// zsh's precommand modifiers.
 	"noglob":    {},
 	"nocorrect": {},
@@ -445,28 +445,16 @@ func (n *normaliser) unwrap(words, out []string, redirs []*syntax.Redirect, dept
 			if wr.shell[flag] {
 				shell = true
 			}
-			switch {
-			case wr.flags[flag] && len(words) > 0:
-				n.flagValue(name, flag, words[0], depth)
-				words = words[1:]
-			case len(flag) > 2 && !strings.HasPrefix(flag, "--") && wr.flags[flag[:2]]:
-				n.flagValue(name, flag[:2], flag[2:], depth) // `-oKey=value`
-			case wr.noArg[flag] || strings.Contains(flag, "=") || len(words) == 0:
-			default:
-				// Not in the table: also read the line as if the flag took the next word.
-				n.alternative(append([]string{name}, words[1:]...), out, redirs, depth)
-			}
+			words = n.wrapperFlag(name, wr, flag, words, out, redirs, depth)
 		}
 		for i := 0; i < wr.positional && len(words) > 0; i++ {
 			words = words[1:]
 		}
 		if name == sshProgram {
 			// OpenSSH reads options after the host too.
-			for len(words) > 0 && strings.HasPrefix(words[0], "-") {
-				if wr.flags[words[0]] && len(words) > 1 {
-					words = words[1:]
-				}
-				words = words[1:]
+			for len(words) > 0 && strings.HasPrefix(words[0], "-") && words[0] != "-" {
+				flag := words[0]
+				words = n.wrapperFlag(name, wr, flag, words[1:], out, redirs, depth)
 			}
 		}
 		if shell && len(words) == 0 {
@@ -487,6 +475,57 @@ func (n *normaliser) unwrap(words, out []string, redirs []*syntax.Redirect, dept
 	return words, false
 }
 
+// wrapperFlag reads one of a wrapper's flags and returns the words after it and its value. A
+// cluster of short flags (`-vo`) is read letter by letter: the first letter that takes a value
+// takes the rest of the word or the next one. A letter the table does not know may take a value
+// itself, so the line is also read as if the cluster ended there.
+func (n *normaliser) wrapperFlag(name string, wr wrapper, flag string, words, out []string, redirs []*syntax.Redirect, depth int) []string {
+	if long, value, ok := strings.Cut(flag, "="); ok && strings.HasPrefix(flag, "--") {
+		if wr.flags[long] {
+			n.flagValue(name, long, value, depth)
+		}
+		return words
+	}
+	switch {
+	case wr.flags[flag] && len(words) > 0:
+		n.flagValue(name, flag, words[0], depth)
+		return words[1:]
+	case wr.noArg[flag] || !shortCluster(flag) && (strings.Contains(flag, "=") || len(words) == 0):
+		return words
+	case shortCluster(flag):
+		unknown := false
+		for i := 1; i < len(flag); i++ {
+			letter := "-" + flag[i:i+1]
+			if !wr.flags[letter] {
+				if !wr.noArg[letter] && !unknown && len(words) > 0 {
+					unknown = true
+					n.alternative(append([]string{name}, words[1:]...), out, redirs, depth)
+				}
+				continue
+			}
+			if value := flag[i+1:]; value != "" {
+				n.flagValue(name, letter, value, depth) // `-oKey=value`, `-voKey=value`
+				return words
+			}
+			if len(words) > 0 {
+				n.flagValue(name, letter, words[0], depth)
+				return words[1:]
+			}
+			return words
+		}
+		return words
+	default:
+		// Not in the table: also read the line as if the flag took the next word.
+		n.alternative(append([]string{name}, words[1:]...), out, redirs, depth)
+		return words
+	}
+}
+
+// shortCluster reports one or more short flags written as one word (`-v`, `-vo`).
+func shortCluster(flag string) bool {
+	return len(flag) > 1 && flag[0] == '-' && flag[1] != '-'
+}
+
 // sshCommandOptions are ssh_config keywords whose value is a command ssh runs locally.
 var sshCommandOptions = set("proxycommand", "localcommand", "knownhostscommand", "remotecommand")
 
@@ -496,22 +535,33 @@ var sshCommandOptions = set("proxycommand", "localcommand", "knownhostscommand",
 func (n *normaliser) flagValue(name, flag, value string, depth int) {
 	switch {
 	case name == sshProgram && flag == "-o":
-		key, rest, ok := strings.Cut(value, "=")
-		if !ok {
-			key, rest, _ = strings.Cut(strings.TrimSpace(value), " ")
-		}
-		key = strings.ToLower(strings.TrimSpace(key))
+		key, rest := sshOption(value)
 		switch {
 		case sshCommandOptions[key]:
-			n.script(strings.TrimSpace(rest), depth+1)
-		case key == "match" || key == "include":
+			n.script(rest, depth+1)
+		case key == "match" || key == "include" || strings.Trim(key, "abcdefghijklmnopqrstuvwxyz") != "":
 			n.flag(UnknownDynamicWord)
 		}
 	case name == sshProgram && flag == "-F" && value != "/dev/null":
 		n.flag(UnknownDynamicWord) // its ProxyCommand is not on the line
-	case (name == "strace" || name == "ltrace") && flag == "-o" && (strings.HasPrefix(value, "|") || strings.HasPrefix(value, "!")):
+	case (name == "strace" || name == "ltrace") && (flag == "-o" || flag == "--output") && (strings.HasPrefix(value, "|") || strings.HasPrefix(value, "!")):
 		n.script(value[1:], depth+1)
 	}
+}
+
+// sshOption splits an `-o` value as OpenSSH does: the keyword ends at the first whitespace or
+// `=`, then whitespace and at most one `=` are skipped. The keyword comes back lower case.
+func sshOption(value string) (key, rest string) {
+	value = strings.TrimLeft(value, " \t")
+	end := strings.IndexAny(value, " \t\r\n=")
+	if end < 0 {
+		return strings.ToLower(value), ""
+	}
+	key, rest = value[:end], strings.TrimLeft(value[end:], " \t\r\n")
+	if strings.HasPrefix(rest, "=") {
+		rest = strings.TrimLeft(rest[1:], " \t\r\n")
+	}
+	return strings.ToLower(key), strings.TrimSpace(rest)
 }
 
 // alternative normalises another reading of a command, one level deeper so readings cannot
@@ -631,7 +681,7 @@ func interpreter(prog string) bool {
 	}
 	switch prog {
 	case "perl", "ruby", "node", "nodejs", "bun", "deno", "php", "lua", "luajit", "awk", "gawk", "mawk", "nawk",
-		"Rscript", "tclsh", "osascript", "pwsh", "powershell":
+		"Rscript", "tclsh", "osascript", pwshProgram, powershellProgram:
 		return true
 	}
 	return false
@@ -651,7 +701,8 @@ func readsProgramFromStdin(words []string) bool {
 		case w == "-" || stdinPath(w):
 			return true
 		case inlineProgramFlag(prog, w):
-			return false
+			// PowerShell's `-Command -` and `-File -` read the program from stdin.
+			return powershell(prog) && i+1 < len(words) && (words[i+1] == "-" || stdinPath(words[i+1]))
 		case strings.HasPrefix(prog, "python") && (w == "-m" || strings.HasPrefix(w, "-m")):
 			return false
 		case strings.HasPrefix(prog, "python") && (w == "-W" || w == "-X"):
@@ -664,17 +715,37 @@ func readsProgramFromStdin(words []string) bool {
 	return true
 }
 
-// encodedProgram reports PowerShell's -EncodedCommand, in any of its abbreviations.
+// PowerShell takes its program inline, from a file or base64-encoded.
+const (
+	pwshProgram       = "pwsh"
+	powershellProgram = "powershell"
+)
+
+// encodedProgram reports PowerShell's -EncodedCommand or -EncodedArguments, in any of their
+// abbreviations: every parameter starting with `e` but -ExecutionPolicy's.
 func encodedProgram(words []string) bool {
-	if words[0] != "pwsh" && words[0] != "powershell" {
+	if !powershell(words[0]) {
 		return false
 	}
 	for _, w := range words[1:] {
-		if lw := strings.ToLower(w); lw == "-e" || lw == "-ec" || (len(lw) > 3 && strings.HasPrefix("-encodedcommand", lw)) {
+		if p, ok := powershellParameter(w); ok && strings.HasPrefix(p, "e") && !strings.HasPrefix(p, "ex") {
 			return true
 		}
 	}
 	return false
+}
+
+func powershell(prog string) bool { return prog == pwshProgram || prog == powershellProgram }
+
+// powershellParameter is a PowerShell parameter's name in lower case, written after `-`, `--`
+// or `/`.
+func powershellParameter(w string) (string, bool) {
+	for _, prefix := range []string{"--", "-", "/"} {
+		if name, ok := strings.CutPrefix(w, prefix); ok && name != "" {
+			return strings.ToLower(name), true
+		}
+	}
+	return "", false
 }
 
 // inlineProgramFlag reports a flag that gives an interpreter its program inline.
@@ -689,9 +760,9 @@ func inlineProgramFlag(prog, w string) bool {
 		return w == "-e" || w == "-p" || strings.HasPrefix(w, "--eval") || strings.HasPrefix(w, "--print")
 	case prog == "deno":
 		return w == "eval" || w == "run" || w == "task"
-	case prog == "pwsh" || prog == "powershell":
-		lw := strings.ToLower(w)
-		return lw == "-c" || strings.HasPrefix(lw, "-command") || strings.HasPrefix(lw, "-encodedcommand") || strings.HasPrefix(lw, "-file")
+	case powershell(prog):
+		p, ok := powershellParameter(w)
+		return ok && (strings.HasPrefix("command", p) || strings.HasPrefix("file", p) || strings.HasPrefix(p, "e") && !strings.HasPrefix(p, "ex"))
 	case prog == "php":
 		return w == "-r"
 	default: // lua, Rscript, osascript
