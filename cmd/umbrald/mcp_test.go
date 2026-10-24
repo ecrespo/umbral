@@ -18,7 +18,11 @@ import (
 func TestMain(m *testing.M) {
 	sdktest.Serve()
 	acptest.Serve()
-	os.Exit(m.Run())
+	code := m.Run()
+	if daemonBuild.dir != "" {
+		_ = os.RemoveAll(daemonBuild.dir)
+	}
+	os.Exit(code)
 }
 
 // awaitNotification reads notifications until one of method arrives, and returns its params
