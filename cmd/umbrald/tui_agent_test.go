@@ -139,3 +139,49 @@ func TestTheAgentPanelAgainstARealDaemon_REQ_TUI_001(t *testing.T) {
 		t.Fatalf("a cancel with no turn running: stopped %v, %v", stopped, err)
 	}
 }
+
+// TestTheThreadListAgainstARealDaemon_REQ_ORC_003: the TUI adapter against a real daemon. A
+// thread it creates in a workspace belongs to it and one created with none belongs to none,
+// and the listing reads the focused workspace and each thread's fields by their wire names.
+func TestTheThreadListAgainstARealDaemon_REQ_ORC_003(t *testing.T) {
+	ollama := &scriptedOllama{}
+	srv := ollama.server(t)
+	home := t.TempDir()
+	stream, ctx := agentDaemon(t, srv.URL, "HOME="+home)
+
+	var ws struct {
+		Workspace struct {
+			ID string `json:"id"`
+		} `json:"workspace"`
+	}
+	if err := stream.Call(ctx, "workspace.create", map[string]any{"cwd": home}, &ws); err != nil {
+		t.Fatalf("workspace.create: %v", err)
+	}
+	adapter := daemonadapter.New(secondStream(t, ctx))
+	inWs, err := adapter.CreateThread(ctx, home, ws.Workspace.ID)
+	if err != nil {
+		t.Fatalf("thread.create in %s: %v", ws.Workspace.ID, err)
+	}
+	inNone, err := adapter.CreateThread(ctx, home, "")
+	if err != nil {
+		t.Fatalf("thread.create in none: %v", err)
+	}
+
+	list, err := adapter.Threads(ctx)
+	if err != nil {
+		t.Fatalf("Threads: %v", err)
+	}
+	if list.WorkspaceID != ws.Workspace.ID || list.Seq == 0 {
+		t.Fatalf("focused %q at seq %d, want %q after the workspace's events", list.WorkspaceID, list.Seq, ws.Workspace.ID)
+	}
+	found := map[string]ports.Thread{}
+	for _, th := range list.Threads {
+		found[th.ID] = th
+	}
+	if got := found[inWs]; got.WorkspaceID != ws.Workspace.ID || got.Attention == "" || got.State != "idle" {
+		t.Errorf("the workspace's thread read %+v", got)
+	}
+	if got, ok := found[inNone]; !ok || got.WorkspaceID != "" || got.Attention == "" {
+		t.Errorf("the thread of no workspace read %+v (listed %v)", got, ok)
+	}
+}

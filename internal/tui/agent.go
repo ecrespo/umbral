@@ -13,7 +13,8 @@ import (
 )
 
 // The agent panel (REQ-TUI-001's agent half, REQ-TUI-002, REQ-TUI-003, REQ-TUI-004): a column
-// beside the panes that shows what the agent can reach beyond its built-in tools, one
+// beside the panes that shows what the agent can reach beyond its built-in tools, the focused
+// workspace's threads (REQ-ORC-003), the selected
 // thread's turn as it streams, the approvals pending on every thread, and the line the user
 // is typing to it. ctrl+space moves input between the shell and the
 // panel.
@@ -44,14 +45,38 @@ type entry struct {
 	text string
 }
 
-// agentPanel is the panel's state. The model owns one: a thread is created by the first
-// message sent and kept for the rest of the run.
+// threadView is what the panel shows of one thread: its transcript and its turn. The
+// selected thread's is the panel's own; every other thread's is kept in agentPanel.views, so
+// switching back finds what arrived meanwhile.
+type threadView struct {
+	running  bool
+	thinking bool
+	entries  []entry
+	// turnTools and turnSkills are the MCP tools the running turn called and the skills it
+	// loaded, each once, in the order first used.
+	turnTools  []string
+	turnSkills []string
+}
+
+// agentPanel is the panel's state. The model owns one. Its thread is the selected one: the
+// first message creates one when none is selected, and up and down select another of the
+// focused workspace's threads (REQ-ORC-003).
 type agentPanel struct {
 	open bool
 	// mode routes the keyboard to the panel instead of the focused shell (REQ-TUI-002).
 	mode bool
 
+	threadView
 	threadID string
+	// views are the transcripts of the threads not selected, by thread id.
+	views map[string]*threadView
+	// workspace is the daemon's focused workspace, "" for none, and threads every thread it
+	// listed with it; the panel lists those of that workspace.
+	workspace string
+	threads   []ports.Thread
+	// listedSeq is the snapshot `seq` of the listing applied; an older one arriving later is
+	// stale and dropped.
+	listedSeq uint64
 	// viewing is the thread the daemon was last told this client views: the panel's own
 	// while the panel is on screen, none otherwise (REQ-AGT-016).
 	viewing  string
@@ -59,10 +84,7 @@ type agentPanel struct {
 	// queued is a message typed before the thread existed, sent once it does.
 	queued *outgoing
 
-	input    []rune
-	running  bool
-	thinking bool
-	entries  []entry
+	input []rune
 
 	// approvals are every thread's, answered oldest first, one chord each. answered keeps
 	// what was answered here, so a late approval.list cannot bring one back.
@@ -74,10 +96,6 @@ type agentPanel struct {
 	// the panel opens and on every mcp.server_state or skill.changed.
 	servers []ports.McpServer
 	skills  []ports.Skill
-	// turnTools and turnSkills are the MCP tools the running turn called and the skills it
-	// loaded, each once, in the order first used.
-	turnTools  []string
-	turnSkills []string
 }
 
 type outgoing struct {
@@ -110,6 +128,10 @@ type (
 	skillsLoadedMsg struct {
 		skills []ports.Skill
 		err    error
+	}
+	threadsLoadedMsg struct {
+		list ports.ThreadList
+		err  error
 	}
 )
 
@@ -144,7 +166,7 @@ func (m *Model) toggleMode() tea.Cmd {
 	m.agent.mode = !m.agent.mode
 	if m.agent.mode && !m.agent.open {
 		m.agent.open = true
-		return tea.Batch(m.resize(m.width, m.height), m.syncView(), m.loadExtensionsCmd())
+		return tea.Batch(m.resize(m.width, m.height), m.syncView(), m.loadExtensionsCmd(), m.loadThreadsCmd())
 	}
 	return nil
 }
@@ -182,7 +204,7 @@ func (m *Model) attachBlock() tea.Cmd {
 	m.agent.mode = true
 	if !m.agent.open {
 		m.agent.open = true
-		return tea.Batch(m.resize(m.width, m.height), m.syncView(), m.loadExtensionsCmd())
+		return tea.Batch(m.resize(m.width, m.height), m.syncView(), m.loadExtensionsCmd(), m.loadThreadsCmd())
 	}
 	return nil
 }
@@ -213,6 +235,10 @@ func (m *Model) handleAgentKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	switch key {
+	case "up":
+		return m.selectThread(-1)
+	case "down":
+		return m.selectThread(+1)
 	case "enter":
 		return m.sendInput()
 	case "backspace":
@@ -277,14 +303,14 @@ func (m *Model) sendInput() tea.Cmd {
 	if p := m.focusedPane(); p != nil {
 		cwd = p.cwd
 	}
-	return m.createThreadCmd(cwd)
+	return m.createThreadCmd(cwd, a.workspace)
 }
 
 // threadCreated installs the thread and sends what was waiting for it.
 func (m *Model) threadCreated(msg threadCreatedMsg) tea.Cmd {
 	a := &m.agent
 	a.threadID, a.creating = msg.threadID, false
-	view := m.syncView()
+	view := tea.Batch(m.syncView(), m.loadThreadsCmd())
 	if a.queued == nil {
 		return view
 	}
@@ -352,7 +378,13 @@ func (m *Model) cancelled(msg cancelledMsg) {
 		return
 	}
 	m.dropApprovals(msg.threadID)
-	if msg.threadID != a.threadID || !a.running {
+	if msg.threadID != a.threadID {
+		if v, ok := a.views[msg.threadID]; ok {
+			v.running, v.thinking = false, false
+		}
+		return
+	}
+	if !a.running {
 		return
 	}
 	a.running, a.thinking = false, false
@@ -421,6 +453,159 @@ func (m *Model) approvalsLoaded(msg approvalsLoadedMsg) tea.Cmd {
 	return nil
 }
 
+// threadsLoaded replaces the listing. A failed one keeps the last and says so.
+//
+// Listings run concurrently, so one older than the listing applied is dropped. A thread the
+// listing shows running is running in its view too, whoever started the turn; one shown idle
+// is left to its own turn's end, since a send of this panel may not be listed yet. The views
+// of threads no longer listed are dropped, which bounds them: an ephemeral thread, `umb ai`'s,
+// is never listed.
+func (m *Model) threadsLoaded(msg threadsLoadedMsg) {
+	a := &m.agent
+	if msg.err != nil {
+		m.status = "threads: " + msg.err.Error()
+		return
+	}
+	if msg.list.Seq < a.listedSeq {
+		return
+	}
+	a.listedSeq = msg.list.Seq
+	a.workspace, a.threads = msg.list.WorkspaceID, msg.list.Threads
+	for id := range a.views {
+		if _, ok := m.listed(id); !ok {
+			delete(a.views, id)
+		}
+	}
+	for id, v := range a.views {
+		if m.listedRunning(id) {
+			v.running = true
+		}
+	}
+	if a.threadID != "" && m.listedRunning(a.threadID) {
+		a.running = true
+	}
+}
+
+// shownThreads are the threads the panel lists: the focused workspace's, or with none focused
+// those of no workspace (REQ-ORC-003), in the daemon's order, most recently updated first.
+// The selected thread is listed even when it belongs elsewhere or is not listed yet.
+func (m *Model) shownThreads() []ports.Thread {
+	a := &m.agent
+	var shown []ports.Thread
+	selected := false
+	for _, t := range a.threads {
+		if t.ID == a.threadID {
+			selected = true
+			shown = append(shown, t)
+			continue
+		}
+		if t.WorkspaceID == a.workspace {
+			shown = append(shown, t)
+		}
+	}
+	if !selected && a.threadID != "" {
+		shown = append(shown, ports.Thread{ID: a.threadID, WorkspaceID: a.workspace})
+	}
+	return shown
+}
+
+// selectThread is up or down in agent mode: the panel moves to the previous or next listed
+// thread, which becomes the one viewed, shown and sent to. With none selected, down takes the
+// first and up the last.
+func (m *Model) selectThread(step int) tea.Cmd {
+	a := &m.agent
+	shown := m.shownThreads()
+	if len(shown) == 0 {
+		return nil
+	}
+	if a.creating || a.queued != nil {
+		m.status = "the thread is being created: wait for it"
+		return nil
+	}
+	at := slices.IndexFunc(shown, func(t ports.Thread) bool { return t.ID == a.threadID })
+	switch {
+	case at < 0 && step > 0:
+		at = 0
+	case at < 0:
+		at = len(shown) - 1
+	default:
+		at = (at + step + len(shown)) % len(shown)
+	}
+	return m.switchTo(shown[at].ID)
+}
+
+// switchTo selects a thread: the current view is kept, and the selected thread's is the one
+// it last had, or a fresh one that knows from the listing whether a turn is running.
+func (m *Model) switchTo(threadID string) tea.Cmd {
+	a := &m.agent
+	if threadID == a.threadID {
+		return nil
+	}
+	if a.threadID != "" {
+		kept := a.threadView
+		if a.views == nil {
+			a.views = map[string]*threadView{}
+		}
+		a.views[a.threadID] = &kept
+	}
+	a.threadView = *m.viewOf(threadID)
+	delete(a.views, threadID)
+	a.threadID = threadID
+	return m.syncView()
+}
+
+// threadLines are the thread list's rows: the selected one marked, each with its attention
+// state, `queued`, its worktree and its pending approvals, at most maxThreadRows of them.
+func (m *Model) threadLines(width int) []string {
+	shown := m.shownThreads()
+	if len(shown) == 0 {
+		return nil
+	}
+	pending := map[string]int{}
+	for _, apr := range m.agent.approvals {
+		pending[apr.ThreadID]++
+	}
+	var rows []string
+	for i, t := range shown {
+		if i == maxThreadRows {
+			rows = append(rows, fmt.Sprintf("  … %d more", len(shown)-i))
+			break
+		}
+		mark := "  "
+		if t.ID == m.agent.threadID {
+			mark = "> "
+		}
+		attention := t.Attention
+		if attention == "" {
+			attention = "unknown"
+		}
+		parts := []string{t.ID, attention}
+		if t.Queued {
+			parts = append(parts, "queued")
+		}
+		if t.WorktreeID != "" {
+			parts = append(parts, t.WorktreeID)
+		} else {
+			parts = append(parts, "no worktree")
+		}
+		switch n := pending[t.ID]; n {
+		case 0:
+		case 1:
+			parts = append(parts, "1 approval")
+		default:
+			parts = append(parts, fmt.Sprintf("%d approvals", n))
+		}
+		if title := oneLine(t.Title); title != "" {
+			parts = append(parts, title)
+		}
+		rows = append(rows, truncate(mark+strings.Join(parts, " · "), width))
+	}
+	return rows
+}
+
+// maxThreadRows bounds the thread list, so the transcript keeps the panel's height.
+const maxThreadRows = 6
+
 // serversLoaded and skillsLoaded replace the extensions view's lists. A failed listing
 // keeps the last one and says so: the daemon is answering, only not this.
 func (m *Model) serversLoaded(msg serversLoadedMsg) {
@@ -440,26 +625,83 @@ func (m *Model) skillsLoaded(msg skillsLoadedMsg) {
 }
 
 // applyAgentEvent folds one of the agent's notifications into the panel. Approvals are
-// every thread's, and a turn's end takes its thread's away; the transcript is the panel's
-// own thread only.
-func (m *Model) applyAgentEvent(ev ports.Event) {
+// every thread's, and a turn's end takes its thread's away. A transcript event goes to its
+// thread's view, the panel's own when it is the selected thread. It returns the listing to
+// run again, when the event changed what the list shows (REQ-ORC-003).
+func (m *Model) applyAgentEvent(ev ports.Event) tea.Cmd {
 	a := &m.agent
 	switch ev.Kind {
 	case ports.EventApprovalRequested:
 		m.addApproval(ev.Approval)
-		return
+		return m.loadThreadsCmd()
+
+	case ports.EventAttentionChanged, ports.EventWorkspaceFocused:
+		return m.loadThreadsCmd()
 
 	case ports.EventTurnFinished:
 		// A turn that ended leaves nothing of its own to answer: a cancel expires what was
 		// waiting (API §5.25), and answering it would be a CONFLICT.
 		m.dropApprovals(ev.ThreadID)
 	}
-
-	if a.threadID == "" || ev.ThreadID != a.threadID {
-		return
+	if ev.ThreadID == "" {
+		return nil
 	}
+
+	// A held turn that started announces nothing but its first event: list again to drop
+	// its `queued` mark.
+	var relist tea.Cmd
+	if ev.Kind == ports.EventTurnFinished || m.listedQueued(ev.ThreadID) {
+		relist = m.loadThreadsCmd()
+	}
+	if ev.ThreadID == a.threadID {
+		a.apply(ev)
+	} else {
+		m.viewOf(ev.ThreadID).apply(ev)
+	}
+	return relist
+}
+
+// viewOf is a thread's kept view, made when the panel first hears of it.
+func (m *Model) viewOf(threadID string) *threadView {
+	a := &m.agent
+	if a.views == nil {
+		a.views = map[string]*threadView{}
+	}
+	v, ok := a.views[threadID]
+	if !ok {
+		v = &threadView{running: m.listedRunning(threadID)}
+		a.views[threadID] = v
+	}
+	return v
+}
+
+// listedRunning and listedQueued read the thread's last listing.
+func (m *Model) listedRunning(threadID string) bool {
+	t, ok := m.listed(threadID)
+	return ok && (t.State == "running" || t.State == "awaiting_approval")
+}
+
+func (m *Model) listedQueued(threadID string) bool {
+	t, ok := m.listed(threadID)
+	return ok && t.Queued
+}
+
+func (m *Model) listed(threadID string) (ports.Thread, bool) {
+	for _, t := range m.agent.threads {
+		if t.ID == threadID {
+			return t, true
+		}
+	}
+	return ports.Thread{}, false
+}
+
+// apply folds a transcript event into one thread's view.
+func (a *threadView) apply(ev ports.Event) {
 	switch ev.Kind {
 	case ports.EventThreadDelta:
+		// Deltas and tool calls come only from a running turn, which this panel may not
+		// have started.
+		a.running = true
 		if ev.Reasoning {
 			a.thinking = true
 			return
@@ -472,7 +714,7 @@ func (m *Model) applyAgentEvent(ev ports.Event) {
 		a.entries = append(a.entries, entry{kind: entryAgent, text: ev.Text})
 
 	case ports.EventToolCall:
-		a.thinking = false
+		a.running, a.thinking = true, false
 		// An MCP tool was called when its call reached the server, whatever it answered; a
 		// skill was loaded only when skill_load succeeded. A call refused or malformed did
 		// neither, and a failed skill_load may name a skill that does not exist.
@@ -704,7 +946,7 @@ func (m *Model) renderAgentPanel(height int) []string {
 			body = append(body, wrap(line, width)...)
 		}
 	}
-	top := append([]string{truncate(header, width)}, m.extensionLines(width)...)
+	top := append(append([]string{truncate(header, width)}, m.extensionLines(width)...), m.threadLines(width)...)
 	room = max(height-len(top)-len(bottom), 0)
 	if len(body) > room {
 		body = body[len(body)-room:]

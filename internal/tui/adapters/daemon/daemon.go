@@ -186,15 +186,65 @@ func (d *Daemon) Blocks(ctx context.Context, sessionID string, limit int) ([]ses
 	return blocks, nil
 }
 
-// CreateThread starts a thread in cwd (API Spec §5.19).
-func (d *Daemon) CreateThread(ctx context.Context, cwd string) (string, error) {
+// CreateThread starts a thread in cwd, in workspaceID unless it is "" (API Spec §5.19).
+func (d *Daemon) CreateThread(ctx context.Context, cwd, workspaceID string) (string, error) {
+	params := map[string]any{"cwd": cwd}
+	if workspaceID != "" {
+		params["workspace"] = workspaceID
+	}
 	var out struct {
 		ID string `json:"id"`
 	}
-	if err := d.stream.Call(ctx, "thread.create", map[string]any{"cwd": cwd}, &out); err != nil {
+	if err := d.stream.Call(ctx, "thread.create", params, &out); err != nil {
 		return "", err
 	}
 	return out.ID, nil
+}
+
+// Threads reads the focused workspace and every thread from one `session.snapshot` (API Spec
+// §5.3), so the two agree: a listing and a focus read apart could straddle a focus change.
+func (d *Daemon) Threads(ctx context.Context) (ports.ThreadList, error) {
+	var out wireSnapshot
+	if err := d.stream.Call(ctx, "session.snapshot", map[string]any{}, &out); err != nil {
+		return ports.ThreadList{}, err
+	}
+	return out.list(), nil
+}
+
+// wireSnapshot is the part of `session.snapshot`'s result the thread list reads.
+type wireSnapshot struct {
+	Seq     uint64 `json:"seq"`
+	Focused struct {
+		WorkspaceID *string `json:"workspace_id"`
+	} `json:"focused"`
+	Threads []struct {
+		ID          string  `json:"id"`
+		Title       string  `json:"title"`
+		WorkspaceID *string `json:"workspace_id"`
+		WorktreeID  *string `json:"worktree_id"`
+		Attention   string  `json:"attention_state"`
+		State       string  `json:"state"`
+		Queued      bool    `json:"queued"`
+	} `json:"threads"`
+}
+
+func (w wireSnapshot) list() ports.ThreadList {
+	list := ports.ThreadList{Seq: w.Seq, WorkspaceID: deref(w.Focused.WorkspaceID)}
+	for _, t := range w.Threads {
+		list.Threads = append(list.Threads, ports.Thread{
+			ID: t.ID, Title: t.Title, WorkspaceID: deref(t.WorkspaceID), WorktreeID: deref(t.WorktreeID),
+			Attention: t.Attention, State: t.State, Queued: t.Queued,
+		})
+	}
+	return list
+}
+
+// deref reads a nullable string, "" for null.
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // Send sends a message with a fresh client_msg_id (API Spec §5.20, REQ-AGT-015).
@@ -477,6 +527,20 @@ func toEvent(n client.Notification) (ports.Event, bool) {
 
 	case "mcp.server_state":
 		return ports.Event{Kind: ports.EventMcpServerState}, true
+
+	case "thread.attention_changed":
+		var p struct {
+			ThreadID string `json:"thread_id"`
+		}
+		if err := n.Decode(&p); err != nil {
+			return ports.Event{}, false
+		}
+		return ports.Event{Kind: ports.EventAttentionChanged, ThreadID: p.ThreadID}, true
+
+	case "workspace.focused", "workspace.closed":
+		// Closing the focused workspace leaves another focused, or none: the panel lists
+		// again either way.
+		return ports.Event{Kind: ports.EventWorkspaceFocused}, true
 
 	case "skill.changed":
 		return ports.Event{Kind: ports.EventSkillChanged}, true

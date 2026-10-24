@@ -230,3 +230,64 @@ func TestADaemonWithoutTheModuleListsNothing(t *testing.T) {
 		t.Error("INTERNAL_ERROR was swallowed")
 	}
 }
+
+// TestToEventMapsTheThreadListNotifications_REQ_ORC_003: the two notifications after which
+// the panel lists its threads again, an attention change carrying its thread.
+func TestToEventMapsTheThreadListNotifications_REQ_ORC_003(t *testing.T) {
+	t.Parallel()
+
+	ev, ok := toEvent(client.Notification{
+		Method: "thread.attention_changed",
+		Params: json.RawMessage(`{"thread_id":"thr_x","attention_state":"blocked"}`),
+	})
+	if !ok || ev.Kind != ports.EventAttentionChanged || ev.ThreadID != "thr_x" {
+		t.Errorf("thread.attention_changed became %+v, %v", ev, ok)
+	}
+	ev, ok = toEvent(client.Notification{
+		Method: "workspace.focused",
+		Params: json.RawMessage(`{"workspace_id":"w2"}`),
+	})
+	if !ok || ev.Kind != ports.EventWorkspaceFocused {
+		t.Errorf("workspace.focused became %+v, %v", ev, ok)
+	}
+	// Closing a workspace can move the focus too.
+	ev, ok = toEvent(client.Notification{
+		Method: "workspace.closed",
+		Params: json.RawMessage(`{"id":"w2"}`),
+	})
+	if !ok || ev.Kind != ports.EventWorkspaceFocused {
+		t.Errorf("workspace.closed became %+v, %v", ev, ok)
+	}
+}
+
+// TestTheThreadListReadsTheSnapshotsNames_REQ_ORC_003: a `session.snapshot` result of API
+// §5.3's shape, with §4's Thread fields, becomes the list the panel shows. A wrong field name
+// would decode as empty and every fake-daemon test would pass through it.
+func TestTheThreadListReadsTheSnapshotsNames_REQ_ORC_003(t *testing.T) {
+	t.Parallel()
+
+	var w wireSnapshot
+	raw := `{"seq":42,"focused":{"workspace_id":"w1","tab_id":null,"thread_id":null},
+		"threads":[{"id":"thr_a","title":"fix","workspace_id":"w1","worktree_id":"wtr_a",
+		"attention_state":"blocked","state":"awaiting_approval","queued":true},
+		{"id":"thr_b","workspace_id":null,"worktree_id":null,"attention_state":"idle","state":"idle","queued":false}]}`
+	if err := json.Unmarshal([]byte(raw), &w); err != nil {
+		t.Fatal(err)
+	}
+	got := w.list()
+	want := ports.ThreadList{Seq: 42, WorkspaceID: "w1", Threads: []ports.Thread{
+		{ID: "thr_a", Title: "fix", WorkspaceID: "w1", WorktreeID: "wtr_a", Attention: "blocked", State: "awaiting_approval", Queued: true},
+		{ID: "thr_b", Attention: "idle", State: "idle"},
+	}}
+	if got.Seq != want.Seq || got.WorkspaceID != want.WorkspaceID || len(got.Threads) != 2 ||
+		got.Threads[0] != want.Threads[0] || got.Threads[1] != want.Threads[1] {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	var none wireSnapshot
+	if err := json.Unmarshal([]byte(`{"seq":1,"focused":{"workspace_id":null},"threads":[]}`), &none); err != nil {
+		t.Fatal(err)
+	}
+	if none.list().WorkspaceID != "" {
+		t.Fatal("a null focused workspace is not none")
+	}
+}

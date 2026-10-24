@@ -24,10 +24,11 @@ type sentMessage struct {
 
 type approvalAnswer struct{ id, decision, scope string }
 
-func (f *fakeDaemon) CreateThread(_ context.Context, cwd string) (string, error) {
+func (f *fakeDaemon) CreateThread(_ context.Context, cwd, workspaceID string) (string, error) {
 	f.mu.Lock()
 	hold := f.holdCreate
 	f.threads = append(f.threads, cwd)
+	f.workspaces = append(f.workspaces, workspaceID)
 	f.mu.Unlock()
 	if hold != nil {
 		<-hold
@@ -87,6 +88,25 @@ func (f *fakeDaemon) Skills(context.Context) ([]ports.Skill, error) {
 	defer f.mu.Unlock()
 	f.listed++
 	return append([]ports.Skill(nil), f.skills...), nil
+}
+
+func (f *fakeDaemon) Threads(context.Context) (ports.ThreadList, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listings++
+	return ports.ThreadList{Seq: f.list.Seq, WorkspaceID: f.list.WorkspaceID, Threads: append([]ports.Thread(nil), f.list.Threads...)}, nil
+}
+
+func (f *fakeDaemon) listingCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.listings
+}
+
+func (f *fakeDaemon) setThreads(list ports.ThreadList) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.list = list
 }
 
 func (f *fakeDaemon) listCount() int {
@@ -871,5 +891,260 @@ func TestTheExtensionsViewStaysInItsRows_REQ_TUI_004(t *testing.T) {
 	h.event(ports.Event{Kind: ports.EventApprovalRequested, ThreadID: "thr_x", Approval: ports.Approval{ID: "apr_x", ThreadID: "thr_x", Tool: "run_command"}})
 	if !h.m.AgentPanelOpen() || h.daemon.listCount() < before+2 {
 		t.Errorf("an approval opened the panel without listing: %d → %d", before, h.daemon.listCount())
+	}
+}
+
+// threadRow is the panel's row for a thread, or "" when the panel does not list it.
+func threadRow(view, id string) string {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, id) && !strings.Contains(line, "agent ·") {
+			return line
+		}
+	}
+	return ""
+}
+
+// TestAgentPanelListsEveryThread_REQ_ORC_003: the panel lists every thread of the focused
+// workspace — and no other — with its attention state, its worktree, its `queued` mark and
+// its pending approvals. Up and down in agent mode switch the panel to another thread: it is
+// viewed, its transcript shown, and a message goes to it. A turn's end, an attention change
+// and a workspace focus each list again.
+func TestAgentPanelListsEveryThread_REQ_ORC_003(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.daemon.setThreads(ports.ThreadList{WorkspaceID: "w1", Threads: []ports.Thread{
+		{ID: "thr_a", WorkspaceID: "w1", WorktreeID: "wtr_a", Attention: "blocked", State: "awaiting_approval", Title: "fix parser"},
+		{ID: "thr_b", WorkspaceID: "w1", Attention: "working", State: "running", Queued: true},
+		{ID: "thr_d", WorkspaceID: "w1", Attention: "idle", State: "idle"},
+		{ID: "thr_c", WorkspaceID: "w2", Attention: "done", State: "idle"},
+	}})
+	h.openSession()
+	h.event(ports.Event{Kind: ports.EventApprovalRequested, ThreadID: "thr_a", Approval: ports.Approval{ID: "apr_1", ThreadID: "thr_a", Tool: "write_file", Risk: "WriteFS", Summary: "x.go"}})
+	h.event(ports.Event{Kind: ports.EventThreadDelta, ThreadID: "thr_b", Text: "from b"})
+	h.step(ctrlSpace())
+
+	view := h.m.View().Content
+	for id, wants := range map[string][]string{
+		"thr_a": {"blocked", "wtr_a", "1 approval"},
+		"thr_b": {"working", "queued", "no worktree"},
+		"thr_d": {"idle"},
+	} {
+		row := threadRow(view, id)
+		if row == "" {
+			t.Fatalf("the panel does not list %s:\n%s", id, view)
+		}
+		for _, want := range wants {
+			if !strings.Contains(row, want) {
+				t.Errorf("%s's row %q lacks %q", id, row, want)
+			}
+		}
+	}
+	if threadRow(view, "thr_c") != "" {
+		t.Errorf("a thread of another workspace is listed:\n%s", view)
+	}
+
+	// Down selects the first thread: it is viewed and its transcript is the panel's.
+	h.step(keyPress(t, "down"))
+	if got := h.daemon.focusCalls(); len(got) == 0 || got[len(got)-1] != "thr_a" {
+		t.Fatalf("focus calls %v, want the last to view thr_a", got)
+	}
+	if strings.Contains(h.m.View().Content, "from b") {
+		t.Error("another thread's transcript is shown")
+	}
+	// Down again: thr_b, whose delta from before the switch is kept.
+	h.step(keyPress(t, "down"))
+	if !strings.Contains(h.m.View().Content, "from b") {
+		t.Errorf("thr_b's transcript was not kept:\n%s", h.m.View().Content)
+	}
+	h.typeText("more")
+	h.step(keyPress(t, "enter"))
+	if _, sent, _, _ := h.daemon.agentCalls(); len(sent) != 0 {
+		t.Fatalf("a message was sent to a thread with a turn running: %+v", sent)
+	}
+	h.step(keyPress(t, "esc"))
+	h.step(keyPress(t, "down"))
+	h.typeText("go on")
+	h.step(keyPress(t, "enter"))
+	threads, sent, _, _ := h.daemon.agentCalls()
+	if len(threads) != 0 || len(sent) != 1 || sent[0].threadID != "thr_d" {
+		t.Fatalf("created %v, sent %+v; want one message to thr_d", threads, sent)
+	}
+	// Approvals are still every thread's, answered with the chords.
+	h.step(ctrlKey('y'))
+	if _, _, answers, _ := h.daemon.agentCalls(); len(answers) != 1 || answers[0].id != "apr_1" {
+		t.Fatalf("answers %+v, want apr_1 approved", answers)
+	}
+
+	// An attention change lists again.
+	h.daemon.setThreads(ports.ThreadList{WorkspaceID: "w1", Threads: []ports.Thread{
+		{ID: "thr_e", WorkspaceID: "w1", Attention: "working", State: "running"},
+		{ID: "thr_d", WorkspaceID: "w1", Attention: "working", State: "running"},
+	}})
+	h.event(ports.Event{Kind: ports.EventAttentionChanged, ThreadID: "thr_e"})
+	if threadRow(h.m.View().Content, "thr_e") == "" {
+		t.Errorf("a new thread is not listed after an attention change:\n%s", h.m.View().Content)
+	}
+
+	// Focusing another workspace lists its threads.
+	h.daemon.setThreads(ports.ThreadList{WorkspaceID: "w2", Threads: []ports.Thread{
+		{ID: "thr_c", WorkspaceID: "w2", Attention: "done", State: "idle"},
+		{ID: "thr_d", WorkspaceID: "w1", Attention: "working", State: "running"},
+	}})
+	h.event(ports.Event{Kind: ports.EventWorkspaceFocused})
+	view = h.m.View().Content
+	if threadRow(view, "thr_c") == "" || threadRow(view, "thr_e") != "" {
+		t.Errorf("after focusing w2 the panel lists:\n%s", view)
+	}
+}
+
+// TestThePanelsThreadJoinsTheFocusedWorkspace_REQ_ORC_003: the thread the panel creates
+// belongs to the focused workspace, so it is listed with the rest; with none focused it
+// belongs to none, and the panel lists the threads that belong to none.
+func TestThePanelsThreadJoinsTheFocusedWorkspace_REQ_ORC_003(t *testing.T) {
+	t.Parallel()
+	for _, ws := range []string{"w3", ""} {
+		h := newHarness(t)
+		h.daemon.setThreads(ports.ThreadList{WorkspaceID: ws, Threads: []ports.Thread{
+			{ID: "thr_none", Attention: "idle", State: "idle"},
+		}})
+		h.openSession()
+		h.step(ctrlSpace())
+		if listed := threadRow(h.m.View().Content, "thr_none") != ""; listed != (ws == "") {
+			t.Errorf("focused %q: a thread of no workspace listed %v", ws, listed)
+		}
+		h.typeText("hello")
+		h.step(keyPress(t, "enter"))
+		h.daemon.mu.Lock()
+		got := append([]string(nil), h.daemon.workspaces...)
+		h.daemon.mu.Unlock()
+		if len(got) != 1 || got[0] != ws {
+			t.Errorf("focused %q: thread.create was given %q", ws, got)
+		}
+	}
+}
+
+// TestThePanelListsAgainWhenAThreadChanges_REQ_ORC_003: each event after which a row can be
+// wrong lists again — a turn's end, an approval, an attention change, a workspace focus, and
+// the first event of a thread listed `queued`, whose held turn announces nothing else when it
+// starts. Another thread's delta does not.
+func TestThePanelListsAgainWhenAThreadChanges_REQ_ORC_003(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.daemon.setThreads(ports.ThreadList{WorkspaceID: "w1", Threads: []ports.Thread{
+		{ID: "thr_q", WorkspaceID: "w1", Attention: "working", State: "running", Queued: true},
+		{ID: "thr_r", WorkspaceID: "w1", Attention: "working", State: "running"},
+	}})
+	h.openSession()
+	h.step(ctrlSpace())
+
+	for _, tc := range []struct {
+		name  string
+		ev    ports.Event
+		lists bool
+	}{
+		{"a running thread's delta", ports.Event{Kind: ports.EventThreadDelta, ThreadID: "thr_r", Text: "x"}, false},
+		{"a queued thread's first delta", ports.Event{Kind: ports.EventThreadDelta, ThreadID: "thr_q", Text: "x"}, true},
+		{"a turn's end", ports.Event{Kind: ports.EventTurnFinished, ThreadID: "thr_r", StopReason: "end_turn"}, true},
+		{"an approval", ports.Event{Kind: ports.EventApprovalRequested, ThreadID: "thr_r", Approval: ports.Approval{ID: "apr_9", ThreadID: "thr_r"}}, true},
+		{"an attention change", ports.Event{Kind: ports.EventAttentionChanged, ThreadID: "thr_r"}, true},
+		{"a workspace focus", ports.Event{Kind: ports.EventWorkspaceFocused}, true},
+	} {
+		before := h.daemon.listingCount()
+		h.event(tc.ev)
+		if listed := h.daemon.listingCount() > before; listed != tc.lists {
+			t.Errorf("%s: listed again %v, want %v", tc.name, listed, tc.lists)
+		}
+	}
+}
+
+// TestATurnStartedElsewhereIsSeen_REQ_ORC_003: the selected thread's turn may be started by
+// another client, or be a held turn starting. Its first delta, or a listing that shows it
+// running, makes the panel's view running: ctrl+c stops it, and a message is refused.
+func TestATurnStartedElsewhereIsSeen_REQ_ORC_003(t *testing.T) {
+	t.Parallel()
+	for _, how := range []string{"delta", "listing"} {
+		h := newHarness(t)
+		h.daemon.setThreads(ports.ThreadList{Seq: 1, WorkspaceID: "w1", Threads: []ports.Thread{
+			{ID: "thr_x", WorkspaceID: "w1", Attention: "idle", State: "idle"},
+		}})
+		h.openSession()
+		h.step(ctrlSpace())
+		h.step(keyPress(t, "down"))
+		if h.m.AgentRunning() {
+			t.Fatalf("%s: an idle thread reads running", how)
+		}
+		switch how {
+		case "delta":
+			h.event(ports.Event{Kind: ports.EventThreadDelta, ThreadID: "thr_x", Text: "started elsewhere"})
+		case "listing":
+			h.daemon.setThreads(ports.ThreadList{Seq: 2, WorkspaceID: "w1", Threads: []ports.Thread{
+				{ID: "thr_x", WorkspaceID: "w1", Attention: "working", State: "running"},
+			}})
+			h.event(ports.Event{Kind: ports.EventAttentionChanged, ThreadID: "thr_x"})
+		}
+		h.step(keyPress(t, "ctrl+c"))
+		if _, _, _, cancels := h.daemon.agentCalls(); len(cancels) != 1 || cancels[0] != "thr_x" {
+			t.Errorf("%s: ctrl+c cancelled %v, want thr_x's turn", how, cancels)
+		}
+	}
+}
+
+// TestAStaleListingIsDropped_REQ_ORC_003: listings run concurrently; one whose snapshot is
+// older than the listing applied does not bring back the rows it had.
+func TestAStaleListingIsDropped_REQ_ORC_003(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.openSession()
+	h.step(threadsLoadedMsg{list: ports.ThreadList{Seq: 9, WorkspaceID: "w1", Threads: []ports.Thread{
+		{ID: "thr_new", WorkspaceID: "w1", Attention: "idle", State: "idle"},
+	}}})
+	h.step(threadsLoadedMsg{list: ports.ThreadList{Seq: 5, WorkspaceID: "w1", Threads: []ports.Thread{
+		{ID: "thr_old", WorkspaceID: "w1", Attention: "working", State: "running", Queued: true},
+	}}})
+	h.step(ctrlSpace())
+	view := h.m.View().Content
+	if threadRow(view, "thr_new") == "" || threadRow(view, "thr_old") != "" {
+		t.Errorf("after a stale listing the panel lists:\n%s", view)
+	}
+}
+
+// TestUnlistedThreadsAreForgotten_REQ_ORC_003: a thread's kept transcript lives while it is
+// listed. An ephemeral thread's, `umb ai`'s, is never listed, and goes at the next listing.
+func TestUnlistedThreadsAreForgotten_REQ_ORC_003(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.openSession()
+	h.event(ports.Event{Kind: ports.EventThreadDelta, ThreadID: "thr_ephemeral", Text: "x"})
+	h.event(ports.Event{Kind: ports.EventThreadDelta, ThreadID: "thr_kept", Text: "y"})
+	h.step(threadsLoadedMsg{list: ports.ThreadList{Seq: 3, Threads: []ports.Thread{{ID: "thr_kept", State: "running"}}}})
+	if _, ok := h.m.agent.views["thr_ephemeral"]; ok {
+		t.Error("an unlisted thread's view was kept")
+	}
+	if _, ok := h.m.agent.views["thr_kept"]; !ok {
+		t.Error("a listed thread's view was dropped")
+	}
+}
+
+// TestNoSwitchWhileTheThreadIsCreated_REQ_ORC_003: a message waiting for its thread goes to
+// the thread being created, so the panel does not move to another meanwhile.
+func TestNoSwitchWhileTheThreadIsCreated_REQ_ORC_003(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	hold := make(chan struct{})
+	h.daemon.mu.Lock()
+	h.daemon.holdCreate = hold
+	h.daemon.mu.Unlock()
+	h.daemon.setThreads(ports.ThreadList{WorkspaceID: "w1", Threads: []ports.Thread{{ID: "thr_y", WorkspaceID: "w1", State: "idle"}}})
+	h.openSession()
+	h.step(ctrlSpace())
+	h.typeText("hi")
+	h.step(keyPress(t, "enter"))
+	h.step(keyPress(t, "down"))
+	close(hold)
+	if got := h.m.agent.threadID; got == "thr_y" {
+		t.Fatalf("the panel moved to %s while its thread was being created", got)
+	}
+	if got := h.daemon.focusCalls(); slices.Contains(got, "thr_y") {
+		t.Fatalf("thr_y was viewed while the panel's thread was being created: %v", got)
 	}
 }

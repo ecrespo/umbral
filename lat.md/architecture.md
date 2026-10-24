@@ -130,6 +130,12 @@ The empty line opens no block only because [[shell/bash/umbral.bash]] disarms it
 
 It used to return at once, so `cmd/umbrald` closed the store while the sessions were still exiting and each logged `persist the session exit: sql: database is closed`. A shell that ignores the hang-up is left to recovery on the next start rather than holding the daemon's exit.
 
+## The agent panel lists the focused workspace's threads
+
+The TUI's panel shows every thread of the daemon's focused workspace and switches between them with up and down; the selected thread is the one viewed, shown and sent to (REQ-ORC-003).
+
+[[internal/tui/adapters/daemon/daemon.go#Daemon#Threads]] reads the focused workspace and the threads from one `session.snapshot`, and [[internal/tui/agent.go#Model#shownThreads]] keeps that workspace's, or with none focused those of none, plus the selected one. [[internal/tui/agent.go#Model#switchTo]] keeps the current [[internal/tui/agent.go#threadView]] and restores the other's, so every thread's transcript survives a switch; [[internal/tui/agent.go#Model#applyAgentEvent]] folds each event into its thread's view and lists again after a turn's end, an attention or focus change, and a queued thread's first event ([[internal/tui/agent_test.go#TestAgentPanelListsEveryThread_REQ_ORC_003]]). [[internal/tui/agent.go#Model#threadsLoaded]] drops a listing older than the applied one by its snapshot `seq`, marks a thread running when the listing does, whoever started its turn, and releases the views of threads no longer listed.
+
 ## A client that stops reading holds up no other
 
 The dispatcher only queues control notifications; each connection's own goroutine writes them, and a connection 8 MiB behind is closed rather than trimmed.

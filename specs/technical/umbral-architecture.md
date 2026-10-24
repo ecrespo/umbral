@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.61 |
-| **Date** | 2026-10-18 |
+| **Version** | 1.62 |
+| **Date** | 2026-10-23 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
 | **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
@@ -1129,12 +1129,35 @@ and the column that separates it, and do the same for the block list.
   - An answer that never reached the daemon puts its approval back. A `CONFLICT` or `NOT_FOUND`
     answer means it was already decided or has expired.
   - In shell mode the status line says the agent is waiting while any approval is pending.
-- **One thread per TUI run.**
-  - The first message creates the thread in the directory of the focused pane's last command,
-    the `cwd` of its latest `block.closed`. That is where the command started, so a `cd` counts
-    from the command after it.
+- **Every thread of the focused workspace** (T-F2-06, REQ-ORC-003, delta `2026-10-panel-threads`).
+  - Under the extensions view the panel lists the threads of the daemon's focused workspace,
+    read with it from one `session.snapshot`, or those of no workspace when none is focused. A
+    row is the thread's id, `attention_state`, `queued` when held, worktree id or `no worktree`,
+    pending approvals and title; six rows at most, the rest `… n more`. The selected thread is
+    marked `>` and listed even when it belongs elsewhere.
+  - In agent mode up and down select the previous or next thread; with none selected down takes
+    the first. The selected thread is the one viewed (`thread.focus`), shown, sent to and
+    stopped. A switch is refused while the panel's thread is being created.
+  - The list is read at start, on opening, after the panel creates a thread, and on
+    `approval.requested`, `thread.turn_finished`, `thread.attention_changed`, `workspace.focused`
+    and `workspace.closed`, and on the first event of a thread listed `queued`. Listings run
+    concurrently: one whose snapshot `seq` is below the listing applied is dropped. Rows follow
+    the daemon's order, most recently updated first, so a listing can reorder them.
+  - A thread is running in the panel once a delta or tool call of it arrives, or a listing shows
+    it `running` or `awaiting_approval`, whoever started the turn; only its turn's end, or a
+    cancel that stopped nothing, makes it idle again.
+  - Once a thread is selected, a message always goes to a selected thread: a TUI run creates at
+    most one thread of its own. Picking "no thread" to create another is not offered.
+- **The panel's thread.**
+  - With none selected, the first message creates a thread in the directory of the focused
+    pane's last command, the `cwd` of its latest `block.closed`, and in the focused workspace.
+    That is where the command started, so a `cd` counts from the command after it.
   - A pane that has run nothing uses its session's starting directory.
-  - The transcript shows only that thread. Tool calls are one row each, matched by id.
+  - The transcript shows the selected thread. Every thread's events are kept in its own view
+    from the start of the run, so switching back finds what arrived meanwhile; nothing is read
+    back with `thread.get`. A view lives while its thread is listed: each listing drops the views
+    of threads it does not list, an ephemeral thread's (`umb ai`) among them. Tool calls are one
+    row each, matched by id.
 - **What is sent and drawn.**
   - `@block:`, `@file:` and `@directory:` (or `@dir:`) tokens become `thread.send`
     attachments.
@@ -1158,7 +1181,7 @@ and the column that separates it, and do the same for the block list.
     the panel lists too: ctrl+space, attaching a block, or an approval arriving. A daemon without the module answers `NOT_IMPLEMENTED`, drawn as `none`.
   - The view is read-only: servers are added and removed with `umb mcp`, skills with
     `umb skill`.
-  - For the panel's own thread, a turn's MCP tools (`mcp_*` calls that ended `ok` or `error`,
+  - For each thread's view, a turn's MCP tools (`mcp_*` calls that ended `ok` or `error`,
     not refused or malformed ones) and the skills its successful `skill_load` calls named
     (`args.name`) are gathered once each, and its end adds one row,
     `mcp tools: … · skills loaded: …`, before `turn ended`. A turn that used neither adds none.
@@ -1670,3 +1693,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.59 | 2026-10-22 | E. Crespo (assisted draft) | Delta `2026-10-worktree-methods` (T-F2-03): §5.2's `worktrees` row names its inbound port and the runtime's two; §5.3b says a thread with an active worktree runs in it and its PTY follows its cwd; §5.3's destructive list gains `umb worktree merge` and `discard` |
 | 1.60 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-parallel-turns` (T-F2-04): §5.1 adds `[agents] max_concurrent_turns` and a provider's `max_parallel`; DD-004's walk queues each call per provider before its first-token clock; §5.2 adds `slots`; §5.3d's runtime holds turns over the limit, `queued`, in arrival order |
 | 1.61 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-full-auto` (T-F2-05): DD-006 step 4 and §5.3's `full-auto` column; §5.3 says when a turn decides under it, how the flag follows the worktree, and that an agent's terminal is refused the methods that land, drop or approve its work |
+| 1.62 | 2026-10-23 | E. Crespo (assisted draft) | Delta `2026-10-panel-threads` (T-F2-06): §5.3e lists every thread of the focused workspace, switches with up and down, keeps a transcript per thread and creates the panel's thread in the focused workspace |
