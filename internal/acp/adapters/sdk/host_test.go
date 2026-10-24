@@ -992,7 +992,8 @@ func TestAHostedAgentIsKnownByItsSession_REQ_ORC_004(t *testing.T) {
 // TestAHostedAgentsExitEndsWhatItLeft_REQ_ORC_004: an agent that exits between turns, leaving a
 // child behind that still holds its stderr, has that child killed with its group and its pid
 // forgotten, with no turn running to notice — so nothing it started outlives the pid the daemon
-// stopped counting (delta `2026-10-hosted-agent-peer`, decision 3).
+// stopped counting; where that cannot be done (macOS) the pid stays listed until close
+// (delta `2026-10-hosted-agent-peer`, decision 3).
 func TestAHostedAgentsExitEndsWhatItLeft_REQ_ORC_004(t *testing.T) {
 	// "group": the child left its group for one of its own, still in the agent's session.
 	for _, how := range []string{"", "group"} {
@@ -1011,9 +1012,22 @@ func exitEndsWhatItLeft(t *testing.T, how string) {
 		t.Fatalf("the agent answered %q, not its child's pid", s.Text0())
 	}
 	t.Cleanup(func() { _ = unix.Kill(child, unix.SIGKILL) })
-	// Only Linux can kill the group before the pid is free (waitid's WNOWAIT); elsewhere the
-	// child runs on until the agent is closed, and only the forgetting is checked.
-	childAlive := func() bool { return runtime.GOOS == "linux" && unix.Kill(child, 0) == nil }
+	if runtime.GOOS != "linux" {
+		// Only Linux can end the session before the pid is free (waitid's WNOWAIT). Elsewhere
+		// the pid stays listed after the exit, so what the agent left stays refused, and is
+		// forgotten when the agent is closed.
+		pids := h.AgentPIDs()
+		time.Sleep(time.Second) // the agent exits 200 ms after its answer
+		if got := h.AgentPIDs(); len(pids) != 1 || len(got) != 1 || got[0] != pids[0] {
+			t.Fatalf("after the agent exited AgentPIDs is %v (was %v), want its pid still listed", got, pids)
+		}
+		h.Close("thr_1")
+		if got := h.AgentPIDs(); len(got) != 0 {
+			t.Errorf("after Close AgentPIDs is %v, want none", got)
+		}
+		return
+	}
+	childAlive := func() bool { return unix.Kill(child, 0) == nil }
 	deadline := time.Now().Add(5 * time.Second)
 	for childAlive() || len(h.AgentPIDs()) != 0 {
 		if time.Now().After(deadline) {
