@@ -470,6 +470,13 @@ var destructiveEvasions = []string{
 	`ssh host -o ProxyCommand='rm -rf /' uptime`,
 	`ssh -o '1ProxyCommand=rm -rf /' host uptime`,
 	`ltrace --output '|rm -rf /' true`,
+	`systemd-run -Cu rm -rf /`,
+	`sudo -Zu rm -rf /`,
+	`echo 'rm -rf /' | pwsh -ExecutionPolicy Bypass -Command -`,
+	`echo 'rm -rf /' | pwsh -NoProfile -WorkingDirectory /tmp -File -`,
+	"pwsh \u2013EncodedCommand cgBtACAALQByAGYAIAAvAA==",
+	"pwsh \u2014enc cgBtACAALQByAGYAIAAvAA==",
+	"echo 'rm -rf /' | pwsh \u2015Command -",
 	`powershell -enc cgBtACAALQByAGYAIAAvAA==`,
 	"node <<'EOF'\nrequire('child_process').execSync('rm -rf /')\nEOF",
 	// A line the parser cannot read is not read as harmless.

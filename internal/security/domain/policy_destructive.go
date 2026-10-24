@@ -498,8 +498,14 @@ func (n *normaliser) wrapperFlag(name string, wr wrapper, flag string, words, ou
 			letter := "-" + flag[i:i+1]
 			if !wr.flags[letter] {
 				if !wr.noArg[letter] && !unknown && len(words) > 0 {
+					// The cluster may end here: the letter takes the rest of the word as its
+					// value or, when it is the last letter, the next word.
 					unknown = true
-					n.alternative(append([]string{name}, words[1:]...), out, redirs, depth)
+					rest := words
+					if i == len(flag)-1 {
+						rest = words[1:]
+					}
+					n.alternative(append([]string{name}, rest...), out, redirs, depth)
 				}
 				continue
 			}
@@ -695,6 +701,15 @@ func readsProgramFromStdin(words []string) bool {
 	if strings.HasSuffix(prog, "awk") {
 		return false
 	}
+	if powershell(prog) {
+		// A parameter's value can look like a script file, so every word is looked at.
+		for i := 1; i+1 < len(words); i++ {
+			if p, ok := powershellParameter(words[i]); ok && (strings.HasPrefix("command", p) || strings.HasPrefix("file", p)) &&
+				(words[i+1] == "-" || stdinPath(words[i+1])) {
+				return true
+			}
+		}
+	}
 	for i := 1; i < len(words); i++ {
 		w := words[i]
 		switch {
@@ -737,10 +752,10 @@ func encodedProgram(words []string) bool {
 
 func powershell(prog string) bool { return prog == pwshProgram || prog == powershellProgram }
 
-// powershellParameter is a PowerShell parameter's name in lower case, written after `-`, `--`
-// or `/`.
+// powershellParameter is a PowerShell parameter's name in lower case, written after `-`, `--`,
+// `/` or a dash PowerShell takes for `-` (en, em and horizontal bar).
 func powershellParameter(w string) (string, bool) {
-	for _, prefix := range []string{"--", "-", "/"} {
+	for _, prefix := range []string{"--", "-", "/", "\u2013", "\u2014", "\u2015"} {
 		if name, ok := strings.CutPrefix(w, prefix); ok && name != "" {
 			return strings.ToLower(name), true
 		}
