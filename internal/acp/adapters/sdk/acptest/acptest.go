@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/coder/acp-go-sdk"
@@ -354,8 +355,13 @@ func (a *agent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResp
 	case "orphan":
 		// Leaves a child behind that holds the agent's stderr, answers its pid, ends the turn,
 		// and exits between turns, when no request of Umbral's is waiting on it.
+		// With "group" the child moves to a process group of its own, still in the agent's
+		// session, so a kill of the agent's group alone misses it.
 		child := exec.Command("sleep", "60") //nolint:noctx // outlives the agent on purpose
 		child.Stderr = os.Stderr
+		if arg(fields, 1) == "group" {
+			child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		}
 		if err := child.Start(); err != nil {
 			a.say(ctx, sid, acp.UpdateAgentMessageText("error: "+err.Error()))
 			return end(acp.StopReasonEndTurn)

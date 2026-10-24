@@ -38,7 +38,9 @@ type process struct {
 	session acp.SessionId
 	client  *client
 
-	// exited closes when the process has ended; invalid when it sent a line that is not ACP.
+	// gone closes as soon as the process is seen to exit, exited once what it left is ended
+	// and it is reaped; invalid when it sent a line that is not ACP.
+	gone        chan struct{}
 	exited      chan struct{}
 	invalid     chan struct{}
 	invalidOnce sync.Once
@@ -65,7 +67,7 @@ type process struct {
 func newProcess(h *Host, req Request, iso domain.Isolation) *process {
 	p := &process{
 		h: h, thread: req.ThreadID, agent: req.Agent, dir: req.Dir, iso: iso,
-		exited: make(chan struct{}), invalid: make(chan struct{}), terminals: map[string]*terminal{},
+		gone: make(chan struct{}), exited: make(chan struct{}), invalid: make(chan struct{}), terminals: map[string]*terminal{},
 	}
 	p.client = &client{p: p}
 	p.client.touch()
@@ -93,18 +95,20 @@ func (p *process) start(cmd *exec.Cmd) error {
 	pid := cmd.Process.Pid
 	p.h.trackPID(pid, true)
 	go func() {
-		// What it started ends with it, and its pid is forgotten, while the agent is still an
-		// unreaped zombie: neither the group kill nor the forgetting can then reach a process
-		// that reused the pid (REQ-ORC-004, delta `2026-10-hosted-agent-peer`).
-		reaped := waitExit(cmd)
+		// What it started in its session ends with it, and its pid is forgotten, while the
+		// agent is still an unreaped zombie: neither can then reach a process that reused the
+		// pid. Where that cannot be done, the pid stays listed until kill (REQ-ORC-004, delta
+		// `2026-10-hosted-agent-peer`).
+		waitExit(cmd)
+		close(p.gone)
 		p.reapMu.Lock()
-		if !reaped {
-			_ = syscall.Kill(-pid, syscall.SIGKILL)
-		}
 		p.reaped = true
-		p.h.trackPID(pid, false)
+		if forgetAtExit {
+			endSession(pid)
+			p.h.trackPID(pid, false)
+		}
 		p.reapMu.Unlock()
-		if !reaped {
+		if forgetAtExit {
 			_ = cmd.Wait()
 		}
 		close(p.exited)
@@ -120,7 +124,7 @@ func (p *process) markInvalid() { p.invalidOnce.Do(func() { close(p.invalid) }) 
 // alive reports whether the process runs and still speaks ACP.
 func (p *process) alive() bool {
 	select {
-	case <-p.exited:
+	case <-p.gone:
 		return false
 	case <-p.invalid:
 		return false
@@ -137,12 +141,16 @@ func (p *process) failure() string {
 	default:
 	}
 	select {
-	case <-p.exited:
-		msg := "its process exited"
-		if p.cmd.ProcessState != nil {
-			msg = "its process exited: " + p.cmd.ProcessState.String()
+	case <-p.gone:
+		// Its status is known once it is reaped, which follows the cleanup of its session.
+		select {
+		case <-p.exited:
+			if p.cmd.ProcessState != nil {
+				return "its process exited: " + p.cmd.ProcessState.String()
+			}
+		default:
 		}
-		return msg
+		return "its process exited"
 	default:
 	}
 	return ""
@@ -164,7 +172,7 @@ func (p *process) call(ctx context.Context, fn func(context.Context) error) erro
 			return fmt.Errorf("%w: %w", domain.ErrAgent, err)
 		}
 		return nil
-	case <-p.exited:
+	case <-p.gone:
 	case <-p.invalid:
 	case <-ctx.Done():
 		return fmt.Errorf("%w: %w", domain.ErrAgent, ctx.Err())
@@ -188,6 +196,11 @@ func (p *process) kill() {
 			select {
 			case <-p.exited:
 			case <-time.After(5 * time.Second):
+			}
+			// Forgotten here only where the exit could not forget it: elsewhere the pid may
+			// already be a newer agent's, listed again.
+			if !forgetAtExit {
+				p.h.trackPID(p.cmd.Process.Pid, false)
 			}
 		}
 		_ = os.RemoveAll(p.iso.Root)

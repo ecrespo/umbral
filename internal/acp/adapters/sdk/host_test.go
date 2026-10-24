@@ -994,8 +994,15 @@ func TestAHostedAgentIsKnownByItsSession_REQ_ORC_004(t *testing.T) {
 // forgotten, with no turn running to notice — so nothing it started outlives the pid the daemon
 // stopped counting (delta `2026-10-hosted-agent-peer`, decision 3).
 func TestAHostedAgentsExitEndsWhatItLeft_REQ_ORC_004(t *testing.T) {
+	// "group": the child left its group for one of its own, still in the agent's session.
+	for _, how := range []string{"", "group"} {
+		t.Run("orphan "+how, func(t *testing.T) { exitEndsWhatItLeft(t, how) })
+	}
+}
+
+func exitEndsWhatItLeft(t *testing.T, how string) {
 	h := newHost(t, nil)
-	s, stop, err := prompt(t, h, workDir(t), "orphan")
+	s, stop, err := prompt(t, h, workDir(t), strings.TrimSpace("orphan "+how))
 	if err != nil || stop != "end_turn" {
 		t.Fatalf("orphan: stop %q, err %v", stop, err)
 	}

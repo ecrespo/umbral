@@ -36,16 +36,21 @@ its thread owns.
    `setsid` also makes a new group with the same id, so the kill on cancel and close, `-pid`, is
    unchanged. A process the agent starts and leaves to init stays in the agent's session, so
    `agentPeer`'s session check still catches it.
-3. **When a hosted agent exits, its process group is killed, and only then is its pid
-   forgotten.** Otherwise a helper it left behind would keep running in a session nobody counts
+3. **When a hosted agent exits, everything left in its session is killed, and only then is
+   its pid forgotten.** On Linux this covers every process whose session id is the agent's,
+   found in `/proc`, so a child that moved to a process group of its own is killed too. The
+   automated security review of the first push found that case: killing the group alone
+   missed it. Otherwise a helper it left behind would keep running in a session nobody counts
    any more. The Tech Design already said that what the agent starts ends with it; until now
    that held only on kill.
    - **No pid reuse.** On Linux the exit is seen with `waitid(WNOWAIT)`, so the group is killed
      and the pid forgotten while the agent is still an unreaped zombie. Neither step can then
      reach a process that reused the pid, and a later close sends no signal once the agent is
      being reaped.
-   - **macOS** has no `WNOWAIT`. There the pid is forgotten after `cmd.Wait`, and a child the
-     agent left behind runs until the thread's agent is closed or the daemon stops.
+   - **macOS** has no `WNOWAIT`. There the pid stays listed until the thread's agent is
+     closed, so what the agent left behind is refused until then; it is not killed, because
+     its session's id may already be someone else's. The same review found that forgetting the
+     pid at exit there left such a child unrefused.
    - **The agent's stderr is `/dev/null` instead of a discarding pipe.** A pipe held by such a
      child kept `Wait` from returning, so the exit was not seen and the pid stayed listed. That
      part was found by spec-guardian and predates this delta: a turn running at that moment
@@ -78,6 +83,8 @@ its thread owns.
   running agent is listed and leads its own session, and after `Close` it is no longer listed.
   It is red with `Setpgid` back in place of `Setsid`, and red without the pid being recorded.
 - **`TestAHostedAgentsExitEndsWhatItLeft_REQ_ORC_004`** (`internal/acp/adapters/sdk`): an agent
-  ends its turn, leaves a `sleep` that holds its stderr, and exits between turns. Within 5 s the
-  child is dead (Linux only) and the pid is no longer listed. It was red before decision 3 was
-  rewritten (child alive, pid listed), and red again with the group kill removed.
+  ends its turn, leaves a `sleep` that holds its stderr, and exits between turns. The case runs
+  twice: once with the child in the agent's group, and once with the child in a group of its
+  own. Within 5 s the child is dead and the pid is no longer listed (Linux). It was red before
+  decision 3 was rewritten (child alive, pid listed), and red in the second case with the kill
+  of the group alone. It is red again with the `/proc` scan removed.

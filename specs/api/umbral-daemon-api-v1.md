@@ -147,8 +147,9 @@ outside its terminal, with `PERMISSION_DENIED`, whatever its kind (REQ-ORC-004, 
 - This holds in every mode: an `umb skill install`, `umb mcp add` or `umb worktree merge` the
   user approved in an agent's turn now fails there, and the user runs it in their own pane.
 - A hosted agent counts from its launch, before it speaks ACP, and leads its own session, so a
-  process it starts and leaves behind is still its own; when it exits it stops counting, and on
-  Linux what is left in its process group is killed first (delta `2026-10-hosted-agent-peer`). Its
+  process it starts and leaves behind is still its own. On Linux, when it exits, everything
+  left in its session is killed before it stops counting; on macOS it counts until its thread's
+  agent is closed (delta `2026-10-hosted-agent-peer`). Its
   isolated `HOME` sits under the runtime directory, beside the socket and its token, so it can
   find and dial the daemon: the refusal is what stops it.
 - The verdict taken when the connection starts holds for the connection, so a process that

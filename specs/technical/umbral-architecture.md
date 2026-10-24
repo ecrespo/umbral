@@ -1233,11 +1233,12 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
     daemon at start, since it would set a permission around the generated file;
   - the process leads its own session, and so its own process group, which a kill ends whole,
     and has no controlling terminal. It counts for the agent's-terminal check of §5.3 from its
-    launch. When it exits it stops counting; on Linux its group is killed first, while it is
-    still an unreaped zombie (`waitid` with `WNOWAIT`), so neither reaches a process that
-    reused its pid, and a signal sent by a close after that is skipped. macOS has no
-    `WNOWAIT`: there a child it left behind runs until the thread's agent is closed or the
-    daemon stops (delta `2026-10-hosted-agent-peer`);
+    launch. On Linux, when it exits, every process left in its session — whatever its
+    process group, found in `/proc` — is killed and then it stops counting, all while it is
+    still an unreaped zombie (`waitid` with `WNOWAIT`), so nothing reaches a process that
+    reused its pid; a signal a close would send after that is skipped. macOS has no `WNOWAIT`:
+    there it counts until the thread's agent is closed, so what it left is refused until then,
+    and a child it left behind is not killed (delta `2026-10-hosted-agent-peer`);
   - its stderr is `/dev/null`, as an MCP server's is discarded — a pipe would keep the exit
     from being seen while a child of the agent still held it: it holds the `env_refs`' credentials, and a
     provider's error often prints the key it refused (Art. 7). No log line and no

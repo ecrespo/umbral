@@ -4,10 +4,14 @@ package sdk
 
 import "os/exec"
 
-// waitExit reaps the agent with cmd.Wait and reports true. Without waitid's WNOWAIT (macOS)
-// nothing is known of the exit before the pid is free, so the group is not signalled then: a
-// child the agent left behind runs on until the thread's agent is closed or the daemon stops.
-func waitExit(cmd *exec.Cmd) bool {
-	_ = cmd.Wait()
-	return true
-}
+// forgetAtExit: without waitid's WNOWAIT (macOS) the pid is free as soon as the agent is
+// reaped, so what it left in its session cannot be found by its id then. The pid is kept
+// listed until the thread's agent is closed instead, so a process the agent left behind is
+// still refused the user's methods while it may run (REQ-ORC-004).
+const forgetAtExit = false
+
+// waitExit reaps the agent.
+func waitExit(cmd *exec.Cmd) { _ = cmd.Wait() }
+
+// endSession does nothing: the session's id may already be someone else's.
+func endSession(int) {}
