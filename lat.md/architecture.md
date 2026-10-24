@@ -130,6 +130,12 @@ The empty line opens no block only because [[shell/bash/umbral.bash]] disarms it
 
 It used to return at once, so `cmd/umbrald` closed the store while the sessions were still exiting and each logged `persist the session exit: sql: database is closed`. A shell that ignores the hang-up is left to recovery on the next start rather than holding the daemon's exit.
 
+## A client that stops reading holds up no other
+
+The dispatcher only queues control notifications; each connection's own goroutine writes them, and a connection 8 MiB behind is closed rather than trimmed.
+
+[[internal/api/notify.go#Server#broadcast]] hands each notification to [[internal/api/outbox.go#conn#enqueue]], which frames it into the connection's [[internal/api/outbox.go#outbox]]; [[internal/api/outbox.go#conn#writeOutbox]] writes it in dispatch order. Past [[internal/api/outbox.go#ClientNotificationQueueBytes]] the connection is closed, because a dropped `pane.closed` would leave the client's cache silently wrong, and the client reconnects with a snapshot. There is no write deadline: a suspended TUI harms only itself ([[internal/api/slowclient_test.go#TestASlowClientHoldsUpNoOtherClient_REQ_API_006]]).
+
 ## umb ai never drops an answer's deltas
 
 `umb ai` prints every delta of an answer, so its stream queues notifications without bound instead of overflowing when its reader falls behind.

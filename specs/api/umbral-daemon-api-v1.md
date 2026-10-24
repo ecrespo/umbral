@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.46 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.47 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -1394,8 +1394,8 @@ a client SHALL NOT carry one across a reconnect — the connection dies with the
 from the previous run names nothing in this one.
 
 **The counter is monotonic in assignment, not in arrival.** A number is taken when the daemon
-dispatches the event; output then travels through the per-client queue of §8, where it may be
-batched, while control notifications are written directly. A connection subscribed to a session can
+dispatches the event; output then travels through the per-subscription queue of §8, where it may be
+batched, while control notifications travel through the connection's own queue, in dispatch order (`notification.posted` has its own, §5.35). A connection subscribed to a session can
 therefore see a higher number before a lower one. The only comparison a client may make is against
 the `seq` reported by `session.snapshot`; comparing against the last number it saw would discard
 live events. THE SYSTEM does not promise per-connection ordering of `seq`, and a client SHALL NOT
@@ -1484,7 +1484,8 @@ stateDiagram-v2
 | Wait timeout | 1 s to 1 h; there is no wait without a deadline |
 | State/metadata reports | 10 kept per second per `source`, `pane.report_state` and `pane.report_metadata` together; the excess returns the normal result and is discarded (§5.33) |
 | Live metadata keys | 16 per report, 32 per pane |
-| Queue per slow client | 8 MiB; beyond that the daemon drops the subscription, announces it with `session.unsubscribed` (§6), and the client re-subscribes (receiving a new snapshot) |
+| Queue per subscription | 8 MiB; beyond that the daemon drops the subscription, announces it with `session.unsubscribed` (§6), and the client re-subscribes (receiving a new snapshot) |
+| Control notifications per slow client | 8 MiB queued per connection, written by its own writer so no other client waits; beyond that the daemon closes the connection without dropping any of them, and the client reconnects and takes a new snapshot (REQ-API-006). The limit also closes a client that reads but falls 8 MiB behind a burst; a single notification over it is written when the queue is empty. `notification.posted` keeps its own queue (§5.35) |
 
 ## 9. Versioning
 
@@ -1581,3 +1582,4 @@ printf '%s\n' \
 | 1.44 | 2026-10-22 | Additive within `protocol_version = 1`. Delta `2026-10-worktree-methods` (T-F2-03): §3 names `wtr_` and a refusal's `data.reason`, `data.paths` and `data.output`; §4 `Worktree`, and `Thread` gains `workspace_id` and `worktree_id`; §5.19 `thread.create` takes `workspace` and `worktree`; new §5.41 `worktree.*`; §2's `cli` row gains `worktree.list`, `get`, `diff`, `merge` and `discard`, and the capability list `worktrees`; §5.19's `worktree_refused` when git refuses a thread's worktree, which no longer withholds the thread (REQ-WT-008); §5.36 explains a thread in its worktree; §5.41 keeps a landed merge and holds every thread of a discarding `close_group` |
 | 1.45 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-parallel-turns` (T-F2-04): §4 `Thread` gains `queued`; §5.20 holds a turn over `[agents] max_concurrent_turns` and starts held turns in arrival order, and `CONFLICT` covers a held turn; §5.21 drops a held turn; §7's `running` covers a held turn |
 | 1.46 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-full-auto` (T-F2-05): §4 `Thread.mode` gains `full-auto`; §5.19 refuses it at creation; §5.22 enters and leaves it; §5.36 explains it; §2 "An agent's terminal" refuses a client inside one the methods that land, drop or approve its work, with `PERMISSION_DENIED` (§3, §5.41) |
+| 1.47 | 2026-10-23 | Additive within `protocol_version = 1`. Delta `2026-10-slow-client-queue` (T-HRD-04): §6 says control notifications travel through a per-connection queue in dispatch order; §8 gains its 8 MiB limit, past which the connection is closed (REQ-API-006) |

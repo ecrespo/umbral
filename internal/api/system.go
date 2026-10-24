@@ -240,10 +240,13 @@ func handleHello(_ context.Context, c *conn, raw json.RawMessage) (any, error) {
 	c.authenticated = true
 	c.clientKind = kind
 	c.interactive.Store(isInteractive(kind))
+	c.connectionID = store.NewID(store.PrefixConnection)
 	if isInteractive(kind) {
 		go c.writePosted()
 	}
-	c.connectionID = store.NewID(store.PrefixConnection)
+	go c.writeOutbox()
+	// Last: the dispatcher reads the connection's fields once this is set.
+	c.notifiable.Store(true)
 
 	return helloResult{
 		DaemonVersion:   c.server.cfg.DaemonVersion,

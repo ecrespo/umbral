@@ -219,7 +219,9 @@ func (s *Server) dispatchOutput(output sessports.SessionOutput) {
 	}
 }
 
-// broadcast sends a notification to every connection that completed the handshake.
+// broadcast queues a notification for every connection that completed the handshake. It
+// never writes a socket itself: each connection's writer does, so a client that stops reading
+// holds up only itself, and is closed once it is a queue limit behind (REQ-API-006).
 func (s *Server) broadcast(method string, params any, seq uint64) {
 	s.mu.Lock()
 	conns := make([]*conn, 0, len(s.conns))
@@ -229,10 +231,10 @@ func (s *Server) broadcast(method string, params any, seq uint64) {
 	s.mu.Unlock()
 
 	for _, c := range conns {
-		if !c.authenticated {
+		if !c.notifiable.Load() {
 			continue
 		}
-		c.notify(method, params, seq)
+		c.enqueue(method, params, seq)
 	}
 }
 
