@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-10-24`, awaiting the Tech Lead |
+| **Status** | `RATIFIED 2026-10-24 by the Tech Lead ("ratifico los deltas")`; folded into Tech 1.70 §5.3, and archived |
 | **Date** | 2026-10-24 |
 | **Task** | T-HRD-07 |
 | **REQ** | REQ-SEC-005, REQ-CLI-008 (no change to their text) |

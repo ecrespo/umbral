@@ -1,6 +1,6 @@
 # Constitution — Umbral
 
-> Version 1.4 (proposed) · Ratified: 2026-10-22 (proposed 2026-09-11; 1.3 ratified with PR #32) · Last amendment: 2026-10-24 (Art. 3, stack; pending ratification)
+> Version 1.4 · Ratified: 2026-10-24 (proposed 2026-09-11; 1.3 ratified with PR #32, 1.4 with delta `2026-10-shell-parser`) · Last amendment: 2026-10-24 (Art. 3, stack)
 > Scope: the `umbral` repository (daemon `umbrald`, clients `umbral-tui`, `umbral-desktop`, CLI `umb`)
 > SDD rigor level: **spec-anchored** — `specs/` is the current truth; changes enter through `changes/`.
 
@@ -130,7 +130,7 @@ THE TEAM SHALL follow these process rules:
 | 2026-09-20 | 5 | Rule material fetched over the network must carry a valid signature | The redaction rules and the destructive-pattern list are the product's security control; an unsigned update can silently disable it | Ernesto Crespo |
 | 2026-09-20 | 6 | Workspace, tab and pane identifiers are short addressable names (`w1`, `w1:t1`, `w1:p2`) rather than type-prefixed ULIDs | The collision risk ULIDs answer applies to identifiers that travel; these never leave the daemon that allocated them. The CLI is the addressing surface, and a 26-character id there is unusable. Raised as Analyze finding C-05; delta `2026-09-art6-structural-ids` | Ernesto Crespo |
 | 2026-10-22 | 4 | `egress_log` records what Umbral sends; a hosted external agent's own network traffic and file reads are disclosed on its thread, not recorded | Umbral cannot observe traffic made inside another agent's process; the alternative was an unjustified exception in every F2 artifact (Analyze finding F-02, PRD F2 Q-F2-02) | Ernesto Crespo |
-| 2026-10-24 | 3, Stack | `security/domain` may import `mvdan.cc/sh/v3/syntax`, the one vendor a domain package may use | The destructive-command floor must read a command line as the shell does (Q1 and Q8 of delta `2026-10-hrd02-open-questions`); the parser does no I/O and imports nothing outside its module, and moving the floor behind a port would take it out of the pure policy engine `policy.explain` shares. Delta `2026-10-shell-parser` | pending — the Tech Lead's ratification of delta `2026-10-shell-parser` |
+| 2026-10-24 | 3, Stack | `security/domain` may import `mvdan.cc/sh/v3/syntax`, the one vendor a domain package may use | The destructive-command floor must read a command line as the shell does (Q1 and Q8 of delta `2026-10-hrd02-open-questions`); the parser does no I/O and imports nothing outside its module, and moving the floor behind a port would take it out of the pure policy engine `policy.explain` shares. Delta `2026-10-shell-parser` | the Tech Lead, 2026-10-24, ratifying delta `2026-10-shell-parser` |
 | 2026-10-22 | Stack | `github.com/coder/acp-go-sdk` for ACP and `git` ≥ 2.34 for worktrees, from F2 | Chosen by spike T-F2-00 (`docs/spikes/2026-10-acp-opencode.md`); 2.34 is the oldest git of the supported platforms (Ubuntu 22.04), so F2a is tested against nothing older (PRD F2 Q-F2-05) | Ernesto Crespo |
 
 ## Constitution check (use in every artifact)
