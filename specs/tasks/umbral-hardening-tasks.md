@@ -165,10 +165,10 @@ its matrix lists commands.
 - **Depends on:** T-F2-08
 - **Done:** a test with a fake hosted agent that calls `skill.install` over the socket is refused, seen red first; `task ci` green. Goes first.
 
-### [ ] T-HRD-06 · A shell parser in front of the destructive patterns
+### [x] 2026-10-24 T-HRD-06 · A shell parser in front of the destructive patterns
 - **What:** Q1 and Q8: the command normaliser behind `MatchDestructive` parses the line with a real shell parser (a new dependency, checked under Art. 9); a word built at run time (`$(…)`, a variable, `env -S`) makes the line ask; `setsid`, `systemd-run`, `at` and `ssh localhost` are read as wrappers. Both paths into it are covered: `run_command` and the ACP `execute` permission's `raw_input.command`. (delta `2026-10-hrd02-open-questions`).
 - **REQ:** REQ-SEC-005, REQ-ACP-003
-- **Files:** `internal/security/domain/policy_destructive.go` and its tests, `go.mod`
+- **Files:** `internal/security/domain/policy_destructive.go` and its tests, `go.mod`. Written as `policy_destructive.go` (the normaliser on `mvdan.cc/sh/v3/syntax`, `UnknownDynamicWord`/`UnknownStdinScript`/`UnknownUnparseable`), `.go-arch-lint.yml` (the `shell-syntax` vendor for `security-domain` only), `go.mod`; tests `TestDestructiveEvasionsAsk_REQ_SEC_005`, `TestARunCommandEvasionAsks_REQ_SEC_005` and `TestAnACPExecuteEvasionAsks_REQ_ACP_003`; delta `2026-10-shell-parser`
 - **Depends on:** T-HRD-05
 - **Done:** a table of evasions — `env -S`, `env 'A=x y' rm -rf /`, `$(…)`, `setsid -f umb skill install x` — asks on both paths, each red first; the existing pattern tests stay green.
 
@@ -289,7 +289,7 @@ its matrix lists commands.
 | REQ-SEC-011, REQ-SEC-013 | T-HRD-01 (the key) | a bundle signed with the project key accepted, any other refused |
 | REQ-SEC-005, REQ-SKL-005, REQ-CLI-008 | T-HRD-02 (decisions) | per decision |
 | REQ-ORC-004 (hosted agents) | T-HRD-05 | TestAHostedAgentIsRefusedTheUsersMethods_REQ_ORC_004, TestAHostedAgentIsKnownByItsSession_REQ_ORC_004, TestAHostedAgentsExitEndsWhatItLeft_REQ_ORC_004, TestAReusedPidStaysListedForItsNewerAgent_REQ_ORC_004 |
-| REQ-SEC-005, REQ-ACP-003 | T-HRD-06, T-HRD-07 | the evasion table on `run_command` and ACP `execute`; the new patterns |
+| REQ-SEC-005, REQ-ACP-003 | T-HRD-06, T-HRD-07 | TestDestructiveEvasionsAsk_REQ_SEC_005, TestARunCommandEvasionAsks_REQ_SEC_005, TestAnACPExecuteEvasionAsks_REQ_ACP_003; the new patterns |
 | REQ-SKL-005 | T-HRD-08, T-HRD-09 | an edited stored copy refused; the delimited catalog block |
 | REQ-AGT-007 (zsh) | T-HRD-10 | `printf x` returned whole in a zsh thread PTY |
 | REQ-ACP-009, REQ-ACP-007 | T-HRD-11, T-HRD-12 | fixed manifest variables; the disclosure's worktree sentence |
@@ -311,3 +311,4 @@ its matrix lists commands.
 | 2026-10-24 | T-HRD-02 | done | Delta `2026-10-hrd02-open-questions`, ratified by the Tech Lead: every question names its answer above. Q5 and Q7 are accepted once T-HRD-05 is done; Q11 is disclosed in PRD F2 0.9 REQ-ACP-007. |
 | 2026-10-24 | T-HRD-05 … T-HRD-12 | added | The code those answers need, Q12 (T-HRD-05) first. Spec-guardian's review found that the socket is reachable from a hosted agent's `HOME`, so a hosted agent can call `userOnly` methods today. |
 | 2026-10-24 | T-HRD-05 | done | Delta `2026-10-hosted-agent-peer` (API 1.52 §2, Tech 1.68). The hole was measured first: a fake hosted agent found the socket from its `HOME`, read the token and reached `skill.install`, which answered `VALIDATION_ERROR` for its empty params. The ACP host now lists its agents' pids from launch, the agents lead their own sessions, and when an agent exits its whole session is killed — on Linux before the zombie is reaped, so a reused pid is never signalled or forgotten; on macOS the pid stays listed until close; members are signalled through pidfds, a session not seen empty in 2 s keeps the pid listed, and pids are counted — with the agent's stderr `/dev/null`, since a discarding pipe held by a child hid the exit. The agent's call answers `PERMISSION_DENIED`. Each piece was mutated back and its test went red. |
+| 2026-10-24 | T-HRD-06 | done | Delta `2026-10-shell-parser` (Tech 1.69 §5.2, §5.3). The normaliser parses the line with `mvdan.cc/sh/v3/syntax`, the one vendor a domain may use; 130 evasions — quoted separators, `env -S`, substitutions, globs, braces, launchers, shell options, interpreters, carriers, redirections on any statement, history, prompt variables, arithmetic — ask on both paths, each red first; nine mutations each redden the table. The vendor is a proposed Art. 3 amendment and REQ-SEC-005/REQ-ORC-004 gain a sentence, both for the Tech Lead. A word built at run time now asks, which costs `always` for lines with variables or globs. |

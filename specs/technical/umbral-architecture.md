@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.68 |
+| **Version** | 1.69 |
 | **Date** | 2026-10-24 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -792,7 +792,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 
 | From | May import |
 |---|---|
-| `*/domain` | stdlib and other `*/domain` |
+| `*/domain` | stdlib and other `*/domain`; `security/domain` also `mvdan.cc/sh/v3/syntax`, the shell parser behind the destructive floor, which does no I/O (delta `2026-10-shell-parser`) |
 | `*/ports` | its own `domain` and other `*/domain` |
 | `*/adapters` | its own `ports`, its own `domain` and external libraries |
 | `agents` | `ports` of `sessions`, `tools`, `context`, `llmgw`, `security`, `store` |
@@ -882,7 +882,7 @@ allows it as in `normal`.
   through a path of its own. The policy cannot see either: the worktree is Art. 5's disposable
   boundary for what `full-auto` allows, not a sandbox.
 - **An agent's terminal cannot land its own work.** The destructive pattern `umb_worktree_change`
-  is a textual barrier a line built by expansion escapes. So `internal/api` reads the connecting
+  is a textual barrier: a renamed binary, or a launcher the normaliser does not know, escapes it. So `internal/api` reads the connecting
   process from the kernel (`SO_PEERCRED`, `LOCAL_PEERPID`) and refuses a client inside an agent's
   terminal — a thread's live PTY shell, or a hosted ACP agent's process, is the process or a
   parent of it, or leads its POSIX session — every method marked `userOnly` (API §2 "An agent's terminal"): `worktree.merge`,
@@ -915,13 +915,39 @@ allows it as in `normal`.
 - **The trace is complete:** every step is evaluated whatever decided; one is marked as
   deciding, and every other match notes that it was overridden (API §5.36, REQ-SEC-009).
 - **Destructive patterns** are matched against each simple command of an `Exec` target after
-  normalisation: the line is split at `;`, `&&`, `||`, `|`, `&`, newlines, backticks,
-  parentheses and braces; quotes are dropped; leading `VAR=value` words and the wrappers `sudo`,
-  `doas`, `env`, `xargs`, `nice`, `nohup`, `time`, `command`, `exec` and `builtin` are removed
-  with their flags — also `ionice`, `stdbuf`, `timeout` (and its duration), `chroot` (and its root),
-  `watch`, `parallel`, `eval` and `busybox`; the program is reduced to its base name; and
-  `sh`/`bash`/`zsh -c '…'` and find's `-exec`/`-execdir`/`-ok`/`-okdir` are normalised again as
-  lines of their own. The built-in list: recursive `rm`; `git push` with
+  normalisation. The line is parsed as bash parses it (`mvdan.cc/sh/v3/syntax`), so quotes,
+  escapes and separators mean what they mean to the shell and every simple command is found,
+  inside `$(…)`, subshells, functions and loops too. Each loses its leading `VAR=value` words and
+  the wrappers `sudo`, `doas`, `env`, `xargs`, `nice`, `nohup`, `time`, `command`, `exec` and
+  `builtin` with their flags — also `ionice`, `stdbuf`, `timeout` (and its duration), `chroot`
+  (and its root), `parallel`, `busybox`, and the launchers `setsid` and `systemd-run`; its
+  program is reduced to its base name; and its words, with any output redirection, are joined by
+  single spaces. A script the line hands to a shell is normalised again as a line of its own:
+  `sh`/`bash`/`zsh -c '…'`, `eval`'s and `watch`'s words, `ssh`'s command after its host, an
+  `alias` definition, `trap`'s first operand, the `-c` of `su`, `runuser`, `script` and `flock`,
+  find's `-exec`/`-execdir`/`-ok`/`-okdir`, and the here-document or here-string a shell, `at`,
+  `batch`, `ssh`, `su` or `source /dev/stdin` reads. A wrapper's flag missing from its table is
+  read both ways, as taking a value and not; a shell's unknown long option asks. The inline
+  program of an interpreter (`python -c`, `perl -e`, `node -e`, awk) is not shell; its words are
+  read with the separator split the normaliser used before the parser, and one reading its
+  program from stdin reads a here-document's or here-string's, or asks. ssh's `-o ProxyCommand`
+  and its kin are scripts, the keyword split as OpenSSH splits it, and its `-F` asks; strace's
+  `-o '|cmd'` or `--output` is a script; a cluster of short flags is read letter by letter; and
+  PowerShell's parameters are read after `-`, `--`, `/` or a Unicode dash, its encoded ones asking. Three things make a line ask with no pattern,
+  named in the trace (delta `2026-10-shell-parser`): `dynamic_word`, a word built at run time — a
+  variable, a command, process or arithmetic substitution, `$'…'`, a brace expansion, an unquoted
+  glob — or arguments taken from stdin (`xargs`, `parallel`) or split from a string (`env -S`);
+  `stdin_script`, a shell, `at`, `batch` or `ssh` reading its commands from stdin with no
+  here-document or here-string; and `unparseable`, a line bash cannot parse, or scripts nested
+  more than three deep; also arithmetic, which evaluates a variable as an expression, an
+  interactive shell's history expansion (`!`, `^old^new`, `fc`, `r`), zsh's `=cmd`, `hash -p`,
+  and `tmux` or `screen` driving a terminal. A prompt variable (`PS0`…`PS4`, `PROMPT_COMMAND`,
+  zsh's `PROMPT`) and `complete -C`/`bind -x` hold scripts, read as such; output redirections
+  count on any statement, a block, subshell or loop included. The floor is not a sandbox: a
+  program that runs a command it is given and is not in the lists, or a renamed binary, still
+  escapes it, which is why the daemon's peer check, not a pattern, refuses an agent's
+  terminal the `userOnly` methods. Lines are parsed as bash even in a zsh thread. A word the line spells statically is read as the shell reads it, so
+  `env 'A=x y' rm -rf /` is `rm`. The rules' split above is unchanged. The built-in list: recursive `rm`; `git push` with
   `--force`, `-f`, `--force-with-lease`, `--mirror` or a `+refspec`; `git reset --hard`;
   `git clean -f`; `mkfs`; `dd of=`; `kubectl delete`; `terraform destroy`/`apply -destroy`;
   `helm uninstall`; `docker`/`podman system prune` and `volume rm|prune`; `find -delete`;
@@ -1296,7 +1322,7 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
     root even when a rule allows the line. A control character in the command, an argument or
     `env` is refused before anything is decided: the shell's line editor would act on it. The
     policy also decides the same words with whitespace, separators, quotes and backslashes inside
-    each made `_` — its command normaliser reads no quotes — and the strictest verdict stands; a
+    each made `_` — a second view of the line, kept from before the normaliser parsed quotes — and the strictest verdict stands; a
     terminal naming a program that runs a script it is given (a shell, busybox, PowerShell, `ssh`,
     `eval`, `watch`, `su`, `script`, `flock`) or `env` with an option outside a safe few always
     asks — a floor, like the destructive list, not a sandbox. At most `[acp] max_terminals` live per thread, counted
@@ -1779,7 +1805,7 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 
 ## Constitution check
 
-- **Art. 3:** §5.2 rules encoded in `.go-arch-lint.yml` (T-F0-01).
+- **Art. 3:** §5.2 rules encoded in `.go-arch-lint.yml` (T-F0-01). `security/domain`'s one vendor, the shell parser, is the Art. 3 amendment of 2026-10-24 (delta `2026-10-shell-parser`), granted to that component alone.
 - **Art. 4 and 5:** DD-006 and DD-008 plus the §5.3 table.
 - **Art. 6:** prefixed ULIDs and UTC ms timestamps (Data Model). The workspace tree uses the structural identifiers `w<n>`, `w<n>:t<m>` and `w<n>:p<m>` (DD-009), which is the exception written into Art. 6 by the amendment of 2026-09-20 (delta `2026-09-art6-structural-ids`).
 - **Art. 7:** §7.3.
@@ -1858,3 +1884,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.66 | 2026-10-24 | E. Crespo (assisted draft) | T-HRD-03, references only: §9.4's `umb skill` points at API §5.42, where `skill.*` moved from the duplicated §5.37 |
 | 1.67 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-deb-package` (T-PKG-03): §9.3 the Debian package — layout, `Depends`, version scheme, maintainer scripts, reproducibility and its verification |
 | 1.68 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-hosted-agent-peer` (T-HRD-05): §5.3 the agent's-terminal check counts hosted ACP agents; §5.3f a hosted agent leads its own session, and its group is killed when it exits |
+| 1.69 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-shell-parser` (T-HRD-06): §5.2 `security/domain` may use the shell parser; §5.3 the destructive floor parses the line as bash does, reads `setsid` and `systemd-run` as wrappers and `ssh`, here-documents and `alias` as scripts, and asks for a word built at run time, a script read from stdin or a line it cannot parse; the Constitution check names the Art. 3 amendment |

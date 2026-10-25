@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"errors"
 	"regexp"
 	"testing"
@@ -156,6 +157,41 @@ func TestDestructiveIgnoresAlways_REQ_SEC_005(t *testing.T) {
 	r.finished(t)
 	if rules, _ := r.store.Rules(t.Context(), th.ID); len(rules) != 0 {
 		t.Fatalf("a destructive command was remembered: %+v", rules)
+	}
+}
+
+// shellEvasions are command lines the separator-splitting normaliser read as harmless (Q1 and
+// Q8 of delta `2026-10-hrd02-open-questions`); each must reach the destructive floor.
+var shellEvasions = []string{
+	`env -S 'umb skill install x'`,
+	`env 'A=x y' rm -rf /`,
+	`umb skill $(echo install) x`,
+	`setsid -f umb skill install x`,
+	`echo 'umb skill install x' | sh`,
+	`ssh localhost rm -rf /`,
+}
+
+// TestARunCommandEvasionAsks_REQ_SEC_005: each evasion, as a command the model asks to run,
+// asks as destructive (delta `2026-10-shell-parser`).
+func TestARunCommandEvasionAsks_REQ_SEC_005(t *testing.T) {
+	for _, line := range shellEvasions {
+		input, err := json.Marshal(map[string]string{"path": line})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := newRig(t, callTool("run", string(input)), answer("done"))
+		th := r.thread(t, domain.CreateParams{Mode: secdomain.ModeAutoEdit})
+		if _, err := r.rt.Send(t.Context(), ports.SendParams{ThreadID: th.ID, Text: "go"}); err != nil {
+			t.Fatal(err)
+		}
+		a := r.requested(t)
+		if a.Summary != line || a.Reason != secdomain.ReasonDestructive {
+			t.Errorf("approval on %q (%s), want %q as destructive", a.Summary, a.Reason, line)
+		}
+		if _, err := r.rt.Respond(t.Context(), domain.Response{ApprovalID: a.ID, Approve: false, Scope: domain.ScopeOnce}); err != nil {
+			t.Fatal(err)
+		}
+		r.finished(t)
 	}
 }
 

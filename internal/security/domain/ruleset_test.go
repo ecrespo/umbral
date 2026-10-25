@@ -36,6 +36,10 @@ func TestParseRulesRefusesWhatItCannotTrust_REQ_SEC_010(t *testing.T) {
 		"trailing content":    `{"redaction": []} {}`,
 		"a destructive group": `{"destructive": [{"name": "x", "pattern": "a", "group": 0}]}`,
 		"a null document":     `null`,
+		// The trace's names for a line the floor cannot read (delta `2026-10-shell-parser`).
+		"a reserved name":  `{"destructive": [{"name": "dynamic_word", "pattern": "a"}]}`,
+		"another reserved": `{"destructive": [{"name": "stdin_script", "pattern": "a"}]}`,
+		"a third reserved": `{"destructive": [{"name": "unparseable", "pattern": "a"}]}`,
 	} {
 		if _, err := ParseRules([]byte(body)); !errors.Is(err, ErrInvalidRules) {
 			t.Errorf("%s: %v, want ErrInvalidRules", name, err)

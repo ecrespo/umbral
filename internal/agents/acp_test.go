@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -508,16 +509,51 @@ func TestATerminalIsDecidedOnTheWordsTheShellSees_REQ_ACP_005(t *testing.T) {
 	r.finished(t)
 }
 
-// TestATerminalThatRunsAScriptAsks_REQ_ACP_005: a terminal whose words hold a script the policy
-// cannot read — `sh -c "env 'A=x y' rm -rf /"` — asks even under full-auto in the worktree.
+// TestAnACPExecuteEvasionAsks_REQ_ACP_003: an `execute` permission whose raw_input command is
+// one of the evasions asks as destructive, even under full-auto in the worktree, and the agent
+// is refused when the user refuses (delta `2026-10-shell-parser`).
+func TestAnACPExecuteEvasionAsks_REQ_ACP_003(t *testing.T) {
+	repo := realDir(t)
+	wts := &fakeWorktrees{root: realDir(t), repo: repo}
+	allowed := make(chan bool, len(shellEvasions))
+	r := acpRig(t, wts, func(ctx context.Context, _ ports.ExternalRequest, sink ports.ExternalSink) {
+		for i, line := range shellEvasions {
+			ok, err := sink.Permission(ctx, ports.ExternalToolCall{ID: fmt.Sprintf("x%d", i), Kind: "execute", Risk: string(secdomain.RiskExec), Command: line})
+			if err != nil {
+				t.Error(err)
+			}
+			allowed <- ok
+		}
+	})
+	th := r.thread(t, domain.CreateParams{Cwd: repo, Agent: "fake", Worktree: true, Mode: secdomain.ModeNormal})
+	if _, err := r.rt.Update(t.Context(), th.ID, domain.UpdateParams{Mode: modePtr(secdomain.ModeFullAuto)}); err != nil {
+		t.Fatal(err)
+	}
+	r.sendOnly(t, th.ID)
+	for _, line := range shellEvasions {
+		a := r.requested(t)
+		if a.Summary != line || a.Reason != secdomain.ReasonDestructive {
+			t.Errorf("approval on %q (%s), want %q as destructive", a.Summary, a.Reason, line)
+		}
+		r.respond(t, a, false)
+		if <-allowed {
+			t.Errorf("%q was allowed after a refusal", line)
+		}
+	}
+	r.finished(t)
+}
+
+// TestATerminalThatRunsAScriptAsks_REQ_ACP_005: a terminal that hands a script to a shell asks
+// even under full-auto in the worktree, even when the script is harmless — `sh -c 'make build'`.
+// A destructive script asks at the destructive step instead (delta `2026-10-shell-parser`).
 func TestATerminalThatRunsAScriptAsks_REQ_ACP_005(t *testing.T) {
 	repo := realDir(t)
 	wts := &fakeWorktrees{root: realDir(t), repo: repo}
 	errs := make(chan error, 1)
 	r := acpRig(t, wts, func(ctx context.Context, req ports.ExternalRequest, sink ports.ExternalSink) {
 		errs <- sink.Request(ctx, ports.ExternalOp{
-			Method: ports.OpTerminal, Command: `sh -c 'env '"'"'A=x y'"'"' rm -rf /'`,
-			Policy: "sh -c env__A=x_y__rm_-rf__", Script: true, Cwd: req.Dir,
+			Method: ports.OpTerminal, Command: `sh -c 'make build'`,
+			Policy: "sh -c make_build", Script: true, Cwd: req.Dir,
 		}, func(context.Context, string) (string, error) { return "started", nil })
 	})
 	th := r.thread(t, domain.CreateParams{Cwd: repo, Agent: "fake", Worktree: true, Mode: secdomain.ModeNormal})
