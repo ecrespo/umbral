@@ -179,7 +179,7 @@ its matrix lists commands.
 - **Depends on:** T-HRD-06
 - **Done:** each command matches its pattern and `umb rules status`/`umb mcp list` do not; `policy_test.go`'s `umb mcp remove x` moves to the destructive list.
 
-### [ ] T-HRD-08 · `skill_load` checks the stored copy's digest
+### [x] 2026-10-24 T-HRD-08 · `skill_load` checks the stored copy's digest
 - **What:** Q3: `ReadSkill` reads the stored bundle once, hashes it against the installed digest and serves the entry from that same read; a mismatch refuses the load, names the skill and tells the user to reinstall it. (delta `2026-10-hrd02-open-questions`).
 - **REQ:** REQ-SKL-005
 - **Files:** `internal/context/adapters/skills/**`
@@ -290,7 +290,7 @@ its matrix lists commands.
 | REQ-SEC-005, REQ-SKL-005, REQ-CLI-008 | T-HRD-02 (decisions) | per decision |
 | REQ-ORC-004 (hosted agents) | T-HRD-05 | TestAHostedAgentIsRefusedTheUsersMethods_REQ_ORC_004, TestAHostedAgentIsKnownByItsSession_REQ_ORC_004, TestAHostedAgentsExitEndsWhatItLeft_REQ_ORC_004, TestAReusedPidStaysListedForItsNewerAgent_REQ_ORC_004 |
 | REQ-SEC-005, REQ-ACP-003 | T-HRD-06, T-HRD-07 | TestDestructiveEvasionsAsk_REQ_SEC_005, TestARunCommandEvasionAsks_REQ_SEC_005, TestAnACPExecuteEvasionAsks_REQ_ACP_003; TestDestructiveAlwaysAsk_REQ_SEC_005 (the new patterns) |
-| REQ-SKL-005 | T-HRD-08, T-HRD-09 | an edited stored copy refused; the delimited catalog block |
+| REQ-SKL-005 | T-HRD-08, T-HRD-09 | TestSkillLoadRefusesAnEditedStoredCopy_REQ_SKL_005, TestSkillLoadServesACopyInstalledFromATarball_REQ_SKL_005; the delimited catalog block |
 | REQ-AGT-007 (zsh) | T-HRD-10 | `printf x` returned whole in a zsh thread PTY |
 | REQ-ACP-009, REQ-ACP-007 | T-HRD-11, T-HRD-12 | fixed manifest variables; the disclosure's worktree sentence |
 | REQ-AGT-018, REQ-API-005, REQ-API-004, REQ-CLI-001 | T-HRD-03 | TestFetchUrlFollowsFiveRedirects_REQ_AGT_018; TestAPlainCutMatchesTheEncoder_REQ_API_005, TestAPlainCutEncodesAFewTimes_REQ_API_005 and the macOS job over repeated runs; `task schema`; TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001 |
@@ -313,3 +313,4 @@ its matrix lists commands.
 | 2026-10-24 | T-HRD-05 | done | Delta `2026-10-hosted-agent-peer` (API 1.52 §2, Tech 1.68). The hole was measured first: a fake hosted agent found the socket from its `HOME`, read the token and reached `skill.install`, which answered `VALIDATION_ERROR` for its empty params. The ACP host now lists its agents' pids from launch, the agents lead their own sessions, and when an agent exits its whole session is killed — on Linux before the zombie is reaped, so a reused pid is never signalled or forgotten; on macOS the pid stays listed until close; members are signalled through pidfds, a session not seen empty in 2 s keeps the pid listed, and pids are counted — with the agent's stderr `/dev/null`, since a discarding pipe held by a child hid the exit. The agent's call answers `PERMISSION_DENIED`. Each piece was mutated back and its test went red. |
 | 2026-10-24 | T-HRD-06 | done | Delta `2026-10-shell-parser` (Tech 1.69 §5.2, §5.3). The normaliser parses the line with `mvdan.cc/sh/v3/syntax`, the one vendor a domain may use; 130 evasions — quoted separators, `env -S`, substitutions, globs, braces, launchers, shell options, interpreters, carriers, redirections on any statement, history, prompt variables, arithmetic — ask on both paths, each red first; nine mutations each redden the table. The vendor is a proposed Art. 3 amendment and REQ-SEC-005/REQ-ORC-004 gain a sentence, both for the Tech Lead. A word built at run time now asks, which costs `always` for lines with variables or globs. |
 | 2026-10-24 | T-HRD-07 | done | Delta `2026-10-rules-mcp-patterns` (Tech 1.70 §5.3), on top of T-HRD-06's branch. `umb_rules_change` and `umb_mcp_remove` join the built-in list; ten command lines ask, `umb rules status`, `umb rules key list` and `echo umb rules reset` do not; `umb mcp remove x` moved from the harmless list. Removing `rollback` or `remove` from a pattern reddens the test. |
+| 2026-10-24 | T-HRD-08 | done | Delta `2026-10-skill-load-digest` (Tech 1.71 §5.3b), stacked on T-HRD-07's branch. `ReadSkill` reads the stored copy once with the install reader, compares its digest with the row's and serves the entry from that read; an edited, added or removed file refuses every load of the skill with `VALIDATION_ERROR` naming it and saying to reinstall. Red first on all four edits; skipping the comparison reddens them. |
