@@ -244,6 +244,18 @@ func TestDestructiveAlwaysAsk_REQ_SEC_005(t *testing.T) {
 		"umb worktree --yes discard wtr_1",
 		"umb --socket /s worktree merge wtr_1",
 		`sh -c "umb worktree discard wtr_1 --yes"`,
+		// Changing the rules that decide for it, or dropping a server the user added (REQ-CLI-008,
+		// defence in depth behind the daemon's refusal; delta `2026-10-rules-mcp-patterns`).
+		"umb rules key add PUBKEY --confirm FP",
+		"umb rules key rotate FP PUBKEY --confirm FP",
+		"umb rules key remove FP --force",
+		"umb rules rollback",
+		"umb rules reset",
+		"umb --socket /s rules reset",
+		`sh -c "umb rules key add K --confirm F"`,
+		"umb mcp remove x",
+		"umb --socket /s mcp remove x",
+		"sudo umb mcp remove x",
 	}
 	allowEverything := []Rule{allowRule("*", "*")}
 	for _, cmd := range destructive {
@@ -285,8 +297,10 @@ func TestDestructiveAlwaysAsk_REQ_SEC_005(t *testing.T) {
 		"umb skill show x --body",
 		"umb skill disable x",
 		"umb mcp list",
-		"umb mcp remove x",
 		"echo umb skill install x",
+		"umb rules status",
+		"umb rules key list",
+		"echo umb rules reset",
 		"umb worktree list",
 		"umb worktree diff wtr_1",
 	}

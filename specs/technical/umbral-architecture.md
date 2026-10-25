@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.69 |
+| **Version** | 1.70 |
 | **Date** | 2026-10-24 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -956,7 +956,11 @@ allows it as in `normal`.
   `enable` or `remove` and `umb mcp add`, so the agent cannot change what instructs it or which
   tools it has (REQ-SKL-005, deltas `2026-09-skills-cli`, `2026-09-cli-mcp` and
   `2026-10-skill-catalog`); `umb worktree merge` or `discard`, so it cannot land or drop its own
-  work without the user's review (delta `2026-10-worktree-methods`). A rule bundle replaces it (REQ-SEC-010).
+  work without the user's review (delta `2026-10-worktree-methods`); `umb rules key add`, `rotate`
+  or `remove`, `rollback` or `reset`, and `umb mcp remove`, so it cannot change the rules that
+  decide for it or drop a server the user added. The daemon refuses all of these `umb` methods to
+  an agent's terminal whatever the line looks like; the patterns ask for what escapes that check
+  (delta `2026-10-rules-mcp-patterns`). A rule bundle replaces it (REQ-SEC-010).
 - **MCP tools are `Network`**, whatever their transport and whatever the server says of them:
   what they do happens outside Umbral's view. They ask by default (REQ-MCP-004), a tainted turn
   asks for them, `ask` mode does not offer them, and a rule `mcp_<server>_*` or one naming the
@@ -1885,3 +1889,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.67 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-deb-package` (T-PKG-03): §9.3 the Debian package — layout, `Depends`, version scheme, maintainer scripts, reproducibility and its verification |
 | 1.68 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-hosted-agent-peer` (T-HRD-05): §5.3 the agent's-terminal check counts hosted ACP agents; §5.3f a hosted agent leads its own session, and its group is killed when it exits |
 | 1.69 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-shell-parser` (T-HRD-06): §5.2 `security/domain` may use the shell parser; §5.3 the destructive floor parses the line as bash does, reads `setsid` and `systemd-run` as wrappers and `ssh`, here-documents and `alias` as scripts, and asks for a word built at run time, a script read from stdin or a line it cannot parse; the Constitution check names the Art. 3 amendment |
+| 1.70 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-rules-mcp-patterns` (T-HRD-07): §5.3's built-in destructive list gains `umb_rules_change` and `umb_mcp_remove` |

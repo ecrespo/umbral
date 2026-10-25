@@ -48,6 +48,11 @@ var DefaultDestructivePatterns = []DestructivePattern{
 	// Nor land or drop its own worktree: a merge is the user's review of the diff (delta
 	// `2026-10-worktree-engine`, decision 19), and full-auto runs commands in the worktree.
 	{"umb_worktree_change", regexp.MustCompile(`^umb( \S+)* worktree( \S+)* (merge|discard)( |$)`)},
+	// Nor change the rules that decide for it, or drop a server the user added. The daemon
+	// refuses both to an agent's terminal; these patterns ask for what escapes that check
+	// (delta `2026-10-rules-mcp-patterns`, Q2 and Q6 of `2026-10-hrd02-open-questions`).
+	{"umb_rules_change", regexp.MustCompile(`^umb( \S+)* rules( \S+)* (key (add|rotate|remove)|rollback|reset)( |$)`)},
+	{"umb_mcp_remove", regexp.MustCompile(`^umb( \S+)* mcp( \S+)* remove( |$)`)},
 }
 
 // What makes a line ask when no pattern names it: the shell, not the line, decides what runs
