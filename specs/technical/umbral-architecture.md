@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.72 |
+| **Version** | 1.73 |
 | **Date** | 2026-10-24 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -848,6 +848,14 @@ workspace, tab or pane id. `UMBRAL_BIN_PATH` is the `umb` beside `umbrald`, then
 `PATH`; with neither it is left out and the daemon logs a warning. A moved pane's processes keep
 the ids they started with, which still reach the pane as aliases (REQ-WS-007). Delta
 `2026-10-integration-surface`, decision 11.
+
+A session the daemon owns for a thread — its PTY or an ACP terminal's session — also gets
+`UMBRAL_AGENT_SESSION=1`, dropped like every `UMBRAL_*` value so no pane carries it. It is not
+part of REQ-INT-001's interface: only the zsh bootstrap reads it, and turns `PROMPT_SP` off after
+the user's rc and again in its precmd and preexec hooks — zsh writes the mark before precmd, and
+preexec runs after every precmd hook, a late-appended one included — so a last line printed without a newline is not
+erased from what `run_command` returns. A user's own zsh pane keeps the option (delta
+`2026-10-zsh-prompt-sp`).
 
 ### 5.3 Default policies
 
@@ -1901,3 +1909,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.70 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-rules-mcp-patterns` (T-HRD-07): §5.3's built-in destructive list gains `umb_rules_change` and `umb_mcp_remove` |
 | 1.71 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-skill-load-digest` (T-HRD-08): §5.3b `skill_load` reads the stored copy once, checks its digest and serves the entry from that read; a changed copy is `VALIDATION_ERROR` naming the skill |
 | 1.72 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-catalog-third-party` (T-HRD-09): §5.3b the skill catalog sits in a `<skills>` block whose preamble names the descriptions third-party text, its entries escaped |
+| 1.73 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-zsh-prompt-sp` (T-HRD-10): §5.2b a thread-owned session gets `UMBRAL_AGENT_SESSION=1`, and the zsh bootstrap turns `PROMPT_SP` off there only |

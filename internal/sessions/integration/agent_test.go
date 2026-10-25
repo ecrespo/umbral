@@ -432,3 +432,83 @@ func TestAgentShellsAreKnown_REQ_ORC_004(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// TestAZshThreadKeepsAnUnterminatedLastLine_REQ_AGT_007: zsh's PROMPT_SP writes a mark, spaces
+// and a carriage return before each prompt, which erased a last line printed without a
+// newline from what run_command returned. A session the daemon owns for a thread turns the
+// option off after the user's rc, so `printf x` comes back as `x`; a user's own zsh pane keeps
+// the option (delta `2026-10-zsh-prompt-sp`, Q9 of `2026-10-hrd02-open-questions`).
+func TestAZshThreadKeepsAnUnterminatedLastLine_REQ_AGT_007(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skipf("zsh is not installed: %v", err)
+	}
+	h := newHarnessForShell(t, "zsh", func(c *sessions.Config) { c.DefaultShell = zsh })
+	cwd := t.TempDir()
+	threadID := thread(t, h, cwd)
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+
+	run, err := h.RunForThread(ctx, threadID, cwd, "printf x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimRight(run.Output, "\r\n"); got != "x" {
+		t.Errorf("printf x in a zsh thread returned %q, want %q", run.Output, "x")
+	}
+	opt, err := h.RunForThread(ctx, threadID, cwd, "echo promptsp=$options[promptsp]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(opt.Output, "promptsp=off") {
+		t.Errorf("the thread's zsh reports %q, want PROMPT_SP off", opt.Output)
+	}
+
+	pane := h.create(t, domain.CreateParams{ShellIntegration: true})
+	waitUntilArmed(t, h, pane.ID)
+	typeCommand(t, h, pane.ID, "echo pane-promptsp=$options[promptsp]")
+	if !waitForScreen(t, h, pane.ID, "pane-promptsp=on") {
+		t.Error("a user's zsh pane lost PROMPT_SP")
+	}
+}
+
+// TestAZshThreadKeepsPromptSPOffUnderAFramework_REQ_AGT_007: a prompt framework that turns
+// PROMPT_SP back on from its own precmd hook, every prompt, does not bring the lost last line
+// back — neither one its rc registers nor one a lazy loader appends after the bootstrap's own
+// hook at the first prompt.
+func TestAZshThreadKeepsPromptSPOffUnderAFramework_REQ_AGT_007(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skipf("zsh is not installed: %v", err)
+	}
+	for name, rcText := range map[string]string{
+		"registered by the rc": "setopt PROMPT_SP\nautoload -Uz add-zsh-hook\n__framework() { setopt PROMPT_SP }\nadd-zsh-hook precmd __framework\n",
+		"appended late": "autoload -Uz add-zsh-hook\n__late() { setopt PROMPT_SP }\n" +
+			"__defer() { precmd_functions+=(__late); add-zsh-hook -d precmd __defer }\nadd-zsh-hook precmd __defer\n",
+	} {
+		t.Run(name, func(t *testing.T) { zshFrameworkRun(t, zsh, rcText) })
+	}
+}
+
+func zshFrameworkRun(t *testing.T, zsh, rcText string) {
+	rc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rc, ".zshrc"), []byte(rcText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ZDOTDIR", rc)
+	h := newHarnessForShell(t, "zsh", func(c *sessions.Config) { c.DefaultShell = zsh })
+	cwd := t.TempDir()
+	threadID := thread(t, h, cwd)
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+
+	for range 3 {
+		run, err := h.RunForThread(ctx, threadID, cwd, "printf x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimRight(run.Output, "\r\n"); got != "x" {
+			t.Fatalf("printf x under a framework returned %q, want %q", run.Output, "x")
+		}
+	}
+}

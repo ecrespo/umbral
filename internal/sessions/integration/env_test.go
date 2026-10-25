@@ -68,17 +68,20 @@ func TestNoPaneLocationIsInherited_REQ_INT_001(t *testing.T) {
 	}
 	t.Setenv("UMBRAL_PANE_ID", "w9:p9")
 	t.Setenv("UMBRAL_WORKSPACE_ID", "w9")
+	// The thread-session marker is Umbral's too: inherited or declared, a pane never has it,
+	// or a layout could switch a user's zsh PROMPT_SP off.
+	t.Setenv("UMBRAL_AGENT_SESSION", "1")
 	h := newHarness(t)
 
 	session := h.create(t, domain.CreateParams{
-		Shell: "/bin/sh", Env: map[string]string{"UMBRAL_TAB_ID": "w8:t8"},
+		Shell: "/bin/sh", Env: map[string]string{"UMBRAL_TAB_ID": "w8:t8", "UMBRAL_AGENT_SESSION": "1"},
 		Command: []string{
 			"sh", "-c",
-			`printf 'loc=<%s|%s|%s> env=<%s>\n' "${UMBRAL_WORKSPACE_ID-unset}" ` +
-				`"${UMBRAL_TAB_ID-unset}" "${UMBRAL_PANE_ID-unset}" "$UMBRAL_ENV"; sleep 5`,
+			`printf 'loc=<%s|%s|%s> env=<%s> agent=<%s>\n' "${UMBRAL_WORKSPACE_ID-unset}" ` +
+				`"${UMBRAL_TAB_ID-unset}" "${UMBRAL_PANE_ID-unset}" "$UMBRAL_ENV" "${UMBRAL_AGENT_SESSION-unset}"; sleep 5`,
 		},
 	})
-	const want = "loc=<unset|unset|unset> env=<1>"
+	const want = "loc=<unset|unset|unset> env=<1> agent=<unset>"
 	if !eventuallyContains(t, h, session.ID, want) {
 		snapshot, _ := h.Snapshot(t.Context(), session.ID)
 		t.Errorf("the pane never printed %q; screen was:\n%s", want,
