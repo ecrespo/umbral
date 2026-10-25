@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.71 |
+| **Version** | 1.72 |
 | **Date** | 2026-10-24 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1010,7 +1010,11 @@ with `run_command` from T-F1-10. Delta `2026-09-builtin-tools`:
   words. Each turn's system prompt lists the catalog — every enabled skill by name, at most 64,
   its description made one line (whitespace collapsed, control and format characters dropped)
   and cut to 256 characters — under `# Skills`, after the rules files and inside
-  the budget, read again for every turn (REQ-SKL-007).
+  the budget, read again for every turn (REQ-SKL-007). The entries sit in one `<skills>`
+  block, after a preamble naming the descriptions as their authors' untrusted third-party text,
+  not instructions, with `&`, `<` and `>` in each entry escaped so none can close the block;
+  the 256-character cut applies before escaping, and the budget counts the rendered entry (delta
+  `2026-10-catalog-third-party`).
 - **A thread with an active worktree runs in it** (REQ-WT-002): each turn reads, as it starts,
   the thread's active worktree through `agents/ports.Worktrees` — the check that marks a gone one
   `missing` included — and runs with the worktree as its write root and, as its cwd, the
@@ -1896,3 +1900,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.69 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-shell-parser` (T-HRD-06): §5.2 `security/domain` may use the shell parser; §5.3 the destructive floor parses the line as bash does, reads `setsid` and `systemd-run` as wrappers and `ssh`, here-documents and `alias` as scripts, and asks for a word built at run time, a script read from stdin or a line it cannot parse; the Constitution check names the Art. 3 amendment |
 | 1.70 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-rules-mcp-patterns` (T-HRD-07): §5.3's built-in destructive list gains `umb_rules_change` and `umb_mcp_remove` |
 | 1.71 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-skill-load-digest` (T-HRD-08): §5.3b `skill_load` reads the stored copy once, checks its digest and serves the entry from that read; a changed copy is `VALIDATION_ERROR` naming the skill |
+| 1.72 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-catalog-third-party` (T-HRD-09): §5.3b the skill catalog sits in a `<skills>` block whose preamble names the descriptions third-party text, its entries escaped |
