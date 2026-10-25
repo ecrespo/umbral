@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-10-24`, awaiting the Tech Lead |
+| **Status** | `RATIFIED 2026-10-24 by the Tech Lead ("ratifico los deltas")`; folded into constitution 1.4 (Art. 3 amendment), PRD 1.23, PRD F2 0.10, API 1.53 and Tech 1.69, and archived |
 | **Date** | 2026-10-24 |
 | **Task** | T-HRD-06 |
 | **REQ** | REQ-SEC-005, REQ-ACP-003 (no change to their text) |
@@ -89,9 +89,10 @@ Both paths into the normaliser were affected: the line `run_command` is asked to
    It changes approved text. REQ-ORC-004 allows `Exec` in the worktree unasked except for
    REQ-SEC-005's list, and `ls *.go` is not on that list. So this delta amends REQ-SEC-005 to say
    that a command line the system cannot read statically counts as matching the list, and
-   REQ-ORC-004 and API §5.22 to say so too. **The Tech Lead decides between that and the
-   narrower reading**: a dynamic word asks only in program or subcommand position, plus `eval`
-   and `env -S`. The narrower reading leaves `rm -$FLAGS /` and `git push $F` unasked.
+   REQ-ORC-004 and API §5.22 to say so too. The narrower reading — a dynamic word asking only
+   in program or subcommand position, plus `eval` and `env -S` — would leave `rm -$FLAGS /` and
+   `git push $F` unasked. **The Tech Lead ratified the delta as written, so the broad reading
+   stands** (2026-10-24).
 
 4. **Launchers and script carriers.**
    - `setsid` and `systemd-run` (with its flags that take a value) are wrappers.
