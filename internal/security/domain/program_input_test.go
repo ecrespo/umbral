@@ -161,3 +161,23 @@ func TestProgramInputKeysTheMatcherDoesNotModelAsk_REQ_FTU_003(t *testing.T) {
 		}
 	}
 }
+
+// TestProgramPendingIsTextAnInterruptLeft_REQ_FTU_003: the text a program was typed and not
+// sent an interrupt after is what the shell may read once the program ends.
+func TestProgramPendingIsTextAnInterruptLeft_REQ_FTU_003(t *testing.T) {
+	for target, want := range map[string]bool{
+		"":              false,
+		"<ctrl+c>":      false,
+		"x<ctrl+c>":     false,
+		"<ctrl+c>y":     true,
+		"rm -":          true,
+		"<<":            true,
+		"<space>":       true,
+		"<up><ctrl+d>":  false,
+		"a<ctrl+c><up>": false,
+	} {
+		if got := ProgramPending(target); got != want {
+			t.Errorf("ProgramPending(%q) = %v, want %v", target, got, want)
+		}
+	}
+}

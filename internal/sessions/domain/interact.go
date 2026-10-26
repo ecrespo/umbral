@@ -273,3 +273,7 @@ func TailText(s string) string {
 	}
 	return s[cut:]
 }
+
+// ProgramPending reports whether a program's input (InteractState.Program) ends with text no
+// interrupt dropped, which the shell may read once the program ends.
+func ProgramPending(program string) bool { return secdomain.ProgramPending(program) }

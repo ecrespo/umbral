@@ -200,7 +200,7 @@ func (s *Service) applyBlockAction(live *liveSession, action domain.Action) {
 		// tty for the shell's line, so the agent's next write at the prompt drops it first
 		// (REQ-FTU-003).
 		live.mu.Lock()
-		if live.programLine != "" {
+		if domain.ProgramPending(live.programLine) {
 			live.discardLine = true
 		}
 		live.blockOpen, live.interactLine, live.programLine = false, "", ""

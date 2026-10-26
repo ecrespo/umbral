@@ -150,6 +150,7 @@ read as shell, `SELECT * FROM t;` has a glob and asks, and so would every `psql`
 - `TestProgramInputIsMatchedAsText_REQ_FTU_003` (`internal/security/domain`): `SELECT * FROM t;`
   does not ask, `DROP TABLE x;` and `x=rm; $x -rf ~` do; full-auto asks.
 - `TestProgramTailIsTheLineNotYetEntered_REQ_FTU_003` (`internal/security/domain`).
+- `TestProgramPendingIsTextAnInterruptLeft_REQ_FTU_003` (`internal/security/domain`): only text after the last ctrl+c makes the next write at the prompt drop the line, since an interrupt flushes the tty.
 - `TestProgramInputKeysTheMatcherDoesNotModelAsk_REQ_FTU_003` (`internal/security/domain`): line-end keys, `space`, unmodelled keys, stdin scripts and lines the shell would join.
 - `TestReadsNeverStartATerminal_REQ_FTU_001`, `TestAnInterruptKeepsTheAgentsNextBlock_REQ_FTU_001`
   (`internal/sessions/integration`).

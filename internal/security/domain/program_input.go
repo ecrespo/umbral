@@ -206,3 +206,33 @@ func ProgramTail(target string) string {
 	}
 	return target[start:]
 }
+
+// ProgramPending reports whether a program-input target ends with text a ctrl+c has not
+// dropped: what a terminal's line discipline, which flushes its input on an interrupt, may
+// still hold for the shell once the program ends.
+func ProgramPending(target string) bool {
+	pending := false
+	for i := 0; i < len(target); {
+		switch {
+		case strings.HasPrefix(target[i:], "<<"):
+			pending = true
+			i += 2
+		case target[i] == '<':
+			end := strings.IndexByte(target[i:], '>')
+			if end < 0 {
+				return true
+			}
+			switch name := target[i+1 : i+end]; {
+			case name == programInterrupt:
+				pending = false
+			case programKey(name) == keySpace:
+				pending = true
+			}
+			i += end + 1
+		default:
+			pending = true
+			i++
+		}
+	}
+	return pending
+}

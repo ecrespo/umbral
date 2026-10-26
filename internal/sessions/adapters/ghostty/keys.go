@@ -57,6 +57,9 @@ func (e *Emulator) EncodeKey(k domain.Key) ([]byte, error) {
 	}
 	defer enc.Close()
 	enc.SetOptFromTerminal(e.term)
+	// An agent's alt is alt on every platform: the macOS option key's own characters are not
+	// what it asked for, and the call above resets this.
+	enc.SetOptOptionAsAlt(libghostty.OptionAsAltTrue)
 
 	ev, err := libghostty.NewKeyEvent()
 	if err != nil {
