@@ -1429,11 +1429,11 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   interrupt typed at the prompt is the call's last key; the next call writes an empty line first,
   the same remedy as §5.3b's late interrupt, and waits up to 500 ms for its prompt so that prompt
   does not withdraw the claim of the line after it.
-- **A call at the prompt returns once the shell answered it.** Keys that enter nothing wait for
-  the shell's output after the write to pause for 50 ms, up to 500 ms: text the line editor has
-  not read is still in the tty's input queue, where a `ctrl+c` that follows flushes part of it,
-  and an interrupt is acted on only when the editor next looks, so a line typed after it could
-  be read first and enter what it dropped.
+- **A call at the prompt waits for the shell's answer to settle.** Keys that enter nothing wait
+  for the shell's output after the write to pause for 50 ms, at most 500 ms (a shell that writes
+  nothing costs all of it): text the line editor has not read is still in the tty's input queue,
+  where a `ctrl+c` that follows flushes part of it. The wait runs after the input lock is
+  released, so a take-over is never held behind it.
 - **Take-over (REQ-FTU-002).** `thread.take_over` moves the PTY's input to the human under the
   same lock every write takes and announces `session.input_owner`; while the user holds it every
   `terminal_interact` call returns the result `taken_over` and writes nothing, `run_command` is

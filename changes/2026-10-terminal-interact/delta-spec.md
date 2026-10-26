@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-10-26` by the implementing agent under the Tech Lead's standing F2 instruction (extended to F2b … F2f on 2026-10-26), pending the Tech Lead's review |
+| **Status** | `APPROVED 2026-10-26` by the implementing agent under the Tech Lead's standing F2 instruction (extended to F2b … F2f on 2026-10-26), pending the Tech Lead's review; amended 2026-10-26 (decision 9), self-approved under the same instruction |
 | **Date** | 2026-10-26 |
 | **Task** | T-F2-20 |
 | **REQ** | REQ-FTU-001, REQ-FTU-002, REQ-FTU-003 |
@@ -130,13 +130,16 @@ read as shell, `SELECT * FROM t;` has a glob and asks, and so would every `psql`
 8. **A program left running.** A cancelled turn ends its `terminal_interact` call; the program
    the agent started stays in the foreground, as the user would see it. The agent ends it with
    its own keys, or the user does after taking over.
-9. **Keys at the prompt return once the shell answered them** (added 2026-10-26, after CI ran
-   `cho` for `echo pending`). A call at the prompt that enters nothing waits for the shell's
-   output after its write to pause for 50 ms, up to 500 ms. Text the line editor had not read
-   was still in the tty's input queue, where the `ctrl+c` of the next call flushed part of it;
-   and an interrupt is acted on only when the editor next looks, so the line typed after it
-   could be gathered first and enter what it dropped. The editor answers both by writing — the
-   echo, `^C` and the prompt again.
+9. **Keys at the prompt wait for the shell's answer to settle** (amended 2026-10-26, after CI
+   ran `cho` for `echo pending`). A call at the prompt that enters nothing waits for the shell's
+   output after its write to pause for 50 ms, at most 500 ms; a shell that writes nothing costs
+   all 500 ms, and the call then returns as it would have. Text the line editor had not read was
+   still in the tty's input queue, where the `ctrl+c` of the next call flushed part of it. (A
+   line typed after an interrupt is the next call's empty-line settle to protect; the two waits
+   cover different races.) The wait runs after the input lock is released, so a take-over or the
+   user's input is never held behind it: one thread's calls run one after another, and the next
+   finds the queue drained or the PTY taken over. A cancel during the wait reports the call
+   failed although its keys were written.
 
 ## Tests
 
@@ -146,6 +149,8 @@ read as shell, `SELECT * FROM t;` has a glob and asks, and so would every `psql`
   submitted at the prompt starts a block with origin agent; keys reach the program; `read_screen`
   shows its output; `wait_for` ends `matched`, `idle`, `exited` and `timeout`; text typed at the
   prompt is on the screen when the call returns, and so is the shell's answer to a `ctrl+c`.
+- `TestTakeOverLocksTheAgentOut_REQ_FTU_002` also takes over while a key at the prompt waits
+  for its answer, and the take-over is not held behind it.
 - `TestTakeOverLocksTheAgentOut_REQ_FTU_002` (`internal/sessions/integration`): after a
   take-over the agent's keys and `run_command` are refused `taken_over` and nothing reaches the
   PTY, the human's input is accepted, and a hand-back at the prompt empties the line the user left.

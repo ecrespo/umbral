@@ -158,7 +158,22 @@ func TestTakeOverLocksTheAgentOut_REQ_FTU_002(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A key at the prompt waits for the shell's answer, at least 50 ms, without the input lock:
+	// a take-over made meanwhile is not held behind it.
+	sent := make(chan error, 1)
+	go func() {
+		_, err := h.SendKeys(ctx, threadID, cwd, []domain.Key{{Name: "backspace"}}, h.InteractState(threadID, cwd))
+		sent <- err
+	}()
+	time.Sleep(5 * time.Millisecond)
+	start := time.Now()
 	sessionID, err := h.TakeOver(ctx, threadID, "conn_a")
+	if took := time.Since(start); took > 30*time.Millisecond {
+		t.Errorf("the take-over waited %v behind a key at the prompt", took)
+	}
+	if err := <-sent; err != nil {
+		t.Errorf("backspace at the prompt: %v", err)
+	}
 	if err != nil || sessionID != run.Block.SessionID {
 		t.Fatalf("take over = %q, %v; want %s", sessionID, err, run.Block.SessionID)
 	}
