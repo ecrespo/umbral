@@ -124,6 +124,32 @@ type liveSession struct {
 	// interrupted is set when stopAgent has interrupted the shell, and cleared by the next
 	// agent command, which then types an empty line first (RunForThread).
 	interrupted atomic.Bool
+
+	// inputMu is held across every write's lock check and the write itself, and by a change of
+	// the input's owner, so a take-over is never passed by a write that checked before it
+	// (REQ-FTU-002).
+	inputMu sync.Mutex
+	// blockOpen is a block open on this session, whoever started it; guarded by mu.
+	blockOpen bool
+	// promptReady is the shell's prompt drawn and waiting for input (OSC 133;B) since the last
+	// command started; guarded by mu.
+	promptReady bool
+	// prompts counts the prompts drawn, so a write can wait for the next one; guarded by mu.
+	prompts uint64
+	// interactLine is what terminal_interact typed at the prompt and has not entered yet
+	// (REQ-FTU-003); guarded by mu.
+	interactLine string
+	// programLine is what terminal_interact typed to the program in the foreground since its
+	// last enter or ctrl+c, as a program-input target; it is dropped when the block closes
+	// (REQ-FTU-003). Guarded by mu.
+	programLine string
+	// takenOver is a thread's PTY the user has taken over (REQ-FTU-002), and takenBy the
+	// connection that did, whose close hands it back; guarded by mu.
+	takenOver bool
+	takenBy   string
+	// discardLine is a hand-back: the agent's next write at the prompt drops whatever the
+	// user left on its line first (decision 6). Guarded by mu.
+	discardLine bool
 }
 
 // agentRun is one command the agent typed and is waiting for. claimed turns true once the
@@ -147,6 +173,9 @@ type agentRun struct {
 	// until that block closes or the shell shows its next prompt, so its late block cannot
 	// be taken for the next run's.
 	abandoned bool
+	// interactive is a line terminal_interact submitted: nobody waits for its block, and keys
+	// may be sent to the program it started while it runs (REQ-FTU-001).
+	interactive bool
 	// cancelled is a run whose caller gave up. Its command is signalled once the shell has
 	// started it (its block is open), never before: an interrupt that reaches a shell still
 	// reading the line is lost, and the command then runs unstopped.
@@ -389,6 +418,13 @@ func (s *Service) Input(_ context.Context, id string, data []byte, writer domain
 		return fmt.Errorf("%w: %s", domain.ErrNotFound, id)
 	}
 
+	live.inputMu.Lock()
+	defer live.inputMu.Unlock()
+	return writeInput(live, data, writer)
+}
+
+// writeInput checks the lock and writes, with inputMu held.
+func writeInput(live *liveSession, data []byte, writer domain.InputOwner) error {
 	live.mu.RLock()
 	session := live.session
 	live.mu.RUnlock()
@@ -397,7 +433,7 @@ func (s *Service) Input(_ context.Context, id string, data []byte, writer domain
 		return err
 	}
 	if _, err := live.pty.Write(data); err != nil {
-		return fmt.Errorf("sessions: write to %s: %w", id, err)
+		return fmt.Errorf("sessions: write to %s: %w", session.ID, err)
 	}
 	return nil
 }
@@ -449,9 +485,16 @@ func (s *Service) SetInputOwner(ctx context.Context, id string, owner domain.Inp
 	if live == nil {
 		return fmt.Errorf("%w: %s", domain.ErrNotFound, id)
 	}
+	live.inputMu.Lock()
+	defer live.inputMu.Unlock()
+	return s.setInputOwner(ctx, live, owner)
+}
 
+// setInputOwner records and announces the input's new owner, with inputMu held.
+func (s *Service) setInputOwner(ctx context.Context, live *liveSession, owner domain.InputOwner) error {
 	live.mu.Lock()
 	live.session.InputOwner = owner
+	id := live.session.ID
 	live.mu.Unlock()
 
 	if _, err := s.cfg.Store.DB().ExecContext(ctx,

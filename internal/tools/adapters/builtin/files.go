@@ -233,7 +233,7 @@ func (editFile) Spec() domain.Spec {
 			fPath:         str("File path, absolute or relative to the working directory."),
 			"old_string":  nonEmpty("The exact text to replace."),
 			"new_string":  str("The text to put in its place."),
-			"replace_all": map[string]any{kType: "boolean", kDescription: "Replace every occurrence."},
+			"replace_all": map[string]any{kType: tBoolean, kDescription: "Replace every occurrence."},
 		}),
 	}
 }

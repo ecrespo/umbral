@@ -32,6 +32,12 @@ const (
 var (
 	// ErrAgentBusy is a second command for a thread whose PTY is still running one.
 	ErrAgentBusy = errors.New("sessions: the thread's PTY is running another command")
+	// ErrProgramRunning is a command for a thread's PTY whose foreground holds a program that
+	// terminal_interact started, or the user did: it would be typed into that program.
+	ErrProgramRunning = errors.New("sessions: a program is running in the thread's terminal; use terminal_interact to drive or end it")
+	// ErrPromptHasText is a command for a thread's PTY whose prompt holds text terminal_interact
+	// typed and did not enter: the two would run as one line.
+	ErrPromptHasText = errors.New("sessions: the thread's terminal has text typed at its prompt; enter it or send ctrl+c with terminal_interact first")
 	// ErrNoIntegration is a thread shell that did not speak OSC 133 within agentReadyTimeout,
 	// so no block could record the command.
 	ErrNoIntegration = errors.New("sessions: the thread's shell has no shell integration")
@@ -88,6 +94,11 @@ func (s *Service) runAgent(ctx context.Context, live *liveSession, run *agentRun
 	line := []byte(command + "\n")
 	if live.interrupted.Swap(false) {
 		line = append([]byte{'\n'}, line...)
+	}
+	// What the user left on the line before handing the terminal back is dropped first
+	// (REQ-FTU-002).
+	if takeDiscard(live) {
+		line = append(append([]byte(nil), discardKeys...), line...)
 	}
 	if err := s.Input(ctx, sessionID, line, domain.InputOwnerAgent); err != nil {
 		release()
@@ -148,6 +159,15 @@ func (s *Service) claimPTY(ctx context.Context, live *liveSession, run *agentRun
 	for {
 		live.mu.Lock()
 		switch {
+		case live.takenOver:
+			live.mu.Unlock()
+			return domain.ErrTakenOver
+		case live.interactLine != "":
+			live.mu.Unlock()
+			return ErrPromptHasText
+		case live.agent == nil && live.blockOpen, live.agent != nil && live.agent.interactive:
+			live.mu.Unlock()
+			return ErrProgramRunning
 		case live.agent == nil:
 			live.agent = run
 			live.mu.Unlock()
@@ -256,6 +276,13 @@ func (s *Service) threadSession(ctx context.Context, threadID, cwd string) (*liv
 	}
 	s.mu.Unlock()
 	if stale != nil {
+		stale.mu.RLock()
+		held := stale.takenOver
+		stale.mu.RUnlock()
+		if held {
+			// The user's terminal is never closed under them (REQ-FTU-002).
+			return nil, domain.ErrTakenOver
+		}
 		if err := s.Close(ctx, stale.snapshotState().ID); err != nil && !errors.Is(err, domain.ErrNotFound) {
 			return nil, err
 		}

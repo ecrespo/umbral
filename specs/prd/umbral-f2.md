@@ -5,9 +5,9 @@
 | Field | Value |
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
-| **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`. Slice F2a implemented and closed on 2026-10-24 (delta `2026-10-f2a-close`); F2b … F2f not started |
-| **Version** | 0.10 |
-| **Date** | 2026-10-22 |
+| **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`. Slice F2a implemented and closed on 2026-10-24 (delta `2026-10-f2a-close`); F2b started on 2026-10-26 |
+| **Version** | 0.11 |
+| **Date** | 2026-10-26 |
 | **Reviewers** | spec-guardian (Analyze and two verify passes); Tech Lead, ratified 2026-10-22 |
 | **Source** | `docs/ARCHITECTURE.md` §5.4–5.8 and §10 (F2 ADE row); `specs/prd/umbral-mvp.md` §5.2–5.3; Plan 1.14 §4 |
 | **Builds on** | PRD MVP 1.21, API 1.41, Tech 1.55, Data Model 1.23, constitution 1.3 |
@@ -188,7 +188,7 @@ makes it ask (spike T-F2-00). So Umbral:
 
 - **REQ-FTU-001** · MUST · ubiquitous — THE SYSTEM SHALL offer the agent a `terminal_interact` tool with the actions `send_keys` (keys encoded by the emulator's key encoder), `read_screen` (plain text of the current screen) and `wait_for` (a regex, an idle time or the process's exit, bounded by a timeout), risk `Exec`.
 - **REQ-FTU-002** · MUST · state — WHILE the agent owns a pane's input, THE SYSTEM SHALL refuse the user's input with `INPUT_LOCKED` (REQ-TERM-008) except the take-over chord; WHEN the user takes over, THE SYSTEM SHALL move ownership to the user at once and return `taken_over` to the agent's next `terminal_interact` call.
-- **REQ-FTU-003** · MUST · unwanted — IF the line the pane's shell would receive when `send_keys` sends Enter — the input assembled across every `send_keys` call since the last Enter — matches the destructive-pattern list, THEN THE SYSTEM SHALL require approval before sending the Enter, like `run_command` (REQ-SEC-005).
+- **REQ-FTU-003** · MUST · unwanted — IF the line the pane's shell would receive when `send_keys` sends Enter — the input assembled across every `send_keys` call since the last Enter — matches the destructive-pattern list, THEN THE SYSTEM SHALL require approval before sending the Enter, like `run_command` (REQ-SEC-005). WHILE a program other than the shell is in the foreground, its input line, assembled the same way, SHALL be matched as text and by the shell parser's patterns, since the shell receives what the program leaves unread, and a match SHALL require approval before the Enter is sent.
 
 ### 6.7 Embedded model and Active AI (AAI) — F2b
 
@@ -348,3 +348,4 @@ Still open, with the draft's default:
 | 0.8 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-f2a-close`: §8 says what "US-F2-001 passes" means — the daemon's properties in every run and one run completing every task within its files — and F2a is closed; the status line no longer says nothing is implemented |
 | 0.9 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-hrd02-open-questions` (T-HRD-02, Q11): REQ-ACP-007's disclosure says a hosted agent can read the main copy and every other thread's worktree |
 | 0.10 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-shell-parser` (T-HRD-06): REQ-ORC-004 says the destructive list it keeps asking for includes a command line the system cannot read statically, as REQ-SEC-005 1.23 does |
+| 0.11 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` (T-F2-20): REQ-FTU-003 says how a program's input is decided, the shell receiving what the program leaves unread |

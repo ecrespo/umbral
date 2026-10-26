@@ -50,6 +50,10 @@ type Model struct {
 
 	// agent is the agent panel (agent.go).
 	agent agentPanel
+	// held is a thread's terminal the user took over, shown in place of the panel, and
+	// heldThread that thread (takeover.go).
+	held       *pane
+	heldThread string
 
 	// status is the one-line message under the panes: what just happened, or what went
 	// wrong. Empty means the key hints are shown instead.
@@ -185,6 +189,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.skillsLoaded(msg)
 		return m, nil
 
+	case takenOverMsg:
+		return m, m.tookOver(msg)
+
+	case handedBackMsg:
+		if msg.err != nil {
+			m.status = msg.err.Error()
+		}
+		return m, nil
+
 	case tea.PasteMsg:
 		if m.agent.mode {
 			m.paste(msg.Content)
@@ -261,6 +274,9 @@ func (m *Model) focusedPane() *pane {
 // paneByID finds a pane across every tab, because a notification names a session and says
 // nothing about which tab is showing it.
 func (m *Model) paneByID(sessionID string) *pane {
+	if m.held != nil && m.held.sessionID == sessionID {
+		return m.held
+	}
 	for _, t := range m.tabs {
 		for _, p := range t.panes {
 			if p.sessionID == sessionID {
@@ -374,7 +390,10 @@ func (m *Model) renderBody() string {
 	if m.showBlocks {
 		columns = append(columns, m.renderBlockList())
 	}
-	if m.agent.open {
+	switch {
+	case m.held != nil:
+		columns = append(columns, m.renderHeld())
+	case m.agent.open:
 		columns = append(columns, m.renderAgentPanel(m.height-2))
 	}
 	return joinColumns(columns, m.height-2)
@@ -422,6 +441,9 @@ func (m *Model) renderBlockList() []string {
 func (m *Model) renderStatus() string {
 	if m.status != "" {
 		return m.status
+	}
+	if m.held != nil {
+		return "the agent's terminal is yours · every key goes to it · ctrl+] hand it back · ctrl+q quit"
 	}
 	if m.agent.mode {
 		return "agent mode · enter send · ctrl+c stop the turn · esc close · ctrl+space back to the shell"

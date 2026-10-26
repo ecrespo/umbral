@@ -396,10 +396,42 @@ has shown what the shared pieces look like.
 
 Each of these is detailed — What, Files, Done, test names — by a delta when its slice starts.
 
-### [ ] T-F2-20 · `terminal_interact`, the input ownership lock, take-over
+### [x] 2026-10-26 T-F2-20 · `terminal_interact`, the input ownership lock, take-over
 - **Slice:** F2b
+- **What:**
+  - `terminal_interact` with `send_keys`, `read_screen` and `wait_for` on the thread's PTY, the
+    session `run_command` uses; named keys encoded by libghostty's key encoder in the terminal's
+    modes;
+  - `send_keys` is `Exec`, the reads `ReadOnly` (`Spec.ReadOnlyCalls`);
+  - at the prompt the line is assembled across calls and an `enter` decided on it as
+    `run_command`'s; a program's input is matched as text;
+  - the state a call was decided on is checked again under the input lock;
+  - `thread.take_over` and `thread.hand_back`, and the TUI's `ctrl+]` in the agent panel.
 - **REQ:** REQ-FTU-001, REQ-FTU-002, REQ-FTU-003
+- **Files:**
+  - `internal/sessions/domain/interact.go`, `internal/sessions/interact.go`, `agent.go`,
+    `blocks.go`, `service.go`, `ports/ports.go`, `adapters/ghostty/keys.go`
+  - `internal/security/domain/program_input.go`, `policy.go`
+  - `internal/tools/domain/tool.go`, `adapters/registry/registry.go`,
+    `adapters/builtin/terminal.go`
+  - `internal/api/threads.go`, `server.go`; `cmd/umbrald/main.go`, `agents.go`
+  - `internal/tui/takeover.go`, `ports/ports.go`, `adapters/daemon/daemon.go`
+  - API 1.54 §2, §5.43, §6; Tech 1.74 §5.2, §5.3g
 - **Depends on:** slice F2a
+- **Done:**
+  - these tests are green:
+    - `TestKeysAreValidated_REQ_FTU_001`, `TestSendKeysUsesTheEmulatorsEncoder_REQ_FTU_001`,
+      `TestTerminalInteractDrivesAProgram_REQ_FTU_001`, `TestReadsNeverStartATerminal_REQ_FTU_001`,
+      `TestAnInterruptKeepsTheAgentsNextBlock_REQ_FTU_001`;
+    - `TestTakeOverLocksTheAgentOut_REQ_FTU_002`, `TestTakenOverIsAResult_REQ_FTU_002`,
+      `TestADecisionWhileTakenOverSendsNothing_REQ_FTU_002`, `TestTakeOverMethods_REQ_FTU_002`,
+      `TestTheTUIChordTakesTheThreadsTerminal_REQ_FTU_002`;
+    - `TestTheLineIsAssembledAcrossCalls_REQ_FTU_003`, `TestAssembledLineAsksOnEnter_REQ_FTU_003`,
+      `TestProgramInputIsMatchedAsText_REQ_FTU_003`, `TestProgramTailIsTheLineNotYetEntered_REQ_FTU_003`, `TestProgramInputKeysTheMatcherDoesNotModelAsk_REQ_FTU_003`,
+      `TestTheDecisionHoldsForTheTerminalItSaw_REQ_FTU_003`,
+      `TestAProgramsUnenteredInputNeverJoinsTheNextLine_REQ_FTU_003`;
+  - `task schema` is green.
+- **Written as:** delta `2026-10-terminal-interact`.
 
 ### [ ] T-F2-21 · The embedded yzma provider for the `fast` class
 - **Slice:** F2b
@@ -493,9 +525,9 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | REQ-RTR-001 | T-F2-11 | `TestACandidateWithoutToolsIsDropped_REQ_RTR_001` |
 | REQ-RTR-002 | T-F2-11 | `TestABreakerOpensAndProbes_REQ_RTR_002`, `TestRouterBreakerKeys_REQ_RTR_002` |
 | REQ-RTR-003 | T-F2-11 | `TestRouterPoliciesOrderTheCandidates_REQ_RTR_003`, `TestModelRouteExplainsTheOrder_REQ_RTR_003`, `TestModelRouteOverTheWire_REQ_RTR_003` |
-| REQ-FTU-001 | T-F2-20, T-F2-23 | deferred: named when the slice starts |
-| REQ-FTU-002 | T-F2-20 | deferred: named when the slice starts |
-| REQ-FTU-003 | T-F2-20 | deferred: named when the slice starts |
+| REQ-FTU-001 | T-F2-20, T-F2-23 | `TestKeysAreValidated_REQ_FTU_001`, `TestSendKeysUsesTheEmulatorsEncoder_REQ_FTU_001`, `TestTerminalInteractDrivesAProgram_REQ_FTU_001`, `TestReadsNeverStartATerminal_REQ_FTU_001`, `TestAnInterruptKeepsTheAgentsNextBlock_REQ_FTU_001`; T-F2-23's named when it starts |
+| REQ-FTU-002 | T-F2-20 | `TestTakeOverLocksTheAgentOut_REQ_FTU_002`, `TestTakenOverIsAResult_REQ_FTU_002`, `TestADecisionWhileTakenOverSendsNothing_REQ_FTU_002`, `TestTakeOverMethods_REQ_FTU_002`, `TestTheTUIChordTakesTheThreadsTerminal_REQ_FTU_002` |
+| REQ-FTU-003 | T-F2-20 | `TestTheLineIsAssembledAcrossCalls_REQ_FTU_003`, `TestAssembledLineAsksOnEnter_REQ_FTU_003`, `TestProgramInputIsMatchedAsText_REQ_FTU_003`, `TestProgramTailIsTheLineNotYetEntered_REQ_FTU_003`, `TestProgramInputKeysTheMatcherDoesNotModelAsk_REQ_FTU_003`, `TestProgramPendingIsTextAnInterruptLeft_REQ_FTU_003`, `TestTheDecisionHoldsForTheTerminalItSaw_REQ_FTU_003`, `TestAProgramsUnenteredInputNeverJoinsTheNextLine_REQ_FTU_003` |
 | REQ-LLM-009 | T-F2-21 | deferred: named when the slice starts |
 | REQ-AAI-001 | T-F2-22 | deferred: named when the slice starts |
 | REQ-AAI-002 | T-F2-22 | deferred: named when the slice starts |
@@ -541,4 +573,5 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | 2026-10-24 | T-F2-09 | done | A cancelled hosted turn kills the commands of the agent's terminals, keeping their sessions, before `session/cancel`; on a real daemon a `sleep 30` terminal's block ended within 500 ms of the cancel, against 5006 ms before. The 5 s process kill is unchanged. Each reported tool call is a `tool.acp:<kind>` span and each mediated request a `tool.acp:<method>` span under the turn's. `umb thread create --agent` sends `agent` and says on stderr that the agent's own network traffic and file reads are not recorded, and why it did not start; the panel lists a hosted thread with its agent and `unobserved` and adds the notice while it is selected. Delta `2026-10-acp-cancel-traces`, API 1.50, Tech 1.65. |
 | 2026-10-24 | T-F2-12 | done | US-F2-001 was run four times against a real daemon with two `gpt-oss:20b` threads and OpenCode 1.18.33 over ACP on the local Ollama, each thread in its own worktree (`docs/reports/usf2-2026-10-24.md`). In all four runs the main copy was untouched before merging, no thread's change reached another's worktree, every turn had a trace and every hosted write and command was decided by the policy engine. Run 1 passed every criterion: 3/3 `end_turn` and three clean merges. Run 2 failed on the model's work: the hosted rename did nothing, and fix ended `tool_error` with the test passing. Run 3 failed because fix also edited `go.mod`, approved by the simulated user. Run 4, with the hardened test, counted 0 `egress_log` rows and found no process left behind; it failed because the hosted rename again did nothing. The budgets were all met: worktree creation on 1 GiB took a p95 of 1.24 s against 2 s, an idle thread cost 0.16 MiB against 15 MiB, and ACP mediation took a p95 of 1.1 ms against 20 ms. The run found that the hosted agent is not offline: with an empty isolated cache OpenCode fetches its provider package from npm and a model catalogue at start, its own disclosed traffic. PRD F2 0.7 §9 and Q-F2-01 now say so (delta `2026-10-usf2-live`, self-approved). Two questions went to T-HRD-02: an offline manifest, and reads across sibling worktrees. A third question goes to the Tech Lead for the F2a close: what "US-F2-001 passes" means. The spec-guardian pass (FIX FIRST) was applied: the run's commands get their own home and no Go toolchain or module fetch, as in US-003; `egress_log` is asserted empty; no process may outlive the daemon; the unavailable-tool exemption covers `acp:other` rows only; and run 1 is stated as judged from its logged rows. With this, every F2a task is done. |
 | 2026-10-24 | F2a | closed | The Tech Lead closed slice F2a (delta `2026-10-f2a-close`): "US-F2-001 passes" means the daemon's properties held in every run measured and at least one run completed every task within its files, which the four runs of 2026-10-24 meet. The F2a budgets stay `live` measurements, not `task perf` gates. PRD F2 0.8. F2b … F2f start from their own deltas. |
+| 2026-10-26 | T-F2-20 | done | `terminal_interact` drives the thread's PTY: keys encoded by the emulator in the terminal's modes, the screen read, and waits on a regex, quiet or the program's end. At the prompt only text, `backspace` and a final `enter` or `ctrl+c` are accepted, the line is kept across calls and its `enter` is decided as `run_command`'s, so `rm -` then `rf /` asks; a program's input is matched as text, so `DROP TABLE` asks in `psql` and `SELECT *` does not. The tool recomputes its target at run time and the sessions module checks the state again under the input lock. A first run found the shell dropping the first byte after an interrupt and the kernel flushing what followed `^C` in the same write: `ctrl+c` at the prompt is now the call's last key and the next call starts with an empty line. `thread.take_over`/`hand_back` (API §5.43) and the TUI's `ctrl+]` hand the terminal to the user and back; a held PTY is never replaced. Every new test was mutated and reddened. The spec-guardian pass (FIX FIRST) was applied: a program's line is kept across calls and also read by the shell parser, because a program that leaves its input unread hands it to the shell (`rm -` then `rf ~` to `sleep`, or `x=rm; $x -rf ~`), and full-auto asks for program input; reads never start or replace a shell; a call decided while taken over writes nothing after the hand-back; the holder's close hands back; a hand-back types nothing and the agent's next write at the prompt starts with ctrl+e ctrl+u, after a ctrl+c lost the race with bash drawing its prompt; and the empty line after an interrupt is awaited so its prompt keeps the next line's claim. A verify pass then found a program's unentered input joining the agent's next prompt line, which the same discard now drops, and an allow rule covering a whole program line a shell would split, which must now cover every command. PRD F2 0.11 amends REQ-FTU-003. Delta `2026-10-terminal-interact`, self-approved under the standing F2 instruction, folded into API 1.54 and Tech 1.74. |
 | — | — | — | — |

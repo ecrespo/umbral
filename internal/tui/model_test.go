@@ -20,6 +20,7 @@ type fakeDaemon struct {
 	sessions int
 	blocks   map[string][]sessdomain.Block
 	input    [][]byte
+	inputIDs []string
 	resizes  []sessdomain.Size
 	events   chan ports.Event
 
@@ -46,6 +47,9 @@ type fakeDaemon struct {
 	list       ports.ThreadList
 	workspaces []string
 	listings   int
+	// takeOvers and handBacks are thread.take_over's and thread.hand_back's threads.
+	takeOvers []string
+	handBacks []string
 }
 
 func newFakeDaemon() *fakeDaemon {
@@ -71,10 +75,11 @@ func (f *fakeDaemon) Subscribe(_ context.Context, _ string) ([]byte, uint64, err
 	return []byte("\x1b[H\x1b[2J"), 7, nil
 }
 
-func (f *fakeDaemon) Input(_ context.Context, _ string, data []byte) error {
+func (f *fakeDaemon) Input(_ context.Context, id string, data []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.input = append(f.input, append([]byte(nil), data...))
+	f.inputIDs = append(f.inputIDs, id)
 	return nil
 }
 

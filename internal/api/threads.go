@@ -190,7 +190,73 @@ func threadMethods() map[string]method {
 		"thread.list":   {handle: handleThreadList, kinds: interactiveClients, params: emptyResult{}, result: threadListResult{}},
 		"thread.update": {handle: handleThreadUpdate, userOnly: true, kinds: interactiveClients, params: updateThreadParams{}, result: Thread{}},
 		"thread.focus":  {handle: handleThreadFocus, kinds: interactiveClients, params: focusThreadParams{}, result: emptyResult{}},
+		// The take-over chord's two halves (REQ-FTU-002): refused to an agent's terminal, which
+		// must not hand itself its terminal back.
+		"thread.take_over": {handle: handleThreadTakeOver, userOnly: true, kinds: interactiveClients, available: hasTerminals, params: threadIDParams{}, result: takeOverResult{}},
+		"thread.hand_back": {handle: handleThreadHandBack, userOnly: true, kinds: interactiveClients, available: hasTerminals, params: threadIDParams{}, result: emptyResult{}},
 	}
+}
+
+// hasTerminals is take-over's availability: the agent runtime and the sessions module's
+// terminal owner.
+func hasTerminals(cfg Config) bool { return cfg.Threads != nil && cfg.Terminals != nil }
+
+type threadIDParams struct {
+	ThreadID string `json:"thread_id"`
+}
+
+// takeOverResult is thread.take_over's answer: the session the client now types into.
+type takeOverResult struct {
+	SessionID string `json:"session_id"`
+}
+
+// terminalThread reads a take-over's thread id and checks the thread exists.
+func terminalThread(ctx context.Context, c *conn, raw json.RawMessage, method string) (string, error) {
+	svc, err := threads(c)
+	if err != nil {
+		return "", err
+	}
+	if c.server.cfg.Terminals == nil {
+		return "", fmt.Errorf("%w: the sessions module is not wired in", ErrNotImplemented)
+	}
+	var p threadIDParams
+	if err := decode(raw, &p, method); err != nil {
+		return "", err
+	}
+	if p.ThreadID == "" {
+		return "", ValidationError("thread_id is required", ErrorField{Field: fieldThreadID, Issue: requiredTag})
+	}
+	if _, err := svc.Get(ctx, p.ThreadID); err != nil {
+		return "", err
+	}
+	return p.ThreadID, nil
+}
+
+// handleThreadTakeOver is thread.take_over (REQ-FTU-002): the thread's PTY's input moves to the
+// user at once, and the agent's next terminal_interact call reads taken_over.
+func handleThreadTakeOver(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
+	threadID, err := terminalThread(ctx, c, raw, "thread.take_over")
+	if err != nil {
+		return nil, err
+	}
+	sessionID, err := c.server.cfg.Terminals.TakeOver(ctx, threadID, c.connectionID)
+	if err != nil {
+		return nil, err
+	}
+	c.holdsTerminal.Store(true)
+	return takeOverResult{SessionID: sessionID}, nil
+}
+
+// handleThreadHandBack is thread.hand_back: the input goes back to the agent.
+func handleThreadHandBack(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
+	threadID, err := terminalThread(ctx, c, raw, "thread.hand_back")
+	if err != nil {
+		return nil, err
+	}
+	if err := c.server.cfg.Terminals.HandBack(ctx, threadID); err != nil {
+		return nil, err
+	}
+	return emptyResult{}, nil
 }
 
 type createThreadParams struct {

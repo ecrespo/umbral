@@ -11,7 +11,8 @@ import (
 var agentRefused = []string{
 	"approval.respond", "layout.apply", "mcp.server.add", "mcp.server.remove", "pane.split", "rules.key.add",
 	"rules.key.remove", "rules.key.rotate", "rules.reset", "rules.rollback", "session.create", "session.input",
-	"skill.install", "skill.remove", "skill.set_enabled", "tab.create", "thread.update", "workspace.create",
+	"skill.install", "skill.remove", "skill.set_enabled", "tab.create", "thread.hand_back", "thread.take_over",
+	"thread.update", "workspace.create",
 	"worktree.close_group", "worktree.discard", "worktree.merge",
 }
 

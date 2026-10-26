@@ -144,6 +144,9 @@ type Config struct {
 	// methods answering METHOD_NOT_FOUND, which is what the daemon does before T-F0-05
 	// is wired in.
 	Sessions sessports.Sessions
+	// Terminals moves a thread's PTY between the agent and the user, served as
+	// thread.take_over and thread.hand_back (REQ-FTU-002). Nil leaves them NOT_IMPLEMENTED.
+	Terminals sessports.TerminalOwner
 	// Blocks is the history port. A nil value leaves the block.* methods answering
 	// METHOD_NOT_FOUND, which is what the daemon does before T-F0-10 is wired in.
 	Blocks sessports.Blocks
