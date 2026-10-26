@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // Keys typed to a program are written as a target this way (delta `2026-10-terminal-interact`,
@@ -16,18 +18,54 @@ func ProgramText(s string) string { return strings.ReplaceAll(s, "<", "<<") }
 // ProgramKey is a key in a program-input target.
 func ProgramKey(name string) string { return "<" + name + ">" }
 
-// programEnter is the key that ends a line, and programInterrupt the one that drops it.
+// programInterrupt is the key that drops the line typed so far.
+const programInterrupt = "ctrl+c"
+
+// UnknownProgramKey is a key typed to a program whose effect on its line the matcher does not
+// model: history, completion, a yank, a search or a cursor move can make the line the program
+// runs one the target does not show, so it asks like a destructive pattern.
+const UnknownProgramKey = "unmodelled_key"
+
+// keyEffect is what a key does to the line a program assembles, as far as the matcher reads it.
+type keyEffect int
+
 const (
-	programEnter     = "enter"
-	programInterrupt = "ctrl+c"
+	keyUnmodelled keyEffect = iota
+	keyLineEnd
+	keyFlush
+	keyErase
+	keySpace
 )
 
+// programKey is the effect of a named key. Every key a terminal sends as a carriage return or
+// a line feed ends a line, and so does ctrl+o, readline's operate-and-get-next; ctrl+h is a
+// backspace. ctrl+c and ctrl+d end the text before them for the matcher too: ctrl+c drops it
+// and ctrl+d hands it to the program unended, so what follows is read as a line of its own.
+func programKey(name string) keyEffect {
+	switch name {
+	case "enter", "ctrl+m", "ctrl+j", "ctrl+o":
+		return keyLineEnd
+	case programInterrupt, "ctrl+d":
+		return keyFlush
+	case "backspace", "ctrl+h":
+		return keyErase
+	case "space":
+		return keySpace
+	}
+	return keyUnmodelled
+}
+
 // ProgramLines reads a program-input target back as the lines the program receives: the text
-// between enters, with each backspace taking back the character before it and every other key
-// left out. A line after the last enter is one too, so text not yet entered is matched like
-// the rest.
+// between line ends, with each backspace taking back the character before it and a space
+// typed as one. A line after the last line end is one too, so text not yet entered is matched
+// like the rest.
 func ProgramLines(target string) []string {
-	var lines []string
+	lines, _ := readProgram(target)
+	return lines
+}
+
+// readProgram is ProgramLines, and whether the target holds a key the matcher does not model.
+func readProgram(target string) (lines []string, unmodelled bool) {
 	var line strings.Builder
 	for i := 0; i < len(target); {
 		switch {
@@ -42,16 +80,20 @@ func ProgramLines(target string) []string {
 				i = len(target)
 				continue
 			}
-			switch name := target[i+1 : i+end]; name {
-			case programEnter:
+			switch programKey(target[i+1 : i+end]) {
+			case keyLineEnd, keyFlush:
 				lines = append(lines, line.String())
 				line.Reset()
-			case "backspace":
+			case keyErase:
 				s := line.String()
 				if _, size := utf8.DecodeLastRuneInString(s); size > 0 {
 					line.Reset()
 					line.WriteString(s[:len(s)-size])
 				}
+			case keySpace:
+				line.WriteByte(' ')
+			case keyUnmodelled:
+				unmodelled = true
 			}
 			i += end + 1
 		default:
@@ -62,17 +104,27 @@ func ProgramLines(target string) []string {
 	if line.Len() > 0 || len(lines) == 0 {
 		lines = append(lines, line.String())
 	}
-	return lines
+	return lines, unmodelled
 }
 
-// matchProgramInput is MatchDestructive for a program's input. Every line is matched as
-// written against every pattern, with no shell parser and so no dynamic-word rule — a query's
-// `*` is not a glob. The program may not read what it is sent, and the shell then reads it as
-// its next line once the program ends (delta `2026-10-terminal-interact`, decision 4), so each
-// line is also read by the shell parser: a pattern it finds asks, and a line with shell
-// expansion syntax in it is decided by the parser alone, dynamic words included.
+// matchProgramInput is MatchDestructive for a program's input. A key the matcher does not
+// model asks. Every line is matched as written against every pattern, with no shell parser and
+// so no dynamic-word rule — a query's `*` is not a glob. The program may not read what it is
+// sent, and the shell then reads it as its next line once the program ends (delta
+// `2026-10-terminal-interact`, decision 4), so each line is also read by the shell parser: a
+// pattern it finds asks, so does a script read from stdin, and a line with shell expansion
+// syntax in it is decided by the parser alone, dynamic words included. A line the parser
+// cannot read asks only when the shell would read on into the next one — an open quote, a
+// trailing `|` or backslash — since a line it rejects runs nothing; SQL's parentheses are
+// such a line. The lines are matched joined as well, as the shell would read them.
 func matchProgramInput(patterns []DestructivePattern, target string) (string, bool) {
-	for _, line := range ProgramLines(target) {
+	lines, unmodelled := readProgram(target)
+	if unmodelled {
+		return UnknownProgramKey, true
+	}
+	// The shell reads what is left as one script, a line ended by a backslash joined to the
+	// next: it is matched whole as well as line by line.
+	for _, line := range append(lines, strings.Join(lines, "\n")) {
 		flat := strings.Join(strings.Fields(line), " ")
 		for _, p := range patterns {
 			if p.Expr.MatchString(flat) {
@@ -84,11 +136,24 @@ func matchProgramInput(patterns []DestructivePattern, target string) (string, bo
 		case !found:
 		case shellExpansion.MatchString(line):
 			return name, true
-		case name != UnknownDynamicWord && name != UnknownStdinScript && name != UnknownUnparseable:
+		case name == UnknownUnparseable:
+			if incompleteLine(line) {
+				return name, true
+			}
+		case name != UnknownDynamicWord:
 			return name, true
 		}
 	}
 	return "", false
+}
+
+// incompleteLine reports whether bash would read the next line as more of this one.
+func incompleteLine(line string) bool {
+	if n := len(line) - len(strings.TrimRight(line, "\\")); n%2 == 1 {
+		return true
+	}
+	_, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(line+"\n"), "")
+	return syntax.IsIncomplete(err)
 }
 
 // shellExpansion is what only a shell expands in a line: a named variable, `${…}`, `$(…)`, a
@@ -96,7 +161,7 @@ func matchProgramInput(patterns []DestructivePattern, target string) (string, bo
 var shellExpansion = regexp.MustCompile("\\$[A-Za-z_{(]|`")
 
 // ProgramTail is what of a program-input target the program has not been sent an end of
-// line for: the text after its last enter or ctrl+c, as written in the target. It is the input
+// line for: the text after its last line end or ctrl+c, as written in the target. It is the input
 // a later call adds to (REQ-FTU-003).
 func ProgramTail(target string) string {
 	start := 0
@@ -109,7 +174,7 @@ func ProgramTail(target string) string {
 			if end < 0 {
 				return target[start:]
 			}
-			if name := target[i+1 : i+end]; name == programEnter || name == programInterrupt {
+			if name := target[i+1 : i+end]; programKey(name) == keyLineEnd || name == programInterrupt {
 				start = i + end + 1
 			}
 			i += end + 1

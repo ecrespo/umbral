@@ -97,3 +97,54 @@ func TestProgramTailIsTheLineNotYetEntered_REQ_FTU_003(t *testing.T) {
 		t.Errorf("a line split across calls: %s %q, want destructive", d.Verdict, d.Reason)
 	}
 }
+
+// TestProgramInputKeysTheMatcherDoesNotModelAsk_REQ_FTU_003: every key that ends a line ends
+// one for the matcher, a space is a space, and a key that can bring back, complete or move
+// within text the matcher does not see asks like a destructive pattern, never as `always`. A
+// line piped to a shell or one the parser cannot read asks too: neither is a query's glob.
+func TestProgramInputKeysTheMatcherDoesNotModelAsk_REQ_FTU_003(t *testing.T) {
+	all := []Rule{allowRule("terminal_interact", "*")}
+	for _, c := range []struct {
+		keys   string
+		rules  []Rule
+		reason string
+	}{
+		{"rm<space>-rf<space>/<enter>", all, ReasonDestructive},
+		{"SELECT 1<ctrl+j>DELETE FROM t<enter>", []Rule{allowRule("terminal_interact", "SELECT*")}, ReasonPolicy},
+		{"SELECT 1<ctrl+m>DELETE FROM t<enter>", []Rule{allowRule("terminal_interact", "SELECT*")}, ReasonPolicy},
+		{"SELECT 1<ctrl+o>DELETE FROM t<enter>", []Rule{allowRule("terminal_interact", "SELECT*")}, ReasonPolicy},
+		{"<up><enter>", all, ReasonDestructive},
+		{"ls<tab><enter>", all, ReasonDestructive},
+		{"<ctrl+y><enter>", all, ReasonDestructive},
+		{"<ctrl+r>rm<enter>", all, ReasonDestructive},
+		{"<escape>k<enter>", all, ReasonDestructive},
+		{"m -rf /<home>r<enter>", all, ReasonDestructive},
+		{"cat f | bash<enter>", all, ReasonDestructive},
+		{"echo 'a<enter>", all, ReasonDestructive},
+		{"ls |<enter>", all, ReasonDestructive},
+		{"rm -r\\<enter>f ~<enter>", all, ReasonDestructive},
+		{"x<ctrl+d>rm -rf ~<enter>", all, ReasonDestructive},
+		{"x<ctrl+c>rm -rf ~<enter>", all, ReasonDestructive},
+		{"SELECT count(*) FROM t WHERE id IN (1, 2);<enter>", all, ""},
+		{"SELECT 1;<enter><ctrl+d>", all, ""},
+		{"x<ctrl+c>", all, ""},
+		{"SELECT 2<backspace>1;<ctrl+h><enter>", []Rule{allowRule("terminal_interact", "SELECT 1")}, ""},
+	} {
+		d := Decide(programInput(c.keys), ModeNormal, c.rules, false)
+		if d.Reason != c.reason {
+			t.Errorf("%q: %s %q, want %q", c.keys, d.Verdict, d.Reason, c.reason)
+		}
+		if c.reason == ReasonDestructive && d.AllowAlways {
+			t.Errorf("%q: offered always", c.keys)
+		}
+	}
+	for target, want := range map[string]string{
+		"a<ctrl+j>rm": "rm",
+		"a<ctrl+m>rm": "rm",
+		"a<ctrl+o>rm": "rm",
+	} {
+		if got := ProgramTail(target); got != want {
+			t.Errorf("ProgramTail(%q) = %q, want %q", target, got, want)
+		}
+	}
+}

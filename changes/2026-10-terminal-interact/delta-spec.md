@@ -78,12 +78,24 @@ read as shell, `SELECT * FROM t;` has a glob and asks, and so would every `psql`
    next write at the prompt (decision 6). Residuals, written
    down: a line built at run time without that syntax and typed ahead to a program that does
    not read it, and a shell nested in the program, are matched as text and by the patterns only;
-   the parser's `stdin_script` and `unparseable` readings are not applied to program input,
-   since a query's open quote would make every line ask.
-5. **The decision holds for the terminal it saw.** The state the target was computed from — at
-   the prompt or not, the line so far — is checked again under the session's input lock just
-   before the keys are written; if it changed, the call fails with "the terminal changed" and
-   nothing is written. Only the window between that check and the kernel write remains.
+   the parser's `dynamic_word` reading is not applied to program input without that syntax,
+   since a query's `*` would make every line ask. The parser's `stdin_script` reading asks, and
+   so does `unparseable` when the shell would read on into the next line (an open quote, a
+   trailing `|` or backslash); a line it rejects outright, as SQL's parentheses are, runs
+   nothing in a shell and does not ask. The lines are read the way a terminal sends them: a
+   `space` key is a space, `ctrl+m`, `ctrl+j` and `ctrl+o` end a line as `enter` does, and
+   `ctrl+h` is a backspace; `ctrl+c` and `ctrl+d` end the text before them for the matcher too,
+   and all the lines are matched joined as well, as a shell reading them would. Any other key
+   but `ctrl+c` and `ctrl+d` — history, completion,
+   `escape`, a yank, a search, a cursor move — can make the line the program runs one the
+   target does not show, so it asks as `unmodelled_key` on the destructive floor, never as
+   `always` and never under an allow rule (security review of 2026-10-26).
+5. **The decision holds for the terminal it saw.** At run time the tool computes the target
+   again from the terminal's state and refuses one that differs from the grant's, target or
+   program flag; the verdict depends on nothing else of the state, so an equal pair is the
+   decision the grant made. That state is then checked again under the session's input lock
+   just before the keys are written; if it changed, the call fails with "the terminal changed"
+   and nothing is written. Only the window between that check and the kernel write remains.
 6. **Take-over (REQ-FTU-002).** Two new methods, for the `tui` and `desktop` kinds, refused to an
    agent's terminal (API §2):
    - `thread.take_over {thread_id}` → `{session_id}` moves the thread's PTY's input to the
@@ -135,6 +147,7 @@ read as shell, `SELECT * FROM t;` has a glob and asks, and so would every `psql`
 - `TestProgramInputIsMatchedAsText_REQ_FTU_003` (`internal/security/domain`): `SELECT * FROM t;`
   does not ask, `DROP TABLE x;` and `x=rm; $x -rf ~` do; full-auto asks.
 - `TestProgramTailIsTheLineNotYetEntered_REQ_FTU_003` (`internal/security/domain`).
+- `TestProgramInputKeysTheMatcherDoesNotModelAsk_REQ_FTU_003` (`internal/security/domain`): line-end keys, `space`, unmodelled keys, stdin scripts and lines the shell would join.
 - `TestReadsNeverStartATerminal_REQ_FTU_001`, `TestAnInterruptKeepsTheAgentsNextBlock_REQ_FTU_001`
   (`internal/sessions/integration`).
 - `TestADecisionWhileTakenOverSendsNothing_REQ_FTU_002` (`internal/tools/adapters/builtin`).

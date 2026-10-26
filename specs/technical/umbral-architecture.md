@@ -1406,15 +1406,22 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   collapsed, and is also read by the shell parser, since a program that leaves its input unread
   hands it to the shell when it ends: a pattern the parser finds asks, and a line with shell
   expansion syntax (`$name`, `${`, `$(`, a backquote) is decided by the parser alone, dynamic
-  words included. `DROP TABLE x;` and `x=rm; $x -rf ~` ask, `SELECT *` and `SELECT $1` do not.
+  words included; a script read from stdin asks, and so does a line the shell would read on into
+  the next one, while one it rejects outright (SQL's parentheses) does not. A `space` key is a
+  space, `ctrl+m`, `ctrl+j`, `ctrl+o`, `ctrl+c` and `ctrl+d` end a line, `ctrl+h` is a backspace,
+  the lines are matched joined as well, as a shell reading them would, and any other key
+  but `ctrl+c` and `ctrl+d` asks as `unmodelled_key` on the destructive floor, since history,
+  completion or a cursor move can run a line the target does not show. `DROP TABLE x;` and
+  `x=rm; $x -rf ~` ask, `SELECT *` and `SELECT $1` do not.
   Full-auto never runs program input unasked, and an allow rule covers a program's line only
   when it covers every command a shell would read in it. Text typed to a program and never
   entered is dropped from the shell's next line by the agent's next write there. A line built
   otherwise and typed ahead to a program that does not read it is a residual.
-- **The decision holds for the terminal it saw.** The tool recomputes its target at run time and
-  refuses one that differs from the grant's; the sessions module checks the state the call was
-  decided on (prompt or not, the line so far, taken over or not) again under the session's input
-  lock before writing, and writes nothing when it changed.
+- **The decision holds for the terminal it saw.** The tool recomputes its target and program
+  flag from the terminal's state at run time and refuses a pair that differs from the grant's,
+  which is all the verdict reads; the sessions module checks that state (prompt or not, the line
+  so far, taken over or not) again under the session's input lock before writing, and writes
+  nothing when it changed.
 - **Sharing the PTY with `run_command`.** `run_command` is refused while a program
   `terminal_interact` started is in the foreground or text it typed is on the prompt's line. An
   interrupt typed at the prompt is the call's last key; the next call writes an empty line first,

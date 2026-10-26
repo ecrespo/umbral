@@ -427,7 +427,7 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
       `TestADecisionWhileTakenOverSendsNothing_REQ_FTU_002`, `TestTakeOverMethods_REQ_FTU_002`,
       `TestTheTUIChordTakesTheThreadsTerminal_REQ_FTU_002`;
     - `TestTheLineIsAssembledAcrossCalls_REQ_FTU_003`, `TestAssembledLineAsksOnEnter_REQ_FTU_003`,
-      `TestProgramInputIsMatchedAsText_REQ_FTU_003`, `TestProgramTailIsTheLineNotYetEntered_REQ_FTU_003`,
+      `TestProgramInputIsMatchedAsText_REQ_FTU_003`, `TestProgramTailIsTheLineNotYetEntered_REQ_FTU_003`, `TestProgramInputKeysTheMatcherDoesNotModelAsk_REQ_FTU_003`,
       `TestTheDecisionHoldsForTheTerminalItSaw_REQ_FTU_003`,
       `TestAProgramsUnenteredInputNeverJoinsTheNextLine_REQ_FTU_003`;
   - `task schema` is green.
@@ -527,7 +527,7 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | REQ-RTR-003 | T-F2-11 | `TestRouterPoliciesOrderTheCandidates_REQ_RTR_003`, `TestModelRouteExplainsTheOrder_REQ_RTR_003`, `TestModelRouteOverTheWire_REQ_RTR_003` |
 | REQ-FTU-001 | T-F2-20, T-F2-23 | `TestKeysAreValidated_REQ_FTU_001`, `TestSendKeysUsesTheEmulatorsEncoder_REQ_FTU_001`, `TestTerminalInteractDrivesAProgram_REQ_FTU_001`, `TestReadsNeverStartATerminal_REQ_FTU_001`, `TestAnInterruptKeepsTheAgentsNextBlock_REQ_FTU_001`; T-F2-23's named when it starts |
 | REQ-FTU-002 | T-F2-20 | `TestTakeOverLocksTheAgentOut_REQ_FTU_002`, `TestTakenOverIsAResult_REQ_FTU_002`, `TestADecisionWhileTakenOverSendsNothing_REQ_FTU_002`, `TestTakeOverMethods_REQ_FTU_002`, `TestTheTUIChordTakesTheThreadsTerminal_REQ_FTU_002` |
-| REQ-FTU-003 | T-F2-20 | `TestTheLineIsAssembledAcrossCalls_REQ_FTU_003`, `TestAssembledLineAsksOnEnter_REQ_FTU_003`, `TestProgramInputIsMatchedAsText_REQ_FTU_003`, `TestProgramTailIsTheLineNotYetEntered_REQ_FTU_003`, `TestTheDecisionHoldsForTheTerminalItSaw_REQ_FTU_003`, `TestAProgramsUnenteredInputNeverJoinsTheNextLine_REQ_FTU_003` |
+| REQ-FTU-003 | T-F2-20 | `TestTheLineIsAssembledAcrossCalls_REQ_FTU_003`, `TestAssembledLineAsksOnEnter_REQ_FTU_003`, `TestProgramInputIsMatchedAsText_REQ_FTU_003`, `TestProgramTailIsTheLineNotYetEntered_REQ_FTU_003`, `TestProgramInputKeysTheMatcherDoesNotModelAsk_REQ_FTU_003`, `TestTheDecisionHoldsForTheTerminalItSaw_REQ_FTU_003`, `TestAProgramsUnenteredInputNeverJoinsTheNextLine_REQ_FTU_003` |
 | REQ-LLM-009 | T-F2-21 | deferred: named when the slice starts |
 | REQ-AAI-001 | T-F2-22 | deferred: named when the slice starts |
 | REQ-AAI-002 | T-F2-22 | deferred: named when the slice starts |
