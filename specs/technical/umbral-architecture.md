@@ -731,6 +731,14 @@ id = "openrouter"
 type = "openrouter"
 base_url = "https://openrouter.ai/api/v1"
 api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allows it
+
+[[providers]]
+id = "embedded"
+type = "yzma"                   # REQ-LLM-009: a GGUF model inside the daemon
+lib_path = "/home/me/.local/llama-cpp/b11899/llama-b11899"   # llama.cpp b11480+, `task deps:llama`
+models_dir = "/home/me/models"  # each <name>.gguf is the model embedded/<name>
+[providers.options]             # num_ctx 512-32768 (4096), temperature 0-2 (0.2), keep_alive s (300)
+num_ctx = 4096
 ```
 
 - **It is real TOML**, read with `pelletier/go-toml/v2` and validated against a JSON Schema
@@ -758,8 +766,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 - **The catalog** (T-F1-05, `internal/llmgw`). Each provider becomes an adapter —
   `openai-compat`, `lmstudio` and `llamacpp` through Fantasy's openaicompat provider, `openrouter`
   through its OpenRouter provider (whose built-in URL the adapter's HTTP client rewrites to
-  `base_url`), `ollama` through the native adapter of DD-005; `yzma` arrives later, and until then
-  it is listed with reason `no_adapter`. A provider down for its credential gets no adapter at all, so nothing can
+  `base_url`), `ollama` through the native adapter of DD-005, and `yzma` in process (below). A provider down for its credential gets no adapter at all, so nothing can
   call it. Discovery reads `<base_url>/models` (`/api/tags` for `ollama`) at start and after every reload, in the background,
   and stores the result in `models`, one row per id: a provider that lists one id twice — Ollama 0.40
   does for a model pulled for two backends — keeps its first entry, in the catalog and for `num_ctx`
@@ -773,6 +780,31 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
   at all and its models are listed `down` with `offline`. The rows of a provider removed from
   `models.toml` are deleted on the next refresh. A provider's key stays in a type that prints as
   `[REDACTED]` up to the call that puts it in a header.
+- **The embedded provider** (T-F2-21, REQ-LLM-009, delta `2026-10-yzma-provider`,
+  `internal/llmgw/adapters/yzma`). A `type = "yzma"` provider loads a GGUF model into the
+  daemon through `github.com/hybridgroup/yzma`'s `pkg/llama`, which binds llama.cpp's shared
+  libraries with purego: no cgo, no server, no socket and no `egress_log` row, so offline mode
+  keeps it. `lib_path` is the absolute directory of those libraries, release b11480 or later
+  (`task deps:llama` installs the pinned b11899 and checks its SHA-256); they are loaded on the
+  first call and once per process, so a provider built after that load — or after a load that
+  failed half way — with another `lib_path` is `down` with `invalid_config`, and one whose call
+  would load a second set fails it permanently. `models_dir` is an absolute directory: each regular file, or symlink to one, named
+  `<name>.gguf` that starts with the bytes `GGUF` is the model `<provider>/<name>`; discovery
+  reads the directory and the four bytes and nothing else, and a name with a separator or a
+  leading dot is never opened. The models are `local`, with no tools, vision, structured output
+  or reasoning switch, and a window of `options.num_ctx` (4096, 512 to 32768); a request that
+  needs one of those is `ErrUnsupported`, so the router moves on, and an unknown option is
+  `invalid_config`. A call renders the system prompt and the messages with the model's own chat
+  template (a tool result as user text, and a message's text never able to name the
+  vocabulary's control tokens: their text in it is broken by a zero-width space), is refused permanently when the prompt and
+  `MaxOutputTokens` (256 by default) do not fit the window, samples at `options.temperature`
+  (0.2; 0 is greedy) from an emptied cache, streams whole characters as `text_delta`, checks
+  the context between tokens, and ends with `usage` (prompt and answer tokens, cost 0) and
+  `done` (`stop`, or `length` at the limit). One call runs at a time and one model is resident
+  per provider: a call for another frees it first, and `options.keep_alive` seconds without a
+  call (300; 0 keeps it) free it, and so does a `config.reload` that replaces the provider: the
+  catalog closes a replaced provider holding something once its running call ends. A crash inside llama.cpp ends the daemon, since purego gives
+  no isolation; what can be checked first — the libraries' load, the magic, the window — is.
 - **Presets** (T-F1-08, REQ-LLM-007): `config.Presets` holds the Hugging Face router
   (`https://router.huggingface.co/v1`, key `keyring:umbral/huggingface`) and OmniRoute
   (`http://127.0.0.1:20128/v1`, no key), both `openai-compat`. `examples/models.toml` carries
@@ -1985,4 +2017,5 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.72 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-catalog-third-party` (T-HRD-09): §5.3b the skill catalog sits in a `<skills>` block whose preamble names the descriptions third-party text, its entries escaped |
 | 1.73 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-zsh-prompt-sp` (T-HRD-10): §5.2b a thread-owned session gets `UMBRAL_AGENT_SESSION=1`, and the zsh bootstrap turns `PROMPT_SP` off there only |
 | 1.74 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` (T-F2-20): new §5.3g, `terminal_interact` on the thread's PTY, what its calls are decided on (a program's line kept across calls and read by the shell parser too; full-auto asks), reads that never start a shell, `thread.take_over`/`hand_back` with the line dropped by the agent's next write and release on close, and the TUI's `ctrl+]`; §5.2 `tools/adapters` may also use `AgentKeys` |
+| 1.75 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-yzma-provider` (T-F2-21): §5.1's embedded provider — `type = "yzma"` on yzma's purego `pkg/llama`, `lib_path` loaded once per process, `models_dir`'s GGUF files as local text-only models, the window, one resident model freed by another call, `keep_alive` or a reload, and the `models.toml` example. |
 | 1.76 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` decision 9: §5.3g a `terminal_interact` call at the prompt that enters nothing returns once the shell's output after it has settled |

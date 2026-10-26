@@ -27,8 +27,8 @@ import (
 
 // TestEveryProviderTypeGetsItsAdapter_REQ_LLM_001: each type of models.toml maps to its adapter; a
 // provider down for its credential gets none, so nothing can call it (REQ-SEC-008); a type
-// with no adapter yet is reported as such rather than hidden; a base URL no adapter accepts
-// is down with invalid_config.
+// with no adapter yet is reported as such rather than hidden; a base URL or a yzma path no
+// adapter accepts is down with invalid_config (REQ-LLM-009).
 func TestEveryProviderTypeGetsItsAdapter_REQ_LLM_001(t *testing.T) {
 	t.Parallel()
 
@@ -40,12 +40,12 @@ func TestEveryProviderTypeGetsItsAdapter_REQ_LLM_001(t *testing.T) {
 		{ID: "hf", Type: "openai-compat", BaseURL: "https://router.huggingface.co/v1"},
 		{ID: "ollama", Type: "ollama", BaseURL: "http://127.0.0.1:11434"},
 		{ID: "yz", Type: "yzma", LibPath: "/x", ModelsDir: "/y"},
+		{ID: "yzrel", Type: "yzma", LibPath: "lib", ModelsDir: "/y"},
 		{ID: "bad", Type: "openai-compat", BaseURL: "ftp://example.com"},
 	}}
 	resolved := []secdomain.ResolvedCredential{
 		{ProviderID: "or", Health: secdomain.HealthDegraded, Reason: secdomain.ReasonEnvSecret, Secret: secdomain.NewSecret("k")},
 		{ProviderID: "hf", Health: secdomain.HealthDown, Reason: secdomain.ReasonKeyringUnavailable},
-		{ProviderID: "yz", Health: secdomain.HealthDegraded, Reason: secdomain.ReasonEnvSecret},
 	}
 	entries := buildEntries(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, models, resolved)
 	byID := map[string]struct {
@@ -71,7 +71,8 @@ func TestEveryProviderTypeGetsItsAdapter_REQ_LLM_001(t *testing.T) {
 		"or":     {true, llmdomain.HealthDegraded, secdomain.ReasonEnvSecret},
 		"hf":     {false, llmdomain.HealthDown, secdomain.ReasonKeyringUnavailable},
 		"ollama": {true, llmdomain.HealthUnknown, ""},
-		"yz":     {false, llmdomain.HealthUnknown, llmdomain.ReasonNoAdapter},
+		"yz":     {true, llmdomain.HealthUnknown, ""},
+		"yzrel":  {false, llmdomain.HealthDown, llmdomain.ReasonInvalidConfig},
 		"bad":    {false, llmdomain.HealthDown, llmdomain.ReasonInvalidConfig},
 	} {
 		if byID[id] != want {

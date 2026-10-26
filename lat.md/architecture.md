@@ -116,6 +116,12 @@ The agent sees skills through [[internal/context/adapters/skills/skills.go#Servi
 
 The panel never patches its lists from a notification: `mcp.server_state` and `skill.changed` make it list again ([[internal/tui/commands.go#Model#loadServersCmd]]), relying on persist-before-notify, and opening the panel lists too because removing a server publishes nothing. [[internal/tui/agent.go#Model#extensionLines]] draws the two lists, each made one line per item and capped at two rows by [[internal/tui/agent.go#wrapItems]] so remote text cannot break the layout. A turn's `mcp_*` calls that reached the server and its successful `skill_load` names are summed into one row at its end.
 
+## The embedded provider runs llama.cpp in process
+
+A `yzma` provider serves a GGUF model from inside the daemon, with no server and no socket (REQ-LLM-009, delta `2026-10-yzma-provider`).
+
+[[internal/llmgw/adapters/yzma/yzma.go#Provider]] lists the `<name>.gguf` files of `models_dir` whose first bytes are `GGUF`, never opening a name with a separator or a leading dot, and loads llama.cpp's libraries from `lib_path` on its first call through [[internal/llmgw/adapters/yzma/yzma.go#libLoader]], once per process, since purego cannot unload them. The models are local and text only: tools, a schema, reasoning or vision are `ErrUnsupported`, so the router moves on. One model is resident per provider; another model's call frees it first, `keep_alive` frees it when idle, and [[internal/llmgw/catalog.go#Catalog#Configure]] closes a provider a reload replaces. [[internal/llmgw/adapters/yzma/llama.go#llamaModel#neutralize]] breaks any control token's text in a message, so only the template frames turns; [[internal/llmgw/adapters/yzma/llama.go#llamaModel#generate]] samples from an emptied cache, and the adapter streams only whole characters and refuses a prompt that leaves no room in the window before decoding.
+
 ## Discovery stores one model per id
 
 [[internal/llmgw/catalog.go#Catalog#Refresh]] keeps the first entry when a provider lists one id twice, because a request names the model only by that id.

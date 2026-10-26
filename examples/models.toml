@@ -86,3 +86,17 @@ id = "openrouter"
 type = "openrouter"
 base_url = "https://openrouter.ai/api/v1"
 api_key = "keyring:umbral/openrouter"
+
+# --- Embedded model (REQ-LLM-009) ---------------------------------------------------------
+# A GGUF model loaded into the daemon itself: no server, no network. `task deps:llama` installs
+# llama.cpp's libraries; every <name>.gguf in models_dir is the model embedded/<name>. Text only,
+# no tools: name it in [classes] fast.
+#
+# [[providers]]
+# id = "embedded"
+# type = "yzma"
+# lib_path = "/home/me/.local/llama-cpp/b11899/llama-b11899"
+# models_dir = "/home/me/models"
+# [providers.options]
+# num_ctx = 4096
+# keep_alive = 300
