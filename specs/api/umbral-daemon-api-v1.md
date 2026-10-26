@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.54 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.55 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -1439,6 +1439,7 @@ terminal (§2).
 | `block.started` | `Block` | REQ-BLK-001 |
 | `block.updated` | `{block_id, state}` (e.g. `interactive`) | REQ-BLK-004 |
 | `block.closed` | `Block` | REQ-BLK-002 |
+| `block.suggestion` | `{block_id, session_id, text, model}` — one line from a local `fast` model for a user's block that finished with an exit code other than 0 and 130, while `[active_ai] enabled`; at most `per_minute` in a sliding minute and one at a time, never from a remote model, never persisted. `text` is at most 200 characters with no escape sequence, control or format character; it is model output shaped by the command's output, so a client treats it as untrusted. `model` is the catalog id that answered, `provider/name` (delta `2026-10-active-ai`) | REQ-AAI-001, REQ-AAI-003 |
 | `thread.delta` | `{thread_id, turn_id, kind:"text"\|"reasoning", text}` | REQ-AGT-001 |
 | `thread.tool_call` | `ToolCall` (on every `status` change) | REQ-AGT-003 |
 | `approval.requested` | `Approval` | REQ-AGT-004 |
@@ -1662,3 +1663,4 @@ printf '%s\n' \
 | 1.52 | 2026-10-24 | No change to the wire. Delta `2026-10-hosted-agent-peer` (T-HRD-05): §2 "An agent's terminal" counts a hosted ACP agent's process and its session, from its launch |
 | 1.53 | 2026-10-24 | No change to the wire. Delta `2026-10-shell-parser` (T-HRD-06): §5.22 full-auto still asks for a command line the policy cannot read statically; §5.36 the destructive step's `detail` may be `dynamic_word`, `stdin_script` or `unparseable`, names a rule file may not use |
 | 1.54 | 2026-10-26 | Additive within `protocol_version = 1`. Delta `2026-10-terminal-interact` (T-F2-20): §5.43 `thread.take_over` and `thread.hand_back` (REQ-FTU-002); §2 refuses both to an agent's terminal; `session.input_owner` also announces a take-over |
+| 1.55 | 2026-10-26 | Additive within `protocol_version = 1`. Delta `2026-10-active-ai` (T-F2-22): §6 `block.suggestion` (REQ-AAI-001) |

@@ -164,6 +164,15 @@ type blockUpdatedPayload struct {
 	State   string `json:"state"`
 }
 
+// blockSuggestionPayload is `block.suggestion` (API §6, REQ-AAI-001): a local model's one line
+// for a failed block, never persisted.
+type blockSuggestionPayload struct {
+	BlockID   string `json:"block_id"`
+	SessionID string `json:"session_id"`
+	Text      string `json:"text"`
+	Model     string `json:"model"`
+}
+
 // paneMovedPayload is REQ-WS-007's: it names both identifiers so a client can follow the
 // terminal across the move instead of seeing an unrelated pane appear.
 type paneMovedPayload struct {

@@ -62,7 +62,26 @@ type Settings struct {
 	// ACP is `[acp]` and `[[acp.agents]]`: the third-party agents Umbral hosts and their
 	// limits (REQ-ACP-001, REQ-ACP-005, REQ-ACP-006). Read at start.
 	ACP ACP
+	// ActiveAI is `[active_ai]`: one-line suggestions on failed blocks from a local model
+	// (REQ-AAI-001). Off by default. Read at start.
+	ActiveAI ActiveAI
 }
+
+// ActiveAI is `[active_ai]` (delta `2026-10-active-ai`).
+type ActiveAI struct {
+	Enabled bool // `enabled`
+	// PerMinute is `per_minute`: suggestions asked in any sliding 60 s.
+	PerMinute int
+}
+
+// DefaultActiveAIPerMinute is REQ-AAI-001's default.
+const DefaultActiveAIPerMinute = 4
+
+// The bounds of `[active_ai] per_minute`.
+const (
+	MinActiveAIPerMinute = 1
+	MaxActiveAIPerMinute = 60
+)
 
 // DefaultMaxConcurrentTurns is REQ-ORC-002's default.
 const DefaultMaxConcurrentTurns = 3
@@ -165,6 +184,7 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 		MaxMessageBytes: DefaultMaxMessageBytes, Retention: DefaultRetention(), NotificationsEnabled: true,
 		RulesURL: DefaultRulesURL, Stall: DefaultStall(), WorktreeCommitTimeoutS: DefaultWorktreeCommitTimeoutS,
 		MaxConcurrentTurns: DefaultMaxConcurrentTurns, ACP: DefaultACP(),
+		ActiveAI: ActiveAI{PerMinute: DefaultActiveAIPerMinute},
 	}
 
 	raw, err := os.ReadFile(path) // #nosec G304 -- the path is the daemon's own config location
@@ -269,6 +289,20 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 					ErrSettingsInvalid, path, key, value, MinConcurrentTurns, MaxConcurrentTurns)
 			}
 			settings.MaxConcurrentTurns = n
+		case "active_ai.enabled":
+			on, err := strconv.ParseBool(value)
+			if err != nil {
+				return Settings{}, fmt.Errorf("%w: %s: active_ai.enabled is %q, want true or false",
+					ErrSettingsInvalid, path, value)
+			}
+			settings.ActiveAI.Enabled = on
+		case "active_ai.per_minute":
+			n, err := strconv.Atoi(value)
+			if err != nil || n < MinActiveAIPerMinute || n > MaxActiveAIPerMinute {
+				return Settings{}, fmt.Errorf("%w: %s: %s is %q, want a whole number from %d to %d",
+					ErrSettingsInvalid, path, key, value, MinActiveAIPerMinute, MaxActiveAIPerMinute)
+			}
+			settings.ActiveAI.PerMinute = n
 		case apiSection + "." + maxMessageKey:
 			n, err := parseMaxMessageBytes(value)
 			if err != nil {

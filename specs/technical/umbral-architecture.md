@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.76 |
+| **Version** | 1.77 |
 | **Date** | 2026-10-26 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -664,6 +664,17 @@ number from 1 to 64 (3). A turn over it is held, `queued`, and started in arriva
 turn ends (REQ-ORC-002). A value out of range stops the daemon naming the key. Not live: a change
 needs a restart (delta `2026-10-parallel-turns`).
 
+`[active_ai]` turns on Active AI (REQ-AAI-001), off by default: `enabled` (false) and
+`per_minute` (4, 1 to 60), the suggestions asked in any sliding 60 s. A user's block that finishes
+with an exit code other than 0 and 130 sends its command, exit code, directory and the last 2 KiB
+of its plain output to the `fast` class with `LocalOnly` set, so the router drops every remote
+candidate before anything is sent (REQ-AAI-003); the first line of the answer, at most 200
+characters with escape sequences and control and format characters removed, is published as `block.suggestion` and not stored. One suggestion is made at a time,
+within 10 s; a failure over the rate or while one is being made is dropped and does not count. The TUI keeps a suggestion only for its pane's last closed block and inserts it into the draft with its attachment tokens made inert.
+The module is `activeai`, a leaf over its own ports, which `cmd` implements over the router and
+the block reader. A value out of range stops the daemon naming the key. Not live: a change needs
+a restart (delta `2026-10-active-ai`).
+
 `[worktrees] commit_timeout` bounds a worktree merge's commit in whole seconds, 5 to 3600 (60).
 It covers the repository's hooks and signing. When it passes, the commit's whole process
 group is killed and the merge is refused `commit_failed` (REQ-WT-004). A value out of range
@@ -844,6 +855,7 @@ num_ctx = 4096
 | `security` | stdlib, `go-keyring` in its adapter, `bus` in its ports (to name `rules.update_rejected`) and the root `llmgw/domain` (for the egress record a rejection writes). Its root holds policy.explain, which reads a thread's mode, directory and rules through its own `ExplainSource` port and asks the same pure `Decide` a turn uses; `cmd/umbrald` adapts the agent thread store to that port and hands both the runtime and the explainer one `isRepo`, so an explanation and a turn agree about the write root (delta `2026-10-policy-explain`). Its root also holds the `Rules` manager of signed bundles (DD-016), which reaches storage through its own `RuleStore` port and replaces the active set's base through `RuleBase`. `tools/rulesign` depends on `security/domain` only (delta `2026-10-signed-rule-bundles`) |
 | `context` | its own `ports` and `domain`, `store` and `bus` in its adapters, and `bus` in its ports, to name `skill.changed` (delta `2026-10-skill-store`) |
 | `mcp` | its own `ports` and `domain`, plus `bus`. `tools/adapters` may use `mcp/domain`, for `mcptools`, which offers a server's tools; `api` the `ports` and `domain` of `mcp`; only `cmd/*` wires the manager to the registry (delta `2026-10-mcp-client`) |
+| `activeai` | its own `ports` and `domain`, `ports` and `domain` of `sessions` (for `block.closed` and the escape-sequence stripper), plus `bus`, which its `ports` import to name `block.suggestion`; never `llmgw`, `agents` or `api`. `cmd/umbrald` implements its `Model` port over the router, always `LocalOnly`, and its `Blocks` port over the block reader (delta `2026-10-active-ai`) |
 | `slots` | stdlib only: the arrival-order semaphore of the runtime's turn slots and the router's per-provider queues (T-F2-04). `agents` and `llmgw` may import it, so neither reaches the other through it |
 | `obs` | stdlib, and OpenTelemetry from T-F1-18; imported only by `cmd/*`. Modules count through a port of their own, which `cmd/umbrald` gives the `obs` implementation (delta `2026-10-tool-call-repair`) |
 | `cmd/*` | everything |
@@ -2019,3 +2031,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.74 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` (T-F2-20): new §5.3g, `terminal_interact` on the thread's PTY, what its calls are decided on (a program's line kept across calls and read by the shell parser too; full-auto asks), reads that never start a shell, `thread.take_over`/`hand_back` with the line dropped by the agent's next write and release on close, and the TUI's `ctrl+]`; §5.2 `tools/adapters` may also use `AgentKeys` |
 | 1.75 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-yzma-provider` (T-F2-21): §5.1's embedded provider — `type = "yzma"` on yzma's purego `pkg/llama`, `lib_path` loaded once per process, `models_dir`'s GGUF files as local text-only models, the window, one resident model freed by another call, `keep_alive` or a reload, and the `models.toml` example. |
 | 1.76 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` decision 9: §5.3g a `terminal_interact` call at the prompt that enters nothing returns once the shell's output after it has settled |
+| 1.77 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-active-ai` (T-F2-22): §5.1 adds `[active_ai]` (`enabled`, `per_minute`), the router's `LocalOnly`, and the `activeai` leaf module; §5.2 its row |

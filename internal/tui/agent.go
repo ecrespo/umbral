@@ -209,6 +209,35 @@ func (m *Model) attachBlock() tea.Cmd {
 	return nil
 }
 
+// acceptSuggestion is alt+s on the focused pane's suggestion (REQ-AAI-002): the panel opens in
+// agent mode on a new thread of the focused workspace, created at once, with the block and the
+// suggestion in the input as a draft. Nothing is sent.
+func (m *Model) acceptSuggestion(p *pane) tea.Cmd {
+	a := &m.agent
+	if a.creating {
+		m.status = "a thread is being created: wait for it"
+		return nil
+	}
+	sg := p.suggestion
+	p.suggestion = nil
+	if a.threadID != "" {
+		kept := a.threadView
+		if a.views == nil {
+			a.views = map[string]*threadView{}
+		}
+		a.views[a.threadID] = &kept
+	}
+	a.threadView, a.threadID, a.queued = threadView{}, "", nil
+	a.input = []rune("@block:" + sg.blockID + " " + inert(oneLine(sg.text)))
+	a.mode, a.creating = true, true
+	cmds := []tea.Cmd{m.createThreadCmd(p.cwd, a.workspace), m.syncView()}
+	if !a.open {
+		a.open = true
+		cmds = append(cmds, m.resize(m.width, m.height), m.loadExtensionsCmd(), m.loadThreadsCmd())
+	}
+	return tea.Batch(cmds...)
+}
+
 // handleAgentKey is a keypress in agent mode that the TUI's own shortcuts did not claim.
 //
 // Approvals are answered with control chords, never letters: an approval can arrive while
@@ -862,6 +891,19 @@ func wrapItems(label string, items []string, width int) []string {
 // REQ-CTX-002's `@directory`, and `@dir` for short.
 var attachmentPrefixes = []struct{ prefix, kind string }{
 	{"@block:", "block"}, {"@file:", "file"}, {"@directory:", "dir"}, {"@dir:", "dir"},
+}
+
+// inert is model text placed in the input with no attachment token of its own: a suggestion
+// was written by a model that read a command's output, and `@file:~/.ssh/id_rsa` in it must not
+// attach a file when the user sends the draft. The `@` of such a word is followed by a space.
+func inert(text string) string {
+	words := strings.Fields(text)
+	for i, w := range words {
+		if len(parseAttachments(w)) > 0 {
+			words[i] = "@ " + strings.TrimPrefix(w, "@")
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 // parseAttachments finds `@block:<id>`, `@file:<path>` and `@directory:<path>` in the text,

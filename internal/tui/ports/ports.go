@@ -209,6 +209,9 @@ const (
 	// lists its threads again on either.
 	EventAttentionChanged
 	EventWorkspaceFocused
+	// EventBlockSuggestion is a local model's one line for a failed block
+	// (`block.suggestion`, REQ-AAI-001): BlockID and SessionID, and Text.
+	EventBlockSuggestion
 )
 
 // Event is one thing that happened, flattened so the model does not decode JSON.
@@ -226,6 +229,9 @@ type Event struct {
 	Err error
 	// CWD is where a closed block's command ran, for EventBlockClosed.
 	CWD string
+	// BlockID is the closed block, for EventBlockClosed, and the block a suggestion is for, for
+	// EventBlockSuggestion.
+	BlockID string
 
 	// ThreadID names the thread of the agent events.
 	ThreadID string

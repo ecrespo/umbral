@@ -312,3 +312,28 @@ func TestMaxConcurrentTurnsIsConfigurable_REQ_ORC_002(t *testing.T) {
 		}
 	}
 }
+
+// TestActiveAIIsReadFromConfig_REQ_AAI_001: `[active_ai]` is off unless the file turns it on,
+// asks at most four suggestions a minute unless it says otherwise, and a value out of bounds
+// stops the daemon rather than being replaced by the default.
+func TestActiveAIIsReadFromConfig_REQ_AAI_001(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, write(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.ActiveAI != (ActiveAI{Enabled: false, PerMinute: 4}) {
+		t.Fatalf("default active_ai %+v, want off at 4 a minute", settings.ActiveAI)
+	}
+	settings, err = LoadSettings(nil, write(t, "[active_ai]\nenabled = true\nper_minute = 10\n"))
+	if err != nil || settings.ActiveAI != (ActiveAI{Enabled: true, PerMinute: 10}) {
+		t.Fatalf("enabled at 10: %+v, %v", settings.ActiveAI, err)
+	}
+	for _, bad := range []string{"enabled = yes", "per_minute = 0", "per_minute = 61", "per_minute = 1.5"} {
+		_, err := LoadSettings(nil, write(t, "[active_ai]\n"+bad+"\n"))
+		if !errors.Is(err, ErrSettingsInvalid) || !strings.Contains(err.Error(), "active_ai.") {
+			t.Errorf("%q: %v, want ErrSettingsInvalid naming active_ai", bad, err)
+		}
+	}
+}

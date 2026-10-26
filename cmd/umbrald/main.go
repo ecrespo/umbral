@@ -472,6 +472,27 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	gauges.waits.Store(waitEngine)
 
+	// Active AI (T-F2-22): a one-line suggestion from a local model when a user's command
+	// fails. Off unless `[active_ai] enabled`; subscribed before the socket serves.
+	suggestions, err := newActiveAI(settings.ActiveAI, eventBus, models.router, blockReader, logger)
+	if err != nil {
+		logger.Error("cannot build Active AI", slog.Any("error", err))
+		return exitCantCreate
+	}
+	if suggestions != nil {
+		// Its own context, as the retention job's: Serve can return without ctx ending.
+		suggestCtx, stopSuggestions := context.WithCancel(ctx)
+		suggestionsDone := make(chan struct{})
+		go func() {
+			defer close(suggestionsDone)
+			suggestions.Run(suggestCtx)
+		}()
+		defer func() {
+			stopSuggestions()
+			<-suggestionsDone
+		}()
+	}
+
 	// The notification sink (T-F1-27). Its deliverer is the API server, built below.
 	notifications, err := notify.New(notify.Config{Enabled: settings.NotificationsEnabled})
 	if err != nil {
