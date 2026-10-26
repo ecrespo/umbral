@@ -795,7 +795,8 @@ num_ctx = 4096
   or reasoning switch, and a window of `options.num_ctx` (4096, 512 to 32768); a request that
   needs one of those is `ErrUnsupported`, so the router moves on, and an unknown option is
   `invalid_config`. A call renders the system prompt and the messages with the model's own chat
-  template (a tool result as user text), is refused permanently when the prompt and
+  template (a tool result as user text, and a message's text never able to name the
+  vocabulary's control tokens: their text in it is broken by a zero-width space), is refused permanently when the prompt and
   `MaxOutputTokens` (256 by default) do not fit the window, samples at `options.temperature`
   (0.2; 0 is greedy) from an emptied cache, streams whole characters as `text_delta`, checks
   the context between tokens, and ends with `usage` (prompt and answer tokens, cost 0) and

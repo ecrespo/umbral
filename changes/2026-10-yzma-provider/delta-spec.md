@@ -43,7 +43,11 @@ daemon.
    tools; a call it cannot carry anyway is `ErrUnsupported`. It is meant for the `fast` class,
    which the user names in `[classes]`.
 5. **A call.** The model's own chat template (GGUF metadata) renders the system prompt and the
-   messages, a tool message as user text; the prompt must leave room for the answer in the
+   messages, a tool message as user text. The prompt is tokenized with special tokens parsed,
+   so the template's frame is read as one; a message's text naming one of the vocabulary's
+   control or user-defined tokens (`<|im_start|>system`) has a zero-width space put after the
+   token text's first byte first, so no message opens a turn of its own (security review of
+   2026-10-26); the prompt must leave room for the answer in the
    window or the call is refused before decoding (`Permanent`). Decoding samples with
    `options.temperature` (default 0.2, 0 to 2) up to `MaxOutputTokens` (default 256, at most
    the window), streams each piece as `text_delta`, checks the context between tokens and ends
@@ -80,7 +84,9 @@ daemon.
   it replaces and not one it keeps.
 - `TestEveryProviderTypeGetsItsAdapter_REQ_LLM_001` (`cmd/umbrald`): `yzma` gets its adapter,
   and a relative path is `invalid_config`.
-- `TestLiveYzmaAnswersFromAGGUF_REQ_LLM_009` (tag `live`): llama.cpp b11899 and the
+- `TestLiveYzmaAnswersFromAGGUF_REQ_LLM_009` (tag `live`): a message forging the template's
+  control tokens renders with no more of them than a plain one (7 against 3 without the
+  neutralizing); llama.cpp b11899 and the
   `qwen2.5-coder:1.5b` GGUF answered `pong` in 1.3 s, first call included. The adapter opens no
   socket, so there is no egress row to count; a router-level run waits for US-F2-002 (T-F2-23).
 

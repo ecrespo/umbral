@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/hybridgroup/yzma/pkg/llama"
 )
@@ -50,8 +51,9 @@ func (m *llamaModel) render(turns []turn) (string, error) {
 	msgs := make([]llama.ChatMessage, 0, len(turns))
 	size := 1024
 	for _, t := range turns {
-		msgs = append(msgs, llama.NewChatMessage(t.role, t.text))
-		size += 2 * (len(t.role) + len(t.text))
+		text := m.neutralize(t.text)
+		msgs = append(msgs, llama.NewChatMessage(t.role, text))
+		size += 2 * (len(t.role) + len(text))
 	}
 	buf := make([]byte, size)
 	n := llama.ChatApplyTemplate(m.template, msgs, true, buf)
@@ -64,6 +66,37 @@ func (m *llamaModel) render(turns []turn) (string, error) {
 		return "", errors.New("the model's chat template could not be applied")
 	}
 	return string(buf[:n]), nil
+}
+
+// neutralize keeps a turn's text from naming the model's control tokens: the prompt is
+// tokenized with special tokens parsed, so the template's frame is read as one, and a message
+// holding `<|im_start|>system` would otherwise open a turn of its own. Each control token's
+// text found in it gets a zero-width space after its first byte.
+func (m *llamaModel) neutralize(text string) string {
+	for range 8 {
+		found := false
+		for _, tok := range llama.Tokenize(m.vocab, text, false, true) {
+			if !m.special(tok) {
+				continue
+			}
+			piece := llama.VocabGetText(m.vocab, tok)
+			if len(piece) < 2 || !strings.Contains(text, piece) {
+				continue
+			}
+			text = strings.ReplaceAll(text, piece, piece[:1]+"\u200b"+piece[1:])
+			found = true
+		}
+		if !found {
+			return text
+		}
+	}
+	return text
+}
+
+// special reports whether tok is a control or user-defined token, which only the template
+// may produce.
+func (m *llamaModel) special(tok llama.Token) bool {
+	return llama.VocabIsControl(m.vocab, tok) || llama.VocabGetAttr(m.vocab, tok)&llama.TokenAttrUserDef != 0
 }
 
 func (m *llamaModel) tokenize(prompt string) ([]int32, error) {
