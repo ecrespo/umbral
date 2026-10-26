@@ -83,10 +83,11 @@ read as shell, `SELECT * FROM t;` has a glob and asks, and so would every `psql`
    so does `unparseable` when the shell would read on into the next line (an open quote, a
    trailing `|` or backslash); a line it rejects outright, as SQL's parentheses are, runs
    nothing in a shell and does not ask. The lines are read the way a terminal sends them: a
-   `space` key is a space, `ctrl+m`, `ctrl+j` and `ctrl+o` end a line as `enter` does, and
-   `ctrl+h` is a backspace; `ctrl+c` and `ctrl+d` end the text before them for the matcher too,
-   and all the lines are matched joined as well, as a shell reading them would. Any other key
-   but `ctrl+c` and `ctrl+d` — history, completion,
+   `space` key is a space, `ctrl+m` and `ctrl+j` end a line as `enter` does, and `ctrl+h` is
+   a backspace. What `ctrl+c` and `ctrl+d` do to the text before them is the program's, so it
+   is matched both cut there and run on, and neither ends the line a later call adds to; all
+   the lines are matched joined as well, as a shell reading them would. Any other key but
+   `ctrl+c` and `ctrl+d` — `ctrl+o`, history, completion,
    `escape`, a yank, a search, a cursor move — can make the line the program runs one the
    target does not show, so it asks as `unmodelled_key` on the destructive floor, never as
    `always` and never under an allow rule (security review of 2026-10-26).

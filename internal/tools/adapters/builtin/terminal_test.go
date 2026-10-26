@@ -135,6 +135,11 @@ func TestAssembledLineAsksOnEnter_REQ_FTU_003(t *testing.T) {
 	}
 	// A program's line is kept across calls too: keys a program leaves unread reach the shell
 	// when it ends, so `rm -` then `rf ~` and enter ask.
+	// The ctrl+c above ended no line: what follows it is still kept.
+	if term.state.Program != "<ctrl+c>" {
+		t.Errorf("after a ctrl+c the program's line is %q, want <ctrl+c>", term.state.Program)
+	}
+	term.state.Program = ""
 	if _, d, err := decideCall(t, reg, keysInput(map[string]any{"text": "rm -"})); err != nil || d.Verdict != secdomain.VerdictAllow || term.state.Program != "rm -" {
 		t.Fatalf("half a line to a program: %s %v, program %q", d.Verdict, err, term.state.Program)
 	}

@@ -78,13 +78,16 @@ func TestProgramInputIsMatchedAsText_REQ_FTU_003(t *testing.T) {
 }
 
 // TestProgramTailIsTheLineNotYetEntered_REQ_FTU_003: what a later call adds to is the input
-// after the last enter or ctrl+c, so a line split across calls is decided whole.
+// after the last key every terminal sends as a line end, so a line split across calls is
+// decided whole; ctrl+c, whose effect is the program's, does not end it.
 func TestProgramTailIsTheLineNotYetEntered_REQ_FTU_003(t *testing.T) {
 	for target, want := range map[string]string{
 		"rm -":                     "rm -",
 		"ls<enter>rm -":            "rm -",
 		"a<enter>":                 "",
-		"x<ctrl+c>rm":              "rm",
+		"x<ctrl+c>rm":              "x<ctrl+c>rm",
+		"rm -r<ctrl+o>":            "rm -r<ctrl+o>",
+		"rm -r<ctrl+d>":            "rm -r<ctrl+d>",
 		"a<<enter>b":               "a<<enter>b",
 		"q<up><backspace>":         "q<up><backspace>",
 		"SELECT 1;<enter><ctrl+d>": "<ctrl+d>",
@@ -112,7 +115,6 @@ func TestProgramInputKeysTheMatcherDoesNotModelAsk_REQ_FTU_003(t *testing.T) {
 		{"rm<space>-rf<space>/<enter>", all, ReasonDestructive},
 		{"SELECT 1<ctrl+j>DELETE FROM t<enter>", []Rule{allowRule("terminal_interact", "SELECT*")}, ReasonPolicy},
 		{"SELECT 1<ctrl+m>DELETE FROM t<enter>", []Rule{allowRule("terminal_interact", "SELECT*")}, ReasonPolicy},
-		{"SELECT 1<ctrl+o>DELETE FROM t<enter>", []Rule{allowRule("terminal_interact", "SELECT*")}, ReasonPolicy},
 		{"<up><enter>", all, ReasonDestructive},
 		{"ls<tab><enter>", all, ReasonDestructive},
 		{"<ctrl+y><enter>", all, ReasonDestructive},
@@ -125,6 +127,9 @@ func TestProgramInputKeysTheMatcherDoesNotModelAsk_REQ_FTU_003(t *testing.T) {
 		{"rm -r\\<enter>f ~<enter>", all, ReasonDestructive},
 		{"x<ctrl+d>rm -rf ~<enter>", all, ReasonDestructive},
 		{"x<ctrl+c>rm -rf ~<enter>", all, ReasonDestructive},
+		{"DROP TA<ctrl+d>BLE x;<enter>", all, ReasonDestructive},
+		{"DROP TA<ctrl+c>BLE x;<enter>", all, ReasonDestructive},
+		{"SELECT 1<ctrl+o><enter>", all, ReasonDestructive},
 		{"SELECT count(*) FROM t WHERE id IN (1, 2);<enter>", all, ""},
 		{"SELECT 1;<enter><ctrl+d>", all, ""},
 		{"x<ctrl+c>", all, ""},
@@ -141,7 +146,6 @@ func TestProgramInputKeysTheMatcherDoesNotModelAsk_REQ_FTU_003(t *testing.T) {
 	for target, want := range map[string]string{
 		"a<ctrl+j>rm": "rm",
 		"a<ctrl+m>rm": "rm",
-		"a<ctrl+o>rm": "rm",
 	} {
 		if got := ProgramTail(target); got != want {
 			t.Errorf("ProgramTail(%q) = %q, want %q", target, got, want)

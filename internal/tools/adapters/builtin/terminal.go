@@ -163,7 +163,7 @@ func parseInteract(input json.RawMessage) (parsed, error) {
 
 // sendTarget is what the policy decides a send on, in state (decision 4): the whole line an
 // enter at the prompt submits, as a shell line; at the prompt without an enter, the keys typed;
-// to a program, its input since its last enter or ctrl+c with these keys, so a line split
+// to a program, its input since its last line end with these keys, so a line split
 // across calls is decided whole.
 func sendTarget(state sessdomain.InteractState, keys []sessdomain.Key) (target string, program bool, err error) {
 	plan, err := sessdomain.PlanKeys(state, keys)

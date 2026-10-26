@@ -1400,7 +1400,7 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   decided on that whole line exactly as `run_command`'s, the shell parser and the destructive
   floor included (REQ-FTU-003); the line becomes a block with origin `agent`. Keys at the prompt
   that do not submit are decided as the keys rendered as text. With a program in the foreground
-  the target is the program's input since its last `enter` or `ctrl+c`, kept across calls, with
+  the target is the program's input since its last line end, kept across calls, with
   the keys rendered as text (`SELECT 1;<enter>`, `<ctrl+c>`, a literal `<` doubled), marked
   `ProgramInput`. Each line is matched against the destructive patterns as written, whitespace
   collapsed, and is also read by the shell parser, since a program that leaves its input unread
@@ -1408,8 +1408,9 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   expansion syntax (`$name`, `${`, `$(`, a backquote) is decided by the parser alone, dynamic
   words included; a script read from stdin asks, and so does a line the shell would read on into
   the next one, while one it rejects outright (SQL's parentheses) does not. A `space` key is a
-  space, `ctrl+m`, `ctrl+j`, `ctrl+o`, `ctrl+c` and `ctrl+d` end a line, `ctrl+h` is a backspace,
-  the lines are matched joined as well, as a shell reading them would, and any other key
+  space, `ctrl+m` and `ctrl+j` end a line, `ctrl+h` is a backspace, text around `ctrl+c` and
+  `ctrl+d` is matched both cut there and run on (neither ends the line kept across calls), the
+  lines are matched joined as well, as a shell reading them would, and any other key
   but `ctrl+c` and `ctrl+d` asks as `unmodelled_key` on the destructive floor, since history,
   completion or a cursor move can run a line the target does not show. `DROP TABLE x;` and
   `x=rm; $x -rf ~` ask, `SELECT *` and `SELECT $1` do not.

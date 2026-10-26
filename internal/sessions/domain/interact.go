@@ -111,7 +111,7 @@ type InteractState struct {
 	// Line is what the agent has typed at the prompt since the last enter or ctrl+c.
 	Line string
 	// Program is what the agent has typed to the program in the foreground since its last
-	// enter or ctrl+c there, as a program-input target (RenderKeys): the start of the line the
+	// line end there, as a program-input target (RenderKeys): the start of the line the
 	// next enter is decided on (REQ-FTU-003).
 	Program string
 	// TakenOver is the user holding the terminal (REQ-FTU-002).
@@ -128,7 +128,7 @@ type Plan struct {
 	// Interrupt is a ctrl+c at the prompt, which empties the line.
 	Interrupt bool
 	// Target is keys to a program as the policy decides them: the input since its last
-	// enter or ctrl+c, these keys included. Program is what of it a later call adds to.
+	// line end, these keys included. Program is what of it a later call adds to.
 	Target  string
 	Program string
 }

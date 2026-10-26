@@ -38,12 +38,12 @@ const (
 )
 
 // programKey is the effect of a named key. Every key a terminal sends as a carriage return or
-// a line feed ends a line, and so does ctrl+o, readline's operate-and-get-next; ctrl+h is a
-// backspace. ctrl+c and ctrl+d end the text before them for the matcher too: ctrl+c drops it
-// and ctrl+d hands it to the program unended, so what follows is read as a line of its own.
+// a line feed ends a line; ctrl+h is a backspace. What ctrl+c and ctrl+d do to the text
+// before them is the program's — dropped or handed over unended, or kept — so the matcher
+// reads it both ways (keyFlush).
 func programKey(name string) keyEffect {
 	switch name {
-	case "enter", "ctrl+m", "ctrl+j", "ctrl+o":
+	case "enter", "ctrl+m", "ctrl+j":
 		return keyLineEnd
 	case programInterrupt, "ctrl+d":
 		return keyFlush
@@ -60,12 +60,23 @@ func programKey(name string) keyEffect {
 // typed as one. A line after the last line end is one too, so text not yet entered is matched
 // like the rest.
 func ProgramLines(target string) []string {
-	lines, _ := readProgram(target)
+	lines, _ := readProgram(target, true)
+	return append(lines, readJoined(target)...)
+}
+
+// readJoined is the target's lines with ctrl+c and ctrl+d ending none, when that reading
+// differs.
+func readJoined(target string) []string {
+	if !strings.Contains(target, "<"+programInterrupt+">") && !strings.Contains(target, "<ctrl+d>") {
+		return nil
+	}
+	lines, _ := readProgram(target, false)
 	return lines
 }
 
-// readProgram is ProgramLines, and whether the target holds a key the matcher does not model.
-func readProgram(target string) (lines []string, unmodelled bool) {
+// readProgram is ProgramLines with ctrl+c and ctrl+d ending a line when split is set, and
+// whether the target holds a key the matcher does not model.
+func readProgram(target string, split bool) (lines []string, unmodelled bool) {
 	var line strings.Builder
 	for i := 0; i < len(target); {
 		switch {
@@ -81,7 +92,12 @@ func readProgram(target string) (lines []string, unmodelled bool) {
 				continue
 			}
 			switch programKey(target[i+1 : i+end]) {
-			case keyLineEnd, keyFlush:
+			case keyFlush:
+				if split {
+					lines = append(lines, line.String())
+					line.Reset()
+				}
+			case keyLineEnd:
 				lines = append(lines, line.String())
 				line.Reset()
 			case keyErase:
@@ -118,13 +134,18 @@ func readProgram(target string) (lines []string, unmodelled bool) {
 // trailing `|` or backslash — since a line it rejects runs nothing; SQL's parentheses are
 // such a line. The lines are matched joined as well, as the shell would read them.
 func matchProgramInput(patterns []DestructivePattern, target string) (string, bool) {
-	lines, unmodelled := readProgram(target)
+	lines, unmodelled := readProgram(target, true)
 	if unmodelled {
 		return UnknownProgramKey, true
 	}
+	joined := readJoined(target)
 	// The shell reads what is left as one script, a line ended by a backslash joined to the
-	// next: it is matched whole as well as line by line.
-	for _, line := range append(lines, strings.Join(lines, "\n")) {
+	// next: each reading is matched whole as well as line by line.
+	candidates := append(append(lines, strings.Join(lines, "\n")), joined...)
+	if joined != nil {
+		candidates = append(candidates, strings.Join(joined, "\n"))
+	}
+	for _, line := range candidates {
 		flat := strings.Join(strings.Fields(line), " ")
 		for _, p := range patterns {
 			if p.Expr.MatchString(flat) {
@@ -161,7 +182,8 @@ func incompleteLine(line string) bool {
 var shellExpansion = regexp.MustCompile("\\$[A-Za-z_{(]|`")
 
 // ProgramTail is what of a program-input target the program has not been sent an end of
-// line for: the text after its last line end or ctrl+c, as written in the target. It is the input
+// line for: the text after its last line end, as written in the target. ctrl+c does not end
+// it, since a program may keep the text before it. It is the input
 // a later call adds to (REQ-FTU-003).
 func ProgramTail(target string) string {
 	start := 0
@@ -174,7 +196,7 @@ func ProgramTail(target string) string {
 			if end < 0 {
 				return target[start:]
 			}
-			if name := target[i+1 : i+end]; programKey(name) == keyLineEnd || name == programInterrupt {
+			if name := target[i+1 : i+end]; programKey(name) == keyLineEnd {
 				start = i + end + 1
 			}
 			i += end + 1
