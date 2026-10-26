@@ -72,6 +72,10 @@ func TestProgramInputIsMatchedAsText_REQ_FTU_003(t *testing.T) {
 		t.Errorf("a line the rule covers: %s, want allow", d.Verdict)
 	}
 	deny := []Rule{allowRule("terminal_interact", "*"), denyRule("terminal_interact", "DELETE*")}
+	// A deny matches every reading of a ctrl+c or ctrl+d inside a line, cut there or not.
+	if d := Decide(programInput("x<ctrl+c>DELETE FROM t;<enter>"), ModeNormal, deny, false); d.Verdict != VerdictDeny {
+		t.Errorf("a deny after a ctrl+c: %s, want deny", d.Verdict)
+	}
 	if d := Decide(programInput("SELECT 1;<enter>DELETE FROM t;<enter>"), ModeNormal, deny, false); d.Verdict != VerdictDeny {
 		t.Errorf("a deny matching one line: %s, want deny", d.Verdict)
 	}

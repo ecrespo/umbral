@@ -1409,7 +1409,8 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   words included; a script read from stdin asks, and so does a line the shell would read on into
   the next one, while one it rejects outright (SQL's parentheses) does not. A `space` key is a
   space, `ctrl+m` and `ctrl+j` end a line, `ctrl+h` is a backspace, a `ctrl+c` or `ctrl+d` between
-  text and more text on a line asks (neither ends the line kept across calls), the
+  text and more text on a line asks, a rule matching the line cut there or run on (neither
+  ends the line kept across calls), the
   lines are matched joined as well, as a shell reading them would, and any other key
   but `ctrl+c` and `ctrl+d` asks as `unmodelled_key` on the destructive floor, since history,
   completion or a cursor move can run a line the target does not show. `DROP TABLE x;` and

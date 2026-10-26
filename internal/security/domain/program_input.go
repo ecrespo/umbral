@@ -59,15 +59,21 @@ func programKey(name string) keyEffect {
 // between line ends, with each backspace taking back the character before it and a space
 // typed as one. A line after the last line end is one too, so text not yet entered is matched
 // like the rest.
+// A ctrl+c or ctrl+d inside a line is read both ways, the line cut there and run on, so a
+// rule matching either reading matches.
 func ProgramLines(target string) []string {
-	lines, _ := readProgram(target)
+	lines, unmodelled := readProgram(target, false)
+	if unmodelled {
+		cut, _ := readProgram(target, true)
+		lines = append(lines, cut...)
+	}
 	return lines
 }
 
-// readProgram is ProgramLines, and whether the target holds a key the matcher does not model.
-// A ctrl+c or ctrl+d with text before it on its line is left out of the line, and anything
-// after it on that line but its end makes the reading unmodelled.
-func readProgram(target string) (lines []string, unmodelled bool) {
+// readProgram is the target's lines, a ctrl+c or ctrl+d left out of its line or, with cut,
+// ending it, and whether the target holds a key the matcher does not model: anything after a
+// ctrl+c or ctrl+d with text before it on its line, but the line's end, is one.
+func readProgram(target string, cut bool) (lines []string, unmodelled bool) {
 	var line strings.Builder
 	flushed := false
 	for i := 0; i < len(target); {
@@ -88,6 +94,10 @@ func readProgram(target string) (lines []string, unmodelled bool) {
 			switch programKey(target[i+1 : i+end]) {
 			case keyFlush:
 				flushed = flushed || line.Len() > 0
+				if cut {
+					lines = append(lines, line.String())
+					line.Reset()
+				}
 			case keyLineEnd:
 				lines = append(lines, line.String())
 				line.Reset()
@@ -129,10 +139,10 @@ func readProgram(target string) (lines []string, unmodelled bool) {
 // trailing `|` or backslash — since a line it rejects runs nothing; SQL's parentheses are
 // such a line. The lines are matched joined as well, as the shell would read them.
 func matchProgramInput(patterns []DestructivePattern, target string) (string, bool) {
-	lines, unmodelled := readProgram(target)
-	if unmodelled {
+	if _, unmodelled := readProgram(target, false); unmodelled {
 		return UnknownProgramKey, true
 	}
+	lines := ProgramLines(target)
 	// The shell reads what is left as one script, a line ended by a backslash joined to the
 	// next: it is matched whole as well as line by line.
 	for _, line := range append(lines, strings.Join(lines, "\n")) {

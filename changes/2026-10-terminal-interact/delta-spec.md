@@ -86,7 +86,8 @@ read as shell, `SELECT * FROM t;` has a glob and asks, and so would every `psql`
    `space` key is a space, `ctrl+m` and `ctrl+j` end a line as `enter` does, and `ctrl+h` is
    a backspace. What `ctrl+c` and `ctrl+d` do to the text before them is the program's, so one
    with text before it and more after it on the same line asks as `unmodelled_key` (at a
-   line's edge both readings are one), and neither ends the line a later call adds to; all
+   line's edge both readings are one) and a rule is matched against both readings, so a
+   deny still denies; neither ends the line a later call adds to; all
    the lines are matched joined as well, as a shell reading them would. Any other key but
    `ctrl+c` and `ctrl+d` — `ctrl+o`, history, completion,
    `escape`, a yank, a search, a cursor move — can make the line the program runs one the
