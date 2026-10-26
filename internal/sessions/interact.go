@@ -105,22 +105,45 @@ func (s *Service) SendKeys(ctx context.Context, threadID, cwd string, keys []dom
 		return domain.Plan{}, err
 	}
 
+	plan, state, before, err := s.writeKeys(ctx, live, threadID, keys, expect)
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	// Keys at the prompt that enter nothing return once the shell's answer to them has settled.
+	// Text the line editor has not read yet is still in the terminal's input queue, where a
+	// ctrl+c sent next flushes part of it: CI ran `cho` for `echo pending`. (A line typed after
+	// an interrupt is the next call's settleInterrupt's to protect.) The editor answers by
+	// writing — the echo, `^C` and the prompt again — so the call waits for output after the
+	// write to pause, at most settleWait; a shell that writes nothing costs all of it. The wait
+	// runs without inputMu, so a take-over is never held behind it (REQ-FTU-002): calls of one
+	// thread run one after another, and the next finds the queue drained or the PTY taken.
+	if state.AtPrompt && !plan.Submit {
+		if err := s.awaitAnswer(ctx, live, before); err != nil {
+			return plan, err
+		}
+	}
+	return plan, nil
+}
+
+// writeKeys checks the decided state and writes keys, under inputMu (SendKeys). It returns the
+// state the keys were written in and the output sequence number before the write.
+func (s *Service) writeKeys(ctx context.Context, live *liveSession, threadID string, keys []domain.Key, expect domain.InteractState) (domain.Plan, domain.InteractState, uint64, error) {
 	live.inputMu.Lock()
 	defer live.inputMu.Unlock()
 	state := interactState(live)
 	switch {
 	case state.TakenOver:
-		return domain.Plan{}, domain.ErrTakenOver
+		return domain.Plan{}, domain.InteractState{}, 0, domain.ErrTakenOver
 	case state != expect:
-		return domain.Plan{}, domain.ErrTerminalChanged
+		return domain.Plan{}, domain.InteractState{}, 0, domain.ErrTerminalChanged
 	}
 	plan, err := domain.PlanKeys(state, keys)
 	if err != nil {
-		return domain.Plan{}, err
+		return domain.Plan{}, domain.InteractState{}, 0, err
 	}
 	data, err := encodeKeys(live, keys)
 	if err != nil {
-		return domain.Plan{}, err
+		return domain.Plan{}, domain.InteractState{}, 0, err
 	}
 
 	var run *agentRun
@@ -130,12 +153,12 @@ func (s *Service) SendKeys(ctx context.Context, threadID, cwd string, keys []dom
 		// and its prompt awaited, so that prompt cannot withdraw the claim of the line after it.
 		if state.Line == "" && takeDiscard(live) {
 			if err := writeInput(live, discardKeys, domain.InputOwnerAgent); err != nil {
-				return domain.Plan{}, err
+				return domain.Plan{}, domain.InteractState{}, 0, err
 			}
 		}
 		if state.Line == "" && live.interrupted.Swap(false) {
 			if err := s.settleInterrupt(ctx, live); err != nil {
-				return domain.Plan{}, err
+				return domain.Plan{}, domain.InteractState{}, 0, err
 			}
 		}
 		if plan.Submit && strings.TrimSpace(plan.Line) != "" {
@@ -146,6 +169,7 @@ func (s *Service) SendKeys(ctx context.Context, threadID, cwd string, keys []dom
 	if run != nil {
 		live.agent = run
 	}
+	before := live.seq
 	live.mu.Unlock()
 
 	if err := writeInput(live, data, domain.InputOwnerAgent); err != nil {
@@ -154,7 +178,7 @@ func (s *Service) SendKeys(ctx context.Context, threadID, cwd string, keys []dom
 			live.agent = nil
 		}
 		live.mu.Unlock()
-		return domain.Plan{}, err
+		return domain.Plan{}, domain.InteractState{}, 0, err
 	}
 	live.mu.Lock()
 	switch {
@@ -169,7 +193,7 @@ func (s *Service) SendKeys(ctx context.Context, threadID, cwd string, keys []dom
 	if plan.Interrupt {
 		live.interrupted.Store(true)
 	}
-	return plan, nil
+	return plan, state, before, nil
 }
 
 // takeDiscard reports, once, that a hand-back left the prompt's line to drop.
@@ -181,8 +205,8 @@ func takeDiscard(live *liveSession) bool {
 	return due
 }
 
-// settleWait bounds the wait for the prompt an empty line draws: when the pending interrupt ate
-// its byte there is none.
+// settleWait bounds the wait for the prompt an empty line draws, when the pending interrupt ate
+// its byte there is none, and the wait for the shell's answer to keys at the prompt.
 const settleWait = 500 * time.Millisecond
 
 // settleInterrupt types an empty line for a pending interrupt to spend, under inputMu, and waits
@@ -194,12 +218,26 @@ func (s *Service) settleInterrupt(ctx context.Context, live *liveSession) error 
 	if err := writeInput(live, []byte{'\r'}, domain.InputOwnerAgent); err != nil {
 		return err
 	}
+	_, err := s.awaitPrompt(ctx, live, before)
+	return err
+}
+
+// answerQuiet is how long output must pause before the shell's answer to keys counts as written.
+const answerQuiet = 50 * time.Millisecond
+
+// awaitAnswer waits up to settleWait for output after the before'th sequence number followed
+// by answerQuiet without more; a shell that writes nothing costs settleWait.
+func (s *Service) awaitAnswer(ctx context.Context, live *liveSession, before uint64) error {
 	deadline := time.Now().Add(settleWait)
+	last, quietFrom := before, time.Time{}
 	for time.Now().Before(deadline) {
 		live.mu.RLock()
-		drawn := live.prompts > before && live.promptReady
+		seq := live.seq
 		live.mu.RUnlock()
-		if drawn {
+		switch {
+		case seq != last:
+			last, quietFrom = seq, time.Now()
+		case seq != before && time.Since(quietFrom) >= answerQuiet:
 			return nil
 		}
 		select {
@@ -211,6 +249,28 @@ func (s *Service) settleInterrupt(ctx context.Context, live *liveSession) error 
 		}
 	}
 	return nil
+}
+
+// awaitPrompt waits up to settleWait for a prompt drawn after the before'th, and reports
+// whether one was.
+func (s *Service) awaitPrompt(ctx context.Context, live *liveSession, before uint64) (bool, error) {
+	deadline := time.Now().Add(settleWait)
+	for time.Now().Before(deadline) {
+		live.mu.RLock()
+		drawn := live.prompts > before && live.promptReady
+		live.mu.RUnlock()
+		if drawn {
+			return true, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-live.done:
+			return false, fmt.Errorf("%w: %s", domain.ErrExited, live.session.ID)
+		case <-time.After(interactPoll):
+		}
+	}
+	return false, nil
 }
 
 // encodeKeys turns keys into what the PTY receives: a text as typed, a named key as the
