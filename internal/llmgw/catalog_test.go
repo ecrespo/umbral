@@ -411,3 +411,34 @@ func mustListRefresh(t *testing.T, c *Catalog) []domain.Model {
 	}
 	return got
 }
+
+// closingProvider is a provider holding something to free, as the embedded one does.
+type closingProvider struct {
+	fakeProvider
+	closed chan struct{}
+}
+
+func (p *closingProvider) Close() { close(p.closed) }
+
+// TestAReplacedProviderIsClosed_REQ_LLM_009: a reload that replaces a provider frees what the
+// old one holds — the embedded provider's resident model — instead of leaving it until its
+// keep-alive, or forever with none.
+func TestAReplacedProviderIsClosed_REQ_LLM_009(t *testing.T) {
+	t.Parallel()
+
+	old := &closingProvider{fakeProvider: fakeProvider{id: "embedded", local: true}, closed: make(chan struct{})}
+	c := newCatalog(newMemStore())
+	c.Configure(false, []Entry{{ID: "embedded", Provider: old, Health: domain.HealthUnknown}})
+	c.Configure(false, []Entry{{ID: "embedded", Provider: old, Health: domain.HealthUnknown}})
+	select {
+	case <-old.closed:
+		t.Fatal("a provider kept by the reload was closed")
+	case <-time.After(50 * time.Millisecond):
+	}
+	c.Configure(false, []Entry{{ID: "embedded", Provider: &fakeProvider{id: "embedded", local: true}, Health: domain.HealthUnknown}})
+	select {
+	case <-old.closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the replaced provider was never closed")
+	}
+}

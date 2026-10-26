@@ -222,6 +222,11 @@ tasks:
     cmds:
       - ./scripts/build_libghostty.sh
 
+  deps:llama:
+    desc: Install llama.cpp's shared libraries, which a yzma provider loads in process (REQ-LLM-009)
+    cmds:
+      - ./scripts/install_llama.sh
+
   tools:install:
     desc: Install the Go tools the gate needs into $(go env GOPATH)/bin
     cmds:

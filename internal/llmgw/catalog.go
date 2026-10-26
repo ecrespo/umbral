@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -55,10 +56,18 @@ func NewCatalog(store ports.ModelStore, logger *slog.Logger) *Catalog {
 // Configure replaces the providers, at start and on config.reload, and whether the router is
 // offline. It does not contact any; Refresh does. A provider that survives the reload keeps
 // its last discovery failure until the next refresh says otherwise.
+//
+// A replaced provider that holds something to free — the embedded one's resident model — is
+// closed once its running call ends, in the background, so a reload never waits on it.
 func (c *Catalog) Configure(offline bool, entries []Entry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.offline = offline
+	for _, old := range c.entries {
+		if closer, ok := old.Provider.(interface{ Close() }); ok && !keeps(entries, old.Provider) {
+			go closer.Close()
+		}
+	}
 	c.entries = make(map[string]Entry, len(entries))
 	for _, e := range entries {
 		c.entries[e.ID] = e
@@ -68,6 +77,20 @@ func (c *Catalog) Configure(offline bool, entries []Entry) {
 			delete(c.failed, id)
 		}
 	}
+}
+
+// keeps reports whether entries still hold p. Only a provider of a comparable type is ever
+// looked for, so the comparison cannot panic; one that is not is never closed.
+func keeps(entries []Entry, p ports.Provider) bool {
+	if !reflect.TypeOf(p).Comparable() {
+		return true
+	}
+	for _, e := range entries {
+		if e.Provider == p {
+			return true
+		}
+	}
+	return false
 }
 
 // offlineLocked reports whether e may not be contacted because the router is offline and

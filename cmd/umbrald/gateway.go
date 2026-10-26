@@ -12,6 +12,7 @@ import (
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/ollama"
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/openaicompat"
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/openrouter"
+	"github.com/ecrespo/umbral/internal/llmgw/adapters/yzma"
 	llmdomain "github.com/ecrespo/umbral/internal/llmgw/domain"
 	llmports "github.com/ecrespo/umbral/internal/llmgw/ports"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
@@ -104,8 +105,8 @@ func buildEntries(logger *slog.Logger, egress llmports.EgressLog, models config.
 }
 
 // adapterFor builds the adapter for a provider type, or nil for a type this build has none
-// for yet: `yzma` arrives later in F1. Every adapter records its
-// requests to hosts that are not loopback (Art. 4).
+// for. Every adapter records its requests to hosts that are not loopback (Art. 4); `yzma`
+// makes none.
 func adapterFor(p config.Provider, key llmdomain.APIKey, egress llmports.EgressLog) (llmports.Provider, error) {
 	switch p.Type {
 	case "openai-compat", "lmstudio", "llamacpp":
@@ -114,6 +115,9 @@ func adapterFor(p config.Provider, key llmdomain.APIKey, egress llmports.EgressL
 		return openrouter.New(openrouter.Config{ID: p.ID, BaseURL: p.BaseURL, APIKey: key, Egress: egress})
 	case "ollama":
 		return ollama.New(ollama.Config{ID: p.ID, BaseURL: p.BaseURL, APIKey: key, Options: p.Options, Egress: egress})
+	case "yzma":
+		// In process: no key, no egress (REQ-LLM-009).
+		return yzma.New(yzma.Config{ID: p.ID, LibPath: p.LibPath, ModelsDir: p.ModelsDir, Options: p.Options})
 	default:
 		return nil, nil
 	}
