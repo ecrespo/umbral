@@ -39,8 +39,8 @@ const (
 
 // programKey is the effect of a named key. Every key a terminal sends as a carriage return or
 // a line feed ends a line; ctrl+h is a backspace. What ctrl+c and ctrl+d do to the text
-// before them is the program's — dropped or handed over unended, or kept — so the matcher
-// reads it both ways (keyFlush).
+// before them is the program's — dropped or handed over unended, or kept — so one between
+// text and more text on a line is a key the matcher does not model (keyFlush).
 func programKey(name string) keyEffect {
 	switch name {
 	case "enter", "ctrl+m", "ctrl+j":
@@ -60,59 +60,54 @@ func programKey(name string) keyEffect {
 // typed as one. A line after the last line end is one too, so text not yet entered is matched
 // like the rest.
 func ProgramLines(target string) []string {
-	lines, _ := readProgram(target, true)
-	return append(lines, readJoined(target)...)
-}
-
-// readJoined is the target's lines with ctrl+c and ctrl+d ending none, when that reading
-// differs.
-func readJoined(target string) []string {
-	if !strings.Contains(target, "<"+programInterrupt+">") && !strings.Contains(target, "<ctrl+d>") {
-		return nil
-	}
-	lines, _ := readProgram(target, false)
+	lines, _ := readProgram(target)
 	return lines
 }
 
-// readProgram is ProgramLines with ctrl+c and ctrl+d ending a line when split is set, and
-// whether the target holds a key the matcher does not model.
-func readProgram(target string, split bool) (lines []string, unmodelled bool) {
+// readProgram is ProgramLines, and whether the target holds a key the matcher does not model.
+// A ctrl+c or ctrl+d with text before it on its line is left out of the line, and anything
+// after it on that line but its end makes the reading unmodelled.
+func readProgram(target string) (lines []string, unmodelled bool) {
 	var line strings.Builder
+	flushed := false
 	for i := 0; i < len(target); {
 		switch {
 		case strings.HasPrefix(target[i:], "<<"):
+			unmodelled = unmodelled || flushed
 			line.WriteByte('<')
 			i += 2
 		case target[i] == '<':
 			end := strings.IndexByte(target[i:], '>')
 			if end < 0 {
 				// Not something ProgramKey wrote: keep it as text, so nothing goes unmatched.
+				unmodelled = unmodelled || flushed
 				line.WriteString(target[i:])
 				i = len(target)
 				continue
 			}
 			switch programKey(target[i+1 : i+end]) {
 			case keyFlush:
-				if split {
-					lines = append(lines, line.String())
-					line.Reset()
-				}
+				flushed = flushed || line.Len() > 0
 			case keyLineEnd:
 				lines = append(lines, line.String())
 				line.Reset()
+				flushed = false
 			case keyErase:
+				unmodelled = unmodelled || flushed
 				s := line.String()
 				if _, size := utf8.DecodeLastRuneInString(s); size > 0 {
 					line.Reset()
 					line.WriteString(s[:len(s)-size])
 				}
 			case keySpace:
+				unmodelled = unmodelled || flushed
 				line.WriteByte(' ')
 			case keyUnmodelled:
 				unmodelled = true
 			}
 			i += end + 1
 		default:
+			unmodelled = unmodelled || flushed
 			line.WriteByte(target[i])
 			i++
 		}
@@ -134,18 +129,13 @@ func readProgram(target string, split bool) (lines []string, unmodelled bool) {
 // trailing `|` or backslash — since a line it rejects runs nothing; SQL's parentheses are
 // such a line. The lines are matched joined as well, as the shell would read them.
 func matchProgramInput(patterns []DestructivePattern, target string) (string, bool) {
-	lines, unmodelled := readProgram(target, true)
+	lines, unmodelled := readProgram(target)
 	if unmodelled {
 		return UnknownProgramKey, true
 	}
-	joined := readJoined(target)
 	// The shell reads what is left as one script, a line ended by a backslash joined to the
-	// next: each reading is matched whole as well as line by line.
-	candidates := append(append(lines, strings.Join(lines, "\n")), joined...)
-	if joined != nil {
-		candidates = append(candidates, strings.Join(joined, "\n"))
-	}
-	for _, line := range candidates {
+	// next: it is matched whole as well as line by line.
+	for _, line := range append(lines, strings.Join(lines, "\n")) {
 		flat := strings.Join(strings.Fields(line), " ")
 		for _, p := range patterns {
 			if p.Expr.MatchString(flat) {

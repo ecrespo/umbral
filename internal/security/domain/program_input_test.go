@@ -133,6 +133,11 @@ func TestProgramInputKeysTheMatcherDoesNotModelAsk_REQ_FTU_003(t *testing.T) {
 		{"SELECT count(*) FROM t WHERE id IN (1, 2);<enter>", all, ""},
 		{"SELECT 1;<enter><ctrl+d>", all, ""},
 		{"x<ctrl+c>", all, ""},
+		{"<ctrl+c>SELECT 1;<enter>", all, ""},
+		{"x<ctrl+c><enter>SELECT 1;<enter>", all, ""},
+		{"SELECT 1;<ctrl+d><enter>", all, ""},
+		{"DROP<ctrl+c>x<ctrl+d> TABLE t;<enter>", all, ReasonDestructive},
+		{"rm -r<ctrl+d><backspace><enter>", all, ReasonDestructive},
 		{"SELECT 2<backspace>1;<ctrl+h><enter>", []Rule{allowRule("terminal_interact", "SELECT 1")}, ""},
 	} {
 		d := Decide(programInput(c.keys), ModeNormal, c.rules, false)
