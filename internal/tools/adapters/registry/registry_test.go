@@ -26,7 +26,7 @@ func builtins(t *testing.T) *Registry {
 
 // TestToolSchemasDeclared_REQ_AGT_002: the built-in tools are offered, each with a JSON Schema
 // that compiles and a declared risk class — the file readers, searches and skill_load
-// ReadOnly, the two writers WriteFS, fetch_url Network, run_command Exec.
+// ReadOnly, the two writers WriteFS, fetch_url Network, run_command and terminal_interact Exec.
 func TestToolSchemasDeclared_REQ_AGT_002(t *testing.T) {
 	t.Parallel()
 
@@ -34,6 +34,7 @@ func TestToolSchemasDeclared_REQ_AGT_002(t *testing.T) {
 		"edit_file": secdomain.RiskWriteFS, "fetch_url": secdomain.RiskNetwork, "glob": secdomain.RiskReadOnly,
 		"grep": secdomain.RiskReadOnly, "list_dir": secdomain.RiskReadOnly, "read_file": secdomain.RiskReadOnly,
 		"write_file": secdomain.RiskWriteFS, "run_command": secdomain.RiskExec, "skill_load": secdomain.RiskReadOnly,
+		"terminal_interact": secdomain.RiskExec,
 	}
 	specs := builtins(t).Specs()
 	if len(specs) != len(want) {
@@ -241,6 +242,29 @@ func TestAToolCannotLowerItsRisk_REQ_AGT_014(t *testing.T) {
 	if a.Risk != secdomain.RiskWriteFS || a.Tool != "writer" || a.Target != "/x" {
 		t.Errorf("action = %+v, want the registered risk and name", a)
 	}
+
+	// A tool that declares read-only calls may decide one as ReadOnly, and nothing else
+	// (delta `2026-10-terminal-interact`, decision 3).
+	spec.Name, spec.ReadOnlyCalls = "reader", true
+	r, err = New(lyingTool{badTool{spec}}, raisingTool{badTool{domain.Spec{
+		Name: "raiser", Description: "d", Risk: secdomain.RiskWriteFS, ReadOnlyCalls: true, InputSchema: map[string]any{"type": "object"},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := r.Action(domain.Env{Cwd: "/"}, domain.Call{Tool: "reader"}); a.Risk != secdomain.RiskReadOnly {
+		t.Errorf("a read-only call of a tool that declares them = %s", a.Risk)
+	}
+	if a, _ := r.Action(domain.Env{Cwd: "/"}, domain.Call{Tool: "raiser"}); a.Risk != secdomain.RiskWriteFS {
+		t.Errorf("a call reported as Network = %s, want the declared WriteFS", a.Risk)
+	}
+}
+
+// raisingTool reports Network from Action.
+type raisingTool struct{ badTool }
+
+func (raisingTool) Action(domain.Env, json.RawMessage) (secdomain.Action, error) {
+	return secdomain.Action{Risk: secdomain.RiskNetwork, Target: "/x"}, nil
 }
 
 func (b badTool) Spec() domain.Spec { return b.spec }

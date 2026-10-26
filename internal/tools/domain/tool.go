@@ -17,6 +17,10 @@ type Spec struct {
 	Name        string
 	Description string
 	Risk        secdomain.Risk
+	// ReadOnlyCalls lets the tool decide a call that only reads as ReadOnly: terminal_interact's
+	// read_screen and wait_for type nothing (delta `2026-10-terminal-interact`, decision 3). The
+	// tool is still listed, and exposed, by Risk.
+	ReadOnlyCalls bool
 	// InputSchema is a JSON Schema object (draft 2020-12).
 	InputSchema map[string]any
 }
@@ -31,6 +35,9 @@ type Env struct {
 	// links resolved at that check. A writer writes there and resolves nothing again, so a
 	// link swapped in since fails the write instead of redirecting it.
 	Target string
+	// ProgramInput is the grant's action's: its Target is keys to a program, not a shell
+	// line (terminal_interact).
+	ProgramInput bool
 }
 
 // Result is what a tool returns to the model. Summary is the one line `tool_calls.

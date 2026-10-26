@@ -1184,3 +1184,84 @@ func TestAgentPanelSaysAHostedThreadIsUnobserved_REQ_ACP_007(t *testing.T) {
 		t.Errorf("Umbral's own thread carries the hosted notice:\n%s", view)
 	}
 }
+
+func (f *fakeDaemon) TakeOver(_ context.Context, threadID string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.takeOvers = append(f.takeOvers, threadID)
+	return "ses_" + threadID, nil
+}
+
+func (f *fakeDaemon) HandBack(_ context.Context, threadID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.handBacks = append(f.handBacks, threadID)
+	return nil
+}
+
+// inputsTo is every input sent to one session.
+func (f *fakeDaemon) inputsTo(sessionID string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for i, id := range f.inputIDs {
+		if id == sessionID {
+			out = append(out, string(f.input[i]))
+		}
+	}
+	return out
+}
+
+// TestTheTUIChordTakesTheThreadsTerminal_REQ_FTU_002: in the agent panel ctrl+] takes the
+// selected thread's terminal over and shows it in place of the panel; every key, ctrl+c
+// included, goes to that session and none to the panel or the shell, and ctrl+] again hands
+// it back (delta `2026-10-terminal-interact`, decision 6).
+func TestTheTUIChordTakesTheThreadsTerminal_REQ_FTU_002(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.daemon.setThreads(ports.ThreadList{WorkspaceID: "w1", Threads: []ports.Thread{
+		{ID: "thr_a", WorkspaceID: "w1", Attention: "working", State: "running"},
+	}})
+	h.openSession()
+	shell := h.m.focusedPane().sessionID
+	h.step(ctrlSpace())
+
+	// No thread selected: nothing to take over.
+	h.step(ctrlKey(']'))
+	if len(h.daemon.takeOvers) != 0 || h.m.Status() == "" {
+		t.Fatalf("ctrl+] with no thread: take-overs %v, status %q", h.daemon.takeOvers, h.m.Status())
+	}
+
+	h.step(keyPress(t, "down"))
+	h.step(ctrlKey(']'))
+	if got := h.daemon.takeOvers; len(got) != 1 || got[0] != "thr_a" {
+		t.Fatalf("take-overs %v, want thr_a", got)
+	}
+	held := h.screen
+	held.written = append(held.written, []byte("\nagent's prompt $")...)
+	if view := h.m.View().Content; !strings.Contains(view, "agent's prompt $") || !strings.Contains(view, "thr_a's terminal") || strings.Contains(view, "working") {
+		t.Errorf("the thread's terminal is not shown in place of the panel:\n%s", view)
+	}
+
+	h.typeText("ls")
+	h.step(keyPress(t, "enter"))
+	h.step(keyPress(t, "ctrl+c"))
+	if got, want := strings.Join(h.daemon.inputsTo("ses_thr_a"), ""), "ls\r\x03"; got != want {
+		t.Errorf("the taken-over terminal received %q, want %q", got, want)
+	}
+	if _, _, _, cancels := h.daemon.agentCalls(); len(cancels) != 0 || h.m.AgentInput() != "" || len(h.daemon.inputsTo(shell)) != 0 {
+		t.Errorf("keys leaked: cancels %v, panel input %q, shell input %v", cancels, h.m.AgentInput(), h.daemon.inputsTo(shell))
+	}
+
+	h.step(ctrlKey(']'))
+	if got := h.daemon.handBacks; len(got) != 1 || got[0] != "thr_a" {
+		t.Fatalf("hand-backs %v, want thr_a", got)
+	}
+	h.typeText("hi")
+	if h.m.AgentInput() != "hi" || strings.Join(h.daemon.inputsTo("ses_thr_a"), "") != "ls\r\x03" {
+		t.Errorf("after the hand back: panel input %q, terminal inputs %v", h.m.AgentInput(), h.daemon.inputsTo("ses_thr_a"))
+	}
+	if threadRow(h.m.View().Content, "thr_a") == "" {
+		t.Errorf("the panel is not back:\n%s", h.m.View().Content)
+	}
+}

@@ -20,6 +20,16 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 
+	case keyTakeOver:
+		return m, m.takeOverKey()
+	}
+	// A held terminal takes every other key (takeover.go).
+	if m.held != nil {
+		return m, m.heldKey(msg)
+	}
+
+	switch msg.String() {
+
 	case "ctrl+t":
 		return m, m.openTabCmd()
 

@@ -1,5 +1,5 @@
 // Package builtin holds the tools Umbral offers the model without an MCP server
-// (REQ-AGT-002): run_command, read_file, write_file, edit_file, grep, glob, list_dir,
+// (REQ-AGT-002): run_command, terminal_interact, read_file, write_file, edit_file, grep, glob, list_dir,
 // fetch_url and skill_load.
 package builtin
 
@@ -19,6 +19,9 @@ type Config struct {
 	Fetch FetchConfig
 	// Terminal runs run_command in a thread's PTY; without it run_command refuses to run.
 	Terminal sessionsports.AgentTerminal
+	// Keys drives the same PTY for terminal_interact; without it terminal_interact refuses to
+	// run.
+	Keys sessionsports.AgentKeys
 	// Skills reads the installed skills for skill_load; without it skill_load refuses to run.
 	Skills ports.SkillReader
 }
@@ -27,6 +30,7 @@ type Config struct {
 func All(cfg Config) []ports.Tool {
 	return []ports.Tool{
 		runCommand{term: cfg.Terminal},
+		terminalInteract{keys: cfg.Keys},
 		readFile{},
 		writeFile{},
 		editFile{},
@@ -88,6 +92,12 @@ func decode(input json.RawMessage, into any) error {
 const (
 	kType        = "type"
 	kDescription = "description"
+	kRequired    = "required"
+	kMinimum     = "minimum"
+	kMaximum     = "maximum"
+	tString      = "string"
+	tInteger     = "integer"
+	tBoolean     = "boolean"
 	fPath        = "path"
 	fPattern     = "pattern"
 )
@@ -100,12 +110,12 @@ func object(required []string, properties map[string]any) map[string]any {
 		req[i] = r
 	}
 	return map[string]any{
-		kType: "object", "properties": properties, "required": req, "additionalProperties": false,
+		kType: "object", "properties": properties, kRequired: req, "additionalProperties": false,
 	}
 }
 
 func str(description string) map[string]any {
-	return map[string]any{kType: "string", kDescription: description}
+	return map[string]any{kType: tString, kDescription: description}
 }
 
 // nonEmpty is a string property that may not be empty.
@@ -116,5 +126,5 @@ func nonEmpty(description string) map[string]any {
 }
 
 func integer(description string, minimum int) map[string]any {
-	return map[string]any{kType: "integer", "minimum": minimum, kDescription: description}
+	return map[string]any{kType: tInteger, kMinimum: minimum, kDescription: description}
 }

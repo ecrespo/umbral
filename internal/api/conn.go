@@ -147,6 +147,9 @@ type conn struct {
 	// viewing says this connection called thread.focus, so its view is forgotten when it
 	// closes (REQ-AGT-016). It stays on the read goroutine.
 	viewing bool
+	// holdsTerminal says this connection took a thread's terminal over, so whatever it still
+	// holds is handed back when it closes (REQ-FTU-002).
+	holdsTerminal atomic.Bool
 
 	// subsMu guards subs, which the read goroutine writes and the dispatch goroutine
 	// reads on every output chunk.
@@ -298,6 +301,13 @@ func (c *conn) serve(ctx context.Context) {
 	if check := c.server.cfg.AgentPeer; check != nil && c.peerPID > 0 {
 		c.agentAtAccept = check(c.peerPID)
 	}
+	// Registered first so it runs last, after every handler has returned: a take-over still
+	// in flight is released too.
+	defer func() {
+		if c.holdsTerminal.Load() && c.server.cfg.Terminals != nil {
+			c.server.cfg.Terminals.Release(context.WithoutCancel(ctx), c.connectionID)
+		}
+	}()
 	defer c.pending.Wait()
 	defer func() { _ = c.close() }()
 	defer func() {

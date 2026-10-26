@@ -13,6 +13,7 @@ import (
 	agentsdomain "github.com/ecrespo/umbral/internal/agents/domain"
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	"github.com/ecrespo/umbral/internal/bus"
+	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 )
 
 type fakeThreads struct {
@@ -571,5 +572,105 @@ func TestAThreadInFullAutoSaysSo_REQ_ORC_004(t *testing.T) {
 	decodeResult(t, resp, &th)
 	if th.Mode != "full-auto" || svc.updated.Mode == nil || *svc.updated.Mode != "full-auto" {
 		t.Fatalf("thread.update = %+v (%+v), runtime got %+v", th, resp.Error, svc.updated)
+	}
+}
+
+// fakeTerminals is the sessions module's terminal owner.
+type fakeTerminals struct {
+	mu       sync.Mutex
+	calls    []string
+	holders  []string
+	released []string
+	err      error
+}
+
+func (f *fakeTerminals) TakeOver(_ context.Context, threadID, holder string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "take_over "+threadID)
+	f.holders = append(f.holders, holder)
+	return "ses_1", f.err
+}
+
+func (f *fakeTerminals) Release(_ context.Context, holder string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.released = append(f.released, holder)
+}
+
+func (f *fakeTerminals) releases() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.released...)
+}
+
+func (f *fakeTerminals) HandBack(_ context.Context, threadID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "hand_back "+threadID)
+	return f.err
+}
+
+// TestTakeOverMethods_REQ_FTU_002: thread.take_over answers the session the client now types
+// into and thread.hand_back gives it back; both check the thread, take a thread_id, are the
+// interactive clients' only, and map a thread without a PTY to NOT_FOUND (API §5.43). Their
+// refusal to an agent's terminal is TestAnAgentsTerminalCannotLandItsOwnWork_REQ_ORC_004's.
+func TestTakeOverMethods_REQ_FTU_002(t *testing.T) {
+	t.Parallel()
+	svc := &fakeThreads{thread: agentsdomain.Thread{ID: "thr_1", Mode: "normal", ModelClass: "code", Cwd: "/w"}}
+	terms := &fakeTerminals{}
+	s := testServerWithConfig(t, Config{Threads: svc, Terminals: terms})
+	c := dial(t, s)
+	if resp := c.hello(s.Token(), ClientTUI); resp.Error != nil {
+		t.Fatal(resp.Error)
+	}
+
+	resp := c.call(2, "thread.take_over", map[string]any{"thread_id": "thr_1"})
+	var got struct {
+		SessionID string `json:"session_id"`
+	}
+	decodeResult(t, resp, &got)
+	if got.SessionID != "ses_1" {
+		t.Errorf("take_over = %+v", got)
+	}
+	if resp := c.call(3, "thread.hand_back", map[string]any{"thread_id": "thr_1"}); resp.Error != nil {
+		t.Errorf("hand_back = %+v", resp.Error)
+	}
+	if len(terms.calls) != 2 || terms.calls[0] != "take_over thr_1" || terms.calls[1] != "hand_back thr_1" {
+		t.Errorf("the terminal owner got %q", terms.calls)
+	}
+	if resp := c.call(4, "thread.take_over", map[string]any{"thread_id": "thr_x"}); resp.Error == nil || resp.Error.Code != codeNotFound {
+		t.Errorf("an unknown thread = %+v, want NOT_FOUND", resp.Error)
+	}
+	if resp := c.call(5, "thread.take_over", map[string]any{}); resp.Error == nil || resp.Error.Code != codeValidationError {
+		t.Errorf("no thread_id = %+v, want VALIDATION_ERROR", resp.Error)
+	}
+	terms.err = fmt.Errorf("%w: thread thr_1 has no terminal", sessdomain.ErrNotFound)
+	if resp := c.call(6, "thread.take_over", map[string]any{"thread_id": "thr_1"}); resp.Error == nil || resp.Error.Code != codeNotFound {
+		t.Errorf("a thread without a PTY = %+v, want NOT_FOUND", resp.Error)
+	}
+
+	umb := dial(t, s)
+	if resp := umb.hello(s.Token(), ClientCLI); resp.Error != nil {
+		t.Fatal(resp.Error)
+	}
+	if resp := umb.call(2, "thread.take_over", map[string]any{"thread_id": "thr_1"}); resp.Error == nil || resp.Error.Code != codeMethodNotFound {
+		t.Errorf("take_over from umb = %+v, want METHOD_NOT_FOUND", resp.Error)
+	}
+
+	// The connection that took a terminal over hands back what it holds when it closes.
+	terms.mu.Lock()
+	holder := terms.holders[0]
+	terms.mu.Unlock()
+	if holder == "" {
+		t.Fatal("take_over named no holder")
+	}
+	_ = c.conn.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(terms.releases()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := terms.releases(); len(got) != 1 || got[0] != holder {
+		t.Errorf("released %q on close, want %q", got, holder)
 	}
 }

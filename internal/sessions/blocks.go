@@ -27,6 +27,7 @@ func (s *Service) recordOutput(live *liveSession, chunk []byte) {
 	}
 
 	events := live.scanner.Scan(chunk)
+	notePromptReady(live, events)
 	// A pane restored with a stored command shows it once the shell is ready to be typed
 	// into, which is the first prompt that ends (REQ-TERM-011).
 	s.notePrompt(live, events)
@@ -45,6 +46,28 @@ func (s *Service) recordOutput(live *liveSession, chunk []byte) {
 	}
 	s.releaseAbandoned(live, events)
 	s.noteIntegration(live)
+}
+
+// notePromptReady follows whether the shell waits at its prompt: the last of a command start
+// and a prompt end decides.
+func notePromptReady(live *liveSession, events []domain.Event) {
+	ready, seen := false, false
+	for _, e := range events {
+		switch e.Kind {
+		case domain.EventCommandStart:
+			ready, seen = false, true
+		case domain.EventPromptEnd:
+			ready, seen = true, true
+		}
+	}
+	if seen {
+		live.mu.Lock()
+		live.promptReady = ready
+		if ready {
+			live.prompts++
+		}
+		live.mu.Unlock()
+	}
 }
 
 // noteAgentBlock remembers the block the agent's claim opened, and stops its command now if
@@ -102,8 +125,8 @@ func (s *Service) markAgentUnsaved(live *liveSession, blockID string) {
 	}
 }
 
-// releaseAbandoned frees the PTY of a cancelled run whose block never opened, once the shell
-// shows a prompt again, and withdraws its claim.
+// releaseAbandoned frees the PTY of a cancelled run, or a submitted line, whose block never
+// opened, once the shell shows a prompt again, and withdraws its claim.
 func (s *Service) releaseAbandoned(live *liveSession, events []domain.Event) {
 	prompt := false
 	for _, e := range events {
@@ -116,7 +139,8 @@ func (s *Service) releaseAbandoned(live *liveSession, events []domain.Event) {
 	}
 	live.mu.Lock()
 	defer live.mu.Unlock()
-	if live.agent != nil && live.agent.abandoned && live.agent.blockID == "" {
+	// A line terminal_interact submitted that started no block — a comment, say — is over too.
+	if live.agent != nil && (live.agent.abandoned || live.agent.interactive) && live.agent.blockID == "" {
 		live.agent = nil
 		live.recorder.Claim("")
 	}
@@ -131,6 +155,9 @@ func (s *Service) releaseAbandoned(live *liveSession, events []domain.Event) {
 func (s *Service) applyBlockAction(live *liveSession, action domain.Action) {
 	switch action.Kind {
 	case domain.ActionOpen:
+		live.mu.Lock()
+		live.blockOpen = true
+		live.mu.Unlock()
 		s.noteAgentBlock(live, action.Block)
 		live.chunkBlockID = ""
 		live.chunkSeq = 0
@@ -169,6 +196,15 @@ func (s *Service) applyBlockAction(live *liveSession, action domain.Action) {
 		// The agent gets its result whether or not the row could be written: the command
 		// ended either way, and a turn must not wait for a block the store lost.
 		defer s.deliverAgentBlock(live, action)
+		// The shell prompts again. Text typed to the program and never entered is left in the
+		// tty for the shell's line, so the agent's next write at the prompt drops it first
+		// (REQ-FTU-003).
+		live.mu.Lock()
+		if live.programLine != "" {
+			live.discardLine = true
+		}
+		live.blockOpen, live.interactLine, live.programLine = false, "", ""
+		live.mu.Unlock()
 		s.flushChunk(live)
 		live.chunkBlockID = ""
 		if err := s.cfg.Blocks.Finish(live.ctx, action.Block, action.Plain); err != nil {

@@ -203,8 +203,12 @@ func (r *Registry) Action(env domain.Env, call domain.Call) (secdomain.Action, e
 	if err != nil {
 		return secdomain.Action{}, err
 	}
-	// The risk the policy decides on is the one the tool declared, whatever Action says.
-	a.Risk, a.Tool = e.spec.Risk, e.spec.Name
+	// The risk the policy decides on is the one the tool declared, whatever Action says — or
+	// ReadOnly, for a call of a tool that declares it may have such calls.
+	if !e.spec.ReadOnlyCalls || a.Risk != secdomain.RiskReadOnly {
+		a.Risk = e.spec.Risk
+	}
+	a.Tool = e.spec.Name
 	return a, nil
 }
 
@@ -252,6 +256,6 @@ func (r *Registry) Invoke(ctx context.Context, env domain.Env, call domain.Call,
 		return domain.Result{}, fmt.Errorf("%w: %s (%s %s)", domain.ErrNotAuthorized, call.Tool, grant.Decision.Verdict, grant.Decision.Reason)
 	}
 	e, _ := r.checked(call)
-	env.Target = a.Target
+	env.Target, env.ProgramInput = a.Target, a.ProgramInput
 	return e.tool.Run(ctx, env, normalize(call))
 }

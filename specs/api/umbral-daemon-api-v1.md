@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.53 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.54 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -140,7 +140,8 @@ outside its terminal, with `PERMISSION_DENIED`, whatever its kind (REQ-ORC-004, 
 `worktree.merge`, `worktree.discard`, `worktree.close_group`, `approval.respond`, `thread.update`,
 `skill.install`, `skill.set_enabled`, `skill.remove`, `mcp.server.add`, `mcp.server.remove`,
 `rules.key.add`, `rules.key.remove`, `rules.key.rotate`, `rules.rollback`, `rules.reset`,
-`session.input`, and every method that starts a process — `session.create`, `pane.split`,
+`session.input`, `thread.take_over`, `thread.hand_back` (REQ-FTU-002: an agent must not hand its
+own terminal back to itself), and every method that starts a process — `session.create`, `pane.split`,
 `tab.create`, `workspace.create` and `layout.apply` — since its command, shell or environment
 (`BASH_ENV`, say) would run outside the agent's terminal. Reads stay open.
 
@@ -1399,6 +1400,32 @@ It checks the bundle and copies nothing.
   copies as they were (REQ-SKL-002).
 - **Announced** with `skill.changed` (§6) once stored.
 
+### 5.43 `thread.take_over` / `thread.hand_back` — REQ-FTU-002
+
+The take-over chord's two halves, for the `tui` and `desktop` kinds; refused to an agent's
+terminal (§2).
+
+`take_over` params: `{thread_id}`. **Result:** `{session_id}`.
+
+`hand_back` params: `{thread_id}`. **Result:** `{}`.
+
+- **`thread.take_over`** → `{session_id}`: the thread's PTY — the session `run_command` and
+  `terminal_interact` use — passes to the user at once, under the lock every write to it takes,
+  and `session.input_owner` (§6) announces `human`. The client subscribes to `session_id` and
+  types with `session.input`. While the user holds it, every `terminal_interact` call of the
+  agent returns the result `taken_over` and writes nothing, `run_command` is refused, and a turn
+  whose cwd moved does not replace it. A thread with no PTY is `NOT_FOUND`. When the connection
+  that took a terminal over closes, whatever it still holds is handed back.
+- **`thread.hand_back`** → `{}`: the input goes back to the agent, announced the same way; a
+  terminal not taken over is left as it is. The daemon types nothing then: the agent's next
+  write at the prompt starts with ctrl+e ctrl+u, so what the user left on the line is dropped
+  (in the line editors' default emacs bindings; a vi command mode or a continuation line is
+  not fully cleared).
+- **Errors.** An unknown thread, or one without a PTY, is `NOT_FOUND`; a missing `thread_id`
+  is `VALIDATION_ERROR`.
+- The daemon never reads the chord from `session.input`: a byte sequence there could be typed or
+  echoed by a program (delta `2026-10-terminal-interact`).
+
 ## 6. Notifications (daemon → client)
 
 | Method | Payload | REQ |
@@ -1407,7 +1434,7 @@ It checks the bundle and copies nothing.
 | `session.resized` | `{session_id, cols, rows}` | REQ-TERM-007 |
 | `session.exited` | `{session_id, exit_code, exited_at}` | REQ-TERM-005 |
 | `session.integration` | `{session_id, integration}` | REQ-BLK-003 |
-| `session.input_owner` | `{session_id, input_owner}` | REQ-TERM-008 |
+| `session.input_owner` | `{session_id, input_owner}` | REQ-TERM-008, REQ-FTU-002 |
 | `session.unsubscribed` | `{session_id, reason}` | REQ-TERM-004 |
 | `block.started` | `Block` | REQ-BLK-001 |
 | `block.updated` | `{block_id, state}` (e.g. `interactive`) | REQ-BLK-004 |
@@ -1634,3 +1661,4 @@ printf '%s\n' \
 | 1.51 | 2026-10-24 | No change to the protocol. T-HRD-03: `skill.*` was numbered §5.37 like `api.schema`; it moves to §5.42 after `worktree.*`, and §4 `Skill` and §6 `skill.changed` point there. No other section is renumbered |
 | 1.52 | 2026-10-24 | No change to the wire. Delta `2026-10-hosted-agent-peer` (T-HRD-05): §2 "An agent's terminal" counts a hosted ACP agent's process and its session, from its launch |
 | 1.53 | 2026-10-24 | No change to the wire. Delta `2026-10-shell-parser` (T-HRD-06): §5.22 full-auto still asks for a command line the policy cannot read statically; §5.36 the destructive step's `detail` may be `dynamic_word`, `stdin_script` or `unparseable`, names a rule file may not use |
+| 1.54 | 2026-10-26 | Additive within `protocol_version = 1`. Delta `2026-10-terminal-interact` (T-F2-20): §5.43 `thread.take_over` and `thread.hand_back` (REQ-FTU-002); §2 refuses both to an agent's terminal; `session.input_owner` also announces a take-over |

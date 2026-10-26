@@ -85,6 +85,11 @@ type Action struct {
 	Cwd string
 	// WriteRoot is the thread's write boundary (see WriteRoot); empty means none.
 	WriteRoot string
+	// ProgramInput marks an Exec target that is keys typed to a program other than the
+	// shell, written as ProgramText and ProgramKey build it: it is matched line by line, as
+	// text and through the shell parser, since the shell reads what the program leaves unread
+	// (delta `2026-10-terminal-interact`).
+	ProgramInput bool
 }
 
 // Rule is a persisted decision or a configured one (`policy_rules`, Data Model §2.9).
@@ -183,7 +188,10 @@ func (p Policy) Decide(action Action, mode Mode, rules []Rule, tainted bool) Dec
 	}
 
 	destructive, isDestructive := "", false
-	if action.Risk == RiskExec {
+	switch {
+	case action.Risk == RiskExec && action.ProgramInput:
+		destructive, isDestructive = matchProgramInput(p.Destructive, action.Target)
+	case action.Risk == RiskExec:
 		destructive, isDestructive = MatchDestructive(p.Destructive, action.Target)
 	}
 	add(StepDestructive, isDestructive, destructive)
@@ -194,8 +202,10 @@ func (p Policy) Decide(action Action, mode Mode, rules []Rule, tainted bool) Dec
 	isTainted := tainted && (action.Risk == RiskExec || action.Risk == RiskNetwork)
 	add(StepTaint, isTainted, taintDetail(isTainted))
 
+	// Keys typed to a program have no cwd that bounds what they do: full-auto never runs them
+	// unasked (delta `2026-10-terminal-interact`, decision 4).
 	modeDecides := (mode == ModeAutoEdit && action.Risk == RiskWriteFS) ||
-		(mode == ModeFullAuto && (action.Risk == RiskWriteFS || action.Risk == RiskExec))
+		(mode == ModeFullAuto && (action.Risk == RiskWriteFS || (action.Risk == RiskExec && !action.ProgramInput)))
 	inside := false
 	switch {
 	case !modeDecides:
@@ -279,7 +289,7 @@ func matchDeny(rules []Rule, action Action) (*Rule, bool) {
 			return &rules[i], true
 		}
 		if action.Risk == RiskExec {
-			for _, part := range commandParts(action.Target) {
+			for _, part := range targetParts(action) {
 				if glob(pattern(r), part) {
 					return &rules[i], true
 				}
@@ -295,7 +305,7 @@ func matchDeny(rules []Rule, action Action) (*Rule, bool) {
 func matchAllow(rules []Rule, action Action) (*Rule, bool) {
 	parts := []string{action.Target}
 	if action.Risk == RiskExec {
-		parts = commandParts(action.Target)
+		parts = targetParts(action)
 	}
 	if len(parts) == 0 {
 		// A line with no command is not something a rule can have allowed; it asks.
@@ -318,6 +328,23 @@ func matchAllow(rules []Rule, action Action) (*Rule, bool) {
 		}
 	}
 	return first, true
+}
+
+// targetParts is what each rule of an Exec action is matched against: the commands of a
+// shell line, or the lines of a program's input and the commands each would be to a shell that
+// read it, so an allow covers a line only when it covers every command in it.
+func targetParts(action Action) []string {
+	if !action.ProgramInput {
+		return commandParts(action.Target)
+	}
+	var parts []string
+	for _, line := range ProgramLines(action.Target) {
+		parts = append(parts, line)
+		if cmds := commandParts(line); len(cmds) > 1 {
+			parts = append(parts, cmds...)
+		}
+	}
+	return parts
 }
 
 // ruleApplies checks the rule's scope and tool: global or the action's thread, and its tool

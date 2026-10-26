@@ -35,9 +35,11 @@ type agentDeps struct {
 	gateway  *gateway
 	egress   llmports.EgressLog
 	terminal sessports.AgentTerminal
-	blocks   *sessions.Reader
-	metrics  *obs.Metrics
-	tracer   agentsports.Tracer
+	// keys drives the same PTY for terminal_interact (T-F2-20).
+	keys    sessports.AgentKeys
+	blocks  *sessions.Reader
+	metrics *obs.Metrics
+	tracer  agentsports.Tracer
 	// maxCost is the thread cost cap now in force, in micro-USD (REQ-AGT-008).
 	maxCost func() int64
 	// redact and policy are the rules in force (REQ-SEC-010).
@@ -67,6 +69,7 @@ func newRuntime(ctx context.Context, d agentDeps) (*agents.Runtime, *registry.Re
 	builtins := builtin.Config{
 		Fetch:    builtin.FetchConfig{Egress: d.egress, Redact: d.redact},
 		Terminal: d.terminal,
+		Keys:     d.keys,
 	}
 	// Set only when there is a store: a nil *skills.Service in an interface is not nil.
 	var catalog ctxports.SkillCatalog

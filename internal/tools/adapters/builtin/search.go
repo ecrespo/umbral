@@ -58,7 +58,7 @@ func (grepTool) Spec() domain.Spec {
 			fPattern:      nonEmpty("Regular expression."),
 			fPath:         str("Directory or file to search; the working directory by default."),
 			"glob":        str("Only files whose path relative to the search root matches this glob, e.g. **/*.go."),
-			"ignore_case": map[string]any{kType: "boolean"},
+			"ignore_case": map[string]any{kType: tBoolean},
 		}),
 	}
 }

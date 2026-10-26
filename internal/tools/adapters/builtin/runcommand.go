@@ -44,7 +44,7 @@ func (runCommand) Spec() domain.Spec {
 		InputSchema: object([]string{"command"}, map[string]any{
 			"command": nonEmpty("The command line."),
 			"timeout_seconds": map[string]any{
-				kType: "integer", "minimum": 1, "maximum": runMaxTimeout,
+				kType: tInteger, kMinimum: 1, kMaximum: runMaxTimeout,
 				kDescription: "Stop the command after this many seconds; 120 by default.",
 			},
 		}),

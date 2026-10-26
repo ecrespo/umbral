@@ -292,6 +292,22 @@ func (d *Daemon) Cancel(ctx context.Context, threadID string) (bool, error) {
 	return out.StoppedAt != nil, nil
 }
 
+// TakeOver gives the user the thread's terminal (API Spec §5.43).
+func (d *Daemon) TakeOver(ctx context.Context, threadID string) (string, error) {
+	var out struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := d.stream.Call(ctx, "thread.take_over", map[string]any{paramThreadID: threadID}, &out); err != nil {
+		return "", err
+	}
+	return out.SessionID, nil
+}
+
+// HandBack gives the thread's terminal back to its agent (API Spec §5.43).
+func (d *Daemon) HandBack(ctx context.Context, threadID string) error {
+	return d.stream.Call(ctx, "thread.hand_back", map[string]any{paramThreadID: threadID}, nil)
+}
+
 // Focus tells the daemon which thread this client views, none for "" (API Spec §5.23).
 func (d *Daemon) Focus(ctx context.Context, threadID string) error {
 	var id any

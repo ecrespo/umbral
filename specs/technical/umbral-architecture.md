@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.73 |
-| **Date** | 2026-10-24 |
+| **Version** | 1.74 |
+| **Date** | 2026-10-26 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
 | **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
@@ -802,7 +802,7 @@ api_key = "keyring:umbral/openrouter"   # or "env:<VAR>" where REQ-SEC-012 allow
 | `tui` | `client`, its own `ports`, and the `domain` packages; never `api`, and never its own adapters — `cmd/umbral-tui` wires those, as `cmd/umbrald` does for the daemon |
 | `tui/ports` | `sessions/domain`, for the size and cursor types the daemon already defines |
 | `tui/adapters/**` | its own `ports`, `client`, `sessions/domain` and external libraries, like every other module's adapters. The `client` allowance is what keeps method names and parameter shapes in one adapter instead of in the model |
-| `tools/adapters` | also `sessions/ports`, for `AgentTerminal` alone: `run_command` runs in the thread's PTY, which the sessions module owns (T-F1-10) |
+| `tools/adapters` | also `sessions/ports`, for `AgentTerminal` and `AgentKeys` alone: `run_command` and `terminal_interact` run in the thread's PTY, which the sessions module owns (T-F1-10, T-F2-20) |
 | `workspaces` | `ports` of `sessions` and `store`; never `agents`, `api` or `waits` |
 | `waits` | `ports` and `domain` of `agents` and `sessions`, plus `bus`; never `api`. It reads the store only through the agents runtime, and its own domain reuses the sessions domain's escape-sequence stripper (delta `2026-10-wait-engine`) |
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api`. The tree resolves a pane's state in DD-012's order (`workspaces/domain.ResolveAttention`); `integrations` writes the external reports and announces every change. It hears the changes it did not make — blocks, integration verdicts, exits, thread attention — through events `cmd/umbrald` subscribes it to, and re-reads the whole tree on each (delta `2026-10-integration-surface`). Display metadata is written by `integrations` and read by the tree into a `Pane`'s `metadata`, never on the state path: `ResolveAttention`, the rollup, waits and notifications do not read it, and a written report is announced as `pane.updated` only (delta `2026-10-display-metadata`). Third-party agent detection lives here too (delta `2026-10-agent-detection`): `integrations/adapters/manifests` reads the local manifests and `integrations/adapters/proctree` the process table, without running a command; the detector reaches a pane's shell pid through `integrations/ports.Shells`, which `cmd/umbrald` satisfies with the sessions service, and keeps its labels in memory, keyed by session, for the tree to read through `workspaces/ports.AgentLabels` — never on the state path |
@@ -1374,6 +1374,66 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   `egress_visibility` (REQ-ACP-007): the CLI on stderr at creation, the panel in the thread's row
   and in a line under the list while the thread is selected.
 
+### 5.3g Full terminal use (T-F2-20)
+
+`terminal_interact` (REQ-FTU-001) drives the thread's PTY key by key: the paneless session
+`run_command` already uses, never a user's pane. Delta `2026-10-terminal-interact`:
+
+- **One tool, three actions.** `send_keys` takes 1 to 64 keys, each a printable text or a named
+  key (`enter`, `tab`, `backspace`, `escape`, `space`, the arrows, `home`, `end`, `page_up`,
+  `page_down`, `insert`, `delete`, `f1` … `f12`, a letter or digit with `ctrl` or `alt`), at
+  most 4096 bytes of text a call. A named key is encoded by the session's emulator with
+  libghostty's key encoder set from the terminal's modes, so `up` reaches `vim` as `ESC O A`;
+  raw bytes and escape sequences are refused. `read_screen` returns the screen's plain text (its
+  last 64 KiB), the cursor, the size and whether the shell is at its prompt. `wait_for` waits for
+  exactly one of a regex on the screen, `idle_ms` (100 to 10 000) without output, or `exit`
+  (the shell back at its prompt, or the session gone), within `timeout_ms` (default 10 s, at
+  most 120 s), and returns `matched`, `idle`, `exited` or `timeout` with the screen.
+- **Risk.** The tool is `Exec` and listed so; a tool whose `Spec.ReadOnlyCalls` is set may lower
+  one call's action to `ReadOnly`, which `read_screen` and `wait_for` do. The registry lets a
+  call lower its risk this way and never otherwise change it. A read uses the thread's PTY only
+  when it has one in the turn's cwd — never starting or replacing a shell — and answers
+  `no_terminal` otherwise.
+- **What is decided.** At the shell's prompt (integration `osc133`, no block open, no agent
+  command in flight) only text, `backspace` and a final `enter` or `ctrl+c` are accepted: the
+  sessions module keeps the line typed since the last `enter` or `ctrl+c`, and an `enter` is
+  decided on that whole line exactly as `run_command`'s, the shell parser and the destructive
+  floor included (REQ-FTU-003); the line becomes a block with origin `agent`. Keys at the prompt
+  that do not submit are decided as the keys rendered as text. With a program in the foreground
+  the target is the program's input since its last `enter` or `ctrl+c`, kept across calls, with
+  the keys rendered as text (`SELECT 1;<enter>`, `<ctrl+c>`, a literal `<` doubled), marked
+  `ProgramInput`. Each line is matched against the destructive patterns as written, whitespace
+  collapsed, and is also read by the shell parser, since a program that leaves its input unread
+  hands it to the shell when it ends: a pattern the parser finds asks, and a line with shell
+  expansion syntax (`$name`, `${`, `$(`, a backquote) is decided by the parser alone, dynamic
+  words included. `DROP TABLE x;` and `x=rm; $x -rf ~` ask, `SELECT *` and `SELECT $1` do not.
+  Full-auto never runs program input unasked, and an allow rule covers a program's line only
+  when it covers every command a shell would read in it. Text typed to a program and never
+  entered is dropped from the shell's next line by the agent's next write there. A line built
+  otherwise and typed ahead to a program that does not read it is a residual.
+- **The decision holds for the terminal it saw.** The tool recomputes its target at run time and
+  refuses one that differs from the grant's; the sessions module checks the state the call was
+  decided on (prompt or not, the line so far, taken over or not) again under the session's input
+  lock before writing, and writes nothing when it changed.
+- **Sharing the PTY with `run_command`.** `run_command` is refused while a program
+  `terminal_interact` started is in the foreground or text it typed is on the prompt's line. An
+  interrupt typed at the prompt is the call's last key; the next call writes an empty line first,
+  the same remedy as §5.3b's late interrupt, and waits up to 500 ms for its prompt so that prompt
+  does not withdraw the claim of the line after it.
+- **Take-over (REQ-FTU-002).** `thread.take_over` moves the PTY's input to the human under the
+  same lock every write takes and announces `session.input_owner`; while the user holds it every
+  `terminal_interact` call returns the result `taken_over` and writes nothing, `run_command` is
+  refused, and the PTY is never replaced by a turn in another cwd; a call decided while it was
+  held writes nothing even if it runs after the hand-back. `thread.hand_back` gives it back and
+  types nothing; the agent's next write at the prompt starts with `ctrl+e ctrl+u`, so what the
+  user left on the line — now, or typed ahead while a program ran — is dropped (a line editor
+  that rebinds those keys or sits in vi command mode, and a continuation line, are residuals). A hand-back of a terminal not held does nothing, and
+  the connection that took one over hands it back when it closes. The TUI's chord
+  is `ctrl+]` in the agent panel: the selected thread's terminal replaces the panel, every key
+  but `ctrl+]` and `ctrl+q` goes to it, and `ctrl+]` again hands it back. The daemon never looks
+  for the chord in `session.input`.
+- **A cancelled turn** ends its call; a program the agent started stays in the foreground.
+
 ### 5.4 Error Handling
 
 ```go
@@ -1910,3 +1970,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.71 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-skill-load-digest` (T-HRD-08): §5.3b `skill_load` reads the stored copy once, checks its digest and serves the entry from that read; a changed copy is `VALIDATION_ERROR` naming the skill |
 | 1.72 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-catalog-third-party` (T-HRD-09): §5.3b the skill catalog sits in a `<skills>` block whose preamble names the descriptions third-party text, its entries escaped |
 | 1.73 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-zsh-prompt-sp` (T-HRD-10): §5.2b a thread-owned session gets `UMBRAL_AGENT_SESSION=1`, and the zsh bootstrap turns `PROMPT_SP` off there only |
+| 1.74 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` (T-F2-20): new §5.3g, `terminal_interact` on the thread's PTY, what its calls are decided on (a program's line kept across calls and read by the shell parser too; full-auto asks), reads that never start a shell, `thread.take_over`/`hand_back` with the line dropped by the agent's next write and release on close, and the TUI's `ctrl+]`; §5.2 `tools/adapters` may also use `AgentKeys` |

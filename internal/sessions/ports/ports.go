@@ -133,6 +133,9 @@ type Emulator interface {
 	// that row is the last one written and the cursor is past its first column: a line still
 	// being written, such as a prompt. It is "" otherwise (block.wait_output, REQ-AUT-003).
 	OpenLine() (string, error)
+	// EncodeKey is the bytes a named key sends in the terminal's current modes — application
+	// cursor keys, the keypad mode, the Kitty keyboard flags (REQ-FTU-001).
+	EncodeKey(key domain.Key) ([]byte, error)
 	// Close releases the emulator.
 	Close() error
 }
@@ -230,4 +233,26 @@ type BlockReader interface {
 // module's run_command reaches the sessions module through it and nothing else.
 type AgentTerminal interface {
 	RunForThread(ctx context.Context, threadID, cwd, command string) (domain.AgentRun, error)
+}
+
+// AgentKeys drives the thread's PTY key by key (REQ-FTU-001): the tools module's
+// terminal_interact reaches the sessions module through it. It is the PTY run_command uses.
+type AgentKeys interface {
+	// InteractState is how keys would be read now, without starting a PTY; a call is decided
+	// on it, and SendKeys refuses one decided on a state that no longer holds.
+	InteractState(threadID, cwd string) domain.InteractState
+	SendKeys(ctx context.Context, threadID, cwd string, keys []domain.Key, expect domain.InteractState) (domain.Plan, error)
+	ReadScreen(ctx context.Context, threadID, cwd string) (domain.Screen, error)
+	WaitFor(ctx context.Context, threadID, cwd string, cond domain.WaitCondition) (domain.WaitOutcome, error)
+}
+
+// TerminalOwner moves a thread's PTY between the agent and the user (REQ-FTU-002).
+type TerminalOwner interface {
+	// TakeOver gives the user the thread's PTY's input and returns its session; holder is
+	// the connection taking it.
+	TakeOver(ctx context.Context, threadID, holder string) (string, error)
+	// HandBack gives it back to the agent; a terminal not taken over is left as it is.
+	HandBack(ctx context.Context, threadID string) error
+	// Release hands back every terminal holder took over, when it goes away.
+	Release(ctx context.Context, holder string)
 }

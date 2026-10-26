@@ -92,6 +92,11 @@ type Daemon interface {
 	// empty list, not an error: having no MCP client or skill store is a configuration.
 	McpServers(ctx context.Context) ([]McpServer, error)
 	Skills(ctx context.Context) ([]Skill, error)
+	// TakeOver gives the user a thread's terminal and returns its session
+	// (`thread.take_over`, REQ-FTU-002); HandBack gives it back to the agent
+	// (`thread.hand_back`).
+	TakeOver(ctx context.Context, threadID string) (sessionID string, err error)
+	HandBack(ctx context.Context, threadID string) error
 	// Events is closed when the connection ends; the model then shows a disconnected
 	// state instead of a frozen screen.
 	Events() <-chan Event
