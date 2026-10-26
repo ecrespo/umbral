@@ -146,6 +146,7 @@ func (s *Service) SendKeys(ctx context.Context, threadID, cwd string, keys []dom
 	if run != nil {
 		live.agent = run
 	}
+	before := live.seq
 	live.mu.Unlock()
 
 	if err := writeInput(live, data, domain.InputOwnerAgent); err != nil {
@@ -168,6 +169,18 @@ func (s *Service) SendKeys(ctx context.Context, threadID, cwd string, keys []dom
 	live.mu.Unlock()
 	if plan.Interrupt {
 		live.interrupted.Store(true)
+	}
+	// Keys at the prompt that enter nothing return once the shell has answered them. Text the
+	// line editor has not read yet is still in the terminal's input queue, where an interrupt
+	// that follows flushes it, so a ctrl+c sent next could leave part of the line behind; and
+	// an interrupt is only acted on when the editor next looks, so a line typed after it could
+	// be read first and enter what it dropped. The editor answers both by writing — the echo,
+	// `^C` and the prompt again — so the call waits for output after the write to settle, or
+	// settleWait.
+	if state.AtPrompt && !plan.Submit {
+		if err := s.awaitAnswer(ctx, live, before); err != nil {
+			return domain.Plan{}, err
+		}
 	}
 	return plan, nil
 }
@@ -194,12 +207,26 @@ func (s *Service) settleInterrupt(ctx context.Context, live *liveSession) error 
 	if err := writeInput(live, []byte{'\r'}, domain.InputOwnerAgent); err != nil {
 		return err
 	}
+	_, err := s.awaitPrompt(ctx, live, before)
+	return err
+}
+
+// answerQuiet is how long output must pause before an interrupt's answer counts as written.
+const answerQuiet = 50 * time.Millisecond
+
+// awaitAnswer waits up to settleWait for output after the before'th sequence number followed
+// by answerQuiet without more; a shell that writes nothing costs settleWait.
+func (s *Service) awaitAnswer(ctx context.Context, live *liveSession, before uint64) error {
 	deadline := time.Now().Add(settleWait)
+	last, quietFrom := before, time.Time{}
 	for time.Now().Before(deadline) {
 		live.mu.RLock()
-		drawn := live.prompts > before && live.promptReady
+		seq := live.seq
 		live.mu.RUnlock()
-		if drawn {
+		switch {
+		case seq != last:
+			last, quietFrom = seq, time.Now()
+		case seq != before && time.Since(quietFrom) >= answerQuiet:
 			return nil
 		}
 		select {
@@ -211,6 +238,28 @@ func (s *Service) settleInterrupt(ctx context.Context, live *liveSession) error 
 		}
 	}
 	return nil
+}
+
+// awaitPrompt waits up to settleWait for a prompt drawn after the before'th, and reports
+// whether one was.
+func (s *Service) awaitPrompt(ctx context.Context, live *liveSession, before uint64) (bool, error) {
+	deadline := time.Now().Add(settleWait)
+	for time.Now().Before(deadline) {
+		live.mu.RLock()
+		drawn := live.prompts > before && live.promptReady
+		live.mu.RUnlock()
+		if drawn {
+			return true, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-live.done:
+			return false, fmt.Errorf("%w: %s", domain.ErrExited, live.session.ID)
+		case <-time.After(interactPoll):
+		}
+	}
+	return false, nil
 }
 
 // encodeKeys turns keys into what the PTY receives: a text as typed, a named key as the

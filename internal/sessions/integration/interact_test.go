@@ -121,10 +121,20 @@ func TestTerminalInteractDrivesAProgram_REQ_FTU_001(t *testing.T) {
 	if state := h.InteractState(threadID, cwd); state.Line != "echo pending" {
 		t.Errorf("the line is not kept: %+v", state)
 	}
+	// The call returns once the shell has read the text, so a ctrl+c sent next finds none of it
+	// still queued.
+	if screen, err := h.ReadScreen(ctx, threadID, cwd); err != nil || !strings.HasSuffix(screen.Text, "echo pending") {
+		t.Errorf("the shell had not read the text when the call returned: %q, %v", screen.Text, err)
+	}
 	if _, err := h.RunForThread(ctx, threadID, cwd, "true"); !errors.Is(err, sessions.ErrPromptHasText) {
 		t.Errorf("run_command over typed text: %v, want ErrPromptHasText", err)
 	}
 	send(t, h, ctx, threadID, cwd, keyCtrlC)
+	// The call returns once the shell has answered the interrupt, so what is typed next cannot
+	// reach it as typeahead of the line the interrupt dropped.
+	if screen, err := h.ReadScreen(ctx, threadID, cwd); err != nil || strings.HasSuffix(screen.Text, "echo pending") {
+		t.Errorf("the shell had not answered the ctrl+c when the call returned: %q, %v", screen.Text, err)
+	}
 	if run, err := h.RunForThread(ctx, threadID, cwd, "printf 'clean\\n'"); err != nil || run.Block.Command != "printf 'clean\\n'" {
 		t.Errorf("run_command after ctrl+c: %+v, %v", run.Block, err)
 	}

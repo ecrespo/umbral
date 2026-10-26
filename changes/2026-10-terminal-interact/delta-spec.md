@@ -130,6 +130,13 @@ read as shell, `SELECT * FROM t;` has a glob and asks, and so would every `psql`
 8. **A program left running.** A cancelled turn ends its `terminal_interact` call; the program
    the agent started stays in the foreground, as the user would see it. The agent ends it with
    its own keys, or the user does after taking over.
+9. **Keys at the prompt return once the shell answered them** (added 2026-10-26, after CI ran
+   `cho` for `echo pending`). A call at the prompt that enters nothing waits for the shell's
+   output after its write to pause for 50 ms, up to 500 ms. Text the line editor had not read
+   was still in the tty's input queue, where the `ctrl+c` of the next call flushed part of it;
+   and an interrupt is acted on only when the editor next looks, so the line typed after it
+   could be gathered first and enter what it dropped. The editor answers both by writing — the
+   echo, `^C` and the prompt again.
 
 ## Tests
 
@@ -137,7 +144,8 @@ read as shell, `SELECT * FROM t;` has a glob and asks, and so would every `psql`
   `up` is `ESC [ A`, and `ESC O A` once the program asked for application cursor keys.
 - `TestTerminalInteractDrivesAProgram_REQ_FTU_001` (`internal/sessions/integration`): a line
   submitted at the prompt starts a block with origin agent; keys reach the program; `read_screen`
-  shows its output; `wait_for` ends `matched`, `idle`, `exited` and `timeout`.
+  shows its output; `wait_for` ends `matched`, `idle`, `exited` and `timeout`; text typed at the
+  prompt is on the screen when the call returns, and so is the shell's answer to a `ctrl+c`.
 - `TestTakeOverLocksTheAgentOut_REQ_FTU_002` (`internal/sessions/integration`): after a
   take-over the agent's keys and `run_command` are refused `taken_over` and nothing reaches the
   PTY, the human's input is accepted, and a hand-back at the prompt empties the line the user left.
@@ -162,7 +170,7 @@ read as shell, `SELECT * FROM t;` has a glob and asks, and so would every `psql`
 
 - API 1.54: §2 (`thread.take_over` and `thread.hand_back` refused to an agent's terminal), §5.43,
   §6 (`session.input_owner` cites REQ-FTU-002).
-- Tech 1.74: §5.2 (`tools/adapters` may use `AgentKeys`), §5.3g.
+- Tech 1.74: §5.2 (`tools/adapters` may use `AgentKeys`), §5.3g; Tech 1.76: §5.3g, decision 9.
 - PRD F2 0.11: REQ-FTU-003 says how a program's input is decided.
 - `specs/tasks/umbral-f2-tasks.md`: T-F2-20 broken down and done, its traceability rows.
 

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.74 |
+| **Version** | 1.76 |
 | **Date** | 2026-10-26 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1429,6 +1429,11 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   interrupt typed at the prompt is the call's last key; the next call writes an empty line first,
   the same remedy as §5.3b's late interrupt, and waits up to 500 ms for its prompt so that prompt
   does not withdraw the claim of the line after it.
+- **A call at the prompt returns once the shell answered it.** Keys that enter nothing wait for
+  the shell's output after the write to pause for 50 ms, up to 500 ms: text the line editor has
+  not read is still in the tty's input queue, where a `ctrl+c` that follows flushes part of it,
+  and an interrupt is acted on only when the editor next looks, so a line typed after it could
+  be read first and enter what it dropped.
 - **Take-over (REQ-FTU-002).** `thread.take_over` moves the PTY's input to the human under the
   same lock every write takes and announces `session.input_owner`; while the user holds it every
   `terminal_interact` call returns the result `taken_over` and writes nothing, `run_command` is
@@ -1980,3 +1985,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.72 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-catalog-third-party` (T-HRD-09): §5.3b the skill catalog sits in a `<skills>` block whose preamble names the descriptions third-party text, its entries escaped |
 | 1.73 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-zsh-prompt-sp` (T-HRD-10): §5.2b a thread-owned session gets `UMBRAL_AGENT_SESSION=1`, and the zsh bootstrap turns `PROMPT_SP` off there only |
 | 1.74 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` (T-F2-20): new §5.3g, `terminal_interact` on the thread's PTY, what its calls are decided on (a program's line kept across calls and read by the shell parser too; full-auto asks), reads that never start a shell, `thread.take_over`/`hand_back` with the line dropped by the agent's next write and release on close, and the TUI's `ctrl+]`; §5.2 `tools/adapters` may also use `AgentKeys` |
+| 1.76 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` decision 9: §5.3g a `terminal_interact` call at the prompt that enters nothing returns once the shell's output after it has settled |
