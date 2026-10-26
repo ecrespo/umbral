@@ -282,9 +282,17 @@ Labels — name and declared state source, nothing of the process — live in me
 
 [[internal/llmgw/policy.go#Router#Route]] and every routed call share one plan, so `model.route` answers exactly the order a call of that shape would walk (delta `2026-10-policy-router`).
 
-[[internal/llmgw/policy.go#Router#plan]] drops a candidate that is not in the catalog, is down, lacks a capability in [[internal/llmgw/policy.go#Needs]], or sits behind an open breaker, then orders the kept ones with [[internal/llmgw/policy.go#compareBy]]: `local-first`, `cost` (an unpriced remote model last) or `quality` (declared order). The dropped ones follow in declared order.
+[[internal/llmgw/policy.go#Router#plan]] drops a candidate that is not in the catalog, is down, lacks a capability in [[internal/llmgw/policy.go#Needs]], or sits behind an open breaker, then orders the kept ones with [[internal/llmgw/policy.go#compareBy]]: `local-first`, `cost` (an unpriced remote model last) or `quality` (declared order). The dropped ones follow in declared order. A call with [[internal/llmgw/router.go#Call]]'s `LocalOnly` set walks only the kept candidates whose provider is local, and none of the dropped ones, so nothing is sent to a remote provider even as a fallback.
 
 The [[internal/llmgw/policy.go#breakers]] count the failures a call falls back on and open after `breaker_failures` in a row for `breaker_cooldown`. After it, the next real call is the one probe: its first event closes the breaker at once and a failure reopens it. While a breaker is open only the probe counts, and each opening and closing is logged by [[internal/llmgw/router.go#Router#breakerMoved]]. A 4xx, an unsupported request or a cancel counts nothing.
+
+## Active AI suggests a fix from a local model only
+
+A user's command that fails gets a one-line suggestion from the local `fast` model, published as `block.suggestion` and never stored (delta `2026-10-active-ai`).
+
+[[internal/activeai/activeai.go#Service#Run]] reads `block.closed` and keeps the blocks [[internal/activeai/domain/domain.go#Eligible]] accepts: origin `user`, finished, exit other than 0 and 130. [[internal/activeai/activeai.go#Service#take]] allows one suggestion at a time and `per_minute` in a sliding minute; a dropped failure takes nothing. The prompt is [[internal/activeai/domain/domain.go#Prompt]], the output's tail cut at a line start by [[internal/activeai/domain/domain.go#Tail]], and [[internal/activeai/domain/domain.go#FirstLine]] is what is kept.
+
+[[cmd/umbrald/activeai.go#localSuggester#Suggest]] calls the router with `LocalOnly`, which drops every remote candidate before anything is sent, so a class naming a remote model first still never receives block content. [[internal/activeai/domain/domain.go#FirstLine]] also removes escape sequences and control and format characters, since the model read a command's output. The TUI keeps a suggestion only for its pane's last closed block, and [[internal/tui/agent.go#Model#acceptSuggestion]] turns `alt+s` into a new thread with `@block:<id> <suggestion>` as a draft, the suggestion passed through [[internal/tui/agent.go#inert]] so it attaches no file of its own.
 
 ## The .deb ships the branding kit as it is
 

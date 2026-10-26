@@ -102,6 +102,17 @@ type pane struct {
 	pending    []ports.Event
 
 	exited bool
+
+	// suggestion is Active AI's newest one line for this session's last failed block, until
+	// it is accepted or another block closes (REQ-AAI-002).
+	suggestion *suggestion
+	// lastClosed is the pane's newest closed block, the only one a suggestion is kept for.
+	lastClosed string
+}
+
+// suggestion is a `block.suggestion` kept for its pane.
+type suggestion struct {
+	blockID, text string
 }
 
 // New builds the model. It does not talk to the daemon: Init does, so that a failure is a
@@ -450,6 +461,9 @@ func (m *Model) renderStatus() string {
 	}
 	if len(m.agent.approvals) > 0 {
 		return "the agent is waiting for an approval: ctrl+space, then ctrl+y or ctrl+x"
+	}
+	if p := m.focusedPane(); p != nil && p.suggestion != nil {
+		return "suggestion: " + oneLine(p.suggestion.text) + " · alt+s accept"
 	}
 	return "ctrl+t new tab · ctrl+n next tab · ctrl+s split · ctrl+o next pane · " +
 		"ctrl+b blocks · ctrl+p/ctrl+g prev/next block · alt+a attach the block · ctrl+space agent · ctrl+q quit"

@@ -165,8 +165,15 @@ func TestToEventMapsTheAgentsNotifications_REQ_TUI_001(t *testing.T) {
 	// A closed block says where its command ran: the panel's thread starts there.
 	ev, ok = toEvent(client.Notification{Method: "block.closed", Params: json.RawMessage(
 		`{"id":"blk_x","session_id":"ses_x","command":"ls","cwd":"/work/scratch","state":"closed"}`)})
-	if !ok || ev.Kind != ports.EventBlockClosed || ev.SessionID != "ses_x" || ev.CWD != "/work/scratch" {
+	if !ok || ev.Kind != ports.EventBlockClosed || ev.SessionID != "ses_x" || ev.CWD != "/work/scratch" || ev.BlockID != "blk_x" {
 		t.Fatalf("block.closed = %+v %v", ev, ok)
+	}
+	// A suggestion names its block, so the TUI keeps it only for the pane's last one
+	// (REQ-AAI-002).
+	ev, ok = toEvent(client.Notification{Method: "block.suggestion", Params: json.RawMessage(
+		`{"block_id":"blk_x","session_id":"ses_x","text":"git status","model":"ollama/m"}`)})
+	if !ok || ev.Kind != ports.EventBlockSuggestion || ev.SessionID != "ses_x" || ev.BlockID != "blk_x" || ev.Text != "git status" {
+		t.Fatalf("block.suggestion = %+v %v", ev, ok)
 	}
 }
 

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`. Slice F2a implemented and closed on 2026-10-24 (delta `2026-10-f2a-close`); F2b started on 2026-10-26 |
-| **Version** | 0.11 |
+| **Version** | 0.12 |
 | **Date** | 2026-10-26 |
 | **Reviewers** | spec-guardian (Analyze and two verify passes); Tech Lead, ratified 2026-10-22 |
 | **Source** | `docs/ARCHITECTURE.md` §5.4–5.8 and §10 (F2 ADE row); `specs/prd/umbral-mvp.md` §5.2–5.3; Plan 1.14 §4 |
@@ -193,8 +193,8 @@ makes it ask (spike T-F2-00). So Umbral:
 ### 6.7 Embedded model and Active AI (AAI) — F2b
 
 - **REQ-LLM-009** · MUST · optional — WHERE a provider of `type = "yzma"` is configured with a GGUF path, THE SYSTEM SHALL load it in process and serve the `fast` class with it, without a server and without network. (Supersedes MVP REQ-LLM-008, a COULD.)
-- **REQ-AAI-001** · MUST · optional — WHERE `[active_ai] enabled = true` in `config.toml` (default false), WHEN a block closes with a non-zero exit, THE SYSTEM SHALL ask a **local** `fast`-class model for a one-line suggestion, rate-limited to `[active_ai] per_minute` (default 4), and publish it as `block.suggestion`.
-- **REQ-AAI-002** · MUST · event — WHEN the user accepts a suggestion, THE SYSTEM SHALL open a thread with the block attached and the suggestion as the first message's draft, without sending it.
+- **REQ-AAI-001** · MUST · optional — WHERE `[active_ai] enabled = true` in `config.toml` (default false), WHEN a user's block closes with an exit code other than 0 and 130 (an interrupt), THE SYSTEM SHALL ask a **local** `fast`-class model for a one-line suggestion, one at a time and rate-limited to `[active_ai] per_minute` (default 4), and publish it as `block.suggestion`.
+- **REQ-AAI-002** · MUST · event — WHEN the user accepts a suggestion for the pane's last closed block, THE SYSTEM SHALL open a thread with the block attached and the suggestion as the first message's draft, the suggestion attaching nothing of its own, without sending it.
 - **REQ-AAI-003** · MUST · unwanted — IF no local `fast` candidate is available, THEN THE SYSTEM SHALL produce no suggestion, and SHALL NEVER send block content to a remote model for Active AI.
 
 ### 6.8 Desktop client (DSK) — F2c
@@ -349,3 +349,4 @@ Still open, with the draft's default:
 | 0.9 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-hrd02-open-questions` (T-HRD-02, Q11): REQ-ACP-007's disclosure says a hosted agent can read the main copy and every other thread's worktree |
 | 0.10 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-shell-parser` (T-HRD-06): REQ-ORC-004 says the destructive list it keeps asking for includes a command line the system cannot read statically, as REQ-SEC-005 1.23 does |
 | 0.11 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` (T-F2-20): REQ-FTU-003 says how a program's input is decided, the shell receiving what the program leaves unread |
+| 0.12 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-active-ai` (T-F2-22): REQ-AAI-001 names a user's block, the exits 0 and 130 excluded, one suggestion at a time; REQ-AAI-002 the pane's last block and a suggestion that attaches nothing |

@@ -73,6 +73,12 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.showBlocks {
 			return m, m.attachBlock()
 		}
+
+	case "alt+s":
+		// Only while the focused pane has a suggestion: elsewhere it is the shell's ESC s.
+		if p := m.focusedPane(); p != nil && p.suggestion != nil && !m.agent.mode {
+			return m, m.acceptSuggestion(p)
+		}
 	}
 
 	if m.agent.mode {
@@ -265,13 +271,24 @@ func (m *Model) applyEvent(msg daemonEventMsg) tea.Cmd {
 	case ports.EventBlockClosed:
 		// The pane's agent thread starts where its last command ran, which a `cd` moved
 		// from where the session started.
-		if p := m.paneByID(ev.SessionID); p != nil && ev.CWD != "" {
-			p.cwd = ev.CWD
+		if p := m.paneByID(ev.SessionID); p != nil {
+			if ev.CWD != "" {
+				p.cwd = ev.CWD
+			}
+			// The suggestion was for the block before this one.
+			p.suggestion, p.lastClosed = nil, ev.BlockID
 		}
 		// A command finished, so the list changed. Refetching is cheaper to get right
 		// than merging: the daemon's ordering is the one the list is defined by.
 		if m.showBlocks {
 			return tea.Batch(m.loadBlocksCmd(ev.SessionID), m.waitForEvent())
+		}
+
+	case ports.EventBlockSuggestion:
+		// A suggestion takes seconds: one for a block that is no longer the pane's last is about
+		// a command already scrolled past, and is dropped.
+		if p := m.paneByID(ev.SessionID); p != nil && ev.BlockID == p.lastClosed {
+			p.suggestion = &suggestion{blockID: ev.BlockID, text: ev.Text}
 		}
 
 	case ports.EventSessionExited:

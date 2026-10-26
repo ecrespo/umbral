@@ -462,13 +462,14 @@ func toEvent(n client.Notification) (ports.Event, bool) {
 
 	case "block.closed":
 		var p struct {
+			ID        string `json:"id"`
 			SessionID string `json:"session_id"`
 			CWD       string `json:"cwd"`
 		}
 		if err := n.Decode(&p); err != nil {
 			return ports.Event{}, false
 		}
-		return ports.Event{Kind: ports.EventBlockClosed, SessionID: p.SessionID, CWD: p.CWD}, true
+		return ports.Event{Kind: ports.EventBlockClosed, SessionID: p.SessionID, CWD: p.CWD, BlockID: p.ID}, true
 
 	case "session.exited":
 		var p struct {
@@ -563,6 +564,17 @@ func toEvent(n client.Notification) (ports.Event, bool) {
 
 	case "skill.changed":
 		return ports.Event{Kind: ports.EventSkillChanged}, true
+
+	case "block.suggestion":
+		var p struct {
+			BlockID   string `json:"block_id"`
+			SessionID string `json:"session_id"`
+			Text      string `json:"text"`
+		}
+		if err := n.Decode(&p); err != nil || p.BlockID == "" || p.Text == "" {
+			return ports.Event{}, false
+		}
+		return ports.Event{Kind: ports.EventBlockSuggestion, SessionID: p.SessionID, BlockID: p.BlockID, Text: p.Text}, true
 
 	case "notification.posted":
 		// The daemon has already normalized the text (REQ-NTF-001): no control characters.

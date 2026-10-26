@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 
+	aaiports "github.com/ecrespo/umbral/internal/activeai/ports"
+
 	intports "github.com/ecrespo/umbral/internal/integrations/ports"
 
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
@@ -42,6 +44,7 @@ var dispatchedKinds = []bus.Kind{
 	sessports.KindBlockStarted,
 	sessports.KindBlockUpdated,
 	sessports.KindBlockClosed,
+	aaiports.KindBlockSuggestion,
 	wsports.KindWorkspaceCreated,
 	wsports.KindWorkspaceUpdated,
 	wsports.KindWorkspaceClosed,
@@ -138,6 +141,8 @@ func toNotification(event bus.Event) (string, any) {
 		}
 	case sessports.BlockClosed:
 		return "block.closed", toWireBlock(e.Block)
+	case aaiports.BlockSuggestion:
+		return "block.suggestion", blockSuggestionPayload{BlockID: e.BlockID, SessionID: e.SessionID, Text: e.Text, Model: e.Model}
 
 	// The workspace tree's kinds are already the §6 method names, so the event carries its
 	// own method and only the payload has to be built.

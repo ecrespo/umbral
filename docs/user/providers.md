@@ -143,6 +143,11 @@ remote candidate listed first, sent zero requests off the machine.
 and its onward requests are not in `egress_log`. The example file keeps it out of every class
 for that reason. Leave it out of yours whenever a call must stay on the machine.
 
+**Active AI uses the same `local`.** With `[active_ai] enabled = true` in `config.toml`, a
+failed command's text and the end of its output go to the first local candidate of `fast`, and
+never to a remote one. A loopback gateway in `fast` is local here too, so keep it out of `fast`
+if you turn Active AI on.
+
 ## Presets
 
 `examples/models.toml` carries two ready entries (REQ-LLM-007):

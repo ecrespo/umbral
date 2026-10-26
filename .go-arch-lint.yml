@@ -64,6 +64,9 @@ components:
 
   waits-service: { in: internal/waits }
 
+  # Active AI (T-F2-22): a one-line suggestion from a local model when a user's command fails.
+  activeai-service: { in: internal/activeai }
+
   # The integration surface (T-F1-25): external state reports and `pane.state_changed`.
   integrations-service: { in: internal/integrations }
 
@@ -151,6 +154,8 @@ components:
   acp-ports:    { in: internal/acp/ports }
   acp-adapters: { in: internal/acp/adapters/** }
   waits-ports:  { in: internal/waits/ports }
+  activeai-domain: { in: internal/activeai/domain }
+  activeai-ports:  { in: internal/activeai/ports }
 
   integrations-domain:   { in: internal/integrations/domain }
   integrations-ports:    { in: internal/integrations/ports }
@@ -450,6 +455,8 @@ deps:
       - mcp-domain
       - waits-ports
       - waits-domain
+      # block.suggestion (T-F2-22).
+      - activeai-ports
       - integrations-ports
       - integrations-domain
       # policy.explain (T-F1-28).
@@ -562,6 +569,9 @@ deps:
       - agents-service
       - mcp-service
       - waits-service
+      - activeai-service
+      - activeai-ports
+      - activeai-domain
       - integrations-service
       - notify-service
       - security-service
@@ -690,6 +700,29 @@ deps:
       - waits-domain
       - agents-ports
       - agents-domain
+      - sessions-ports
+      - sessions-domain
+      - bus
+
+  # --- Active AI (T-F2-22, delta `2026-10-active-ai`) ---------------------------
+  # `activeai` -> its own ports and domain, the sessions domain and ports for `block.closed`,
+  # and `bus`; never `llmgw` or `agents`. The model and the block reader are its own ports,
+  # which `cmd` implements over the router (local only) and the block store.
+  activeai-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+
+  activeai-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - bus
+
+  activeai-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - activeai-ports
+      - activeai-domain
       - sessions-ports
       - sessions-domain
       - bus

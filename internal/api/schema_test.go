@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	aaiports "github.com/ecrespo/umbral/internal/activeai/ports"
+
 	"github.com/ecrespo/umbral/internal/bus"
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
@@ -165,6 +167,7 @@ func everyDispatchedEvent() []struct {
 		{sessports.KindBlockStarted, sessports.BlockStarted{Block: block}},
 		{sessports.KindBlockUpdated, sessports.BlockUpdated{BlockID: block.ID}},
 		{sessports.KindBlockClosed, sessports.BlockClosed{Block: block}},
+		{aaiports.KindBlockSuggestion, aaiports.BlockSuggestion{BlockID: block.ID, SessionID: fakeSessionID, Text: "git status"}},
 		{wsports.KindWorkspaceCreated, wsports.WorkspaceEvent{Kind: wsports.KindWorkspaceCreated, Workspace: sample.Workspace}},
 		{wsports.KindWorkspaceUpdated, wsports.WorkspaceEvent{Kind: wsports.KindWorkspaceUpdated, Workspace: sample.Workspace}},
 		{wsports.KindWorkspaceClosed, wsports.WorkspaceEvent{Kind: wsports.KindWorkspaceClosed, Workspace: sample.Workspace}},

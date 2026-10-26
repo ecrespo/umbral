@@ -77,6 +77,9 @@ type Call struct {
 	Class    string
 	Model    string
 	Request  domain.Request
+	// LocalOnly drops every candidate whose provider is not local before anything is sent:
+	// Active AI's block content never reaches a remote model (REQ-AAI-003).
+	LocalOnly bool
 }
 
 // NewRouter builds a router over the catalog.
@@ -343,7 +346,7 @@ func (r *Router) Stream(ctx context.Context, call Call) (iter.Seq2[domain.Event,
 	}
 	var cands []candidate
 	for _, p := range plan {
-		if p.Kept {
+		if p.Kept && (!call.LocalOnly || p.provider.Local()) {
 			cands = append(cands, p.candidate)
 		}
 	}

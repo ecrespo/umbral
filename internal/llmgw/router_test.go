@@ -822,3 +822,35 @@ func TestEveryModelCallIsTraced_REQ_OBS_001(t *testing.T) {
 		t.Errorf("the answered call was traced as %+v", ok.rec)
 	}
 }
+
+// TestALocalOnlyCallNeverReachesARemoteProvider_REQ_AAI_003: a call marked local only drops
+// every remote candidate before anything is sent, even one the class names first; with no
+// local candidate left it is refused and no provider is asked.
+func TestALocalOnlyCallNeverReachesARemoteProvider_REQ_AAI_003(t *testing.T) {
+	t.Parallel()
+
+	remote := &streamProvider{id: "or", scripts: map[string]script{"fast": {events: answer}}}
+	local := &streamProvider{id: "ollama", local: true, scripts: map[string]script{"small": {events: answer}}}
+	r := newRig(t, false,
+		map[string][]string{"fast": {"or/fast", "ollama/small"}, "remote": {"or/fast"}},
+		[]*streamProvider{remote, local},
+		[]domain.Model{model("or", "fast"), model("ollama", "small")})
+
+	call := hello("fast")
+	call.LocalOnly = true
+	if text, err := collect(t, r.router, call); err != nil || text != "hello" {
+		t.Fatalf("a local-only call: %q, %v", text, err)
+	}
+	if remote.called() != 0 || local.called() != 1 {
+		t.Errorf("remote asked %d times, local %d; want 0 and 1", remote.called(), local.called())
+	}
+
+	only := hello("remote")
+	only.LocalOnly = true
+	if _, err := r.router.Stream(context.Background(), only); !errors.Is(err, domain.ErrNoCandidate) {
+		t.Errorf("a local-only call with no local candidate: %v, want ErrNoCandidate", err)
+	}
+	if remote.called() != 0 {
+		t.Errorf("the remote provider was asked %d times", remote.called())
+	}
+}

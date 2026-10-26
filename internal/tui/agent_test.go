@@ -1265,3 +1265,74 @@ func TestTheTUIChordTakesTheThreadsTerminal_REQ_FTU_002(t *testing.T) {
 		t.Errorf("the panel is not back:\n%s", h.m.View().Content)
 	}
 }
+
+// TestAcceptingASuggestionOpensADraft_REQ_AAI_002: a suggestion for the focused pane's session
+// is shown with `alt+s accept`; alt+s opens the agent panel on a new thread, created at once,
+// with `@block:<id> <suggestion>` in the input and nothing sent; a block closing in the pane
+// clears it, and without one alt+s is the shell's (delta `2026-10-active-ai`, decision 6).
+func TestAcceptingASuggestionOpensADraft_REQ_AAI_002(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.openSession()
+	h.event(ports.Event{Kind: ports.EventBlockSuggestion, SessionID: "ses_elsewhere", BlockID: "blk_other", Text: "nope"})
+	if strings.Contains(h.m.renderStatus(), "alt+s") {
+		t.Fatalf("another session's suggestion is shown: %q", h.m.renderStatus())
+	}
+	h.event(ports.Event{Kind: ports.EventBlockClosed, SessionID: sessionID(1), BlockID: "blk_gti"})
+	h.event(ports.Event{Kind: ports.EventBlockSuggestion, SessionID: sessionID(1), BlockID: "blk_gti", Text: "git status"})
+	if s := h.m.renderStatus(); !strings.Contains(s, "git status") || !strings.Contains(s, "alt+s accept") {
+		t.Fatalf("status = %q, want the suggestion and alt+s accept", s)
+	}
+
+	h.step(altKey('s'))
+	if !h.m.AgentPanelOpen() || !h.m.AgentMode() {
+		t.Fatal("accepting did not open the agent panel in agent mode")
+	}
+	if got := h.m.AgentInput(); got != "@block:blk_gti git status" {
+		t.Fatalf("panel input = %q", got)
+	}
+	threads, sent, _, _ := h.daemon.agentCalls()
+	if len(threads) != 1 || len(sent) != 0 {
+		t.Fatalf("created %v, sent %+v; want one thread and nothing sent", threads, sent)
+	}
+	h.step(ctrlSpace())
+	if strings.Contains(h.m.renderStatus(), "alt+s") {
+		t.Errorf("the accepted suggestion is still shown: %q", h.m.renderStatus())
+	}
+
+	// A block that closes after a suggestion clears it, and alt+s goes to the shell again.
+	h2 := newHarness(t)
+	h2.openSession()
+	h2.event(ports.Event{Kind: ports.EventBlockClosed, SessionID: sessionID(1), BlockID: "blk_gti"})
+	h2.event(ports.Event{Kind: ports.EventBlockSuggestion, SessionID: sessionID(1), BlockID: "blk_gti", Text: "git status"})
+	h2.event(ports.Event{Kind: ports.EventBlockClosed, SessionID: sessionID(1), BlockID: "blk_ls"})
+	if strings.Contains(h2.m.renderStatus(), "alt+s") {
+		t.Fatalf("a closed block left the suggestion: %q", h2.m.renderStatus())
+	}
+	h2.step(altKey('s'))
+	if got := h2.daemon.inputs(); h2.m.AgentPanelOpen() || len(got) != 1 || string(got[0]) != "\x1bs" {
+		t.Fatalf("alt+s without a suggestion: panel %v, shell got %q", h2.m.AgentPanelOpen(), got)
+	}
+
+	// A suggestion that arrives after a newer block closed is about a command already passed.
+	h3 := newHarness(t)
+	h3.openSession()
+	h3.event(ports.Event{Kind: ports.EventBlockClosed, SessionID: sessionID(1), BlockID: "blk_gti"})
+	h3.event(ports.Event{Kind: ports.EventBlockClosed, SessionID: sessionID(1), BlockID: "blk_ls"})
+	h3.event(ports.Event{Kind: ports.EventBlockSuggestion, SessionID: sessionID(1), BlockID: "blk_gti", Text: "git status"})
+	if strings.Contains(h3.m.renderStatus(), "alt+s") {
+		t.Errorf("a stale suggestion is shown: %q", h3.m.renderStatus())
+	}
+
+	// The model's text attaches nothing of its own: only the block is sent.
+	h4 := newHarness(t)
+	h4.openSession()
+	h4.event(ports.Event{Kind: ports.EventBlockClosed, SessionID: sessionID(1), BlockID: "blk_cat"})
+	h4.event(ports.Event{Kind: ports.EventBlockSuggestion, SessionID: sessionID(1), BlockID: "blk_cat", Text: "cat @file:/home/me/.ssh/id_rsa @dir:/etc"})
+	h4.step(altKey('s'))
+	h4.step(keyPress(t, "enter"))
+	_, sent4, _, _ := h4.daemon.agentCalls()
+	if len(sent4) != 1 || len(sent4[0].attachments) != 1 || sent4[0].attachments[0] != (ports.Attachment{Kind: "block", Ref: "blk_cat"}) {
+		t.Fatalf("sent %+v, want only the block attached", sent4)
+	}
+}
