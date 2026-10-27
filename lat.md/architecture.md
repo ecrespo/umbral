@@ -294,6 +294,18 @@ A user's command that fails gets a one-line suggestion from the local `fast` mod
 
 [[cmd/umbrald/activeai.go#localSuggester#Suggest]] calls the router with `LocalOnly`, which drops every remote candidate before anything is sent, so a class naming a remote model first still never receives block content. [[internal/activeai/domain/domain.go#FirstLine]] also removes escape sequences and control and format characters, since the model read a command's output. The TUI keeps a suggestion only for its pane's last closed block, and [[internal/tui/agent.go#Model#acceptSuggestion]] turns `alt+s` into a new thread with `@block:<id> <suggestion>` as a draft, the suggestion passed through [[internal/tui/agent.go#inert]] so it attaches no file of its own.
 
+## The desktop client is a bridge and a page
+
+The Wails window is two halves: [[internal/desktop/bridge.go#Bridge]] over a `desktop` connection, tested against a real daemon, and `cmd/umbral-desktop`, a module of its own that binds it to a plain HTML page (delta `2026-10-desktop-client`).
+
+[[internal/desktop/bridge.go#Bridge#Call]] sends only the methods in [[internal/desktop/bridge.go#Methods]], those the page's views use, and refuses any other unsent; configuration, keys, rules, skills and MCP servers stay with `umb`. [[internal/desktop/bridge.go#Bridge#Attach]] resizes, subscribes and replays the snapshot into an empty screen, and [[internal/desktop/bridge.go#Bridge#output]] drops output at or below the snapshot's `seq`. Every other notification reaches the page as it came, and the page reads `session.snapshot` again on each tree notification, keeping no cache.
+
+The threads view is REQ-ORC-003's desktop clause: [[internal/desktop/threads.go#Bridge#Threads]] reads one `session.snapshot` and the pending approvals, and [[internal/desktop/threads.go#threadRows]] keeps the threads whose workspace is the focused one, with attention, `queued`, worktree and pending count. The page reads it again on `thread.attention_changed` and `thread.turn_finished`, and a merge needs the diff read first and passes its revision. The window is often the foreground client of [[lat.md/architecture#Architecture#Notifications reach one client]], since it sends requests on every change, so it shows each `notification.posted` it receives in its status line.
+
+Screens are libghostty, as the TUI's are. [[internal/desktop/adapters/vtframe/frame.go#Screen#Frame]] walks the render state into rows of styled runs, skipping the spacer after a wide character and applying inverse video, and [[internal/desktop/bridge.go#Bridge#draw]] emits a screen with new output at most every 16 ms. The page places runs with `textContent`, so a program's output never becomes markup.
+
+The window module carries Wails v3.0.0 and its GTK 4 and WebKitGTK 6.0 cgo dependencies, so the daemon's build, lint and vulnerability scan never see them. [[packaging/desktop/build.sh]] builds it in a container, [[scripts/desktop_imports.sh]] keeps its imports of Umbral's packages to the client and the bridge, and [[scripts/desktop_smoke.sh]] runs it under xvfb in CI, where the page types shell arithmetic into its first pane and quits once its own DOM shows the sum, which the echo of the typed line cannot.
+
 ## The .deb ships the branding kit as it is
 
 [[packaging/deb/build.sh]] stages the three binaries, the eleven `hicolor` files and the `.desktop` entry copied from the kit, never regenerated (REQ-PKG-006), so the package carries what the `icons` job proved.

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.77 |
+| **Version** | 1.78 |
 | **Date** | 2026-10-26 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -845,6 +845,9 @@ num_ctx = 4096
 | `tui` | `client`, its own `ports`, and the `domain` packages; never `api`, and never its own adapters — `cmd/umbral-tui` wires those, as `cmd/umbrald` does for the daemon |
 | `tui/ports` | `sessions/domain`, for the size and cursor types the daemon already defines |
 | `tui/adapters/**` | its own `ports`, `client`, `sessions/domain` and external libraries, like every other module's adapters. The `client` allowance is what keeps method names and parameter shapes in one adapter instead of in the model |
+| `desktop` | `client`, its own `ports` and `sessions/domain`; no external library. It is the Wails client's core, which `cmd/umbral-desktop` — a module of its own — binds to a page (delta `2026-10-desktop-client`) |
+| `desktop/ports` | `sessions/domain`, for the terminal size |
+| `desktop/adapters/**` | its own `ports`, `sessions/domain` and libghostty, for the frame renderer |
 | `tools/adapters` | also `sessions/ports`, for `AgentTerminal` and `AgentKeys` alone: `run_command` and `terminal_interact` run in the thread's PTY, which the sessions module owns (T-F1-10, T-F2-20) |
 | `workspaces` | `ports` of `sessions` and `store`; never `agents`, `api` or `waits` |
 | `waits` | `ports` and `domain` of `agents` and `sessions`, plus `bus`; never `api`. It reads the store only through the agents runtime, and its own domain reuses the sessions domain's escape-sequence stripper (delta `2026-10-wait-engine`) |
@@ -1492,6 +1495,41 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   for the chord in `session.input`.
 - **A cancelled turn** ends its call; a program the agent started stays in the foreground.
 
+### 5.3h The desktop client (T-F2-30)
+
+The Wails v3 client is two halves (delta `2026-10-desktop-client`). `internal/desktop` is its
+core: a bridge over a `desktop` connection that the page calls and that tells the page what
+happens, tested by the daemon's suite against a real daemon. `cmd/umbral-desktop` is a Go module
+of its own on Wails v3.0.0, GTK 4 and WebKitGTK 6.0, built in `packaging/desktop/Dockerfile`
+(`task desktop`) and in CI's `desktop` job, never by `go build ./...`; it binds the bridge to a
+page of plain HTML and JavaScript, with no npm step. `go-arch-lint` excludes the module, and
+`scripts/desktop_imports.sh` (in `task arch`, with a selftest) is its boundary rule: of
+Umbral's packages it imports `internal/client`, `internal/desktop` and its frame renderer only.
+
+- **Calls.** The page calls `Call` with one of `desktop.Methods` — the methods its views of
+  REQ-DSK-001 use — `Attach`, `Detach`, `Input` and `Resize` for terminals, and `Threads` for
+  the threads view. A method outside the list is
+  refused unsent; configuration, keys, rules, skills, MCP servers and limits stay with `umb`.
+- **Events.** `daemon` carries every notification as the daemon sent it, `frame` a terminal's
+  screen, `disconnected` the connection's end.
+- **Terminals.** The client runs libghostty, as the TUI does, and sends frames: visible rows of
+  styled runs, the cursor and the default colours, drawn with `textContent` under a CSP that
+  allows only the page's own files, at most every 16 ms. Attaching resizes, subscribes and
+  replays the snapshot into an empty screen; output at or below its `seq` is dropped, and
+  `session.unsubscribed` re-attaches.
+- **The tree.** The page reads `session.snapshot` again on every tree notification and draws the
+  focused tab's layout; it keeps no cache.
+- **Threads (REQ-ORC-003).** `Bridge.Threads` lists the threads whose `workspace_id` is the
+  focused workspace, from one `session.snapshot` and the pending approvals, each with its
+  attention state, `queued`, worktree and pending count; the page reads it again on
+  `thread.attention_changed` and `thread.turn_finished`, focuses the thread it shows and
+  unfocuses it when it leaves. A merge needs the worktree's diff read first, asks, and passes
+  its revision.
+- **Smoke.** `scripts/desktop_smoke.sh` runs the window under xvfb against a real daemon: the
+  page types `echo smoke-$((<marker>+1))` into its first pane and quits once its own DOM shows
+  the sum, which only the shell can print. A `notification.posted` the window receives as
+  foreground client is shown in its status line.
+
 ### 5.4 Error Handling
 
 ```go
@@ -2032,3 +2070,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.75 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-yzma-provider` (T-F2-21): §5.1's embedded provider — `type = "yzma"` on yzma's purego `pkg/llama`, `lib_path` loaded once per process, `models_dir`'s GGUF files as local text-only models, the window, one resident model freed by another call, `keep_alive` or a reload, and the `models.toml` example. |
 | 1.76 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` decision 9: §5.3g a `terminal_interact` call at the prompt that enters nothing returns once the shell's output after it has settled |
 | 1.77 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-active-ai` (T-F2-22): §5.1 adds `[active_ai]` (`enabled`, `per_minute`), the router's `LocalOnly`, and the `activeai` leaf module; §5.2 its row |
+| 1.78 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-desktop-client` (T-F2-30): §5.2 rows for `desktop`, its ports and adapters; §5.3h the Wails client — a module of its own built in a container and CI, its import rule, the bridge's method list, frames of styled runs, attaching, the threads view of REQ-ORC-003 and the smoke |
