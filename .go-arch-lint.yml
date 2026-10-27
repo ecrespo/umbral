@@ -18,10 +18,13 @@ workdir: .
 # e2e/us003/fixture is a module of its own, not Umbral's code: the Go repository with a broken
 # test that the live US-003 run copies and asks the agent to fix (T-F1-21). It imports nothing
 # of Umbral's and nothing of Umbral's imports it, so no component applies to it. docs/spikes/acp
-# is the same: the throwaway ACP client of spike T-F2-00, a module of its own.
+# is the same: the throwaway ACP client of spike T-F2-00, a module of its own. cmd/umbral-desktop
+# is the Wails window, a module of its own so its GTK and WebKit cgo never reach this one; its
+# imports of Umbral's packages are checked by scripts/desktop_imports.sh, which `task arch` runs.
 exclude:
   - e2e/us003/fixture
   - docs/spikes/acp
+  - cmd/umbral-desktop
 
 components:
   # --- composition root -------------------------------------------------------
@@ -112,6 +115,10 @@ components:
   tui:          { in: internal/tui }
   tui-ports:    { in: internal/tui/ports }
   tui-adapters: { in: internal/tui/adapters/** }
+  # The Wails client's core (T-F2-30): the bridge, its ports, and the frame renderer.
+  desktop:          { in: internal/desktop }
+  desktop-ports:    { in: internal/desktop/ports }
+  desktop-adapters: { in: internal/desktop/adapters/** }
 
   # --- hexagonal modules ------------------------------------------------------
   sessions-domain:   { in: internal/sessions/domain }
@@ -489,6 +496,21 @@ deps:
       - tui-ports
       - client
       - sessions-domain
+  desktop-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sessions-domain
+  desktop-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - desktop-ports
+      - sessions-domain
+  desktop:
+    anyVendorDeps: false
+    mayDependOn:
+      - client
+      - desktop-ports
+      - sessions-domain
   tui:
     anyVendorDeps: true
     mayDependOn:
@@ -563,6 +585,9 @@ deps:
       - tui
       - tui-ports
       - tui-adapters
+      - desktop
+      - desktop-ports
+      - desktop-adapters
       - sessions-service
       - workspaces-service
       - llmgw-service

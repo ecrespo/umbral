@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' wails:">
+  <title>Umbral</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="/wails/runtime.js"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header id="bar">
+    <span id="brand">Umbral</span>
+    <span id="status" role="status">connecting…</span>
+    <span id="version"></span>
+  </header>
+  <main id="layout">
+    <nav id="tree" aria-label="Workspaces"></nav>
+    <section id="panes" aria-label="Terminal panes"></section>
+    <aside id="side" aria-label="Agents">
+      <div id="tabs" role="tablist">
+        <button role="tab" data-view="threads" aria-selected="true">Threads</button>
+        <button role="tab" data-view="approvals">Approvals <span id="approval-count"></span></button>
+        <button role="tab" data-view="worktrees">Worktrees</button>
+        <button role="tab" data-view="blocks">Blocks</button>
+      </div>
+      <div id="view"></div>
+    </aside>
+  </main>
+</body>
+</html>

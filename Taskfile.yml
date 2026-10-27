@@ -62,11 +62,13 @@ tasks:
     desc: 'Art. 3 gate: verify the Tech Design §5.2 dependency rules'
     cmds:
       - go-arch-lint check
+      - ./scripts/desktop_imports.sh
 
   arch:selftest:
     desc: Prove that a forbidden import actually breaks `task arch` (T-F0-01 done criterion)
     cmds:
       - ./scripts/arch_selftest.sh
+      - ./scripts/desktop_imports.sh --selftest
 
   # --- Art. 2: tests ----------------------------------------------------------
   test:
@@ -194,6 +196,17 @@ tasks:
       # A fake daemon cannot see what the real one refuses: the `cli` allowlist gap that
       # blocked T-F0-20 passed every cmd/umb test and fails here on the first command.
       - UMBRALD={{.BIN}}/umbrald UMB={{.BIN}}/umb ./scripts/cli_roundtrip.sh
+
+  desktop:
+    desc: 'REQ-DSK-001: build bin/umbral-desktop in a container with GTK 4 and WebKitGTK 6.0 (needs docker)'
+    cmds:
+      - ./packaging/desktop/build.sh
+
+  desktop:smoke:
+    desc: 'REQ-DSK-001: the window draws a real daemon''s pane under xvfb (CI; WebKit''s sandbox needs user namespaces)'
+    deps: [build, desktop]
+    cmds:
+      - UMBRALD={{.BIN}}/umbrald DESKTOP={{.BIN}}/umbral-desktop ./scripts/desktop_smoke.sh
 
   clean:
     desc: Remove build and coverage artifacts

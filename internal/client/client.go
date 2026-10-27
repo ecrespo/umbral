@@ -43,8 +43,9 @@ var Version = "0.0.0-dev"
 // looks like a daemon that does not implement `session.create` rather than a client that
 // misidentified itself.
 const (
-	ClientKindCLI = "cli"
-	ClientKindTUI = "tui"
+	ClientKindCLI     = "cli"
+	ClientKindTUI     = "tui"
+	ClientKindDesktop = "desktop"
 )
 
 // maxMessageBytes is the 4 MiB frame limit of API Spec §1 and §8. The reader enforces it
