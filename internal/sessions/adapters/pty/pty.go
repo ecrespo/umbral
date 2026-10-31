@@ -279,20 +279,6 @@ func validateExecutable(path string) error {
 	return nil
 }
 
-func validateDir(dir string) error {
-	if dir == "" {
-		return nil
-	}
-	info, err := os.Stat(dir)
-	if err != nil {
-		return fmt.Errorf("%w: cwd %s: %w", domain.ErrValidation, dir, err)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("%w: cwd %s is not a directory", domain.ErrValidation, dir)
-	}
-	return nil
-}
-
 // Adopt takes over a PTY another daemon started (REQ-HND-001): its master, received over the
 // handoff socket, and its child's pid. The child is not this daemon's, so its exit code is
 // not either: Wait reports ports.ErrExitUnknown once the child is gone. The watch on it is
