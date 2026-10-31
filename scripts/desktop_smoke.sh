@@ -7,13 +7,14 @@
 # Hermetic like `cli_roundtrip.sh`: every XDG_* directory and HOME point into a directory this
 # script owns, and the daemon it starts is the one it stops.
 #
-# Needs xvfb-run and dbus-run-session. UMBRALD and DESKTOP name the binaries.
+# Needs xvfb-run, dbus-run-session and xwininfo (x11-utils). UMBRALD and DESKTOP name the binaries.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 UMBRALD="${UMBRALD:-bin/umbrald}"
 DESKTOP="${DESKTOP:-bin/umbral-desktop}"
+command -v xwininfo >/dev/null || { echo "desktop_smoke: xwininfo (x11-utils) is not installed" >&2; exit 1; }
 for bin in "$UMBRALD" "$DESKTOP"; do
   [ -x "$bin" ] || { echo "desktop_smoke: $bin is not built" >&2; exit 1; }
 done
@@ -51,10 +52,25 @@ for _ in $(seq 100); do [ -S "$SOCKET" ] && break; sleep 0.1; done
 MARKER="1$RANDOM$RANDOM"
 ANSWER=$((MARKER + 1))
 # The window quits itself once the page has drawn the marker, and exits 1 after 90 s without it.
+# While it is open, the X11 class of the window titled Umbral is read (REQ-PKG-004): the
+# desktop shows the kit's icon only when it matches the `.desktop` file's name.
+export DESKTOP WORK
 UMBRAL_DESKTOP_SMOKE="$MARKER" GTK_A11Y=none \
-  timeout 120 xvfb-run -a dbus-run-session -- "$DESKTOP" >"$WORK/desktop.log" 2>&1 || {
+  timeout 120 xvfb-run -a dbus-run-session -- bash -c '
+    "$DESKTOP" & pid=$!
+    # Polled for as long as the window lives, so a slow start is not a failure.
+    while kill -0 "$pid" 2>/dev/null; do
+      xwininfo -root -tree 2>/dev/null | sed -n "s/^ *0x[0-9a-f]* \"Umbral\": (\(.*\)) .*/\1/p" >"$WORK/class"
+      [ -s "$WORK/class" ] && break
+      sleep 0.1
+    done
+    wait "$pid"' >"$WORK/desktop.log" 2>&1 || {
     cat "$WORK/desktop.log" >&2
     fail "the window did not draw smoke-$ANSWER"
   }
 grep -q "smoke: drawn" "$WORK/desktop.log" || { cat "$WORK/desktop.log" >&2; fail "the window quit without drawing"; }
 echo "desktop_smoke: the window drew smoke-$ANSWER, the shell's answer, from a real daemon"
+want='"io.github.ecrespo.Umbral" "io.github.ecrespo.Umbral"'
+class="$(head -1 "$WORK/class" 2>/dev/null || true)"
+[ "$class" = "$want" ] || fail "the window's WM_CLASS is ($class), want ($want)"
+echo "desktop_smoke: the window's WM_CLASS is ($class)"

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.80 |
+| **Version** | 1.81 |
 | **Date** | 2026-10-31 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1992,7 +1992,18 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   sources; 32 px and above come from the 128 master.
 - **Linux:** the `share/icons/hicolor` tree plus `io.github.ecrespo.Umbral.desktop`. The
   Breeze variant is shipped in the kit but not installed by default.
-- **Windows (F2):** `umbral.ico` plus the MSIX `Assets/` set.
+- **Windows (F2):** `umbral.ico` plus the MSIX `Assets/` set. `packaging/desktop/syso.sh`
+  (`task desktop:syso`) runs `github.com/tc-hib/go-winres@v0.3.3`, the pure-Go tool behind
+  Wails' `generate syso`, outside the module, and writes `cmd/umbral-desktop/rsrc_windows_amd64.syso`
+  and `_arm64.syso` from the kit's `umbral.ico`: its eight images as they are and go-winres's
+  default manifest (`asInvoker`, system DPI awareness). Go links them into Windows builds only.
+  `packaging/desktop/syso_test.go` walks each object's resource directory — its machine, one icon group, each entry's
+  RT_ICON holding the kit's image byte for byte — and CI's `desktop` job regenerates and compares them (`--check`); that the
+  executable embeds them is checked when T-F2-50 builds it (delta `2026-10-wails-icons`).
+- **Window id (REQ-PKG-004):** `io.github.ecrespo.Umbral` is the GTK application id and
+  program name, so the Wayland `app_id` and the X11 `WM_CLASS`; `scripts/desktop_smoke.sh`
+  reads the live window's class with `xwininfo` under xvfb; the Wayland `app_id` and the dock's
+  icon are step 1 of `docs/qa/f2-desktop.md`, F2c's walk.
 - **macOS (F2):** the layers in `macos/icon-composer-layers/` are assembled in Icon Composer
   into `appicon.icon`; `umbral.icns` is the fallback for macOS ≤ 15.
 - **Debian package (release 0.1, delta `2026-10-deb-package`):** one package, `umbral`, built by
@@ -2119,3 +2130,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.78 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-desktop-client` (T-F2-30): §5.2 rows for `desktop`, its ports and adapters; §5.3h the Wails client — a module of its own built in a container and CI, its import rule, the bridge's method list, frames of styled runs, attaching, the threads view of REQ-ORC-003 and the smoke |
 | 1.79 | 2026-10-30 | E. Crespo (assisted draft) | Delta `2026-10-hunks-file-tree` (T-F2-31): the `hunks` leaf in the module and dependency tables, `worktrees` reverting single hunks and serving its file tree; §5.3h the desktop review of hunks and the Files view. Delta `2026-10-icons-render-tolerance`: §9.3's regeneration compares rendered images within two levels |
 | 1.80 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-usf2-002-live` (T-F2-23): §5.3g the calls a local model writes — string keys, a lone control character as its key, zero values absent, `send_keys` that waits on the output after its keys, combined conditions, the holder line first; §3.3 item 2 an unreadable tool call is one retry with a repair message; DD-004's breakers do not count it |
+| 1.81 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-wails-icons` (T-PKG-04): §9.3 the Windows resource objects generated from the kit's icon and checked, the executable's check moved to T-F2-50; the window id read from the live window |

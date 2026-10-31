@@ -100,6 +100,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false # syso.sh --check runs a fetched tool
       - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -114,7 +116,7 @@ jobs:
       - name: GTK 4, WebKitGTK 6.0 and a virtual display
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev xvfb xauth dbus-x11
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev xvfb xauth dbus-x11 x11-utils
       # The runner's AppArmor forbids unprivileged user namespaces, and WebKit's web process
       # sandbox (bubblewrap) needs them: without this it aborts at start. A user's desktop
       # allows them for WebKit; the sandbox stays on.
@@ -134,6 +136,9 @@ jobs:
           install-mode: goinstall
           working-directory: cmd/umbral-desktop
           args: --config ../../.golangci.yml
+      # The committed .syso files are what the kit's icon generates (REQ-PKG-005).
+      - name: The Windows resource objects match the kit's icon
+        run: ./packaging/desktop/syso.sh --check
       - name: Build umbrald and the client
         run: |
           go build -o bin/umbrald ./cmd/umbrald

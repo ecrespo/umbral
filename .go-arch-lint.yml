@@ -36,6 +36,11 @@ components:
   # them. It is a leaf: no package dependencies, so no module can hide logic in it.
   shellscripts: { in: shell }
 
+  # --- packaging checks ---------------------------------------------------------
+  # packaging/desktop holds only the test of the Windows resource objects generated from the
+  # kit's icon (REQ-PKG-005). It is a leaf on the standard library: no module may depend on it.
+  packaging-checks: { in: packaging/desktop }
+
   # --- operator tools ------------------------------------------------------------
   # tools/rulesign signs rule bundles offline. It may reach the security domain only, so its
   # `verify` is the daemon's own verification function and nothing else (T-F1-30).
