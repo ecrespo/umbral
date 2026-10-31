@@ -159,6 +159,9 @@ func Dir() (string, error) {
 	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
 		return filepath.Join(dir, "umbral"), nil
 	}
+	if runtime.GOOS == "windows" {
+		return windowsDir("APPDATA", "")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("config: locate the home directory: %w", err)

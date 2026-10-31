@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/coder/acp-go-sdk"
@@ -189,7 +188,7 @@ func (p *process) kill() {
 			// process is being reaped, when its pid may already be someone else's.
 			p.reapMu.Lock()
 			if !p.reaped {
-				_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+				killGroup(p.cmd.Process.Pid)
 				_ = p.cmd.Process.Kill()
 			}
 			p.reapMu.Unlock()

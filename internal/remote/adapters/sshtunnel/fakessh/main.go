@@ -9,6 +9,8 @@
 //
 // FAKESSH_LOG appends each argv, FAKESSH_PIDDIR records a forward's pid as <host>.<pid>, and a
 // host named in FAKESSH_REFUSE is refused as an unreachable one is.
+//go:build unix
+
 package main
 
 import (

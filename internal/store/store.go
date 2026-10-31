@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver, no cgo (Constitution stack constraints)
@@ -164,9 +165,18 @@ func (s *Store) verifyPragmas(ctx context.Context) error {
 }
 
 // DefaultPath reports $XDG_DATA_HOME/umbral/umbral.db, falling back to
-// ~/.local/share/umbral/umbral.db (Data Model metadata).
+// ~/.local/share/umbral/umbral.db (Data Model metadata), and on Windows to
+// %LOCALAPPDATA%\Umbral\data\umbral.db.
 func DefaultPath() (string, error) {
 	dir := os.Getenv("XDG_DATA_HOME")
+	if dir == "" && runtime.GOOS == "windows" {
+		// %LOCALAPPDATA%\Umbral\data (delta `2026-10-windows-port`, decision 2).
+		root := os.Getenv("LOCALAPPDATA")
+		if root == "" {
+			return "", errors.New("store: %LOCALAPPDATA% is not set")
+		}
+		return filepath.Join(root, "Umbral", "data", DefaultFileName), nil
+	}
 	if dir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -350,9 +349,7 @@ func TestReadsAreBounded_REQ_AGT_002(t *testing.T) {
 	dir := t.TempDir()
 	env := domain.Env{Cwd: dir, WriteRoot: dir}
 	fifo := filepath.Join(dir, "pipe")
-	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mkfifo(t, fifo)
 	huge := filepath.Join(dir, "huge.log")
 	write(t, huge, strings.Repeat("a line of text\n", maxFileBytes/15+1))
 

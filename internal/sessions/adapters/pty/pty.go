@@ -1,3 +1,5 @@
+//go:build unix
+
 // Package pty opens pseudo-terminals with creack/pty and adapts them to the sessions
 // module's PTY port.
 //

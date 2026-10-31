@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/ecrespo/umbral/internal/context/domain"
 )
@@ -83,13 +82,10 @@ func addRegular(b *domain.BundleBuilder, p, rel string) error {
 	if !before.Mode().IsRegular() {
 		return fmt.Errorf("%w: entry %q: changed into something other than a regular file", domain.ErrSkillValidation, rel)
 	}
-	//nolint:unconvert // Nlink is uint64 on Linux and uint16 on macOS
-	if st, ok := before.Sys().(*syscall.Stat_t); ok && uint64(st.Nlink) > 1 {
+	if hardlinked(before) {
 		return fmt.Errorf("%w: entry %q: a hardlink", domain.ErrSkillValidation, rel)
 	}
-	// O_NOFOLLOW and O_NONBLOCK: a file swapped for a symlink is not followed, and one swapped
-	// for a FIFO cannot block the handler on open.
-	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) // #nosec G304 -- a file inside the bundle the user asked to inspect
+	f, err := openEntry(p)
 	if err != nil {
 		return fmt.Errorf("%w: entry %q: %w", domain.ErrSkillValidation, rel, err)
 	}

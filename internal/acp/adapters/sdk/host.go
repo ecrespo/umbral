@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/coder/acp-go-sdk"
@@ -225,7 +224,7 @@ const maxGitFile = 4096
 // the agent's to write, so p is opened without blocking — a FIFO would wait for a writer for
 // good — and its type is checked on the open file, not on a path that could change under it.
 func readGitFile(p string) (string, bool) {
-	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // a git file in the thread's own directory tree
+	f, err := openNonblocking(p)
 	if err != nil {
 		return "", false
 	}
@@ -350,7 +349,10 @@ func (h *Host) launch(ctx context.Context, req Request) (*process, error) {
 	cmd.Env = domain.Environment(h.cfg.Environ(), iso, m, refs)
 	// Its own session, and so its own process group: the shells and servers it starts end with
 	// it, and a process it leaves behind is still known by its session for REQ-ORC-004.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := isolateTree(cmd); err != nil {
+		_ = os.RemoveAll(iso.Root)
+		return nil, fmt.Errorf("%w: launch %s: %w", domain.ErrAgent, entry.Name, err)
+	}
 	p := newProcess(h, req, iso)
 	if err := p.start(cmd); err != nil {
 		_ = os.RemoveAll(iso.Root)

@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -237,9 +236,7 @@ func TestABadBundleIsRefusedWhole_REQ_SKL_002(t *testing.T) {
 		t.Fatal(err)
 	}
 	fifo := bundle(t, map[string]string{"SKILL.md": skillMD})
-	if err := syscall.Mkfifo(filepath.Join(fifo, "pipe"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	hasFIFO := mkfifo(t, filepath.Join(fifo, "pipe"))
 	bomb := make([]tarEntry, 0, 10)
 	bomb = append(bomb, tarEntry{name: "SKILL.md", typeflag: tar.TypeReg, body: []byte(skillMD)})
 	for i := range 9 { // nine 1 MiB files: each within the file limit, together past the bundle's
@@ -267,6 +264,9 @@ func TestABadBundleIsRefusedWhole_REQ_SKL_002(t *testing.T) {
 		{"no front matter", bundle(t, map[string]string{"SKILL.md": "# just markdown\n"}), "front matter"},
 		{"a relative path", "relative/dir", "absolute"},
 	} {
+		if tc.path == fifo && !hasFIFO {
+			continue
+		}
 		_, err := r.svc.Inspect(t.Context(), tc.path)
 		if !errors.Is(err, domain.ErrSkillValidation) || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: Inspect = %v, want a validation error naming %q", tc.name, err, tc.want)
