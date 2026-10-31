@@ -212,9 +212,21 @@ The worktree's own `.git` file is never read, because the agent can rewrite it. 
 
 A diff answers with the revision it was read from. A merge that passes it is refused `changed` when the worktree no longer holds that content. The check runs inside the squash against the snapshot being committed, so work slipped in after the review never lands.
 
-[[internal/worktrees/domain/domain.go#ParseUnifiedDiff]] gives each hunk an id from its path and lines, not its position, so a hunk keeps its id while an earlier one grows.
+[[internal/hunks/hunks.go#Parse]] gives each hunk an id from its path and lines, not its position, so a hunk keeps its id while an earlier one grows. It reads git's diffs and go-udiff's alike, ending a hunk when its header's line counts are used up, so a worktree's diff and an approval's give one hunk one id. `internal/hunks` is a standard-library leaf that the worktree domain, the tools, the agent runtime and the API share.
 
 [[internal/worktrees/worktrees.go#Service#CheckAll]] marks a worktree missing when its directory, branch or repository is gone, and never recreates it.
+
+## Review keeps hunks and edits files before a merge
+
+A worktree is reviewed before it lands: single hunks are rejected, and its files are listed, read and edited by the user (delta `2026-10-hunks-file-tree`).
+
+[[internal/worktrees/review.go#Service#RejectHunks]] checks the diff's revision and the ids, then [[internal/worktrees/adapters/gitcli/gitcli.go#CLI#Revert]] reverse-applies a patch holding only those hunks ([[internal/hunks/hunks.go#Patch]]) to the working copy, through the pinned git directory with no filter driver run, whole or not at all. The hunks left are what a merge with the new revision lands.
+
+[[internal/worktrees/review.go#Service#Files]] lists the snapshot tree a merge would read, marked from the same snapshot's diff, deleted files included. [[internal/worktrees/review.go#Service#ReadFile]] and [[internal/worktrees/review.go#Service#WriteFile]] work inside an `os.Root` on the worktree's directory, never through a link, outside `.git`, at most 1 MiB of UTF-8 text. A write needs the digest that was read, keeps the file's mode, and lands by rename. [[internal/worktrees/review.go#cleanPath]] refuses `.git` at any depth and in any case, and [[internal/worktrees/review.go#throughLink]] a link among a path's directories, both as `bad_path`.
+
+`worktree.reject_hunks` and `worktree.write_file` are the interactive clients' and `userOnly`, and run under the thread's idle guard. `read_file` reports a file as not editable while the thread's turn runs.
+
+An approval's diff can be accepted in part. [[internal/agents/approvals.go#acceptable]] checks the ids against the approval's diff, and [[internal/agents/domain/approval.go#Approval#HunksSelectable]] keeps a hosted agent's write whole, because its answer carries no content. The accepted ids travel with the answer to the paused turn as `Grant.Hunks`. The registry then runs only a [[internal/tools/ports/tool.go#Partial]] tool with them: `write_file` and `edit_file` recompute their diff, write the old content with the accepted hunks applied, and tell the model which hunks were rejected.
 
 ## A thread runs in its active worktree
 
@@ -304,6 +316,8 @@ The Wails window is two halves: [[internal/desktop/bridge.go#Bridge]] over a `de
 
 The threads view is REQ-ORC-003's desktop clause: [[internal/desktop/threads.go#Bridge#Threads]] reads one `session.snapshot` and the pending approvals, and [[internal/desktop/threads.go#threadRows]] keeps the threads whose workspace is the focused one, with attention, `queued`, worktree and pending count. The page reads it again on `thread.attention_changed` and `thread.turn_finished`, and a merge needs the diff read first and passes its revision. The window is often the foreground client of [[lat.md/architecture#Architecture#Notifications reach one client]], since it sends requests on every change, so it shows each `notification.posted` it receives in its status line.
 
+The review views never apply a diff in the page (delta `2026-10-hunks-file-tree`): a hunk left unchecked in a worktree's diff is sent to `worktree.reject_hunks`, so the merge that follows lands only what was kept, and an approval approved once with hunks unchecked sends the checked ids. The Files view reads `worktree.files` and `read_file` and saves through `write_file` with the digest it read; [[cmd/umbrald/desktop_review_test.go#TestTheDesktopReviewsHunksAgainstARealDaemon_REQ_DSK_002]] drives those calls through the bridge against a real daemon and repository.
+
 Screens are libghostty, as the TUI's are. [[internal/desktop/adapters/vtframe/frame.go#Screen#Frame]] walks the render state into rows of styled runs, skipping the spacer after a wide character and applying inverse video, and [[internal/desktop/bridge.go#Bridge#draw]] emits a screen with new output at most every 16 ms. The page places runs with `textContent`, so a program's output never becomes markup.
 
 The window module carries Wails v3.0.0 and its GTK 4 and WebKitGTK 6.0 cgo dependencies, so the daemon's build, lint and vulnerability scan never see them. [[packaging/desktop/build.sh]] builds it in a container, [[scripts/desktop_imports.sh]] keeps its imports of Umbral's packages to the client and the bridge, and [[scripts/desktop_smoke.sh]] runs it under xvfb in CI, where the page types shell arithmetic into its first pane and quits once its own DOM shows the sum, which the echo of the typed line cannot.
@@ -311,6 +325,8 @@ The window module carries Wails v3.0.0 and its GTK 4 and WebKitGTK 6.0 cgo depen
 ## The .deb ships the branding kit as it is
 
 [[packaging/deb/build.sh]] stages the three binaries, the eleven `hicolor` files and the `.desktop` entry copied from the kit, never regenerated (REQ-PKG-006), so the package carries what the `icons` job proved.
+
+That job, [[scripts/icons_check.sh]], regenerates the kit and compares it byte for byte, except that a rendered image passes when no pixel channel moves by more than two levels ([[scripts/icons_compare.py#TOLERANCE]]): pixman rounds a level apart on another runner's CPU.
 
 libghostty-vt is linked statically, so `Depends` names only the newest glibc symbol version the binaries reference. Only a `vMAJOR.MINOR.PATCH` tag is a release; an untagged build becomes `0.0.0+git.<hash>` and a prerelease `~rc`, so apt upgrades from either to the release. Modes and mtimes are fixed, so one commit builds one package. [[packaging/deb/postinst]] and [[packaging/deb/postrm]] refresh the icon cache and the desktop database only where the tools exist, so a minimal system installs without them.
 

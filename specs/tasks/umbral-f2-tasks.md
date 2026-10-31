@@ -464,10 +464,14 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 - **REQ:** REQ-DSK-001, REQ-ORC-003 (the desktop clause)
 - **Depends on:** slice F2a
 
-### [ ] T-F2-31 · Per-hunk diff approval and the worktree's file tree
+### [x] 2026-10-30 T-F2-31 · Per-hunk diff approval and the worktree's file tree
 - **Slice:** F2c
 - **REQ:** REQ-DSK-002, REQ-DSK-003
 - **Depends on:** slice F2a
+- **Done:** delta `2026-10-hunks-file-tree` (API 1.56 §2, §4, §5.25, §5.41; Tech 1.79 §5.2,
+  §5.3h): `internal/hunks`, `worktree.reject_hunks`, `files`, `read_file` and `write_file`, an
+  approval's `hunks` approved one by one, and the desktop's review and Files view, checked
+  against a real daemon and repository.
 
 ### [ ] T-PKG-04 · Wails icons, app id and Taskfile override
 - **Slice:** F2c
@@ -546,8 +550,8 @@ Each of these is detailed — What, Files, Done, test names — by a delta when 
 | REQ-AAI-002 | T-F2-22 | `TestAcceptingASuggestionOpensADraft_REQ_AAI_002` |
 | REQ-AAI-003 | T-F2-22 | `TestALocalOnlyCallNeverReachesARemoteProvider_REQ_AAI_003`, `TestActiveAIAsksTheRouterLocalOnly_REQ_AAI_003`, `TestNoLocalModelNoSuggestion_REQ_AAI_003` |
 | REQ-DSK-001 | T-F2-30 | `TestAFrameIsTheVisibleScreenAsText_REQ_DSK_001`, `TestTheDesktopBridgeDrivesADaemon_REQ_DSK_001`, `TestOutputTheSnapshotHeldIsNotAppliedAgain_REQ_DSK_001`, `TestATerminalSizeIsOneTheDaemonTakes_REQ_DSK_001`, and `scripts/desktop_smoke.sh` in CI's `desktop` job |
-| REQ-DSK-002 | T-F2-31 | deferred: named when the slice starts |
-| REQ-DSK-003 | T-F2-31 | deferred: named when the slice starts |
+| REQ-DSK-002 | T-F2-31 | `TestHunkIDsAreTheSameFromEitherDiff_REQ_DSK_002`, `TestApplyingChosenHunks_REQ_DSK_002`, `TestRejectedHunksLeaveTheWorktree_REQ_DSK_002`, `TestAnApprovalAcceptsSomeHunks_REQ_DSK_002`, `TestAWriteRunsWithTheAcceptedHunks_REQ_DSK_002`, `TestTheReviewMethodsAreTheUsers_REQ_DSK_002`, `TestAnApprovalsHunksReachTheWire_REQ_DSK_002`, `TestTheDesktopReviewsHunksAgainstARealDaemon_REQ_DSK_002`; the page's views by hand (delta residual) |
+| REQ-DSK-003 | T-F2-31 | `TestTheWorktreesFileTree_REQ_DSK_003`, `TestTheDesktopReviewsHunksAgainstARealDaemon_REQ_DSK_002` (the Files view's calls); the view by hand |
 | REQ-PKG-004 | T-PKG-04 | a test of the Wails window options (`app_id`, `WM_CLASS`) |
 | REQ-PKG-005 | T-PKG-04 | a test that parses the embedded `.ico` and checks its sizes |
 | REQ-PKG-007 | T-PKG-05 | a test that the built bundle carries `Assets.car` and `CFBundleIconName = appicon`; the Icon Composer compile is manual (PRD F2 §11) |

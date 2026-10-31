@@ -3,7 +3,8 @@
 #
 # The rules, restated from Tech Design §5.2:
 #   */domain        -> the standard library and other */domain (security's domain may also
-#                      use mvdan.cc/sh/v3/syntax, delta `2026-10-shell-parser`)
+#                      use mvdan.cc/sh/v3/syntax, delta `2026-10-shell-parser`; a domain may
+#                      use the leaf internal/hunks, delta `2026-10-hunks-file-tree`)
 #   */ports         -> its own domain and other */domain
 #   */adapters      -> its own ports, its own domain and external libraries
 #   agents          -> ports of sessions, tools, context, llmgw, security, store
@@ -105,6 +106,11 @@ components:
   # the router's per-provider queues. A leaf, so neither module reaches the other through it:
   # it has no `deps` entry, which go-arch-lint reads as no project import allowed at all.
   slots:  { in: internal/slots }
+  # A unified diff as files and hunks with their review ids, and a chosen subset applied
+  # (T-F2-31). A leaf with the standard library only, for the same reason as slots: the
+  # worktree engine, the tools and the API read one diff the same way without reaching each
+  # other. A domain may use it, as it would the standard library.
+  hunks:  { in: internal/hunks }
   api:    { in: internal/api }
   store:  { in: internal/store }
   config: { in: internal/config }
@@ -341,6 +347,8 @@ deps:
   tools-adapters:
     anyVendorDeps: true
     mayDependOn:
+      # write_file and edit_file apply the accepted hunks of their change (T-F2-31).
+      - hunks
       # mcptools offers an MCP server's tools in the mcp module's own types (T-F1-17).
       - mcp-domain
       # the registry's tests assemble the built-ins (T-F1-09).
@@ -448,6 +456,8 @@ deps:
   api:
     anyVendorDeps: true
     mayDependOn:
+      # An Approval's diff is read as hunks (T-F2-31).
+      - hunks
       - bus
       - store
       - config
@@ -526,6 +536,8 @@ deps:
   agents-service:
     anyVendorDeps: true
     mayDependOn:
+      # An approval's hunks are checked against its diff (T-F2-31).
+      - hunks
       - agents-ports
       - agents-domain
       - tools-ports
@@ -760,6 +772,8 @@ deps:
     anyVendorDeps: false
     mayDependOn:
       - sessions-domain
+      # A worktree's diff is read as hunks.File (T-F2-31).
+      - hunks
 
   worktrees-ports:
     anyVendorDeps: false
@@ -778,6 +792,8 @@ deps:
     mayDependOn:
       - worktrees-ports
       - worktrees-domain
+      # A review's rejected hunks are cut from its diff as a patch (T-F2-31).
+      - hunks
 
   worktrees-integration:
     anyVendorDeps: false

@@ -1,6 +1,9 @@
 package domain
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ApprovalState is an approval's state (API §4 Approval).
 type ApprovalState string
@@ -35,12 +38,23 @@ type Approval struct {
 	Reason string
 	// Summary is the call's target — the command line, the path, the URL — which a
 	// remembered decision's rule matches.
-	Summary   string
-	Diff      string
-	State     ApprovalState
+	Summary string
+	Diff    string
+	State   ApprovalState
+	// Accepted are the hunks of Diff the user approved, nil when it was approved whole. They
+	// travel with the answer to the paused turn and are not stored: the call's result says
+	// which were applied.
+	Accepted  []string
 	Scope     Scope
 	CreatedAt int64
 	DecidedAt *int64
+}
+
+// HunksSelectable reports whether single hunks of the approval's diff may be accepted: a diff of
+// Umbral's own tool, never a hosted agent's write, which is answered without its content (delta
+// `2026-10-hunks-file-tree`, decision 5).
+func (a Approval) HunksSelectable() bool {
+	return a.Diff != "" && !strings.HasPrefix(a.Tool, "acp:")
 }
 
 // Response is approval.respond's input (API §5.25).
@@ -48,14 +62,26 @@ type Response struct {
 	ApprovalID string
 	Approve    bool
 	Scope      Scope
+	// Hunks, when not nil, are the only hunks of the diff approved (decision 3).
+	Hunks []string
 }
 
-// Validate checks the scope.
+// Validate checks the scope, and that hunks come with an approval for this call alone.
 func (r Response) Validate() error {
 	switch r.Scope {
 	case ScopeOnce, ScopeThread, ScopeAlways:
-		return nil
 	default:
 		return fmt.Errorf("%w: scope %q is not once, thread or always", ErrValidation, r.Scope)
 	}
+	switch {
+	case r.Hunks == nil:
+		return nil
+	case !r.Approve:
+		return fmt.Errorf("%w: hunks are the ones approved; deny to accept none", ErrValidation)
+	case r.Scope != ScopeOnce:
+		return fmt.Errorf("%w: hunks are approved once: a rule approves whole calls", ErrValidation)
+	case len(r.Hunks) == 0:
+		return fmt.Errorf("%w: name at least one hunk, or deny", ErrValidation)
+	}
+	return nil
 }

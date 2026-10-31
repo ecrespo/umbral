@@ -9,6 +9,7 @@ import (
 
 	agentsdomain "github.com/ecrespo/umbral/internal/agents/domain"
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
+	"github.com/ecrespo/umbral/internal/hunks"
 	wtdomain "github.com/ecrespo/umbral/internal/worktrees/domain"
 	wtports "github.com/ecrespo/umbral/internal/worktrees/ports"
 )
@@ -33,6 +34,12 @@ func worktreeMethods() map[string]method {
 		"worktree.merge":       {handle: handleWorktreeMerge, userOnly: true, kinds: treeClients, params: worktreeMergeParams{}, result: worktreeMergeResult{}},
 		"worktree.discard":     {handle: handleWorktreeDiscard, userOnly: true, kinds: treeClients, params: worktreeDiscardParams{}, result: Worktree{}},
 		"worktree.close_group": {handle: handleWorktreeCloseGroup, userOnly: true, kinds: interactiveClients, params: worktreeCloseGroupParams{}, result: worktreeCloseGroupResult{}},
+		// The review before a merge (delta `2026-10-hunks-file-tree`): rejecting hunks and
+		// editing a file are the user's, in a window; listing and reading are anyone's.
+		"worktree.reject_hunks": {handle: handleWorktreeRejectHunks, userOnly: true, kinds: interactiveClients, params: worktreeRejectParams{}, result: worktreeDiffResult{}},
+		"worktree.files":        {handle: handleWorktreeFiles, kinds: treeClients, params: worktreeIDParams{}, result: worktreeFilesResult{}},
+		"worktree.read_file":    {handle: handleWorktreeReadFile, kinds: treeClients, params: worktreeFileParams{}, result: worktreeFile{}},
+		"worktree.write_file":   {handle: handleWorktreeWriteFile, userOnly: true, kinds: interactiveClients, params: worktreeWriteParams{}, result: worktreeWritten{}},
 	}
 }
 
@@ -215,8 +222,13 @@ func handleWorktreeDiff(ctx context.Context, c *conn, raw json.RawMessage) (any,
 	if err != nil {
 		return nil, err
 	}
-	out := worktreeDiffResult{WorktreeID: id, Revision: d.Revision, Files: make([]worktreeDiffFile, 0, len(d.Files))}
-	for _, f := range d.Files {
+	return worktreeDiffResult{WorktreeID: id, Revision: d.Revision, Files: toWireDiffFiles(d.Files)}, nil
+}
+
+// toWireDiffFiles is §5.41's `files`, which an Approval's `hunks` shares (§4).
+func toWireDiffFiles(files []hunks.File) []worktreeDiffFile {
+	out := make([]worktreeDiffFile, 0, len(files))
+	for _, f := range files {
 		file := worktreeDiffFile{Path: f.Path, Status: f.Status, Binary: f.Binary, Hunks: make([]worktreeDiffHunk, 0, len(f.Hunks))}
 		for _, h := range f.Hunks {
 			lines := h.Lines
@@ -225,9 +237,164 @@ func handleWorktreeDiff(ctx context.Context, c *conn, raw json.RawMessage) (any,
 			}
 			file.Hunks = append(file.Hunks, worktreeDiffHunk{ID: h.ID, Header: h.Header, Lines: lines})
 		}
-		out.Files = append(out.Files, file)
+		out = append(out, file)
+	}
+	return out
+}
+
+type worktreeRejectParams struct {
+	WorktreeID string   `json:"worktree_id"`
+	Revision   string   `json:"revision"`
+	HunkIDs    []string `json:"hunk_ids"`
+}
+
+func handleWorktreeRejectHunks(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
+	svc, err := worktreeSvc(c)
+	if err != nil {
+		return nil, err
+	}
+	var p worktreeRejectParams
+	if err := decode(raw, &p, "worktree.reject_hunks"); err != nil {
+		return nil, err
+	}
+	switch {
+	case p.WorktreeID == "":
+		return nil, ValidationError("worktree_id is required", ErrorField{Field: fieldWorktreeID, Issue: requiredTag})
+	case p.Revision == "":
+		return nil, ValidationError("revision is required: the hunk ids are a diff's", ErrorField{Field: "revision", Issue: requiredTag})
+	}
+	w, err := svc.Get(ctx, p.WorktreeID)
+	if err != nil {
+		return nil, err
+	}
+	var d wtdomain.DiffResult
+	err = c.server.cfg.WorktreeThreads.WhileIdle(ctx, w.ThreadID, func() error {
+		d, err = svc.RejectHunks(ctx, wtdomain.RejectRequest{ID: p.WorktreeID, Revision: p.Revision, HunkIDs: p.HunkIDs})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return worktreeDiffResult{WorktreeID: p.WorktreeID, Revision: d.Revision, Files: toWireDiffFiles(d.Files)}, nil
+}
+
+type worktreeFilesResult struct {
+	WorktreeID string             `json:"worktree_id"`
+	Revision   string             `json:"revision"`
+	Items      []worktreeTreeItem `json:"items"`
+	Truncated  bool               `json:"truncated"`
+}
+
+type worktreeTreeItem struct {
+	Path string `json:"path"`
+	// Status is added, modified or deleted, null for an unchanged file.
+	Status *string `json:"status"`
+}
+
+func handleWorktreeFiles(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
+	svc, err := worktreeSvc(c)
+	if err != nil {
+		return nil, err
+	}
+	id, err := worktreeID(raw, "worktree.files")
+	if err != nil {
+		return nil, err
+	}
+	tree, err := svc.Files(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	out := worktreeFilesResult{WorktreeID: id, Revision: tree.Revision, Items: make([]worktreeTreeItem, 0, len(tree.Items)), Truncated: tree.Truncated}
+	for _, it := range tree.Items {
+		out.Items = append(out.Items, worktreeTreeItem{Path: it.Path, Status: emptyAsNull(it.Status)})
 	}
 	return out, nil
+}
+
+type worktreeFileParams struct {
+	WorktreeID string `json:"worktree_id"`
+	Path       string `json:"path"`
+}
+
+type worktreeFile struct {
+	Path      string `json:"path"`
+	SizeBytes int64  `json:"size_bytes"`
+	// SHA256 is "" for a file that is not a regular one.
+	SHA256 string `json:"sha256"`
+	Binary bool   `json:"binary"`
+	// Content is null for a file not shown as text.
+	Content  *string `json:"content"`
+	Editable bool    `json:"editable"`
+}
+
+func handleWorktreeReadFile(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
+	svc, err := worktreeSvc(c)
+	if err != nil {
+		return nil, err
+	}
+	var p worktreeFileParams
+	if err := decode(raw, &p, "worktree.read_file"); err != nil {
+		return nil, err
+	}
+	if p.WorktreeID == "" {
+		return nil, ValidationError("worktree_id is required", ErrorField{Field: fieldWorktreeID, Issue: requiredTag})
+	}
+	w, err := svc.Get(ctx, p.WorktreeID)
+	if err != nil {
+		return nil, err
+	}
+	f, err := svc.ReadFile(ctx, p.WorktreeID, p.Path)
+	if err != nil {
+		return nil, err
+	}
+	// Editable means write_file would take it now: not under a running turn (decision 7).
+	if f.Editable {
+		f.Editable = c.server.cfg.WorktreeThreads.WhileIdle(ctx, w.ThreadID, func() error { return nil }) == nil
+	}
+	return worktreeFile{Path: f.Path, SizeBytes: f.Size, SHA256: f.SHA256, Binary: f.Binary, Content: f.Content, Editable: f.Editable}, nil
+}
+
+type worktreeWriteParams struct {
+	WorktreeID     string `json:"worktree_id"`
+	Path           string `json:"path"`
+	Content        string `json:"content"`
+	ExpectedSHA256 string `json:"expected_sha256"`
+}
+
+type worktreeWritten struct {
+	Path      string `json:"path"`
+	SizeBytes int64  `json:"size_bytes"`
+	SHA256    string `json:"sha256"`
+}
+
+func handleWorktreeWriteFile(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
+	svc, err := worktreeSvc(c)
+	if err != nil {
+		return nil, err
+	}
+	var p worktreeWriteParams
+	if err := decode(raw, &p, "worktree.write_file"); err != nil {
+		return nil, err
+	}
+	switch {
+	case p.WorktreeID == "":
+		return nil, ValidationError("worktree_id is required", ErrorField{Field: fieldWorktreeID, Issue: requiredTag})
+	case p.ExpectedSHA256 == "":
+		return nil, ValidationError("expected_sha256 is required: read_file's", ErrorField{Field: "expected_sha256", Issue: requiredTag})
+	}
+	w, err := svc.Get(ctx, p.WorktreeID)
+	if err != nil {
+		return nil, err
+	}
+	var f wtdomain.FileContent
+	err = c.server.cfg.WorktreeThreads.WhileIdle(ctx, w.ThreadID, func() error {
+		f, err = svc.WriteFile(ctx, wtdomain.WriteFileRequest{ID: p.WorktreeID, Path: p.Path, Content: p.Content, ExpectedSHA256: p.ExpectedSHA256})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return worktreeWritten{Path: f.Path, SizeBytes: f.Size, SHA256: f.SHA256}, nil
 }
 
 type worktreeMergeParams struct {

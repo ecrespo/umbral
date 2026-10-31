@@ -284,7 +284,7 @@ its matrix lists commands.
 | REQ-PKG-001 | T-PKG-01, T-PKG-03 | `icons` job; the `deb` job's `packaging/deb/check.sh` (`dpkg -c`, each file compared with the kit), `check_selftest.sh` and `smoke.sh` |
 | REQ-PKG-002 | T-PKG-02, T-PKG-03 | `desktop-file-validate`, on the kit's file and on the packaged one |
 | REQ-PKG-003 | T-PKG-02, T-PKG-03 | `.desktop` review in CI; `packaging/deb/check.sh` step 3 on the packaged file |
-| REQ-PKG-006 | T-PKG-01 | the `icons` job regenerates the kit with `build.py` and compares byte for byte; checksums alone would pass a source edit committed with its new checksum |
+| REQ-PKG-006 | T-PKG-01 | the `icons` job regenerates the kit with `build.py` and compares byte for byte, rendered images pixel for pixel within two levels (delta `2026-10-icons-render-tolerance`); checksums alone would pass a source edit committed with its new checksum |
 | REQ-TUI-001, 002, 003, 004 | T-REL-02 (walk) | `docs/qa/f1-tui.md`; the harness tests are F1's |
 | REQ-SEC-011, REQ-SEC-013 | T-HRD-01 (the key) | a bundle signed with the project key accepted, any other refused |
 | REQ-SEC-005, REQ-SKL-005, REQ-CLI-008 | T-HRD-02 (decisions) | per decision |

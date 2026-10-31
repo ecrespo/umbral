@@ -29,6 +29,13 @@ type Previewer interface {
 	Preview(ctx context.Context, env domain.Env, input json.RawMessage) (string, error)
 }
 
+// Partial is a Previewer that can run with only some hunks of its preview applied: the ones the
+// user accepted (REQ-DSK-002, delta `2026-10-hunks-file-tree`, decision 4). keep holds their ids.
+type Partial interface {
+	Previewer
+	RunHunks(ctx context.Context, env domain.Env, input json.RawMessage, keep map[string]bool) (domain.Result, error)
+}
+
 // Registry is the tools the agent runtime offers the model (REQ-AGT-002).
 type Registry interface {
 	// Specs lists every tool, ordered by name.

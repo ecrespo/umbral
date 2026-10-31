@@ -9,6 +9,7 @@ import (
 
 	"github.com/ecrespo/umbral/internal/agents/domain"
 	"github.com/ecrespo/umbral/internal/agents/ports"
+	"github.com/ecrespo/umbral/internal/hunks"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 )
 
@@ -312,5 +313,64 @@ func TestTheTurnDecidesWithTheActiveRules_REQ_SEC_010(t *testing.T) {
 	}
 	if a := r.requested(t); a.Reason != secdomain.ReasonDestructive {
 		t.Fatalf("reason %s, want destructive from the local rule", a.Reason)
+	}
+}
+
+// twoHunks is a write_file preview of two hunks, as go-udiff writes it.
+const twoHunks = "--- a/a.txt\n+++ b/a.txt\n@@ -1,4 +1,4 @@\n-one\n+uno\n two\n three\n four\n" +
+	"@@ -9,4 +9,4 @@\n nine\n ten\n eleven\n-twelve\n+doce\n"
+
+// TestAnApprovalAcceptsSomeHunks_REQ_DSK_002: an approval of Umbral's own write carries its
+// diff's hunks, selectable; approving some of them runs the call with exactly those ids. The ids
+// must be the diff's, the decision an approval, the scope `once` and the list not empty; a
+// hosted agent's write is approved whole.
+func TestAnApprovalAcceptsSomeHunks_REQ_DSK_002(t *testing.T) {
+	r := newRig(t, callTool("write_file", `{"path":"a.txt","content":"x"}`), answer("written"))
+	r.tools.tools["write_file"].diff = twoHunks
+	th := r.thread(t, domain.CreateParams{})
+	if _, err := r.rt.Send(t.Context(), ports.SendParams{ThreadID: th.ID, Text: "edit a.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	a := r.requested(t)
+	if !a.HunksSelectable() || a.Diff != twoHunks {
+		t.Fatalf("approval %+v: want its diff, selectable", a)
+	}
+	files := hunks.Parse(a.Diff)
+	first := files[0].Hunks[0].ID
+	for name, resp := range map[string]domain.Response{
+		"an unknown id": {ApprovalID: a.ID, Approve: true, Scope: domain.ScopeOnce, Hunks: []string{"0000000000000000"}},
+		"a denial":      {ApprovalID: a.ID, Approve: false, Scope: domain.ScopeOnce, Hunks: []string{first}},
+		"a rule":        {ApprovalID: a.ID, Approve: true, Scope: domain.ScopeThread, Hunks: []string{first}},
+		"an empty list": {ApprovalID: a.ID, Approve: true, Scope: domain.ScopeOnce, Hunks: []string{}},
+	} {
+		if _, err := r.rt.Respond(t.Context(), resp); !errors.Is(err, domain.ErrValidation) {
+			t.Errorf("%s: %v, want a validation error", name, err)
+		}
+	}
+	if pending, _ := r.rt.Approvals(t.Context(), "", false); len(pending) != 1 {
+		t.Fatalf("a refused answer decided the approval: %+v", pending)
+	}
+	if _, err := r.rt.Respond(t.Context(), domain.Response{ApprovalID: a.ID, Approve: true, Scope: domain.ScopeOnce, Hunks: []string{first}}); err != nil {
+		t.Fatal(err)
+	}
+	if end := r.finished(t); end.StopReason != domain.StopEndTurn {
+		t.Fatalf("stop %s", end.StopReason)
+	}
+	w := r.tools.tools["write_file"]
+	if len(w.hunks) != 1 || len(w.hunks[0]) != 1 || w.hunks[0][0] != first {
+		t.Errorf("the write ran with hunks %v, want [%s]", w.hunks, first)
+	}
+
+	hosted := domain.Approval{Tool: "acp:fs/write_text_file", Diff: twoHunks}
+	if hosted.HunksSelectable() || (domain.Approval{Tool: "write_file"}).HunksSelectable() {
+		t.Error("a hosted agent's write, or an approval without a diff, is selectable")
+	}
+	// Decision 5: a hosted agent's write is answered with no content, so it is decided whole;
+	// naming hunks of it is refused rather than approving the whole write behind a partial look.
+	if err := acceptable(hosted, []string{first}); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("hunks of a hosted agent's write: %v, want a validation error", err)
+	}
+	if err := acceptable(hosted, nil); err != nil {
+		t.Errorf("a hosted agent's write approved whole: %v", err)
 	}
 }

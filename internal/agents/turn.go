@@ -561,7 +561,7 @@ func (t *turnRun) callTool(ctx context.Context, c domain.ToolCall) error {
 		return t.finishTool(ctx, c, domain.ToolDeniedByPolicy, "denied by policy: "+decision.Reason, "", false)
 	case secdomain.VerdictAsk:
 		preview, _ := cfg.Tools.Preview(ctx, env, call)
-		approved, err := t.awaitApproval(ctx, c, action, decision, preview)
+		approved, accepted, err := t.awaitApproval(ctx, c, action, decision, preview)
 		if err != nil {
 			return err
 		}
@@ -569,7 +569,7 @@ func (t *turnRun) callTool(ctx context.Context, c domain.ToolCall) error {
 			// REQ-AGT-005: the model reads the refusal and the turn goes on.
 			return t.finishTool(ctx, c, domain.ToolDeniedByUser, "denied_by_user: the user did not allow this call", "", false)
 		}
-		grant.Approved = true
+		grant.Approved, grant.Hunks = true, accepted
 	case secdomain.VerdictAllow:
 	}
 

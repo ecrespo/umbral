@@ -3,10 +3,12 @@ package agents
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/ecrespo/umbral/internal/agents/domain"
 	"github.com/ecrespo/umbral/internal/agents/ports"
+	"github.com/ecrespo/umbral/internal/hunks"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 )
 
@@ -15,7 +17,7 @@ const prefixApproval = "apr"
 // awaitApproval pauses the turn on an `ask` (REQ-AGT-004): the approval is persisted and the
 // thread marked awaiting_approval before approval.requested is published (DD-007), and the
 // turn waits for approval.respond. A turn cancelled meanwhile leaves the approval expired.
-func (t *turnRun) awaitApproval(ctx context.Context, c domain.ToolCall, action secdomain.Action, decision secdomain.Decision, diff string) (bool, error) {
+func (t *turnRun) awaitApproval(ctx context.Context, c domain.ToolCall, action secdomain.Action, decision secdomain.Decision, diff string) (approved bool, accepted []string, err error) {
 	r := t.r
 	a := domain.Approval{
 		ID: r.cfg.NewID(prefixApproval), ThreadID: t.thread.ID, ToolCallID: c.ID, Tool: c.Tool, Risk: c.Risk,
@@ -32,7 +34,7 @@ func (t *turnRun) awaitApproval(ctx context.Context, c domain.ToolCall, action s
 	}()
 
 	if err := t.requestApproval(ctx, a); err != nil {
-		return false, storageErr(err)
+		return false, nil, storageErr(err)
 	}
 	r.publish(ports.ApprovalRequested{Approval: a})
 
@@ -40,7 +42,7 @@ func (t *turnRun) awaitApproval(ctx context.Context, c domain.ToolCall, action s
 	case decided := <-answer:
 		if ctx.Err() != nil {
 			// Answered and cancelled at once: the cancel wins, and the tool does not run.
-			return false, ctx.Err()
+			return false, nil, ctx.Err()
 		}
 		// approval.respond wrote `working` with the decision; the turn announces it as it
 		// resumes, so it cannot follow the end of a turn that ran on at once.
@@ -52,17 +54,17 @@ func (t *turnRun) awaitApproval(ctx context.Context, c domain.ToolCall, action s
 			// A remembered decision, allow or deny, applies to the rest of this turn too.
 			rules, err := r.cfg.Store.Rules(ctx, t.thread.ID)
 			if err != nil {
-				return false, storageErr(err)
+				return false, nil, storageErr(err)
 			}
 			t.rules = rules
 		}
-		return decided.State == domain.ApprovalApproved, nil
+		return decided.State == domain.ApprovalApproved, decided.Accepted, nil
 	case <-ctx.Done():
 		_, err := r.cfg.Store.DecideApproval(context.WithoutCancel(ctx), a.ID, domain.ApprovalExpired, "", nil, r.now())
 		if err != nil && !errors.Is(err, domain.ErrConflict) {
 			r.cfg.Logger.WarnContext(ctx, "a cancelled turn's approval could not be expired", "approval", a.ID, "error", err)
 		}
-		return false, ctx.Err()
+		return false, nil, ctx.Err()
 	}
 }
 
@@ -96,6 +98,9 @@ func (r *Runtime) Respond(ctx context.Context, resp domain.Response) (domain.App
 	if err != nil {
 		return domain.Approval{}, err
 	}
+	if err := acceptable(a, resp.Hunks); err != nil {
+		return domain.Approval{}, err
+	}
 	scope := resp.Scope
 	if scope != domain.ScopeOnce && !rememberable(a) {
 		scope = domain.ScopeOnce
@@ -119,10 +124,34 @@ func (r *Runtime) Respond(ctx context.Context, resp domain.Response) (domain.App
 	r.mu.Lock()
 	answer, waiting := r.waiting[a.ID]
 	r.mu.Unlock()
+	decided.Accepted = resp.Hunks
 	if waiting {
 		answer <- decided
 	}
 	return decided, nil
+}
+
+// acceptable checks that the hunks named, if any, are hunks of the approval's diff and that
+// the approval lets single hunks be chosen (delta `2026-10-hunks-file-tree`, decision 3).
+func acceptable(a domain.Approval, ids []string) error {
+	if ids == nil {
+		return nil
+	}
+	if !a.HunksSelectable() {
+		return fmt.Errorf("%w: whole_only: this approval is decided whole", domain.ErrValidation)
+	}
+	known := map[string]bool{}
+	for _, f := range hunks.Parse(a.Diff) {
+		for _, h := range f.Hunks {
+			known[h.ID] = true
+		}
+	}
+	for _, id := range ids {
+		if !known[id] {
+			return fmt.Errorf("%w: unknown_hunk: %s is not a hunk of the approval's diff", domain.ErrValidation, id)
+		}
+	}
+	return nil
 }
 
 // rememberable reports whether a decision on this approval may become a rule. A destructive

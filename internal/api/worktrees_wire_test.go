@@ -19,6 +19,8 @@ type fakeWorktreeEngine struct {
 	merged   []string // "id revision message"
 	listed   [][]string
 	group    *wtdomain.CloseGroupRequest
+	rejected []wtdomain.RejectRequest
+	written  []wtdomain.WriteFileRequest
 }
 
 func newFakeWorktreeEngine() *fakeWorktreeEngine {
@@ -58,6 +60,29 @@ func (f *fakeWorktreeEngine) Diff(context.Context, string) (wtdomain.DiffResult,
 		Path: "a.txt", Status: "modified",
 		Hunks: []wtdomain.Hunk{{ID: "h1", Header: "@@ -1 +1 @@", Lines: []string{"-one", "+uno"}}},
 	}}}, nil
+}
+
+func (f *fakeWorktreeEngine) RejectHunks(_ context.Context, req wtdomain.RejectRequest) (wtdomain.DiffResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rejected = append(f.rejected, req)
+	return wtdomain.DiffResult{Revision: "rev2"}, nil
+}
+
+func (f *fakeWorktreeEngine) Files(context.Context, string) (wtdomain.FileTree, error) {
+	return wtdomain.FileTree{Revision: "rev1", Items: []wtdomain.TreeItem{{Path: "a.txt", Status: "modified"}, {Path: "b.txt"}}}, nil
+}
+
+func (f *fakeWorktreeEngine) ReadFile(_ context.Context, _, path string) (wtdomain.FileContent, error) {
+	text := "uno\n"
+	return wtdomain.FileContent{Path: path, Size: 4, SHA256: "s1", Content: &text, Editable: true}, nil
+}
+
+func (f *fakeWorktreeEngine) WriteFile(_ context.Context, req wtdomain.WriteFileRequest) (wtdomain.FileContent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.written = append(f.written, req)
+	return wtdomain.FileContent{Path: req.Path, Size: int64(len(req.Content)), SHA256: "s2"}, nil
 }
 
 func (f *fakeWorktreeEngine) Merge(_ context.Context, req wtdomain.MergeRequest) (wtdomain.MergeResult, error) {
@@ -300,5 +325,75 @@ func TestWorktreesAreNotImplementedWithoutTheEngine(t *testing.T) {
 	resp := c.call(3, "thread.create", map[string]any{"cwd": "/w", "worktree": true})
 	if resp.Error == nil || resp.Error.Data.DomainCode != "NOT_IMPLEMENTED" {
 		t.Errorf("thread.create with a worktree: %+v", resp.Error)
+	}
+}
+
+// TestTheReviewMethodsAreTheUsers_REQ_DSK_002: rejecting hunks and editing a file reach the
+// engine with what the window sent, under the thread's idle guard — CONFLICT `running` while its
+// turn runs — and are the interactive clients' alone; `umb` may list and read. A file under a
+// running turn reads as not editable. The wire shapes are §5.41's.
+func TestTheReviewMethodsAreTheUsers_REQ_DSK_002(t *testing.T) {
+	t.Parallel()
+	engine := newFakeWorktreeEngine()
+	engine.rows["wtr_busy"] = wtdomain.Worktree{ID: "wtr_busy", ThreadID: "thr_busy", State: wtdomain.StateActive}
+	s := testServerWithConfig(t, Config{Worktrees: engine, WorktreeThreads: &fakeWorktreeThreads{}})
+	c := dial(t, s)
+	c.hello(s.Token(), ClientDesktop)
+
+	resp := c.call(2, "worktree.reject_hunks", map[string]any{"worktree_id": "wtr_1", "revision": "rev1", "hunk_ids": []string{"h1"}})
+	if resp.Error != nil || string(ordered[worktreeDiffResult](t, resp.Result)) != `{"worktree_id":"wtr_1","revision":"rev2","files":[]}` {
+		t.Fatalf("worktree.reject_hunks = %s, %+v", resp.Result, resp.Error)
+	}
+	if len(engine.rejected) != 1 || engine.rejected[0].Revision != "rev1" || !slices.Equal(engine.rejected[0].HunkIDs, []string{"h1"}) {
+		t.Errorf("the engine rejected %+v", engine.rejected)
+	}
+	if resp := c.call(3, "worktree.reject_hunks", map[string]any{"worktree_id": "wtr_1", "hunk_ids": []string{"h1"}}); resp.Error == nil || resp.Error.Data.DomainCode != domainValidationError {
+		t.Errorf("a reject without its revision: %+v", resp.Error)
+	}
+	resp = c.call(4, "worktree.files", map[string]any{"worktree_id": "wtr_1"})
+	if resp.Error != nil || string(ordered[worktreeFilesResult](t, resp.Result)) !=
+		`{"worktree_id":"wtr_1","revision":"rev1","items":[{"path":"a.txt","status":"modified"},{"path":"b.txt","status":null}],"truncated":false}` {
+		t.Fatalf("worktree.files = %s, %+v", resp.Result, resp.Error)
+	}
+	resp = c.call(5, "worktree.read_file", map[string]any{"worktree_id": "wtr_1", "path": "a.txt"})
+	if resp.Error != nil || string(ordered[worktreeFile](t, resp.Result)) !=
+		`{"path":"a.txt","size_bytes":4,"sha256":"s1","binary":false,"content":"uno\n","editable":true}` {
+		t.Fatalf("worktree.read_file = %s, %+v", resp.Result, resp.Error)
+	}
+	resp = c.call(6, "worktree.read_file", map[string]any{"worktree_id": "wtr_busy", "path": "a.txt"})
+	if resp.Error != nil || string(ordered[worktreeFile](t, resp.Result)) !=
+		`{"path":"a.txt","size_bytes":4,"sha256":"s1","binary":false,"content":"uno\n","editable":false}` {
+		t.Errorf("a file under a running turn = %s, %+v", resp.Result, resp.Error)
+	}
+	resp = c.call(7, "worktree.write_file", map[string]any{"worktree_id": "wtr_1", "path": "a.txt", "content": "dos\n", "expected_sha256": "s1"})
+	if resp.Error != nil || string(ordered[worktreeWritten](t, resp.Result)) != `{"path":"a.txt","size_bytes":4,"sha256":"s2"}` {
+		t.Fatalf("worktree.write_file = %s, %+v", resp.Result, resp.Error)
+	}
+	if len(engine.written) != 1 || engine.written[0] != (wtdomain.WriteFileRequest{ID: "wtr_1", Path: "a.txt", Content: "dos\n", ExpectedSHA256: "s1"}) {
+		t.Errorf("the engine wrote %+v", engine.written)
+	}
+	for i, call := range []struct {
+		method string
+		params map[string]any
+	}{
+		{"worktree.reject_hunks", map[string]any{"worktree_id": "wtr_busy", "revision": "rev1", "hunk_ids": []string{"h1"}}},
+		{"worktree.write_file", map[string]any{"worktree_id": "wtr_busy", "path": "a.txt", "content": "x", "expected_sha256": "s1"}},
+	} {
+		if resp := c.call(10+i, call.method, call.params); resp.Error == nil || resp.Error.Data.Reason != "running" {
+			t.Errorf("%s under a running turn: %+v", call.method, resp.Error)
+		}
+	}
+
+	cli := dial(t, s)
+	cli.hello(s.Token(), ClientCLI)
+	for i, m := range []string{"worktree.files", "worktree.read_file"} {
+		if resp := cli.call(20+i, m, map[string]any{"worktree_id": "wtr_1", "path": "a.txt"}); resp.Error != nil {
+			t.Errorf("umb may not call %s: %+v", m, resp.Error)
+		}
+	}
+	for i, m := range []string{"worktree.reject_hunks", "worktree.write_file"} {
+		if resp := cli.call(30+i, m, map[string]any{"worktree_id": "wtr_1"}); resp.Error == nil || resp.Error.Data.DomainCode != "METHOD_NOT_FOUND" {
+			t.Errorf("umb called %s: %+v", m, resp.Error)
+		}
 	}
 }

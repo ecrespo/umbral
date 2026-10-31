@@ -7,9 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/ecrespo/umbral/internal/hunks"
 )
 
 // State is a worktree's lifecycle state (Data Model §2.4g).
@@ -104,15 +105,21 @@ const (
 	ReasonConfirmRequired Reason = "confirm_required"
 	ReasonBadThread       Reason = "bad_thread"   // not a thread id a branch and a directory can carry
 	ReasonNotInGroup      Reason = "not_in_group" // close_group named a worktree of another thread
+	ReasonNoHunks         Reason = "no_hunks"     // reject_hunks named no hunk
+	ReasonUnknownHunk     Reason = "unknown_hunk" // an id the reviewed diff does not hold
+	ReasonBadPath         Reason = "bad_path"     // not a clean relative path inside the worktree, outside .git
+	ReasonNotText         Reason = "not_text"     // an edit that is not UTF-8 text without NUL
+	ReasonTooLarge        Reason = "too_large"    // an edit over MaxFileBytes
 
 	ReasonDirty        Reason = "dirty"
 	ReasonOtherBranch  Reason = "other_branch"
 	ReasonDetached     Reason = "detached"
 	ReasonConflict     Reason = "conflict"
 	ReasonCommitFailed Reason = "commit_failed"
-	ReasonNotActive    Reason = "not_active" // merged, discarded or missing: nothing to act on
-	ReasonExists       Reason = "exists"     // the thread already has an active worktree
-	ReasonChanged      Reason = "changed"    // the worktree no longer holds the revision reviewed
+	ReasonNotActive    Reason = "not_active"   // merged, discarded or missing: nothing to act on
+	ReasonExists       Reason = "exists"       // the thread already has an active worktree
+	ReasonChanged      Reason = "changed"      // the worktree no longer holds the revision reviewed
+	ReasonNotEditable  Reason = "not_editable" // a link, a directory, a binary or large file
 )
 
 // What an active worktree holds, as close_group reports it (REQ-WT-007).
@@ -146,7 +153,8 @@ func (r *Refusal) Error() string {
 // Conflict reports whether the refusal is about the repository's state rather than the request.
 func (r *Refusal) Conflict() bool {
 	switch r.Reason {
-	case ReasonNotGit, ReasonBare, ReasonOldGit, ReasonNoCommit, ReasonConfirmRequired, ReasonBadThread, ReasonNotInGroup:
+	case ReasonNotGit, ReasonBare, ReasonOldGit, ReasonNoCommit, ReasonConfirmRequired, ReasonBadThread, ReasonNotInGroup,
+		ReasonNoHunks, ReasonUnknownHunk, ReasonBadPath, ReasonNotText, ReasonTooLarge:
 		return false
 	}
 	return true
@@ -164,94 +172,15 @@ func Clip(s string) string {
 	return s[:cut]
 }
 
-// FileDiff is one file of a worktree's diff.
-type FileDiff struct {
-	Path   string
-	Status string // added, modified or deleted
-	Binary bool   // a binary file has no hunks
-	Hunks  []Hunk
-}
+// FileDiff is one file of a worktree's diff, read by internal/hunks so a worktree's diff and an
+// approval's give one hunk the same id (REQ-WT-003, REQ-DSK-002).
+type FileDiff = hunks.File
 
-// Hunk is one hunk of a file's diff. Its ID is stable while the hunk does not change.
-type Hunk struct {
-	ID     string
-	Header string   // the "@@ -a,b +c,d @@" line, without the section heading git appends
-	Lines  []string // each line with its ' ', '+' or '-' prefix
-}
+// Hunk is one hunk of a FileDiff, with its stable id.
+type Hunk = hunks.Hunk
 
 // ParseUnifiedDiff splits `git diff` output (without renames) into files and hunks.
-//
-// A hunk's id is the first 16 hex digits of the SHA-256 of its path and its lines, with a
-// counter for identical hunks in one file. The header's line numbers are left out on purpose:
-// an earlier hunk that grows moves every later one, and a reviewer's decision on a hunk must
-// not be lost because a different hunk changed (REQ-WT-003, REQ-DSK-002).
-func ParseUnifiedDiff(text string) []FileDiff {
-	var files []FileDiff
-	var cur *FileDiff
-	var hunk *Hunk
-	seen := map[string]int{}
-	flush := func() {
-		if hunk != nil && cur != nil {
-			key := cur.Path + "\x00" + strings.Join(hunk.Lines, "\n")
-			n := seen[key]
-			seen[key] = n + 1
-			sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d", key, n)))
-			hunk.ID = hex.EncodeToString(sum[:])[:16]
-			cur.Hunks = append(cur.Hunks, *hunk)
-		}
-		hunk = nil
-	}
-	for _, line := range strings.Split(text, "\n") {
-		switch {
-		case strings.HasPrefix(line, "diff --git "):
-			flush()
-			files = append(files, FileDiff{Path: pathFromDiffLine(line), Status: "modified"})
-			cur = &files[len(files)-1]
-			seen = map[string]int{}
-		case cur == nil:
-		case hunk == nil && strings.HasPrefix(line, "new file mode"):
-			cur.Status = "added"
-		case hunk == nil && strings.HasPrefix(line, "deleted file mode"):
-			cur.Status = "deleted"
-		case hunk == nil && strings.HasPrefix(line, "Binary files "):
-			cur.Binary = true
-		case strings.HasPrefix(line, "@@ "):
-			flush()
-			header := line
-			if end := strings.Index(line[3:], " @@"); end >= 0 {
-				header = line[:3+end+3]
-			}
-			hunk = &Hunk{Header: header}
-		case hunk != nil && line != "" && strings.ContainsRune(" +-\\", rune(line[0])):
-			hunk.Lines = append(hunk.Lines, line)
-		}
-	}
-	flush()
-	return files
-}
-
-// pathFromDiffLine reads the b-side path of "diff --git a/<p> b/<p>". Paths with spaces are
-// written the same on both sides without renames, so the line splits at its midpoint. A path git
-// quotes — one with a quote, a backslash or a control character — is written C-style on both
-// sides, "a/<p>" "b/<p>", and unquoted here.
-func pathFromDiffLine(line string) string {
-	rest := strings.TrimPrefix(line, "diff --git ")
-	if half := (len(rest) - 1) / 2; strings.HasPrefix(rest, `"`) && half > 0 && rest[half] == ' ' {
-		if p, err := strconv.Unquote(rest[half+1:]); err == nil && strings.HasPrefix(p, "b/") {
-			return p[2:]
-		}
-	}
-	if len(rest) > 4 && strings.HasPrefix(rest, "a/") {
-		half := (len(rest) - 1) / 2
-		if rest[half] == ' ' && strings.HasPrefix(rest[half+1:], "b/") {
-			return rest[half+3:]
-		}
-	}
-	if i := strings.LastIndex(rest, " b/"); i >= 0 {
-		return rest[i+3:]
-	}
-	return rest
-}
+func ParseUnifiedDiff(text string) []FileDiff { return hunks.Parse(text) }
 
 // DiffResult is a worktree's changes and the revision they were read from.
 type DiffResult struct {
@@ -297,4 +226,50 @@ type GroupEntry struct {
 	// was read, and "" otherwise.
 	Changes   string
 	Discarded bool
+}
+
+// RejectRequest reverts the named hunks of the diff read as Revision (delta
+// `2026-10-hunks-file-tree`, decision 2).
+type RejectRequest struct {
+	ID       string
+	Revision string
+	HunkIDs  []string
+}
+
+// MaxTreeItems is how many paths a file tree lists (decision 6).
+const MaxTreeItems = 20000
+
+// MaxFileBytes is the largest file read as text or written (decisions 7 and 8).
+const MaxFileBytes = 1 << 20
+
+// FileTree is a worktree's content as paths, each with its diff status (decision 6).
+type FileTree struct {
+	Revision  string
+	Items     []TreeItem
+	Truncated bool
+}
+
+// TreeItem is one path of a tree; Status is "" for an unchanged file.
+type TreeItem struct {
+	Path   string
+	Status string
+}
+
+// FileContent is a worktree file as read (decision 7). Content is nil for a file that is not
+// shown as text.
+type FileContent struct {
+	Path     string
+	Size     int64
+	SHA256   string
+	Binary   bool
+	Content  *string
+	Editable bool
+}
+
+// WriteFileRequest replaces an existing file's content with the user's text (decision 8).
+type WriteFileRequest struct {
+	ID             string
+	Path           string
+	Content        string
+	ExpectedSHA256 string
 }
