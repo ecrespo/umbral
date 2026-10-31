@@ -36,7 +36,10 @@ func buildDaemon(t *testing.T) string {
 			return
 		}
 		daemonBuild.dir, daemonBuild.bin = dir, filepath.Join(dir, "umbrald")
-		build := exec.CommandContext(context.Background(), "go", "build", "-o", daemonBuild.bin, "./cmd/umbrald")
+		build := exec.CommandContext(context.Background(), "go", "build",
+			// The handoff's failure injection, which a release build never has (handoff_test.go).
+			"-ldflags", "-X main.handoffFailEnv="+testHandoffFailEnv,
+			"-o", daemonBuild.bin, "./cmd/umbrald")
 		build.Dir = "../.."
 		build.Env = append(os.Environ(), "PKG_CONFIG_PATH="+os.Getenv("PKG_CONFIG_PATH"))
 		if out, err := build.CombinedOutput(); err != nil {

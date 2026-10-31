@@ -67,6 +67,20 @@ func (s *Service) Restore(ctx context.Context) error {
 	return nil
 }
 
+// ResumeFocus is a handoff's restore (REQ-HND-001): the panes keep the sessions the next
+// daemon adopted, so nothing is started and nothing is rewritten, and only the focus, which
+// the service caches, is read back.
+func (s *Service) ResumeFocus(ctx context.Context) error {
+	focus, err := s.tree.Focus(ctx)
+	if err != nil {
+		return err
+	}
+	if focus.WorkspaceID != "" {
+		s.adoptFocus(focus.WorkspaceID, focus.TabID)
+	}
+	return nil
+}
+
 // restorePane gives one restored pane a fresh shell and hands its pending command to the
 // session, which shows it at the prompt.
 func (s *Service) restorePane(ctx context.Context, pane domain.Pane) (domain.Pane, error) {

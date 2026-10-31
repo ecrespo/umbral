@@ -116,6 +116,10 @@ components:
   # worktree engine, the tools and the API read one diff the same way without reaching each
   # other. A domain may use it, as it would the standard library.
   hunks:  { in: internal/hunks }
+  # The channel a newer umbrald takes a running one's sessions over (T-F2-40): frames and
+  # descriptors on a Unix socket. A leaf on the standard library and x/sys; what the frames
+  # mean belongs to cmd/umbrald, the only place that reaches every module a handoff touches.
+  handoff: { in: internal/handoff }
   api:    { in: internal/api }
   store:  { in: internal/store }
   config: { in: internal/config }
@@ -182,6 +186,7 @@ components:
   notify-ports:          { in: internal/notify/ports }
 vendors:
   shell-syntax: { in: mvdan.cc/sh/v3/syntax }
+  x-sys-unix:   { in: golang.org/x/sys/unix }
 
 deps:
   # --- domain: the standard library and other domains, nothing else -----------
@@ -423,6 +428,14 @@ deps:
       - security-domain
 
   # --- cross-cutting ----------------------------------------------------------
+  handoff:
+    anyVendorDeps: false
+    canUse:
+      - x-sys-unix
+    # Its own external test package; the leaf imports nothing of the project.
+    mayDependOn:
+      - handoff
+
   bus:
     anyVendorDeps: false
     mayDependOn:
@@ -658,6 +671,8 @@ deps:
       - acp-adapters
       - acp-ports
       - acp-domain
+      # The live handoff of a running daemon's sessions (T-F2-40).
+      - handoff
 
 
   # --- the workspace tree (Tech Design §5.2) ----------------------------------

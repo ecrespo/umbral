@@ -126,7 +126,7 @@ type snapshotResult struct {
 
 type sessionExitedPayload struct {
 	SessionID string `json:"session_id"`
-	ExitCode  int    `json:"exit_code"`
+	ExitCode  *int   `json:"exit_code"`
 	ExitedAt  int64  `json:"exited_at"`
 }
 

@@ -33,8 +33,10 @@ func (SessionOutput) EventKind() bus.Kind { return KindSessionOutput }
 // SessionExited reports that the shell is gone (REQ-TERM-005). The session's blocks stay
 // in the database; only the session's state changes.
 type SessionExited struct {
-	SessionID   string
-	ExitCode    int
+	SessionID string
+	// ExitCode is nil for a session adopted in a handoff: its code went to the daemon that
+	// started it (REQ-HND-001).
+	ExitCode    *int
 	ExitedAtMs  int64
 	PreviousEnd bool
 }

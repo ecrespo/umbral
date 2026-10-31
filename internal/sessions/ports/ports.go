@@ -9,7 +9,9 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"io"
+	"os"
 
 	"github.com/ecrespo/umbral/internal/sessions/domain"
 )
@@ -77,7 +79,22 @@ type PTY interface {
 	Signal(sig SignalKind) error
 	// Pid is the child's process id, 0 before it started.
 	Pid() int
+	// Pause wakes a Read in progress, which returns ErrPaused, and makes every Read return it
+	// until Resume. Nothing is read meanwhile, so the child's output waits in the kernel: this
+	// is how a handoff stops the old daemon reading before the new one starts (REQ-HND-001).
+	Pause() error
+	// Resume undoes Pause.
+	Resume() error
+	// File is the PTY's master, which a handoff passes to the next daemon.
+	File() *os.File
 }
+
+// ErrPaused is a Read stopped by Pause.
+var ErrPaused = errors.New("sessions: the PTY is paused")
+
+// ErrExitUnknown is a Wait on an adopted PTY: the child ended, and its exit code went to the
+// daemon that started it (delta `2026-10-pty-handoff`, decision 6).
+var ErrExitUnknown = errors.New("sessions: the exit code went to the previous daemon")
 
 // SignalKind is the small set of signals the sessions module sends, named here so the
 // domain and the service never import syscall.
@@ -100,6 +117,14 @@ const (
 // PTYFactory opens a PTY running the given command. It is a function rather than an
 // interface because there is exactly one thing to do with it.
 type PTYFactory func(spec PTYSpec) (PTY, error)
+
+// PTYAdopter takes over a PTY another daemon started, from its master and its child's pid
+// (REQ-HND-001).
+type PTYAdopter func(master *os.File, pid int) (PTY, error)
+
+// ScannerResumer builds a scanner in the state another daemon's was in, from what its State
+// method returned (REQ-HND-001).
+type ScannerResumer func(state []byte) (Scanner, error)
 
 // PTYSpec is everything needed to launch a shell under a PTY.
 type PTYSpec struct {

@@ -178,6 +178,8 @@ type Tree interface {
 	// Restore reads what a restart has to rebuild and clears the previous run's sessions
 	// in the same transaction (REQ-TERM-009, Data Model §6 step 5).
 	Restore(ctx context.Context) (Restored, error)
+	// Focus is the focus Restore would read, read without changing anything (REQ-HND-001).
+	Focus(ctx context.Context) (domain.Focus, error)
 	// SetFocus persists which workspace is focused and which tab inside it, so the answer
 	// survives a restart instead of living only in the service.
 	SetFocus(ctx context.Context, workspaceID, tabID string, atMillis int64) error

@@ -352,3 +352,10 @@ func nullable(s string) any {
 	}
 	return s
 }
+
+func nullableInt(n *int) any {
+	if n == nil {
+		return nil
+	}
+	return *n
+}
