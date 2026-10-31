@@ -185,6 +185,12 @@ const (
 	EventUnsubscribed
 	// EventDisconnected is the stream ending. Err says why.
 	EventDisconnected
+	// EventReconnecting is the daemon closing the stream while this client dials it again, as
+	// on a live handoff (REQ-HND-001); Err says why it closed. EventReconnected is the new
+	// connection: every subscription and the thread list are gone with the old one, and the
+	// model attaches again from fresh snapshots.
+	EventReconnecting
+	EventReconnected
 	// EventThreadDelta is a chunk of a thread's answer (`thread.delta`); Reasoning marks
 	// the model's thinking rather than its answer.
 	EventThreadDelta

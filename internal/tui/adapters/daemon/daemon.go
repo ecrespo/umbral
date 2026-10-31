@@ -9,6 +9,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
+	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -44,8 +46,15 @@ func checkSnapshotFormat(format string) error {
 
 // Daemon wraps a streaming client.
 type Daemon struct {
+	mu     sync.Mutex
 	stream *client.Stream
+	// redial dials the daemon again when the stream ends because it went away, as on a live
+	// handoff (REQ-HND-001); nil leaves the end final.
+	redial func(context.Context) (*client.Stream, error)
 	events chan ports.Event
+	// ctx ends with Close, which stops a redial in progress.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // New starts translating the stream's notifications into events. It takes ownership: Close
@@ -55,10 +64,19 @@ type Daemon struct {
 // Reporting "you fell behind" on a channel that is full because the reader fell behind
 // would park this goroutine forever, and the overflow the code detects would never reach
 // the user.
-func New(stream *client.Stream) *Daemon {
+func New(stream *client.Stream) *Daemon { return NewReconnecting(stream, nil) }
+
+// NewReconnecting is New for a client that follows its daemon across a handoff: when the
+// daemon closes the stream, redial is called within client.RedialWindow, the new stream
+// replaces the old and EventReconnected tells the model to attach its panes again from fresh
+// snapshots. Overflow is not followed: it is this client falling behind, not the daemon going.
+func NewReconnecting(stream *client.Stream, redial func(context.Context) (*client.Stream, error)) *Daemon {
+	ctx, cancel := context.WithCancel(context.Background())
 	d := &Daemon{
 		stream: stream,
+		redial: redial,
 		events: make(chan ports.Event, client.NotificationBuffer+1),
+		ctx:    ctx, cancel: cancel,
 	}
 	go d.translate()
 	return d
@@ -67,8 +85,18 @@ func New(stream *client.Stream) *Daemon {
 // Events is the channel the model listens on.
 func (d *Daemon) Events() <-chan ports.Event { return d.events }
 
-// Close ends the connection.
-func (d *Daemon) Close() error { return d.stream.Close() }
+// Close ends the connection, and a redial in progress.
+func (d *Daemon) Close() error {
+	d.cancel()
+	return d.current().Close()
+}
+
+// current is the stream calls go to: the one the latest connection opened.
+func (d *Daemon) current() *client.Stream {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.stream
+}
 
 // CreateSession starts a shell (API Spec §5.9).
 func (d *Daemon) CreateSession(ctx context.Context, size sessdomain.Size) (sessdomain.Session, error) {
@@ -84,7 +112,7 @@ func (d *Daemon) CreateSession(ctx context.Context, size sessdomain.Size) (sessd
 		CreatedAt   int64  `json:"created_at"`
 	}
 	params := map[string]any{"cols": size.Cols, "rows": size.Rows}
-	if err := d.stream.Call(ctx, "session.create", params, &out); err != nil {
+	if err := d.current().Call(ctx, "session.create", params, &out); err != nil {
 		return sessdomain.Session{}, err
 	}
 	return sessdomain.Session{
@@ -110,7 +138,7 @@ func (d *Daemon) Subscribe(ctx context.Context, sessionID string) ([]byte, uint6
 		Seq uint64 `json:"seq"`
 	}
 	params := map[string]any{paramSessionID: sessionID}
-	if err := d.stream.Call(ctx, "session.subscribe", params, &out); err != nil {
+	if err := d.current().Call(ctx, "session.subscribe", params, &out); err != nil {
 		return nil, 0, err
 	}
 	if err := checkSnapshotFormat(out.Snapshot.Format); err != nil {
@@ -129,7 +157,7 @@ func (d *Daemon) Input(ctx context.Context, sessionID string, data []byte) error
 		paramSessionID: sessionID,
 		"data_b64":     base64.StdEncoding.EncodeToString(data),
 	}
-	return d.stream.Call(ctx, "session.input", params, nil)
+	return d.current().Call(ctx, "session.input", params, nil)
 }
 
 // Resize tells the daemon a pane changed size (API Spec §5.14, REQ-TERM-007).
@@ -139,7 +167,7 @@ func (d *Daemon) Resize(ctx context.Context, sessionID string, size sessdomain.S
 		"cols":         size.Cols,
 		"rows":         size.Rows,
 	}
-	return d.stream.Call(ctx, "session.resize", params, nil)
+	return d.current().Call(ctx, "session.resize", params, nil)
 }
 
 // Blocks lists a session's blocks, newest first (API Spec §5.16).
@@ -160,7 +188,7 @@ func (d *Daemon) Blocks(ctx context.Context, sessionID string, limit int) ([]ses
 		} `json:"items"`
 	}
 	params := map[string]any{paramSessionID: sessionID, "limit": limit}
-	if err := d.stream.Call(ctx, "block.list", params, &out); err != nil {
+	if err := d.current().Call(ctx, "block.list", params, &out); err != nil {
 		return nil, err
 	}
 
@@ -195,7 +223,7 @@ func (d *Daemon) CreateThread(ctx context.Context, cwd, workspaceID string) (str
 	var out struct {
 		ID string `json:"id"`
 	}
-	if err := d.stream.Call(ctx, "thread.create", params, &out); err != nil {
+	if err := d.current().Call(ctx, "thread.create", params, &out); err != nil {
 		return "", err
 	}
 	return out.ID, nil
@@ -205,7 +233,7 @@ func (d *Daemon) CreateThread(ctx context.Context, cwd, workspaceID string) (str
 // §5.3), so the two agree: a listing and a focus read apart could straddle a focus change.
 func (d *Daemon) Threads(ctx context.Context) (ports.ThreadList, error) {
 	var out wireSnapshot
-	if err := d.stream.Call(ctx, "session.snapshot", map[string]any{}, &out); err != nil {
+	if err := d.current().Call(ctx, "session.snapshot", map[string]any{}, &out); err != nil {
 		return ports.ThreadList{}, err
 	}
 	return out.list(), nil
@@ -263,7 +291,7 @@ func (d *Daemon) Send(ctx context.Context, threadID, text string, attachments []
 	var out struct {
 		TurnID string `json:"turn_id"`
 	}
-	if err := d.stream.Call(ctx, "thread.send", params, &out); err != nil {
+	if err := d.current().Call(ctx, "thread.send", params, &out); err != nil {
 		return "", err
 	}
 	return out.TurnID, nil
@@ -273,7 +301,7 @@ func (d *Daemon) Send(ctx context.Context, threadID, text string, attachments []
 // ports.ErrApprovalGone, so the panel can tell it from an answer that never arrived.
 func (d *Daemon) Respond(ctx context.Context, approvalID, decision, scope string) error {
 	params := map[string]any{"approval_id": approvalID, "decision": decision, "scope": scope}
-	err := d.stream.Call(ctx, "approval.respond", params, nil)
+	err := d.current().Call(ctx, "approval.respond", params, nil)
 	if code := client.DomainCode(err); code == "CONFLICT" || code == "NOT_FOUND" {
 		return fmt.Errorf("%w: %w", ports.ErrApprovalGone, err)
 	}
@@ -286,7 +314,7 @@ func (d *Daemon) Cancel(ctx context.Context, threadID string) (bool, error) {
 	var out struct {
 		StoppedAt *int64 `json:"stopped_at"`
 	}
-	if err := d.stream.Call(ctx, "thread.cancel", map[string]any{paramThreadID: threadID}, &out); err != nil {
+	if err := d.current().Call(ctx, "thread.cancel", map[string]any{paramThreadID: threadID}, &out); err != nil {
 		return false, err
 	}
 	return out.StoppedAt != nil, nil
@@ -297,7 +325,7 @@ func (d *Daemon) TakeOver(ctx context.Context, threadID string) (string, error) 
 	var out struct {
 		SessionID string `json:"session_id"`
 	}
-	if err := d.stream.Call(ctx, "thread.take_over", map[string]any{paramThreadID: threadID}, &out); err != nil {
+	if err := d.current().Call(ctx, "thread.take_over", map[string]any{paramThreadID: threadID}, &out); err != nil {
 		return "", err
 	}
 	return out.SessionID, nil
@@ -305,7 +333,7 @@ func (d *Daemon) TakeOver(ctx context.Context, threadID string) (string, error) 
 
 // HandBack gives the thread's terminal back to its agent (API Spec §5.43).
 func (d *Daemon) HandBack(ctx context.Context, threadID string) error {
-	return d.stream.Call(ctx, "thread.hand_back", map[string]any{paramThreadID: threadID}, nil)
+	return d.current().Call(ctx, "thread.hand_back", map[string]any{paramThreadID: threadID}, nil)
 }
 
 // Focus tells the daemon which thread this client views, none for "" (API Spec §5.23).
@@ -314,7 +342,7 @@ func (d *Daemon) Focus(ctx context.Context, threadID string) error {
 	if threadID != "" {
 		id = threadID
 	}
-	return d.stream.Call(ctx, "thread.focus", map[string]any{paramThreadID: id}, nil)
+	return d.current().Call(ctx, "thread.focus", map[string]any{paramThreadID: id}, nil)
 }
 
 // Approvals lists the pending approvals of every thread (API Spec §5.24).
@@ -322,7 +350,7 @@ func (d *Daemon) Approvals(ctx context.Context) ([]ports.Approval, error) {
 	var out struct {
 		Items []wireApproval `json:"items"`
 	}
-	if err := d.stream.Call(ctx, "approval.list", map[string]any{}, &out); err != nil {
+	if err := d.current().Call(ctx, "approval.list", map[string]any{}, &out); err != nil {
 		return nil, err
 	}
 	list := make([]ports.Approval, 0, len(out.Items))
@@ -341,7 +369,7 @@ func (d *Daemon) McpServers(ctx context.Context) ([]ports.McpServer, error) {
 			LastError *string `json:"last_error"`
 		} `json:"items"`
 	}
-	if err := d.stream.Call(ctx, "mcp.server.list", map[string]any{}, &out); err != nil {
+	if err := d.current().Call(ctx, "mcp.server.list", map[string]any{}, &out); err != nil {
 		return nil, notImplementedIsEmpty(err)
 	}
 	list := make([]ports.McpServer, 0, len(out.Items))
@@ -363,7 +391,7 @@ func (d *Daemon) Skills(ctx context.Context) ([]ports.Skill, error) {
 			Enabled bool   `json:"enabled"`
 		} `json:"items"`
 	}
-	if err := d.stream.Call(ctx, "skill.list", map[string]any{}, &out); err != nil {
+	if err := d.current().Call(ctx, "skill.list", map[string]any{}, &out); err != nil {
 		return nil, notImplementedIsEmpty(err)
 	}
 	list := make([]ports.Skill, 0, len(out.Items))
@@ -412,22 +440,59 @@ func newClientMsgID() string { return ulid.Make().String() }
 func (d *Daemon) translate() {
 	defer close(d.events)
 
-	for n := range d.stream.Notifications() {
-		ev, ok := toEvent(n)
-		if !ok {
-			continue
+	for {
+		stream := d.current()
+		for n := range stream.Notifications() {
+			ev, ok := toEvent(n)
+			if !ok {
+				continue
+			}
+			select {
+			case d.events <- ev:
+			default:
+				// The model is not draining. Saying so is better than growing: the recovery
+				// is a fresh snapshot, and a silent drop would leave the screen missing bytes.
+				// The reserved slot is what makes this send safe on a full channel.
+				d.report(ports.Event{Kind: ports.EventDisconnected, Err: client.ErrStreamOverflow})
+				return
+			}
 		}
-		select {
-		case d.events <- ev:
-		default:
-			// The model is not draining. Saying so is better than growing: the recovery
-			// is a fresh snapshot, and a silent drop would leave the screen missing bytes.
-			// The reserved slot is what makes this send safe on a full channel.
-			d.report(ports.Event{Kind: ports.EventDisconnected, Err: client.ErrStreamOverflow})
+		err := stream.Err()
+		if d.redial == nil || d.ctx.Err() != nil || !errors.Is(err, io.EOF) {
+			d.report(ports.Event{Kind: ports.EventDisconnected, Err: err})
+			return
+		}
+		if !d.send(ports.Event{Kind: ports.EventReconnecting, Err: err}) {
+			return
+		}
+		next, err := client.Redial(d.ctx, client.RedialWindow, d.redial)
+		if err != nil {
+			d.report(ports.Event{Kind: ports.EventDisconnected, Err: err})
+			return
+		}
+		d.mu.Lock()
+		d.stream = next
+		d.mu.Unlock()
+		_ = stream.Close()
+		if d.ctx.Err() != nil {
+			// Closed while the dial succeeded: Close saw the old stream, so this one is ours.
+			_ = next.Close()
+			return
+		}
+		if !d.send(ports.Event{Kind: ports.EventReconnected}) {
 			return
 		}
 	}
-	d.report(ports.Event{Kind: ports.EventDisconnected, Err: d.stream.Err()})
+}
+
+// send delivers an event the model must see, waiting for room, until Close.
+func (d *Daemon) send(ev ports.Event) bool {
+	select {
+	case d.events <- ev:
+		return true
+	case <-d.ctx.Done():
+		return false
+	}
 }
 
 // report delivers a terminal event without ever blocking. The buffer reserves a slot for

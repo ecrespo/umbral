@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"sync"
@@ -24,11 +25,15 @@ import (
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 )
 
-// The events the page is told.
+// The events the page is told. `reconnecting` and `reconnected` follow the daemon across a
+// live handoff (REQ-HND-001): the bridge has attached its terminals again from fresh
+// snapshots by the time the page is told `reconnected`, and the page reads its views again.
 const (
 	EventDaemon       = "daemon"
 	EventFrame        = "frame"
 	EventDisconnected = "disconnected"
+	EventReconnecting = "reconnecting"
+	EventReconnected  = "reconnected"
 )
 
 // Methods is what the page may call through Call: the methods its views of REQ-DSK-001 use —
@@ -89,7 +94,11 @@ type Notification struct {
 
 // Bridge is one window's connection to the daemon.
 type Bridge struct {
-	stream    *client.Stream
+	streamMu sync.Mutex
+	stream   *client.Stream
+	// redial dials the daemon again when it closes the stream; nil makes the end final.
+	redial func(context.Context) (*client.Stream, error)
+
 	emit      ports.Emitter
 	newScreen ports.ScreenFactory
 
@@ -106,12 +115,23 @@ type terminal struct {
 	screen ports.Screen
 	seq    uint64
 	dirty  bool
+	// cols and rows are its size, to attach it again at after a reconnection.
+	cols, rows int
 }
 
 // New starts the bridge over a `desktop` connection. It owns the stream: Close ends it.
 func New(stream *client.Stream, emit ports.Emitter, newScreen ports.ScreenFactory) *Bridge {
+	return NewReconnecting(stream, nil, emit, newScreen)
+}
+
+// NewReconnecting is New for a window that follows its daemon across a handoff: when the
+// daemon closes the stream, redial is called within client.RedialWindow and every attached
+// terminal is attached again on the new connection.
+func NewReconnecting(stream *client.Stream, redial func(context.Context) (*client.Stream, error),
+	emit ports.Emitter, newScreen ports.ScreenFactory,
+) *Bridge {
 	b := &Bridge{
-		stream: stream, emit: emit, newScreen: newScreen,
+		stream: stream, redial: redial, emit: emit, newScreen: newScreen,
 		screens: map[string]*terminal{}, wake: make(chan struct{}, 1), done: make(chan struct{}),
 	}
 	go b.pump()
@@ -122,7 +142,7 @@ func New(stream *client.Stream, emit ports.Emitter, newScreen ports.ScreenFactor
 // Close ends the connection and releases every screen.
 func (b *Bridge) Close() error {
 	b.once.Do(func() { close(b.done) })
-	err := b.stream.Close()
+	err := b.current().Close()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for id, t := range b.screens {
@@ -145,7 +165,7 @@ func (b *Bridge) Call(method string, params json.RawMessage) (json.RawMessage, e
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
 	var out json.RawMessage
-	if err := b.stream.Call(ctx, method, p, &out); err != nil {
+	if err := b.current().Call(ctx, method, p, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -165,7 +185,7 @@ func (b *Bridge) Attach(sessionID string, cols, rows int) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
-	if err := b.stream.Call(ctx, "session.resize", map[string]any{paramSessionID: sessionID, "cols": cols, "rows": rows}, nil); err != nil {
+	if err := b.current().Call(ctx, "session.resize", map[string]any{paramSessionID: sessionID, "cols": cols, "rows": rows}, nil); err != nil {
 		_ = screen.Close()
 		return err
 	}
@@ -180,7 +200,7 @@ func (b *Bridge) Attach(sessionID string, cols, rows int) error {
 	// the screen it belongs to; the daemon holds that output until the reply is written.
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if err := b.stream.Call(ctx, "session.subscribe", map[string]any{paramSessionID: sessionID}, &sub); err != nil {
+	if err := b.current().Call(ctx, "session.subscribe", map[string]any{paramSessionID: sessionID}, &sub); err != nil {
 		_ = screen.Close()
 		return err
 	}
@@ -200,7 +220,7 @@ func (b *Bridge) Attach(sessionID string, cols, rows int) error {
 	if old := b.screens[sessionID]; old != nil {
 		_ = old.screen.Close()
 	}
-	b.screens[sessionID] = &terminal{screen: screen, seq: sub.Seq, dirty: true}
+	b.screens[sessionID] = &terminal{screen: screen, seq: sub.Seq, dirty: true, cols: cols, rows: rows}
 	b.kick()
 	return nil
 }
@@ -215,14 +235,14 @@ func (b *Bridge) Detach(sessionID string) error {
 	b.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
-	return b.stream.Call(ctx, "session.unsubscribe", map[string]any{paramSessionID: sessionID}, nil)
+	return b.current().Call(ctx, "session.unsubscribe", map[string]any{paramSessionID: sessionID}, nil)
 }
 
 // Input sends what the user typed to a session.
 func (b *Bridge) Input(sessionID, data string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
-	return b.stream.Call(ctx, "session.input", map[string]any{
+	return b.current().Call(ctx, "session.input", map[string]any{
 		paramSessionID: sessionID, "data_b64": base64.StdEncoding.EncodeToString([]byte(data)),
 	}, nil)
 }
@@ -235,7 +255,7 @@ func (b *Bridge) Resize(sessionID string, cols, rows int) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
-	if err := b.stream.Call(ctx, "session.resize", map[string]any{paramSessionID: sessionID, "cols": cols, "rows": rows}, nil); err != nil {
+	if err := b.current().Call(ctx, "session.resize", map[string]any{paramSessionID: sessionID, "cols": cols, "rows": rows}, nil); err != nil {
 		return err
 	}
 	b.mu.Lock()
@@ -245,27 +265,120 @@ func (b *Bridge) Resize(sessionID string, cols, rows int) error {
 			return err
 		}
 		t.dirty = true
+		t.cols, t.rows = cols, rows
 		b.kick()
 	}
 	return nil
 }
 
+// current is the stream calls go to: the latest connection's.
+func (b *Bridge) current() *client.Stream {
+	b.streamMu.Lock()
+	defer b.streamMu.Unlock()
+	return b.stream
+}
+
 // pump reads the stream: output goes into its screen, everything else to the page as it came.
+// When the daemon closes it and the bridge can redial, it follows the daemon to its new
+// connection (REQ-HND-001).
 func (b *Bridge) pump() {
-	for n := range b.stream.Notifications() {
-		if n.Method == "session.output" {
-			b.output(n)
+	for {
+		stream := b.current()
+		for n := range stream.Notifications() {
+			if n.Method == "session.output" {
+				b.output(n)
+				continue
+			}
+			// A `session.unsubscribed` among them tells the page to attach again, which brings a
+			// fresh snapshot (API §8).
+			b.emit.Emit(EventDaemon, Notification{Method: n.Method, Seq: n.Seq, Params: n.Params})
+		}
+		err := stream.Err()
+		if !b.reconnect(stream, err) {
+			msg := ""
+			if err != nil {
+				msg = err.Error()
+			}
+			b.emit.Emit(EventDisconnected, map[string]string{"error": msg})
+			return
+		}
+	}
+}
+
+// reconnect dials the daemon again after it closed stream, and attaches every terminal on the
+// new connection. It reports false when the end is final: no redial, the bridge closed, a
+// stream that ended for a reason other than the daemon closing it, or no daemon answering.
+func (b *Bridge) reconnect(stream *client.Stream, ended error) bool {
+	if b.redial == nil || !errors.Is(ended, io.EOF) || b.closed() {
+		return false
+	}
+	b.emit.Emit(EventReconnecting, map[string]string{"error": ended.Error()})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-b.done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	next, err := client.Redial(ctx, client.RedialWindow, b.redial)
+	if err != nil {
+		return false
+	}
+	b.streamMu.Lock()
+	b.stream = next
+	b.streamMu.Unlock()
+	_ = stream.Close()
+	if b.closed() {
+		_ = next.Close()
+		return false
+	}
+	b.mu.Lock()
+	held := make(map[string]*terminal, len(b.screens))
+	for id, t := range b.screens {
+		held[id] = t
+	}
+	b.mu.Unlock()
+	// Every subscription went with the old connection: each terminal starts over from a
+	// fresh snapshot, which Attach replays into a new screen. A terminal the page detached
+	// meanwhile is not attached again. One that cannot be — its session is gone, as after a
+	// restart rather than a handoff — is dropped and named to the page.
+	attached, lost := []string{}, []string{}
+	for id, t := range held {
+		b.mu.Lock()
+		current := b.screens[id] == t
+		b.mu.Unlock()
+		if !current {
 			continue
 		}
-		// A `session.unsubscribed` among them tells the page to attach again, which brings a
-		// fresh snapshot (API §8).
-		b.emit.Emit(EventDaemon, Notification{Method: n.Method, Seq: n.Seq, Params: n.Params})
+		if err := b.Attach(id, t.cols, t.rows); err != nil {
+			b.mu.Lock()
+			if b.screens[id] == t {
+				_ = t.screen.Close()
+				delete(b.screens, id)
+			}
+			b.mu.Unlock()
+			lost = append(lost, id)
+			continue
+		}
+		attached = append(attached, id)
 	}
-	msg := ""
-	if err := b.stream.Err(); err != nil {
-		msg = err.Error()
+	slices.Sort(attached)
+	slices.Sort(lost)
+	// The page attaches what it opened while the connection was down, whose Attach went to
+	// the closed stream: every terminal it holds that is in neither list.
+	b.emit.Emit(EventReconnected, map[string][]string{"attached": attached, "lost": lost})
+	return true
+}
+
+func (b *Bridge) closed() bool {
+	select {
+	case <-b.done:
+		return true
+	default:
+		return false
 	}
-	b.emit.Emit(EventDisconnected, map[string]string{"error": msg})
 }
 
 // output applies one `session.output` to its screen, dropping what the snapshot already held.

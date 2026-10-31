@@ -75,8 +75,11 @@ type agentPanel struct {
 	workspace string
 	threads   []ports.Thread
 	// listedSeq is the snapshot `seq` of the listing applied; an older one arriving later is
-	// stale and dropped.
+	// stale and dropped. conn counts the connections this client has had: a seq is only
+	// comparable within one daemon's run, so a listing asked on an earlier connection is
+	// dropped whatever its seq (API §6).
 	listedSeq uint64
+	conn      int
 	// viewing is the thread the daemon was last told this client views: the panel's own
 	// while the panel is on screen, none otherwise (REQ-AGT-016).
 	viewing  string
@@ -132,6 +135,8 @@ type (
 	threadsLoadedMsg struct {
 		list ports.ThreadList
 		err  error
+		// conn is the connection the listing was asked on (agentState.conn).
+		conn int
 	}
 )
 
@@ -495,7 +500,7 @@ func (m *Model) threadsLoaded(msg threadsLoadedMsg) {
 		m.status = "threads: " + msg.err.Error()
 		return
 	}
-	if msg.list.Seq < a.listedSeq {
+	if msg.conn != a.conn || msg.list.Seq < a.listedSeq {
 		return
 	}
 	a.listedSeq = msg.list.Seq

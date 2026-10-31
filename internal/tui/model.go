@@ -298,6 +298,18 @@ func (m *Model) paneByID(sessionID string) *pane {
 	return nil
 }
 
+// allPanes is every pane the model draws a session in: each tab's, and the held one.
+func (m *Model) allPanes() []*pane {
+	var out []*pane
+	if m.held != nil {
+		out = append(out, m.held)
+	}
+	for _, t := range m.tabs {
+		out = append(out, t.panes...)
+	}
+	return out
+}
+
 // paneSize is how big one pane is, given how many share the tab and whether the block list
 // is open. The daemon is told this through `session.resize`, so what the shell believes
 // about its terminal matches what the user sees.
