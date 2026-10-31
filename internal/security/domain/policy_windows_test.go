@@ -49,3 +49,55 @@ func TestEveryCommandAsksOnWindows_REQ_WIN_001(t *testing.T) {
 		t.Errorf("a denied command = %s, want deny", d.Verdict)
 	}
 }
+
+// TestAWriteIsDecidedByItsDrivePath_REQ_WIN_001: the write root and the target are Windows
+// paths with a drive, and auto-edit and full-auto act on them as on a POSIX tree: inside the
+// root a write runs, outside it asks, and a relative target is read under the call's cwd.
+func TestAWriteIsDecidedByItsDrivePath_REQ_WIN_001(t *testing.T) {
+	t.Parallel()
+
+	repos := map[string]bool{`C:\u\project`: true}
+	isRepo := func(dir string) bool { return repos[dir] }
+	for cwd, want := range map[string]string{
+		`C:\u\project`:              `C:\u\project`,
+		`C:\u\project\internal\api`: `C:\u\project`,
+		`C:\u\notes`:                `C:\u\notes`,
+		`D:\`:                       `D:\`,
+	} {
+		if got := WriteRoot(cwd, isRepo); got != want {
+			t.Errorf("WriteRoot(%s) = %s, want %s", cwd, got, want)
+		}
+	}
+
+	root := `C:\u\project`
+	write := func(target string) Action {
+		return Action{ThreadID: "thr_1", Tool: "edit_file", Risk: RiskWriteFS, Target: target, Cwd: root, WriteRoot: root}
+	}
+	for _, mode := range []Mode{ModeAutoEdit, ModeFullAuto} {
+		for target, want := range map[string]Verdict{
+			`C:\u\project\main.go`:      VerdictAllow,
+			`main.go`:                   VerdictAllow,
+			`C:\u\other\main.go`:        VerdictAsk,
+			`D:\u\project\main.go`:      VerdictAsk,
+			`C:\u\project\..\x\main.go`: VerdictAsk,
+			`..\x\main.go`:              VerdictAsk,
+		} {
+			if d := Decide(write(target), mode, nil, false); d.Verdict != want {
+				t.Errorf("%s: write %s = %s/%q by %s, want %s", mode, target, d.Verdict, d.Reason, d.Step, want)
+			}
+		}
+	}
+}
+
+// TestAProgramsInputAsksOnWindows_REQ_WIN_001: keys sent to a program are also read as the
+// shell's next line when the program does not take them (delta `2026-10-terminal-interact`,
+// decision 4); on Windows that shell's lines are not read, so a line of program input asks
+// as a command line does (decision 14). Keys with no line in them stay the program's.
+func TestAProgramsInputAsksOnWindows_REQ_WIN_001(t *testing.T) {
+	t.Parallel()
+
+	input := Action{Tool: "terminal_interact", Risk: RiskExec, Target: ":wq<enter>", ProgramInput: true, Cwd: `C:\wt`, WriteRoot: `C:\wt`}
+	if d := Decide(input, ModeFullAuto, nil, false); d.Verdict != VerdictAsk || d.Step != StepDestructive {
+		t.Errorf("program input in full-auto = %s/%q by %s, want an ask by the destructive step", d.Verdict, d.Reason, d.Step)
+	}
+}

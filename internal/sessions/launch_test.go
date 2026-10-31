@@ -39,7 +39,7 @@ func TestLaunchRunsTheCommandAndSkipsTheBootstrap_REQ_WS_005(t *testing.T) {
 	if err != nil {
 		t.Fatalf("launch: %v", err)
 	}
-	if !strings.HasSuffix(program, "/sh") {
+	if strings.TrimSuffix(filepath.Base(program), ".exe") != "sh" {
 		t.Errorf("program = %q, want the resolved sh", program)
 	}
 	if len(args) != 2 || args[0] != "-c" || args[1] != "true" {
@@ -69,10 +69,7 @@ func TestLaunchResolvesAgainstTheSessionsPath(t *testing.T) {
 
 	dir := t.TempDir()
 	const name = "umbral-launch-probe"
-	target := filepath.Join(dir, name)
-	if err := os.WriteFile(target, []byte("#!/bin/sh\n"), 0o700); err != nil {
-		t.Fatalf("write the probe: %v", err)
-	}
+	target := writeProgram(t, dir, name)
 
 	s := &Service{cfg: Config{Logger: slog.New(slog.DiscardHandler)}}
 	program, _, _, _, err := s.launch("ses_test", domain.CreateParams{
@@ -172,16 +169,11 @@ func TestAnEmptyPathElementIsNotTheWorkingDirectory(t *testing.T) {
 	// The same name in both places. One is the decoy in the working directory; the other
 	// is the one a correctly-resolved lookup finds.
 	const name = "umbral-ambiguous-tool"
-	decoy := filepath.Join(here, name)
-	real := filepath.Join(elsewhere, name)
-	for _, path := range []string{decoy, real} {
-		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o700); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
+	decoy := writeProgram(t, here, name)
+	real := writeProgram(t, elsewhere, name)
 	t.Chdir(here)
 
-	got, err := lookPath(name, []string{"PATH=:" + elsewhere})
+	got, err := lookPath(name, []string{"PATH=" + string(os.PathListSeparator) + elsewhere})
 	if err != nil {
 		t.Fatalf("lookPath: %v", err)
 	}

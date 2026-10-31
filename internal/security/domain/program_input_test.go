@@ -1,3 +1,8 @@
+//go:build unix
+
+// The POSIX reading of command lines and paths. On Windows every command line asks and paths
+// carry a drive (delta `2026-10-windows-port`, decisions 14 and 15): policy_windows_test.go.
+
 package domain
 
 import "testing"

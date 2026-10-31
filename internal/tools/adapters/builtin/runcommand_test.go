@@ -42,12 +42,12 @@ func TestRunCommandRunsInTheThreadsTerminal_REQ_AGT_003(t *testing.T) {
 		Output: strings.Repeat("x", runMaxOutput+10) + "FAIL: TestFoo",
 	}}
 	tool := runCommand{term: term}
-	env := domain.Env{ThreadID: "thr_1", Cwd: "/work"}
+	env := domain.Env{ThreadID: "thr_1", Cwd: work}
 	res, err := tool.Run(context.Background(), env, in(map[string]any{"command": "go test ./..."}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if term.thread != "thr_1" || term.cwd != "/work" || term.command != "go test ./..." {
+	if term.thread != "thr_1" || term.cwd != work || term.command != "go test ./..." {
 		t.Errorf("terminal got %q %q %q", term.thread, term.cwd, term.command)
 	}
 	if res.Summary != "exit 2" || !strings.HasSuffix(res.Text, "FAIL: TestFoo\n[exit 2]\n") ||

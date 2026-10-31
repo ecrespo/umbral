@@ -1641,7 +1641,8 @@ twin, and `task vet:windows` keeps the packages that do not link libghostty comp
   suspended, joins its job and is resumed; the job is closed when its turn is killed and when it
   exits. Detection reads a process's executable only.
 - **Policy.** The destructive floor reads POSIX lines only, so every non-empty command line asks
-  on Windows (`windows_shell`); path rules compare without case and with `/` read as `\`.
+  on Windows (`windows_shell`), and so does a line of a program's input, which the shell may
+  read next; path rules compare without case and with `/` read as `\`.
 - **Secrets.** The Windows Credential Manager through `go-keyring`.
 - **Not on Windows yet.** `umbrald --takeover` exits `EX_UNAVAILABLE`, and `remote.add` answers
   `NOT_IMPLEMENTED`.

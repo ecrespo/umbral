@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -235,7 +236,11 @@ func TestAToolCannotLowerItsRisk_REQ_AGT_014(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := r.Action(domain.Env{Cwd: "/"}, domain.Call{Tool: "writer"})
+	root := string(filepath.Separator)
+	if runtime.GOOS == "windows" {
+		root = `C:\` // rooted is not absolute there without a drive
+	}
+	a, err := r.Action(domain.Env{Cwd: root}, domain.Call{Tool: "writer"})
 	if err != nil {
 		t.Fatal(err)
 	}

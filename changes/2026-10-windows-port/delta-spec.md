@@ -96,7 +96,10 @@
     (`mvdan.cc/sh/v3/syntax`, delta `2026-10-shell-parser`); an agent's shell on Windows is
     PowerShell or cmd, whose lines it cannot read. Every non-empty line therefore asks there,
     reported by the destructive step as `windows_shell`: full-auto does not run it, an allow rule
-    does not carry it, and it is never remembered `always`. A deny rule still refuses. A parser for
+    does not carry it, and it is never remembered `always`. A deny rule still refuses. Keys sent to a
+    running program are read the same way: delta `2026-10-terminal-interact` (decision 4) also
+    reads them as the shell's next line, in case the program does not take them, and that shell's
+    lines are not read here, so a line of program input asks too. A parser for
     PowerShell lines is later work.
 15. **Paths compare as NTFS does.** Deny and allow rules over paths match a target without case and
     with `/` read as `\`, as the file system opens it; otherwise `c:/SECRETS/key` would step around

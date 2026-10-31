@@ -279,6 +279,7 @@ func (rig *rulesRig) status(t *testing.T) domain.RulesStatus {
 
 // applies reports whether the active rule set flags the bundle of version v.
 func applies(set domain.RuleSet, v int) bool {
-	_, ok := domain.MatchDestructive(set.Destructive, fmt.Sprintf("v%d now", v))
-	return ok
+	// By name: on Windows every line also matches the floor's windows_shell.
+	name, _ := domain.MatchDestructive(set.Destructive, fmt.Sprintf("v%d now", v))
+	return name == fmt.Sprintf("v%d", v)
 }

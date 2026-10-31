@@ -112,7 +112,7 @@ func modelsDir(t *testing.T, files map[string]string) string {
 func newTest(t *testing.T, eng *fakeEngine, dir string, options map[string]any) *Provider {
 	t.Helper()
 	p, err := New(Config{
-		ID: "embedded", LibPath: "/opt/llama", ModelsDir: dir, Options: options,
+		ID: "embedded", LibPath: optLlama, ModelsDir: dir, Options: options,
 		engine: eng, lib: &libLoader{},
 	})
 	if err != nil {
@@ -300,7 +300,7 @@ func TestYzmaKeepsOneModelAndReleasesIt_REQ_LLM_009(t *testing.T) {
 	if strings.Join(opened, ",") != "a.gguf,b.gguf" || strings.Join(closed, ",") != "a.gguf" {
 		t.Fatalf("opened %v closed %v, want a then b with a freed", opened, closed)
 	}
-	if len(eng.loads) != 1 || eng.loads[0] != "/opt/llama" {
+	if len(eng.loads) != 1 || eng.loads[0] != optLlama {
 		t.Errorf("libraries loaded %v, want once from /opt/llama", eng.loads)
 	}
 	deadline := time.Now().Add(3 * time.Second)
@@ -326,24 +326,24 @@ func TestYzmaRefusesASecondLibPath_REQ_LLM_009(t *testing.T) {
 	dir := modelsDir(t, map[string]string{"a.gguf": "GGUF"})
 	lib := &libLoader{}
 	eng := &fakeEngine{pieces: []string{"ok"}}
-	first, err := New(Config{ID: "one", LibPath: "/opt/llama", ModelsDir: dir, engine: eng, lib: lib})
+	first, err := New(Config{ID: "one", LibPath: optLlama, ModelsDir: dir, engine: eng, lib: lib})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := collect(t, first, context.Background(), domain.Request{Model: "a", Messages: []domain.Message{{Role: domain.RoleUser, Text: "hi"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(Config{ID: "two", LibPath: "/opt/other", ModelsDir: dir, engine: eng, lib: lib}); err == nil {
+	if _, err := New(Config{ID: "two", LibPath: optOther, ModelsDir: dir, engine: eng, lib: lib}); err == nil {
 		t.Error("a second lib_path was accepted after the first was loaded")
 	}
-	if _, err := New(Config{ID: "three", LibPath: "/opt/llama", ModelsDir: dir, engine: eng, lib: lib}); err != nil {
+	if _, err := New(Config{ID: "three", LibPath: optLlama, ModelsDir: dir, engine: eng, lib: lib}); err != nil {
 		t.Errorf("the same lib_path: %v", err)
 	}
 
 	// Two providers built before any load: the second one's call is refused, permanently.
 	early := &libLoader{}
-	a, errA := New(Config{ID: "a", LibPath: "/opt/llama", ModelsDir: dir, engine: eng, lib: early})
-	b, errB := New(Config{ID: "b", LibPath: "/opt/other", ModelsDir: dir, engine: eng, lib: early})
+	a, errA := New(Config{ID: "a", LibPath: optLlama, ModelsDir: dir, engine: eng, lib: early})
+	b, errB := New(Config{ID: "b", LibPath: optOther, ModelsDir: dir, engine: eng, lib: early})
 	if errA != nil || errB != nil {
 		t.Fatal(errA, errB)
 	}
@@ -359,27 +359,27 @@ func TestYzmaRefusesASecondLibPath_REQ_LLM_009(t *testing.T) {
 	// A load that failed pins its directory too: it may have left libraries in the process.
 	half := &libLoader{}
 	broken := &fakeEngine{fail: errors.New("libllama: not found")}
-	c, err := New(Config{ID: "c", LibPath: "/opt/llama", ModelsDir: dir, engine: broken, lib: half})
+	c, err := New(Config{ID: "c", LibPath: optLlama, ModelsDir: dir, engine: broken, lib: half})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := collect(t, c, context.Background(), hi); err == nil {
 		t.Fatal("a failed load served a call")
 	}
-	if _, err := New(Config{ID: "d", LibPath: "/opt/other", ModelsDir: dir, engine: eng, lib: half}); err == nil {
+	if _, err := New(Config{ID: "d", LibPath: optOther, ModelsDir: dir, engine: eng, lib: half}); err == nil {
 		t.Error("another lib_path was accepted after a load from /opt/llama failed")
 	}
 
 	for name, cfg := range map[string]Config{
-		"no id":           {LibPath: "/opt/llama", ModelsDir: dir},
+		"no id":           {LibPath: optLlama, ModelsDir: dir},
 		"relative lib":    {ID: "x", LibPath: "lib", ModelsDir: dir},
-		"no models_dir":   {ID: "x", LibPath: "/opt/llama"},
-		"relative models": {ID: "x", LibPath: "/opt/llama", ModelsDir: "models"},
-		"small window":    {ID: "x", LibPath: "/opt/llama", ModelsDir: dir, Options: map[string]any{"num_ctx": int64(100)}},
-		"string window":   {ID: "x", LibPath: "/opt/llama", ModelsDir: dir, Options: map[string]any{"num_ctx": "4096"}},
-		"hot":             {ID: "x", LibPath: "/opt/llama", ModelsDir: dir, Options: map[string]any{"temperature": 3.0}},
-		"negative keep":   {ID: "x", LibPath: "/opt/llama", ModelsDir: dir, Options: map[string]any{"keep_alive": int64(-1)}},
-		"unknown option":  {ID: "x", LibPath: "/opt/llama", ModelsDir: dir, Options: map[string]any{"num_gpu": int64(1)}},
+		"no models_dir":   {ID: "x", LibPath: optLlama},
+		"relative models": {ID: "x", LibPath: optLlama, ModelsDir: "models"},
+		"small window":    {ID: "x", LibPath: optLlama, ModelsDir: dir, Options: map[string]any{"num_ctx": int64(100)}},
+		"string window":   {ID: "x", LibPath: optLlama, ModelsDir: dir, Options: map[string]any{"num_ctx": "4096"}},
+		"hot":             {ID: "x", LibPath: optLlama, ModelsDir: dir, Options: map[string]any{"temperature": 3.0}},
+		"negative keep":   {ID: "x", LibPath: optLlama, ModelsDir: dir, Options: map[string]any{"keep_alive": int64(-1)}},
+		"unknown option":  {ID: "x", LibPath: optLlama, ModelsDir: dir, Options: map[string]any{"num_gpu": int64(1)}},
 	} {
 		cfg.engine, cfg.lib = eng, &libLoader{}
 		if _, err := New(cfg); err == nil {
