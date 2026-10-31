@@ -2,6 +2,7 @@ package desktop_test
 
 import (
 	"bytes"
+	"debug/pe"
 	"encoding/binary"
 	"os"
 	"path/filepath"
@@ -91,6 +92,16 @@ func readSyso(t *testing.T, path string) rsrc {
 	if sec == nil {
 		t.Fatalf("%s: no .rsrc section", path)
 	}
+	return rsrc{machine: le.Uint16(b), data: readResources(t, path, sec, 0)}
+}
+
+// readResources walks a resource section's three-level directory of type, id and language and
+// returns, by type and id, each resource's data in the first language listed. A leaf's address
+// is relative to base: 0 in an object, whose linker relocates it, and the section's virtual
+// address in an executable, where it is an RVA.
+func readResources(t *testing.T, path string, sec []byte, base uint32) map[uint32]map[uint32][]byte {
+	t.Helper()
+	le := binary.LittleEndian
 	at := func(off uint32, n int) []byte {
 		if uint64(off)+uint64(n) > uint64(len(sec)) {
 			t.Fatalf("%s: a resource entry at %d lies outside .rsrc", path, off)
@@ -109,31 +120,49 @@ func readSyso(t *testing.T, path string) rsrc {
 		return list
 	}
 	const sub = 0x80000000
-	res := rsrc{machine: le.Uint16(b), data: map[uint32]map[uint32][]byte{}}
+	data := map[uint32]map[uint32][]byte{}
 	for _, typ := range entries(0) {
 		if typ[1]&sub == 0 {
 			t.Fatalf("%s: type %d is not a directory", path, typ[0])
 		}
-		res.data[typ[0]] = map[uint32][]byte{}
+		data[typ[0]] = map[uint32][]byte{}
 		for _, id := range entries(typ[1] &^ sub) {
 			langs := entries(id[1] &^ sub)
 			if id[1]&sub == 0 || len(langs) == 0 || langs[0][1]&sub != 0 {
 				t.Fatalf("%s: resource %d/%d has no data entry", path, typ[0], id[0])
 			}
 			leaf := at(langs[0][1], 16)
-			res.data[typ[0]][id[0]] = at(le.Uint32(leaf), int(le.Uint32(leaf[4:])))
+			addr := le.Uint32(leaf)
+			if addr < base {
+				t.Fatalf("%s: resource %d/%d lies before .rsrc", path, typ[0], id[0])
+			}
+			data[typ[0]][id[0]] = at(addr-base, int(le.Uint32(leaf[4:])))
 		}
 	}
-	return res
+	return data
 }
 
 // TestTheWindowsResourceCarriesTheKitIcon_REQ_PKG_005 checks the resource objects Go links into
 // the Windows executable (delta `2026-10-wails-icons`): each is for its own machine, has one
 // icon group listing each of the kit's entries at 16, 20, 24, 32, 40, 48, 64 and 256 px once,
 // and every group entry's RT_ICON id holds that entry's image byte for byte. That the
-// executable embeds them is T-F2-50's check.
+// executable embeds them is TestTheWindowsExecutableEmbedsTheKitIcon_REQ_PKG_005.
 func TestTheWindowsResourceCarriesTheKitIcon_REQ_PKG_005(t *testing.T) {
 	t.Parallel()
+	kit, sizes := kitSizes(t)
+	for arch, machine := range map[string]uint16{"amd64": 0x8664, "arm64": 0xaa64} {
+		path := filepath.Join("..", "..", "cmd", "umbral-desktop", "rsrc_windows_"+arch+".syso")
+		res := readSyso(t, path)
+		if res.machine != machine {
+			t.Errorf("%s: machine %#x, want %#x", path, res.machine, machine)
+		}
+		assertKitIcon(t, path, res, kit, sizes)
+	}
+}
+
+// kitSizes reads the kit's icon and checks it has the entries REQ-PKG-005 names.
+func kitSizes(t *testing.T) ([]icoEntry, []int) {
+	t.Helper()
 	kit := readICO(t, kitICO)
 	sizes := make([]int, len(kit))
 	for i, e := range kit {
@@ -145,40 +174,70 @@ func TestTheWindowsResourceCarriesTheKitIcon_REQ_PKG_005(t *testing.T) {
 	if want := []int{16, 20, 24, 32, 40, 48, 64, 256}; !slices.Equal(sizes, want) {
 		t.Fatalf("the kit's icon has entries %v, want %v", sizes, want)
 	}
-	for arch, machine := range map[string]uint16{"amd64": 0x8664, "arm64": 0xaa64} {
-		path := filepath.Join("..", "..", "cmd", "umbral-desktop", "rsrc_windows_"+arch+".syso")
-		res := readSyso(t, path)
-		if res.machine != machine {
-			t.Errorf("%s: machine %#x, want %#x", path, res.machine, machine)
+	return kit, sizes
+}
+
+// assertKitIcon checks that res has one icon group listing each of the kit's entries once, and
+// that every group entry's RT_ICON id holds that entry's image byte for byte.
+func assertKitIcon(t *testing.T, path string, res rsrc, kit []icoEntry, sizes []int) {
+	t.Helper()
+	groups := res.data[rtGroupIcon]
+	if len(groups) != 1 {
+		t.Fatalf("%s: %d icon groups, want 1", path, len(groups))
+	}
+	for _, g := range groups {
+		// GRPICONDIR: reserved 0, type 1, the count, then 14 bytes per entry — the .ico's
+		// 12-byte description and the RT_ICON id. Windows picks an entry by size, so the
+		// order is the generator's (largest first).
+		if len(g) != 6+14*len(kit) || !bytes.Equal(g[:6], []byte{0, 0, 1, 0, byte(len(kit)), 0}) {
+			t.Fatalf("%s: the icon group is not %d entries", path, len(kit))
 		}
-		groups := res.data[rtGroupIcon]
-		if len(groups) != 1 {
-			t.Fatalf("%s: %d icon groups, want 1", path, len(groups))
-		}
-		for _, g := range groups {
-			// GRPICONDIR: reserved 0, type 1, the count, then 14 bytes per entry — the .ico's
-			// 12-byte description and the RT_ICON id. Windows picks an entry by size, so the
-			// order is the generator's (largest first).
-			if len(g) != 6+14*len(kit) || !bytes.Equal(g[:6], []byte{0, 0, 1, 0, byte(len(kit)), 0}) {
-				t.Fatalf("%s: the icon group is not %d entries", path, len(kit))
+		listed := make([]bool, len(kit))
+		for i := range kit {
+			e := g[6+14*i : 6+14*i+14]
+			j := slices.IndexFunc(kit, func(k icoEntry) bool { return bytes.Equal(k.dir, e[:12]) })
+			if j < 0 || listed[j] {
+				t.Errorf("%s: group entry %d (% x) is none of the kit's, or listed twice", path, i, e[:12])
+				continue
 			}
-			listed := make([]bool, len(kit))
-			for i := range kit {
-				e := g[6+14*i : 6+14*i+14]
-				j := slices.IndexFunc(kit, func(k icoEntry) bool { return bytes.Equal(k.dir, e[:12]) })
-				if j < 0 || listed[j] {
-					t.Errorf("%s: group entry %d (% x) is none of the kit's, or listed twice", path, i, e[:12])
-					continue
-				}
-				listed[j] = true
-				id := uint32(binary.LittleEndian.Uint16(e[12:]))
-				if !bytes.Equal(res.data[rtIcon][id], kit[j].data) {
-					t.Errorf("%s: icon %d, named for %d px, is not the kit's %d px image", path, id, sizes[j], sizes[j])
-				}
+			listed[j] = true
+			id := uint32(binary.LittleEndian.Uint16(e[12:]))
+			if !bytes.Equal(res.data[rtIcon][id], kit[j].data) {
+				t.Errorf("%s: icon %d, named for %d px, is not the kit's %d px image", path, id, sizes[j], sizes[j])
 			}
-		}
-		if len(res.data[rtIcon]) != len(kit) {
-			t.Errorf("%s: %d icons, want %d", path, len(res.data[rtIcon]), len(kit))
 		}
 	}
+	if len(res.data[rtIcon]) != len(kit) {
+		t.Errorf("%s: %d icons, want %d", path, len(res.data[rtIcon]), len(kit))
+	}
+}
+
+// TestTheWindowsExecutableEmbedsTheKitIcon_REQ_PKG_005 reads the icon out of a built
+// umbral-desktop.exe, which the Windows CI job names in UMBRAL_DESKTOP_EXE (T-F2-50): the group
+// and images the linker took from the resource objects are the kit's, byte for byte.
+func TestTheWindowsExecutableEmbedsTheKitIcon_REQ_PKG_005(t *testing.T) {
+	t.Parallel()
+	path := os.Getenv("UMBRAL_DESKTOP_EXE")
+	if path == "" {
+		t.Skip("UMBRAL_DESKTOP_EXE names no Windows build of umbral-desktop")
+	}
+	kit, sizes := kitSizes(t)
+	f, err := pe.Open(path)
+	if err != nil {
+		t.Fatalf("%s: %v", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	sec := f.Section(".rsrc")
+	if sec == nil {
+		t.Fatalf("%s embeds no resources", path)
+	}
+	raw, err := sec.Data()
+	if err != nil {
+		t.Fatalf("%s: read .rsrc: %v", path, err)
+	}
+	res := rsrc{machine: f.Machine, data: readResources(t, path, raw, sec.VirtualAddress)}
+	if res.machine != pe.IMAGE_FILE_MACHINE_AMD64 {
+		t.Errorf("%s: machine %#x, want amd64", path, res.machine)
+	}
+	assertKitIcon(t, path, res, kit, sizes)
 }

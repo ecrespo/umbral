@@ -348,6 +348,7 @@ func TestACPToolCallsAreRecordedWithTheirDecision_REQ_ACP_007(t *testing.T) {
 // and an `execute` without a cwd — which runs in the agent's session directory, the worktree —
 // are allowed unasked; a `fetch` still asks.
 func TestFullAutoDecidesACPPermissions_REQ_ORC_004(t *testing.T) {
+	posixLines(t)
 	repo := realDir(t)
 	wts := &fakeWorktrees{root: realDir(t), repo: repo}
 	outside := realDir(t)
@@ -400,8 +401,13 @@ func TestFullAutoDecidesACPPermissions_REQ_ORC_004(t *testing.T) {
 		}
 	}
 	for range 2 {
-		if err := <-terminal; err != nil {
-			t.Errorf("terminal: %v", err)
+		select {
+		case err := <-terminal:
+			if err != nil {
+				t.Errorf("terminal: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("a terminal request was never answered")
 		}
 	}
 	r.finished(t)
@@ -426,6 +432,7 @@ func TestFullAutoDecidesACPPermissions_REQ_ORC_004(t *testing.T) {
 // write root asks even when a remembered rule allows its command line; inside, the rule
 // allows it unasked.
 func TestAnACPTerminalOutsideTheWriteRootAsks_REQ_ACP_005(t *testing.T) {
+	posixLines(t)
 	dir, outside := realDir(t), realDir(t)
 	errs := make(chan error, 2)
 	r := acpRig(t, nil, func(ctx context.Context, req ports.ExternalRequest, sink ports.ExternalSink) {
@@ -547,6 +554,7 @@ func TestAnACPExecuteEvasionAsks_REQ_ACP_003(t *testing.T) {
 // even under full-auto in the worktree, even when the script is harmless — `sh -c 'make build'`.
 // A destructive script asks at the destructive step instead (delta `2026-10-shell-parser`).
 func TestATerminalThatRunsAScriptAsks_REQ_ACP_005(t *testing.T) {
+	posixLines(t)
 	repo := realDir(t)
 	wts := &fakeWorktrees{root: realDir(t), repo: repo}
 	errs := make(chan error, 1)

@@ -98,6 +98,17 @@ tasks:
         mkdir -p "$long"
         TMPDIR="$long" go test -race -count=1 ./internal/client/ ./internal/api/ ./cmd/umb/ ./cmd/umbrald/ ./internal/remote/...
 
+  vet:windows:
+    desc: Every package that does not link libghostty vets for Windows (T-F2-50, layer 1)
+    cmds:
+      # The packages that render a terminal link libghostty through cgo and are built on the
+      # Windows runner itself; every other one must keep compiling for Windows from here.
+      - |
+        export GOOS=windows GOARCH=amd64 CGO_ENABLED=0
+        cgo=$(go list -test -f '{{"{{"}}.ImportPath{{"}}"}} {{"{{"}}join .Deps " "{{"}}"}}' ./... | grep 'go.mitchellh.com/libghostty' | cut -d' ' -f1 | sed 's/_test$//' | sort -u)
+        pkgs=$(go list ./... | grep -vxF "$cgo")
+        go vet $pkgs
+
   test:hygiene:selftest:
     desc: Prove the hygiene gate rejects a leak
     cmds:
@@ -231,6 +242,7 @@ tasks:
       - task: test:hygiene
       - task: test:hygiene:selftest
       - task: test:portability
+      - task: vet:windows
       - task: perf
       - task: build
       - task: roundtrip

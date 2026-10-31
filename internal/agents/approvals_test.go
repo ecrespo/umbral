@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"runtime"
 	"testing"
 	"time"
 
@@ -45,7 +46,12 @@ func TestAskPausesTurn_REQ_AGT_004(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := r.requested(t)
-	if a.Tool != "run" || a.Risk != "Exec" || a.Reason != secdomain.ReasonPolicy || a.Summary != "make test" || a.State != domain.ApprovalPending {
+	// On Windows every line asks at the destructive step (delta `2026-10-windows-port`).
+	wantReason := secdomain.ReasonPolicy
+	if runtime.GOOS == "windows" {
+		wantReason = secdomain.ReasonDestructive
+	}
+	if a.Tool != "run" || a.Risk != "Exec" || a.Reason != wantReason || a.Summary != "make test" || a.State != domain.ApprovalPending {
 		t.Fatalf("approval %+v", a)
 	}
 	if got, _ := r.rt.Get(t.Context(), th.ID); got.State != domain.StateAwaitingApproval {
@@ -115,6 +121,7 @@ func TestDenyReturnsDeniedByUser_REQ_AGT_005(t *testing.T) {
 // TestAThreadScopeRemembersTheDecision_REQ_AGT_004: `thread` persists a rule for this thread,
 // so the same call is not asked again — in this turn or the next.
 func TestAThreadScopeRemembersTheDecision_REQ_AGT_004(t *testing.T) {
+	posixLines(t)
 	r := newRig(t, callTool("run", `{"path":"make test"}`), callTool("run", `{"path":"make test"}`), answer("done"))
 	th := r.thread(t, domain.CreateParams{})
 	if _, err := r.rt.Send(t.Context(), ports.SendParams{ThreadID: th.ID, Text: "test twice"}); err != nil {
@@ -237,6 +244,7 @@ func TestACancelledTurnExpiresItsApproval_REQ_AGT_004(t *testing.T) {
 // TestARememberedDenyAppliesToTheRestOfTheTurn_REQ_AGT_005: a `thread` deny is a rule at once:
 // the same call later in the turn is refused by it, without asking again.
 func TestARememberedDenyAppliesToTheRestOfTheTurn_REQ_AGT_005(t *testing.T) {
+	posixLines(t)
 	r := newRig(t, callTool("run", `{"path":"make deploy"}`), callTool("run", `{"path":"make deploy"}`), answer("ok"))
 	th := r.thread(t, domain.CreateParams{})
 	if _, err := r.rt.Send(t.Context(), ports.SendParams{ThreadID: th.ID, Text: "deploy"}); err != nil {

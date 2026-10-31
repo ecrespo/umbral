@@ -1,5 +1,5 @@
 // Package keyring implements ports.Keyring over the operating system's keyring with
-// zalando/go-keyring: Secret Service on Linux, Keychain on macOS.
+// zalando/go-keyring: Secret Service on Linux, Keychain on macOS, Credential Manager on Windows.
 package keyring
 
 import (

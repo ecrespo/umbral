@@ -191,6 +191,7 @@ components:
 vendors:
   shell-syntax: { in: mvdan.cc/sh/v3/syntax }
   x-sys-unix:   { in: golang.org/x/sys/unix }
+  x-sys-windows: { in: golang.org/x/sys/windows }
 
 deps:
   # --- domain: the standard library and other domains, nothing else -----------
@@ -600,6 +601,9 @@ deps:
   # The links to remote daemons (T-F2-41): one supervisor per host over its ports.
   remote-service:
     anyVendorDeps: false
+    # A forwarded socket's owner is checked by pid; on Windows through OpenProcess.
+    canUse:
+      - x-sys-windows
     mayDependOn:
       - remote-ports
       - remote-domain

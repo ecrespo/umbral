@@ -247,7 +247,7 @@ func TestGitContextRunsNoRepositoryCommand_REQ_CTX_003(t *testing.T) {
 	git(t, root, "init", "-q")
 	marker := filepath.Join(t.TempDir(), "ran")
 	hook := filepath.Join(t.TempDir(), "hook.sh")
-	write(t, hook, "#!/bin/sh\ntouch "+marker+"\n")
+	write(t, hook, "#!/bin/sh\ntouch "+filepath.ToSlash(marker)+"\n")
 	if err := os.Chmod(hook, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -255,10 +255,10 @@ func TestGitContextRunsNoRepositoryCommand_REQ_CTX_003(t *testing.T) {
 	git(t, root, "add", "a.txt")
 	git(t, root, "commit", "-q", "-m", "one")
 	write(t, filepath.Join(root, "a.txt"), "two\n")
-	git(t, root, "config", "core.fsmonitor", hook)
-	git(t, root, "config", "diff.external", hook)
+	git(t, root, "config", "core.fsmonitor", filepath.ToSlash(hook))
+	git(t, root, "config", "diff.external", filepath.ToSlash(hook))
 	write(t, filepath.Join(root, ".gitattributes"), "*.txt diff=evil\n")
-	git(t, root, "config", "diff.evil.textconv", hook)
+	git(t, root, "config", "diff.evil.textconv", filepath.ToSlash(hook))
 
 	if _, err := New(Config{}).Git(context.Background(), root); err != nil {
 		t.Fatal(err)
@@ -316,11 +316,12 @@ func TestGitContextRunsNoFilterDriver_REQ_CTX_003(t *testing.T) {
 	git(t, root, "init", "-q")
 	marker := filepath.Join(t.TempDir(), "ran")
 	hook := filepath.Join(t.TempDir(), "clean.sh")
-	write(t, hook, "#!/bin/sh\ntouch "+marker+"\ncat\n")
+	// Git runs the driver through sh, which reads a Windows path's backslashes as escapes.
+	write(t, hook, "#!/bin/sh\ntouch "+filepath.ToSlash(marker)+"\ncat\n")
 	if err := os.Chmod(hook, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	git(t, root, "config", "filter.evil.clean", hook)
+	git(t, root, "config", "filter.evil.clean", filepath.ToSlash(hook))
 	git(t, root, "config", "filter.evil.required", "true")
 	write(t, filepath.Join(root, ".gitattributes"), "*.txt filter=evil\n")
 	write(t, filepath.Join(root, "a.txt"), "one\n")
@@ -354,11 +355,7 @@ func TestAFailingGitIsStatedNotDropped_REQ_CTX_003(t *testing.T) {
 	root := t.TempDir()
 	git(t, root, "init", "-q")
 	// A git that refuses the repository: the section says why rather than vanish.
-	refusing := filepath.Join(t.TempDir(), "git")
-	write(t, refusing, "#!/bin/sh\necho 'fatal: detected dubious ownership in repository' >&2\nexit 128\n")
-	if err := os.Chmod(refusing, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	refusing := fakeProgram(t, t.TempDir(), "git", "", "fatal: detected dubious ownership in repository", 128)
 	g, err := New(Config{Git: refusing}).Git(context.Background(), root)
 	if err != nil {
 		t.Fatal(err)

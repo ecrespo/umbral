@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"syscall"
 )
 
 // File names inside the runtime directory (API Spec §2 and Metadata).
@@ -31,6 +30,9 @@ const RuntimeDirMode = 0o700
 func RuntimeDir() (string, error) {
 	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
 		return filepath.Join(dir, "umbral"), nil
+	}
+	if runtime.GOOS == "windows" {
+		return windowsDir("LOCALAPPDATA", "run")
 	}
 	if runtime.GOOS == "darwin" {
 		home, err := os.UserHomeDir()
@@ -54,35 +56,6 @@ func RuntimeDir() (string, error) {
 	return dir, nil
 }
 
-// verifyPrivateDir rejects a pre-existing runtime directory that the current user does
-// not own or that others can enter. A directory that does not exist yet is fine: MkdirAll
-// will create it with mode 0700.
-func verifyPrivateDir(dir string) error {
-	info, err := os.Lstat(dir)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("config: inspect the runtime directory %s: %w", dir, err)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("config: %s exists and is not a directory", dir)
-	}
-	if got := info.Mode().Perm(); got != RuntimeDirMode {
-		return fmt.Errorf("config: runtime directory %s is %#o, want %#o; refusing to put a token there",
-			dir, got, RuntimeDirMode)
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return fmt.Errorf("config: cannot read the owner of %s", dir)
-	}
-	if int(stat.Uid) != os.Getuid() {
-		return fmt.Errorf("config: runtime directory %s is owned by uid %d, not %d",
-			dir, stat.Uid, os.Getuid())
-	}
-	return nil
-}
-
 // DefaultSocketPath is the socket the daemon binds, and the one a client dials, when no
 // path is configured.
 func DefaultSocketPath() (string, error) { return runtimePath(SocketFileName) }
@@ -96,4 +69,14 @@ func runtimePath(name string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, name), nil
+}
+
+// windowsDir is %<base>%\Umbral\<sub>, where Windows keeps a user's own files (delta
+// `2026-10-windows-port`, decision 2).
+func windowsDir(base, sub string) (string, error) {
+	root := os.Getenv(base)
+	if root == "" {
+		return "", fmt.Errorf("config: %%%s%% is not set", base)
+	}
+	return filepath.Join(root, "Umbral", sub), nil
 }

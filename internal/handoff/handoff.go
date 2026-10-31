@@ -1,3 +1,5 @@
+//go:build unix
+
 // Package handoff is the channel a newer umbrald takes a running one's sessions over
 // (REQ-HND-001, delta `2026-10-pty-handoff`): a Unix socket beside the API's, carrying
 // length-prefixed JSON frames and, beside a frame, open descriptors as SCM_RIGHTS.

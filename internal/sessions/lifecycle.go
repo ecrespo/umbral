@@ -57,7 +57,7 @@ func lookPath(name string, env []string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("%w: command names no program", domain.ErrValidation)
 	}
-	if strings.ContainsRune(name, os.PathSeparator) {
+	if strings.ContainsAny(name, pathSeparators) {
 		return name, nil
 	}
 
@@ -69,12 +69,13 @@ func lookPath(name string, env []string) (string, error) {
 			// skipped rather than resolved.
 			continue
 		}
-		candidate := filepath.Join(dir, name)
-		info, err := os.Stat(candidate)
-		if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
-			continue
+		for _, candidate := range candidates(filepath.Join(dir, name), env) {
+			info, err := os.Stat(candidate)
+			if err != nil || info.IsDir() || !runnable(candidate, info) {
+				continue
+			}
+			return candidate, nil
 		}
-		return candidate, nil
 	}
 	return "", fmt.Errorf("%w: command %q is not on the session's PATH", domain.ErrValidation, name)
 }
@@ -85,7 +86,7 @@ func lookPath(name string, env []string) (string, error) {
 func pathFrom(env []string) string {
 	path := ""
 	for _, entry := range env {
-		if value, ok := strings.CutPrefix(entry, "PATH="); ok {
+		if key, value, ok := strings.Cut(entry, "="); ok && envKeyIs(key, "PATH") {
 			path = value
 		}
 	}

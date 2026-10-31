@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.84 |
+| **Version** | 1.85 |
 | **Date** | 2026-10-31 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1615,6 +1615,44 @@ Umbral's packages it imports `internal/client`, `internal/desktop` and its frame
   the sum, which only the shell can print. A `notification.posted` the window receives as
   foreground client is shown in its status line.
 
+### 5.3i Windows (T-F2-50)
+
+Windows 11 x86_64 runs the daemon, `umb`, the TUI and the desktop (REQ-WIN-001…003, delta
+`2026-10-windows-port`). Every call only Unix has sits in a `_unix.go` file with a `_windows.go`
+twin, and `task vet:windows` keeps the packages that do not link libghostty compiling for Windows.
+
+- **Paths.** Runtime `%LOCALAPPDATA%\Umbral\run`, data `%LOCALAPPDATA%\Umbral\data`, config
+  `%APPDATA%\Umbral`; a set `XDG_*` variable still wins. The private check reads the owner, the current user,
+  and an access list allowing only that user, SYSTEM and the Administrators, refusing an allow
+  entry of a kind it does not read; the token gets a protected list for the user alone.
+  The instance lock is `LockFileEx`.
+- **Transport.** The named pipe of API §2 through `Microsoft/go-winio`, with 64 KiB buffers. A
+  connection's close flushes for up to a second on its own goroutine, since closing a pipe's
+  server end discards what the client has not read.
+- **PTY.** ConPTY through `aymanbagabas/go-pty`. Each shell runs in a Job Object with
+  `KILL_ON_JOB_CLOSE`: a hang-up closes the pseudo console, a kill closes the job, an interrupt
+  types Ctrl-C and its second half terminates the shell's descendants. The daemon clears its
+  inherited "ignore Ctrl-C" flag once. A shell must have an extension `PATHEXT` runs.
+- **Shell.** `$SHELL`, then `pwsh`, then `%ComSpec%`. PowerShell 7 dot-sources
+  `shell/pwsh/umbral.ps1`, which emits OSC 133 `A`/`B`/OSC 7 from its prompt, `633;E` and `C`
+  from `PSConsoleHostReadLine`, and `D` with the exit code (REQ-WIN-002). `cmd.exe` and Windows
+  PowerShell 5.1 run with `integration: none`.
+- **Peer check.** API §2: Toolhelp ancestors, dropping a parent created after its child, and Job
+  Object membership through `IsProcessInJob`, failing closed. A hosted ACP agent starts
+  suspended, joins its job and is resumed; the job is closed when its turn is killed and when it
+  exits. Detection reads a process's executable only.
+- **Policy.** The destructive floor reads POSIX lines only, so every non-empty command line asks
+  on Windows (`windows_shell`), and so does a line of a program's input, which the shell may
+  read next; path rules compare without case and with `/` read as `\`.
+- **Secrets.** The Windows Credential Manager through `go-keyring`.
+- **Not on Windows yet.** `umbrald --takeover` exits `EX_UNAVAILABLE` (69) with "live handoff is
+  not supported on Windows", and the `remote` module is not wired, so every `remote.*` method
+  answers `NOT_IMPLEMENTED`.
+- **CI.** A `windows-latest` job runs the packages that support Windows with the race detector,
+  builds libghostty-vt with Zig and links it as `ghostty-vt.dll` (`-tags dynamic`; the static
+  archive needs Zig's compiler-rt and `ntdll`), runs the emulator tests, builds every
+  binary and `umbral-desktop.exe`, and checks the executable's icon group (REQ-PKG-005).
+
 ### 5.4 Error Handling
 
 ```go
@@ -2041,8 +2079,8 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   and `_arm64.syso` from the kit's `umbral.ico`: its eight images as they are and go-winres's
   default manifest (`asInvoker`, system DPI awareness). Go links them into Windows builds only.
   `packaging/desktop/syso_test.go` walks each object's resource directory — its machine, one icon group, each entry's
-  RT_ICON holding the kit's image byte for byte — and CI's `desktop` job regenerates and compares them (`--check`); that the
-  executable embeds them is checked when T-F2-50 builds it (delta `2026-10-wails-icons`).
+  RT_ICON holding the kit's image byte for byte — and CI's `desktop` job regenerates and compares them (`--check`); the
+  `windows` job builds `umbral-desktop.exe` and reads the same group out of it (delta `2026-10-wails-icons`, §5.3i).
 - **Window id (REQ-PKG-004):** `io.github.ecrespo.Umbral` is the GTK application id and
   program name, so the Wayland `app_id` and the X11 `WM_CLASS`; `scripts/desktop_smoke.sh`
   reads the live window's class with `xwininfo` under xvfb; the Wayland `app_id` and the dock's
@@ -2177,3 +2215,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.82 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-pty-handoff` (T-F2-40): §5.2 the `handoff` leaf; DD-014 the live handoff over `handoff.sock`, its steps, what the new daemon skips, and the resume on failure; T-F2-42 for the clients' reconnection |
 | 1.83 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-client-reconnect` (T-F2-42): §5.3h and DD-014 the TUI and the desktop follow their daemon across a handoff through `client.Redial` and attach every pane again from a fresh snapshot |
 | 1.84 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-remote-hosts` (T-F2-41): §3 and §5.2 the `remote` module; §5.1 `[remote]` and the forwarded sockets; the relay lives in `api` (API §5.44); §5.3's destructive list gains `umb_remote_change` |
+| 1.85 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-windows-port` (T-F2-50): §5.3i Windows — paths, the named pipe, ConPTY in Job Objects, the PowerShell bootstrap, the peer check by job membership, every command asking, Credential Manager, what is not on Windows yet and the CI job; §9.3 the executable's icon check |

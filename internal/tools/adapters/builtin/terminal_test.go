@@ -1,3 +1,9 @@
+//go:build unix
+
+// These calls are decided by the POSIX reading of the line typed at the prompt; on Windows
+// every line of program input asks (delta `2026-10-windows-port`, decision 14), which
+// security/domain's policy_windows_test.go checks.
+
 package builtin
 
 import (
@@ -76,7 +82,7 @@ func keysInput(keys ...map[string]any) json.RawMessage {
 // with an allow rule for the tool, and runs it when the policy allows it.
 func decideCall(t *testing.T, reg *registry.Registry, input json.RawMessage) (secdomain.Action, secdomain.Decision, error) {
 	t.Helper()
-	env := domain.Env{ThreadID: "thr_1", Cwd: "/work", WriteRoot: "/work"}
+	env := domain.Env{ThreadID: "thr_1", Cwd: work, WriteRoot: work}
 	call := domain.Call{Tool: "terminal_interact", Input: input}
 	action, err := reg.Action(env, call)
 	if err != nil {
@@ -231,7 +237,7 @@ func TestSendKeysMayWaitAfter_REQ_FTU_001(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := domain.Env{ThreadID: "thr_1", Cwd: "/work", WriteRoot: "/work"}
+	env := domain.Env{ThreadID: "thr_1", Cwd: work, WriteRoot: work}
 	run := func(input json.RawMessage) (secdomain.Action, domain.Result, error) {
 		t.Helper()
 		call := domain.Call{Tool: "terminal_interact", Input: input}
@@ -344,7 +350,7 @@ func TestTakenOverIsAResult_REQ_FTU_002(t *testing.T) {
 		in(map[string]any{"action": "read_screen"}),
 		in(map[string]any{"action": "wait_for", "exit": true}),
 	} {
-		env := domain.Env{ThreadID: "thr_1", Cwd: "/work", WriteRoot: "/work"}
+		env := domain.Env{ThreadID: "thr_1", Cwd: work, WriteRoot: work}
 		call := domain.Call{Tool: "terminal_interact", Input: input}
 		action, err := reg.Action(env, call)
 		if err != nil {
@@ -375,7 +381,7 @@ func TestADecisionWhileTakenOverSendsNothing_REQ_FTU_002(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := domain.Env{ThreadID: "thr_1", Cwd: "/work", WriteRoot: "/work"}
+	env := domain.Env{ThreadID: "thr_1", Cwd: work, WriteRoot: work}
 	call := domain.Call{Tool: "terminal_interact", Input: keysInput(map[string]any{"text": "taken_over"})}
 	action, err := reg.Action(env, call)
 	if err != nil {
@@ -391,7 +397,7 @@ func TestADecisionWhileTakenOverSendsNothing_REQ_FTU_002(t *testing.T) {
 
 	term.err = sessdomain.ErrNoTerminal
 	res, err = reg.Invoke(context.Background(), env, domain.Call{Tool: "terminal_interact", Input: in(map[string]any{"action": "read_screen"})},
-		domain.Grant{Action: secdomain.Action{ThreadID: "thr_1", Tool: "terminal_interact", Risk: secdomain.RiskReadOnly, Target: "read_screen", Cwd: "/work", WriteRoot: "/work"}, Decision: secdomain.Decision{Verdict: secdomain.VerdictAllow}})
+		domain.Grant{Action: secdomain.Action{ThreadID: "thr_1", Tool: "terminal_interact", Risk: secdomain.RiskReadOnly, Target: "read_screen", Cwd: work, WriteRoot: work}, Decision: secdomain.Decision{Verdict: secdomain.VerdictAllow}})
 	if err != nil || res.Summary != "no_terminal" {
 		t.Errorf("a read with no terminal: %+v, %v", res, err)
 	}
@@ -408,7 +414,7 @@ func TestALoneControlCharacterIsItsKey_REQ_FTU_001(t *testing.T) {
 		t.Fatal(err)
 	}
 	send := func(keys ...any) error {
-		env := domain.Env{ThreadID: "thr_1", Cwd: "/work", WriteRoot: "/work"}
+		env := domain.Env{ThreadID: "thr_1", Cwd: work, WriteRoot: work}
 		call := domain.Call{Tool: "terminal_interact", Input: in(map[string]any{"action": "send_keys", "keys": keys})}
 		action, err := reg.Action(env, call)
 		if err != nil {
@@ -473,7 +479,7 @@ func TestAStringMayNameKeys_REQ_FTU_001(t *testing.T) {
 		term.sent = nil
 		term.state = sessdomain.InteractState{}
 		// Run as a user's approval would: some of these keys ask, which is not what is tested.
-		env := domain.Env{ThreadID: "thr_1", Cwd: "/work", WriteRoot: "/work"}
+		env := domain.Env{ThreadID: "thr_1", Cwd: work, WriteRoot: work}
 		call := domain.Call{Tool: "terminal_interact", Input: strs(c.in...)}
 		action, err := reg.Action(env, call)
 		if err == nil {
@@ -537,7 +543,7 @@ func TestSendKeysWaitFailureKeepsTheSend_REQ_FTU_002(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			env := domain.Env{ThreadID: "thr_1", Cwd: "/work", WriteRoot: "/work"}
+			env := domain.Env{ThreadID: "thr_1", Cwd: work, WriteRoot: work}
 			call := domain.Call{Tool: "terminal_interact", Input: in(map[string]any{
 				"action": "send_keys", "keys": []any{"psql\n"}, "regex": "postgres", "timeout_ms": 5000,
 			})}

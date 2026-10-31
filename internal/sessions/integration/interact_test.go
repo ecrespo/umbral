@@ -171,7 +171,9 @@ func TestTakeOverLocksTheAgentOut_REQ_FTU_002(t *testing.T) {
 	if took := time.Since(start); took > 30*time.Millisecond {
 		t.Errorf("the take-over waited %v behind a key at the prompt", took)
 	}
-	if err := <-sent; err != nil {
+	// On a loaded machine the key may not have reached the PTY before the take-over; it is then
+	// refused as the user's terminal, which is right too. Only another failure is a defect.
+	if err := <-sent; err != nil && !errors.Is(err, domain.ErrTakenOver) {
 		t.Errorf("backspace at the prompt: %v", err)
 	}
 	if err != nil || sessionID != run.Block.SessionID {

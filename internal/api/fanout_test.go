@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/base64"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -484,6 +485,12 @@ func TestNotificationSeqIsMonotonic(t *testing.T) {
 // while the daemon was flushing immediately. A reintroduced fixed timer would delay *every*
 // chunk, which moves the median and not just the tail, so the test keeps its teeth.
 func TestNoChunkWaitsLongerThanTheBatchInterval(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// On the Windows runner a lone chunk took 414 µs at best and 33 ms at the median under
+		// -race beside the package's other tests: the scheduler, not a timer. The budget is
+		// gated where `task perf` runs (delta `2026-10-windows-port`).
+		t.Skip("API Spec §8's ceiling is gated on Linux and macOS")
+	}
 	t.Parallel()
 
 	sessions := newFakeSessions()

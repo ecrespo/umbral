@@ -6,7 +6,7 @@ package domain
 import (
 	"errors"
 	"fmt"
-	"strings"
+	"path/filepath"
 
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 )
@@ -147,7 +147,7 @@ func (p CreateParams) Validate() (CreateParams, error) {
 	if !modelClasses[p.ModelClass] {
 		return p, fmt.Errorf("%w: model_class %q is not fast, code or plan", ErrValidation, p.ModelClass)
 	}
-	if p.Cwd == "" || !strings.HasPrefix(p.Cwd, "/") {
+	if !filepath.IsAbs(p.Cwd) {
 		return p, fmt.Errorf("%w: cwd must be an absolute path", ErrValidation)
 	}
 	if p.MaxSteps == 0 {

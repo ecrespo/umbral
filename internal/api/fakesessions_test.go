@@ -206,7 +206,7 @@ func benchClient(b *testing.B, s *Server) *client {
 	b.Helper()
 
 	var dialer net.Dialer
-	netConn, err := dialer.DialContext(b.Context(), "unix", s.SocketPath())
+	netConn, err := dialDaemon(b.Context(), &dialer, s.SocketPath())
 	if err != nil {
 		b.Fatalf("dial: %v", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -241,6 +242,10 @@ func buildUmb(t *testing.T) string {
 	t.Helper()
 
 	bin := filepath.Join(t.TempDir(), "umb")
+	if runtime.GOOS == "windows" {
+		// Windows runs a program by its extension; go build adds none to an -o path.
+		bin += ".exe"
+	}
 	build := exec.CommandContext(t.Context(), "go", "build", "-o", bin, ".")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build umb: %v\n%s", err, out)

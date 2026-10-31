@@ -6,10 +6,10 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.58 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.59 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
-| **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
+| **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`; Windows: the named pipe `\\.\pipe\umbral-<16 hex>`, see §2) |
 
 ---
 
@@ -120,6 +120,17 @@ already exists and is not a directory owned by the current user with permissions
 Without the check another local user could pre-create it and read the token, defeating REQ-SEC-003
 before the daemon starts.
 
+On **Windows** (F2, REQ-WIN-001) the runtime directory is `%LOCALAPPDATA%\Umbral\run` unless
+`XDG_RUNTIME_DIR` is set. It must be owned by the current user's SID, and its access list may allow
+only that SID, SYSTEM and the Administrators — the accounts that read anything on the machine, as
+root does on Unix; an allow entry of a kind the check does not read (conditional, object or
+compound) is refused. The token file gets a protected list admitting the current user alone. The protocol runs on the named
+pipe `\\.\pipe\umbral-<the first 16 hex digits of the SHA-256 of the runtime directory>`, whose
+security descriptor `D:P(A;;GA;;;<user SID>)` admits the current user only. Its first instance is
+created exclusive, so a pipe another account created first stops the daemon, and a client checks
+that the pipe's server process runs as the current user before it sends the token. Messages and
+framing are unchanged.
+
 ### Client kinds
 
 | `client_kind` | Description | Allowed methods |
@@ -157,8 +168,12 @@ own terminal back to itself), and every method that starts a process — `sessio
   find and dial the daemon: the refusal is what stops it.
 - The verdict taken when the connection starts holds for the connection, so a process that
   connects and leaves the socket to a child is still refused.
+- On Windows, which has no POSIX session, the pid comes from `GetNamedPipeClientProcessId`, and a
+  peer is inside an agent's terminal when it or a parent runs in the Job Object of a thread's
+  shell or of a hosted agent; a process the agent's children left behind stays in that job until
+  it is closed (delta `2026-10-windows-port`).
 - While any agent's terminal is open or any hosted agent runs, a peer whose process cannot be read — no pid, or one that
-  has exited — is refused them too. Only Linux and macOS report a peer's pid; elsewhere every
+  has exited — is refused them too. Linux, macOS and Windows report a peer's pid; elsewhere every
   client is refused them once the check is wired.
 - Not recognised: a process that leaves its session with `setsid` and then forks away from its
   parents, and a command handed to a launcher outside the terminal (`systemd-run --user`, `at`,
@@ -1784,3 +1799,4 @@ printf '%s\n' \
 | 1.56 | 2026-10-26 | Additive within `protocol_version = 1`. Delta `2026-10-hunks-file-tree` (T-F2-31): §5.41 `worktree.reject_hunks`, `files`, `read_file`, `write_file`; §4 `Approval`'s `hunks` and `hunks_selectable`; §5.25 `hunks`; §2 (REQ-DSK-002, REQ-DSK-003) |
 | 1.57 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-pty-handoff` (T-F2-40): §6 `session.exited`'s `exit_code` may be `null` after a live handoff. The handoff itself travels on `handoff.sock`, outside this protocol |
 | 1.58 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-remote-hosts` (T-F2-41): §5.44 `remote.list`, `add`, `remove` and the relay to remote daemons over ssh; §4 `RemoteHost`; §6 `remote.state_changed` and `session.unsubscribed`'s `remote_disconnected`; §2 `cli` row and an agent's terminal; §9 `federation` served (REQ-RMT-001, REQ-RMT-002, REQ-RMT-003) |
+| 1.59 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-windows-port` (T-F2-50): the Windows transport — the named pipe, its owner-only descriptor and squatting checks — and runtime directory in §2; the agent's-terminal check on Windows reads Job Objects. |

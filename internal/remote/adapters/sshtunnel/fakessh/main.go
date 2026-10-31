@@ -1,3 +1,5 @@
+//go:build unix
+
 // Command fakessh stands in for ssh in the remote module's tests. It understands the two command
 // lines sshtunnel runs:
 //

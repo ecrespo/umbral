@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/ecrespo/umbral/internal/remote/domain"
@@ -345,11 +344,4 @@ func sweep(dir string, logger *slog.Logger) {
 			logger.Info("removed a forwarded socket left by a daemon that is gone", slog.String("file", e.Name()))
 		}
 	}
-}
-
-// alive reports whether a process of this pid exists; one this user may not signal is taken
-// for alive.
-func alive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
 }

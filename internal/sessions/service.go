@@ -431,7 +431,11 @@ func (s *Service) AgentShellPIDs() []int {
 	var out []int
 	for _, live := range lives {
 		session := live.snapshotState()
-		if session.OwnerThreadID == "" || session.State == domain.StateExited {
+		// An exited shell still counts while its process tree is open: on Windows its Job
+		// Object outlives it until the session is closed, holding what it left behind
+		// (delta `2026-10-windows-port`, decision 4). Unix PTYs keep no such tree.
+		tree, hasTree := live.pty.(interface{ TreeOpen() bool })
+		if session.OwnerThreadID == "" || (session.State == domain.StateExited && (!hasTree || !tree.TreeOpen())) {
 			continue
 		}
 		if pid := live.pty.Pid(); pid > 0 {
@@ -439,6 +443,31 @@ func (s *Service) AgentShellPIDs() []int {
 		}
 	}
 	return out
+}
+
+// AgentTreeHolding is the pid of the agent-owned shell whose process tree holds pid, or 0.
+// It is the agent's-terminal check where the platform keeps a shell's tree in an object of its
+// own — a Job Object on Windows, which has no POSIX session — so a process the shell's children
+// left behind is still known as the agent's (REQ-ORC-004, delta `2026-10-windows-port`).
+func (s *Service) AgentTreeHolding(pid int) int {
+	s.mu.RLock()
+	lives := make([]*liveSession, 0, len(s.live))
+	for _, live := range s.live {
+		lives = append(lives, live)
+	}
+	s.mu.RUnlock()
+	for _, live := range lives {
+		// An exited shell's tree is asked too: its job outlives the shell until finish closes
+		// it, and a process the shell left behind is the agent's until then. Holds answers
+		// false once the job is closed, which also ended everything in it.
+		if live.snapshotState().OwnerThreadID == "" {
+			continue
+		}
+		if tree, ok := live.pty.(interface{ Holds(pid int) bool }); ok && tree.Holds(pid) {
+			return live.pty.Pid()
+		}
+	}
+	return 0
 }
 
 // Get reports one session. A live session is answered from memory, since its state is
@@ -692,11 +721,4 @@ func runCleanup(cleanup func() error) {
 	if cleanup != nil {
 		_ = cleanup()
 	}
-}
-
-func defaultShell() string {
-	if sh := os.Getenv("SHELL"); sh != "" {
-		return sh
-	}
-	return "/bin/sh"
 }

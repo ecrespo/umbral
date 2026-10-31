@@ -13,5 +13,5 @@ import "embed"
 // The `all:` prefix is what includes zsh/.zshrc: `go:embed` skips names beginning with a
 // dot, and zsh will only read the file under that exact name.
 //
-//go:embed bash/umbral.bash fish/umbral.fish all:zsh
+//go:embed bash/umbral.bash fish/umbral.fish all:zsh pwsh/umbral.ps1
 var FS embed.FS

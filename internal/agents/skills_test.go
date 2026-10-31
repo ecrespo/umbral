@@ -62,6 +62,7 @@ func TestASkillChangeReachesTheNextTurn_REQ_SKL_007(t *testing.T) {
 // skill_load's output taints the turn. The agent typing `umb skill install`, `enable` or
 // `remove`, or `umb mcp add`, asks as destructive in any turn, and `always` is not remembered.
 func TestASkillCannotRunOrWidenAnything_REQ_SKL_005(t *testing.T) {
+	posixLines(t)
 	catalog := &fakeCatalog{}
 	catalog.set(ctxdomain.CatalogEntry{Name: "deploy", Description: "Deploys."})
 	r := newRigWith(t, func(c *Config) { c.Skills = catalog },

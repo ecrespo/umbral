@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/coder/acp-go-sdk"
@@ -360,7 +359,7 @@ func (a *agent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResp
 		child := exec.Command("sleep", "60") //nolint:noctx // outlives the agent on purpose
 		child.Stderr = os.Stderr
 		if arg(fields, 1) == "group" {
-			child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			child.SysProcAttr = ownGroup()
 		}
 		if err := child.Start(); err != nil {
 			a.say(ctx, sid, acp.UpdateAgentMessageText("error: "+err.Error()))

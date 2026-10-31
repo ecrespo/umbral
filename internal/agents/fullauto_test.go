@@ -52,6 +52,9 @@ func TestFullAutoOnlyInsideAWorktree_REQ_ORC_004(t *testing.T) {
 		t.Fatalf("thread %+v: want full_auto set beside its own mode normal", got)
 	}
 
+	// What full-auto runs unasked is a POSIX line; on Windows every line asks (decision 14),
+	// which TestFullAutoAsksForEveryCommandOnWindows_REQ_WIN_001 proves instead.
+	posixLines(t)
 	if _, end := r.send(t, th.ID, "build it", ""); end.StopReason != domain.StopEndTurn {
 		t.Fatalf("the turn ended %q, want end_turn without an approval", end.StopReason)
 	}

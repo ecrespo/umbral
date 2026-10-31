@@ -9,9 +9,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -131,7 +131,7 @@ func (r *rig) stored(t *testing.T) []string {
 	_ = filepath.WalkDir(r.dir, func(p string, _ os.DirEntry, err error) error {
 		if err == nil && p != r.dir && filepath.Base(p) != ownerMarker {
 			rel, _ := filepath.Rel(r.dir, p)
-			out = append(out, rel)
+			out = append(out, filepath.ToSlash(rel))
 		}
 		return nil
 	})
@@ -199,7 +199,8 @@ func TestInstallCopiesRecordsAndRunsNothing_REQ_SKL_001(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s not installed: %v", p, err)
 		}
-		if mode := info.Mode() & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky); mode != want {
+		// Windows keeps no permission bits beyond read-only: there the files' presence is checked.
+		if mode := info.Mode() & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky); runtime.GOOS != "windows" && mode != want {
 			t.Errorf("%s has mode %v, want %v", p, mode, want)
 		}
 	}
@@ -237,9 +238,7 @@ func TestABadBundleIsRefusedWhole_REQ_SKL_002(t *testing.T) {
 		t.Fatal(err)
 	}
 	fifo := bundle(t, map[string]string{"SKILL.md": skillMD})
-	if err := syscall.Mkfifo(filepath.Join(fifo, "pipe"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	hasFIFO := mkfifo(t, filepath.Join(fifo, "pipe"))
 	bomb := make([]tarEntry, 0, 10)
 	bomb = append(bomb, tarEntry{name: "SKILL.md", typeflag: tar.TypeReg, body: []byte(skillMD)})
 	for i := range 9 { // nine 1 MiB files: each within the file limit, together past the bundle's
@@ -267,6 +266,9 @@ func TestABadBundleIsRefusedWhole_REQ_SKL_002(t *testing.T) {
 		{"no front matter", bundle(t, map[string]string{"SKILL.md": "# just markdown\n"}), "front matter"},
 		{"a relative path", "relative/dir", "absolute"},
 	} {
+		if tc.path == fifo && !hasFIFO {
+			continue
+		}
 		_, err := r.svc.Inspect(t.Context(), tc.path)
 		if !errors.Is(err, domain.ErrSkillValidation) || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: Inspect = %v, want a validation error naming %q", tc.name, err, tc.want)

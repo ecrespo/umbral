@@ -70,6 +70,9 @@ const (
 	UnknownStdinScript = "stdin_script"
 	// UnknownUnparseable is a line the parser cannot read, or scripts nested too deep.
 	UnknownUnparseable = "unparseable"
+	// UnknownWindowsShell is any line on Windows, where an agent's shell is PowerShell or cmd,
+	// whose syntax the POSIX parser does not read (delta `2026-10-windows-port`, decision 14).
+	UnknownWindowsShell = "windows_shell"
 )
 
 // maxScriptDepth bounds how many scripts inside scripts are read; deeper asks.
@@ -90,6 +93,9 @@ func MatchDestructive(patterns []DestructivePattern, command string) (string, bo
 	}
 	if n.unknown != "" {
 		return n.unknown, true
+	}
+	if shellLinesUnread && strings.TrimSpace(command) != "" {
+		return UnknownWindowsShell, true
 	}
 	return "", false
 }

@@ -120,6 +120,10 @@ func TestInstallAsksOrNeedsYes_REQ_SKL_001(t *testing.T) {
 		t.Fatal(err)
 	}
 	rel, err := filepath.Rel(wd, src)
+	if err != nil && filepath.VolumeName(wd) != filepath.VolumeName(src) {
+		// Windows has no relative path from one drive to another; the absolute one is checked.
+		rel, err = src, nil
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

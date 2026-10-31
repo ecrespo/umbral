@@ -451,7 +451,7 @@ func (p *printer) print(s string) {
 // err reports the first failed write, unless it was a closed pipe. `umb status | head -1`
 // closes the pipe on purpose and is not a failure the user wants an exit code for.
 func (p *printer) err() error {
-	if p.writeErr == nil || errors.Is(p.writeErr, syscall.EPIPE) {
+	if p.writeErr == nil || isClosedPipe(p.writeErr) {
 		return nil
 	}
 	return p.writeErr

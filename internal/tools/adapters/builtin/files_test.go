@@ -6,8 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -147,7 +147,8 @@ func TestWriteFileCreatesAndKeepsTheMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, _ := os.Stat(path)
-	if read(t, path) != "two" || info.Mode().Perm() != 0o700 {
+	// Windows keeps no permission bits beyond read-only, so there only the content is checked.
+	if read(t, path) != "two" || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o700) {
 		t.Errorf("content %q mode %v, want two and 0700", read(t, path), info.Mode().Perm())
 	}
 	if !strings.Contains(res.Text, "-one") || !strings.Contains(res.Text, "+two") || !strings.Contains(res.Summary, "3 bytes") {
@@ -194,8 +195,8 @@ func TestReadFileReadsAWindow(t *testing.T) {
 	if len(res.Text) > maxReadBytes+200 || !strings.Contains(res.Text, "[truncated at line") {
 		t.Errorf("a large file returned %d bytes without saying it was cut", len(res.Text))
 	}
-	a, _ := readFile{}.Action(domain.Env{Cwd: "/r"}, in(map[string]any{"path": "x"}))
-	if a.Target != "/r/x" {
+	a, _ := readFile{}.Action(domain.Env{Cwd: abs("/r")}, in(map[string]any{"path": "x"}))
+	if a.Target != filepath.Join(abs("/r"), "x") {
 		t.Errorf("target = %q", a.Target)
 	}
 }
@@ -350,9 +351,7 @@ func TestReadsAreBounded_REQ_AGT_002(t *testing.T) {
 	dir := t.TempDir()
 	env := domain.Env{Cwd: dir, WriteRoot: dir}
 	fifo := filepath.Join(dir, "pipe")
-	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mkfifo(t, fifo)
 	huge := filepath.Join(dir, "huge.log")
 	write(t, huge, strings.Repeat("a line of text\n", maxFileBytes/15+1))
 

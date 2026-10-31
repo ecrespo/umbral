@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/coder/acp-go-sdk"
@@ -77,6 +76,9 @@ type Host struct {
 	// and the older one's release must not unlist the newer.
 	pidMu sync.Mutex
 	pids  map[int]int
+	// trees are the agents' process trees from the moment each joins its own, before any
+	// handshake: where a tree is a Job Object, membership is what the peer check asks.
+	trees map[*tree]int
 }
 
 // New builds a host.
@@ -108,7 +110,7 @@ func New(cfg Config) (*Host, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
-	h := &Host{cfg: cfg, entries: map[string]domain.Entry{}, agents: map[string]*process{}, pids: map[int]int{}}
+	h := &Host{cfg: cfg, entries: map[string]domain.Entry{}, agents: map[string]*process{}, pids: map[int]int{}, trees: map[*tree]int{}}
 	for _, e := range cfg.Entries {
 		if err := e.Validate(); err != nil {
 			return nil, fmt.Errorf("acp: %w", err)
@@ -225,7 +227,7 @@ const maxGitFile = 4096
 // the agent's to write, so p is opened without blocking — a FIFO would wait for a writer for
 // good — and its type is checked on the open file, not on a path that could change under it.
 func readGitFile(p string) (string, bool) {
-	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // a git file in the thread's own directory tree
+	f, err := openNonblocking(p)
 	if err != nil {
 		return "", false
 	}
@@ -350,7 +352,10 @@ func (h *Host) launch(ctx context.Context, req Request) (*process, error) {
 	cmd.Env = domain.Environment(h.cfg.Environ(), iso, m, refs)
 	// Its own session, and so its own process group: the shells and servers it starts end with
 	// it, and a process it leaves behind is still known by its session for REQ-ORC-004.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := isolateTree(cmd); err != nil {
+		_ = os.RemoveAll(iso.Root)
+		return nil, fmt.Errorf("%w: launch %s: %w", domain.ErrAgent, entry.Name, err)
+	}
 	p := newProcess(h, req, iso)
 	if err := p.start(cmd); err != nil {
 		_ = os.RemoveAll(iso.Root)
@@ -423,12 +428,36 @@ func (h *Host) Running(threadID string) bool {
 // `2026-10-hosted-agent-peer`).
 func (h *Host) AgentPIDs() []int {
 	h.pidMu.Lock()
-	defer h.pidMu.Unlock()
 	out := make([]int, 0, len(h.pids))
 	for pid := range h.pids {
 		out = append(out, pid)
 	}
+	h.pidMu.Unlock()
 	return out
+}
+
+// AgentTreeHolding is the pid of the hosted agent whose process tree holds pid, or 0: on Windows
+// the agent's Job Object, which keeps what the agent left behind known as the agent's after its
+// parent links are gone (REQ-ORC-004, delta `2026-10-windows-port`, decision 10).
+func (h *Host) AgentTreeHolding(pid int) int {
+	h.pidMu.Lock()
+	defer h.pidMu.Unlock()
+	for t, agent := range h.trees {
+		if t.holds(pid) {
+			return agent
+		}
+	}
+	return 0
+}
+
+func (h *Host) trackTree(t *tree, agent int, live bool) {
+	h.pidMu.Lock()
+	defer h.pidMu.Unlock()
+	if live {
+		h.trees[t] = agent
+		return
+	}
+	delete(h.trees, t)
 }
 
 func (h *Host) trackPID(pid int, live bool) {

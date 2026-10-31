@@ -2,12 +2,9 @@ package client
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
-	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -46,12 +43,7 @@ func buildFakeDaemon(t *testing.T, dir string) string {
 	if err != nil {
 		t.Fatalf("locate the test binary: %v", err)
 	}
-	script := filepath.Join(dir, "fake-umbrald")
-	body := fmt.Sprintf("#!/bin/sh\nexec env %s=1 %q \"$@\"\n", fakeDaemonEnv, self)
-	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
-		t.Fatalf("write the fake daemon: %v", err)
-	}
-	return script
+	return writeLauncher(t, dir, "fake-umbrald", "1", self)
 }
 
 // buildSilentDaemon is buildFakeDaemon's counterpart: it binds the socket and then never
@@ -63,12 +55,7 @@ func buildSilentDaemon(t *testing.T, dir string) string {
 	if err != nil {
 		t.Fatalf("locate the test binary: %v", err)
 	}
-	script := filepath.Join(dir, "silent-umbrald")
-	body := fmt.Sprintf("#!/bin/sh\nexec env %s=silent %q \"$@\"\n", fakeDaemonEnv, self)
-	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
-		t.Fatalf("write the silent daemon: %v", err)
-	}
-	return script
+	return writeLauncher(t, dir, "silent-umbrald", "silent", self)
 }
 
 // runSilentDaemon accepts connections and reads nothing, so the client's handshake blocks
@@ -139,8 +126,7 @@ func listenAndExpire(socket string) (net.Listener, bool) {
 	if socket == "" {
 		return nil, false
 	}
-	var lc net.ListenConfig
-	ln, err := lc.Listen(context.Background(), "unix", socket)
+	ln, err := listenFake(socket)
 	if err != nil {
 		return nil, false
 	}

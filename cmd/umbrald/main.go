@@ -27,7 +27,7 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/sys/unix"
+	remoteports "github.com/ecrespo/umbral/internal/remote/ports"
 
 	"github.com/ecrespo/umbral/internal/agents"
 	"github.com/ecrespo/umbral/internal/api"
@@ -151,6 +151,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 	// step.
 	var took *taken
 	committed := false
+	if *takeover && !liveHandoffSupported {
+		logger.Error("live handoff is not supported on Windows")
+		return exitUnavailable
+	}
 	if *takeover {
 		if took, err = takeOver(ctx, filepath.Dir(socket), logger); err != nil {
 			logger.Error("the handoff failed; the running daemon keeps serving",
@@ -613,17 +617,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 	ctx, stopDaemon := context.WithCancel(ctx)
 	defer stopDaemon()
 	// Remote daemons over ssh (T-F2-41), linked for this daemon's lifetime.
-	remoteHosts, err := startRemotes(ctx, settings.Remote, filepath.Dir(socket), db, eventBus, logger)
-	if err != nil {
-		logger.Error("cannot start the remote hosts", slog.Any("error", err))
-		return exitCantCreate
+	// On Windows the module is not wired in, so remote.* answer NOT_IMPLEMENTED (decision 11);
+	// the interface stays nil rather than holding a nil *Manager.
+	var remoteHosts remoteports.Hosts
+	if remoteHostsSupported {
+		m, err := startRemotes(ctx, settings.Remote, filepath.Dir(socket), db, eventBus, logger)
+		if err != nil {
+			logger.Error("cannot start the remote hosts", slog.Any("error", err))
+			return exitCantCreate
+		}
+		defer m.Close()
+		remoteHosts = m
 	}
-	defer remoteHosts.Close()
 	// A client inside an agent's terminal, or inside a hosted ACP agent: the API refuses it
 	// what lands, drops or approves the agent's own work, and the handoff socket everything.
 	insideAnAgent := agentPeer(func() []int {
 		return append(sessionService.AgentShellPIDs(), acpHost.AgentPIDs()...)
-	}, proctree.Ancestors, unix.Getsid)
+	}, proctree.Ancestors, sessionOf(sessionService, acpHost))
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
 		Listener:      inherited,

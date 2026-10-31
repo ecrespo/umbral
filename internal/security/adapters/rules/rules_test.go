@@ -63,7 +63,7 @@ func TestLocalRulesWin_REQ_SEC_010(t *testing.T) {
 	if !strings.Contains(logs.String(), "20-broken.json") || !strings.Contains(logs.String(), "level=WARN") {
 		t.Errorf("the invalid file was not warned about:\n%s", logs.String())
 	}
-	if _, ok := domain.MatchDestructive(active.Policy().Destructive, "linked x"); ok || strings.Contains(logs.String(), "30-link.json") {
+	if name, _ := domain.MatchDestructive(active.Policy().Destructive, "linked x"); name == "linked" || strings.Contains(logs.String(), "30-link.json") {
 		t.Errorf("a link was followed:\n%s", logs.String())
 	}
 	if !strings.Contains(logs.String(), "40-huge.json") || !strings.Contains(logs.String(), "over 1048576 bytes") {
@@ -105,7 +105,8 @@ func TestALocalRuleStaysOverABundle_REQ_SEC_011(t *testing.T) {
 	if _, ok := domain.MatchDestructive(active.Policy().Destructive, "boom"); !ok {
 		t.Error("the bundle's own pattern does not apply")
 	}
-	if _, ok := domain.MatchDestructive(active.Policy().Destructive, "rm -rf build"); ok {
+	// Matched by name: on Windows every line is also the floor's windows_shell.
+	if name, ok := domain.MatchDestructive(active.Policy().Destructive, "rm -rf build"); ok && name != domain.UnknownWindowsShell {
 		t.Error("a built-in pattern the bundle leaves out still applies; a bundle replaces the built-ins")
 	}
 }

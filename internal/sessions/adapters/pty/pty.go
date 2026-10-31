@@ -1,3 +1,5 @@
+//go:build unix
+
 // Package pty opens pseudo-terminals with creack/pty and adapts them to the sessions
 // module's PTY port.
 //
@@ -273,20 +275,6 @@ func validateExecutable(path string) error {
 	}
 	if info.IsDir() || info.Mode()&0o111 == 0 {
 		return fmt.Errorf("%w: shell %s is not executable", domain.ErrValidation, path)
-	}
-	return nil
-}
-
-func validateDir(dir string) error {
-	if dir == "" {
-		return nil
-	}
-	info, err := os.Stat(dir)
-	if err != nil {
-		return fmt.Errorf("%w: cwd %s: %w", domain.ErrValidation, dir, err)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("%w: cwd %s is not a directory", domain.ErrValidation, dir)
 	}
 	return nil
 }

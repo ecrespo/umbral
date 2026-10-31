@@ -202,6 +202,84 @@ jobs:
       - name: Prove the rules actually reject a violation
         run: ./scripts/arch_selftest.sh
 
+  windows:
+    name: Windows (T-F2-50, REQ-WIN-001)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Test data is compared byte for byte; a checkout that turns LF into CRLF changes it.
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      # Every package that does not render a terminal, with the race detector, which needs cgo
+      # and the runner's MinGW gcc; the ones that link libghostty run below, once it is built.
+      # Remote hosts are not supported on Windows (decision 11), so their packages stay out.
+      - name: Test every package that does not link libghostty
+        run: |
+          unsupported='
+          github.com/ecrespo/umbral/internal/remote
+          github.com/ecrespo/umbral/internal/remote/adapters/sshtunnel
+          '
+          skip=$(printf '%s\n' "$unsupported" | awk 'NF {print $1}')
+          cgo=$(go list -test -f '{{.ImportPath}} {{join .Deps " "}}' ./... | grep 'go.mitchellh.com/libghostty' | cut -d' ' -f1 | sed 's/_test$//' | sort -u)
+          pkgs=$(go list ./... | grep -vxF "$cgo" | grep -vxF "$skip")
+          CGO_ENABLED=1 go test -race $pkgs
+      # libghostty-vt built for Windows by the pinned Zig and linked by MinGW's gcc as a DLL.
+      # These steps run whatever the tests above said, so one run reports both.
+      - name: Zig, which builds libghostty-vt
+        if: success() || failure()
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: pkg-config, which cgo asks for libghostty-vt's flags
+        if: success() || failure()
+        run: choco install -y --no-progress pkgconfiglite
+      - name: Build libghostty-vt for Windows
+        if: success() || failure()
+        # Without SIMD: the SIMD UTF-8 path read a null pointer on the first non-ASCII byte in
+        # the MinGW-linked DLL (VT-12, the desktop frame), while every ASCII test passed.
+        env:
+          GHOSTTY_ZIG_FLAGS: -Dsimd=false
+        run: |
+          ./scripts/build_libghostty.sh "$RUNNER_TEMP/ghostty-vt"
+          echo "PKG_CONFIG_PATH=$(cygpath -w "$RUNNER_TEMP/ghostty-vt/share/pkgconfig")" >> "$GITHUB_ENV"
+          # Windows loads ghostty-vt.dll from PATH (decision 1).
+          cygpath -w "$RUNNER_TEMP/ghostty-vt/bin" >> "$GITHUB_PATH"
+      - name: The emulators link and pass on Windows, and every binary builds
+        if: success() || failure()
+        # Zig's static archive leaves compiler-rt (__chkstk) and ntdll to Zig's own linker, which
+        # MinGW's ld does not supply; the DLL Zig builds beside it carries them (decision 1).
+        env:
+          GOFLAGS: -tags=dynamic
+        run: |
+          ls -la "$RUNNER_TEMP/ghostty-vt/lib" "$RUNNER_TEMP/ghostty-vt/bin"
+          CGO_ENABLED=1 go test -race ./internal/sessions/adapters/ghostty/... ./internal/tui/adapters/ghosttyvt/... ./internal/desktop/adapters/vtframe/...
+          CGO_ENABLED=1 go build ./cmd/...
+      # umbrald.exe and umb.exe against each other over the named pipe: a workspace with a ConPTY
+      # shell, remote.* NOT_IMPLEMENTED, --takeover refused with 69 (decisions 3, 11 and 13).
+      - name: The daemon and the CLI talk over the named pipe
+        if: success() || failure()
+        env:
+          GOFLAGS: -tags=dynamic
+        run: |
+          CGO_ENABLED=1 go build -o "$RUNNER_TEMP/smoke/umbrald.exe" ./cmd/umbrald
+          go build -o "$RUNNER_TEMP/smoke/umb.exe" ./cmd/umb
+          UMBRALD="$RUNNER_TEMP/smoke/umbrald.exe" UMB="$RUNNER_TEMP/smoke/umb.exe" ./scripts/windows_smoke.sh
+      # REQ-PKG-005's last check: the .exe the linker produced carries the kit's icon group,
+      # taken from cmd/umbral-desktop's rsrc_windows_amd64.syso (T-PKG-04, T-F2-50).
+      - name: The desktop builds for Windows and embeds the kit's icon
+        if: success() || failure()
+        env:
+          GOFLAGS: -tags=dynamic
+        run: |
+          (cd cmd/umbral-desktop && CGO_ENABLED=1 go build -o "$RUNNER_TEMP/umbral-desktop.exe" .)
+          UMBRAL_DESKTOP_EXE="$(cygpath -w "$RUNNER_TEMP/umbral-desktop.exe")" \
+            go test ./packaging/desktop/ -run TestTheWindowsExecutableEmbedsTheKitIcon_REQ_PKG_005 -v
+
   test:
     name: Tests with the race detector (Art. 2)
     runs-on: ${{ matrix.os }}
