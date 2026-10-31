@@ -142,6 +142,11 @@ func (s *Server) registry() map[string]method {
 		m.available = hasWorktrees
 		table[name] = m
 	}
+	for name, m := range remoteMethods() {
+		m.available = hasRemotes
+		m.capability = capabilityFederation
+		table[name] = m
+	}
 	for name, m := range integrationMethods() {
 		m.available = hasIntegrations
 		m.capability = capabilityIntegrations

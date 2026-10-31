@@ -162,6 +162,11 @@ type conn struct {
 	// one that dispatches and replies.
 	afterReply []func()
 
+	// relays are this connection's links to remote hosts' daemons, opened on first use
+	// (REQ-RMT-001); relayMu guards the map, which the read goroutine and close touch.
+	relayMu sync.Mutex
+	relays  map[string]*relayLink
+
 	closed    chan struct{}
 	closeOnce sync.Once
 	// pending counts the deferred answers still running; serve waits for them once the
@@ -444,6 +449,20 @@ func (c *conn) handleLine(ctx context.Context, line []byte) (closeConn bool) {
 		return false
 	}
 
+	// A request for a remote host's state goes to that host's daemon (REQ-RMT-003), after the
+	// checks above and before NOT_IMPLEMENTED: what this build serves is not what the host does.
+	if c.server.cfg.Remotes != nil && !noRelay(req.Method) {
+		host, params, routed, err := routeParams(req.Params, c.server.cfg.Remotes.Known)
+		if err != nil {
+			c.reply(req, nil, err)
+			return false
+		}
+		if routed {
+			c.relay(ctx, req, host, params)
+			return false
+		}
+	}
+
 	// A name this build knows but cannot serve. REQ-API-003 keeps the connection and every
 	// other capability usable, so this is an ordinary error reply and not a close: the
 	// client drops that one action and carries on.
@@ -597,7 +616,10 @@ func (c *conn) close() error {
 	c.closeOnce.Do(func() {
 		close(c.closed)
 		c.closeSubscriptions()
+		// The socket first: a writer stuck on a client that stopped reading returns, and the
+		// links that end next write nothing (REQ-API-006).
 		err = c.netConn.Close()
+		c.closeRelays()
 	})
 	return err
 }

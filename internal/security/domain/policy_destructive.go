@@ -53,6 +53,9 @@ var DefaultDestructivePatterns = []DestructivePattern{
 	// (delta `2026-10-rules-mcp-patterns`, Q2 and Q6 of `2026-10-hrd02-open-questions`).
 	{"umb_rules_change", regexp.MustCompile(`^umb( \S+)* rules( \S+)* (key (add|rotate|remove)|rollback|reset)( |$)`)},
 	{"umb_mcp_remove", regexp.MustCompile(`^umb( \S+)* mcp( \S+)* remove( |$)`)},
+	// Nor change which machines this daemon reaches and as whom; refused to an agent's terminal
+	// too (delta `2026-10-remote-hosts`, REQ-ORC-004).
+	{"umb_remote_change", regexp.MustCompile(`^umb( \S+)* remote( \S+)* (add|remove)( |$)`)},
 }
 
 // What makes a line ask when no pattern names it: the shell, not the line, decides what runs

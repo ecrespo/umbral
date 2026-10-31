@@ -3,6 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
+	"sync"
+	"time"
+
+	remotedomain "github.com/ecrespo/umbral/internal/remote/domain"
 
 	wsdomain "github.com/ecrespo/umbral/internal/workspaces/domain"
 )
@@ -28,16 +33,99 @@ import (
 // after they landed. That makes the client apply something it already has, which every tree
 // notification tolerates: they carry whole records, not deltas.
 func handleSessionSnapshot(ctx context.Context, c *conn, _ json.RawMessage) (any, error) {
-	tree, err := c.tree()
+	local, err := localSnapshot(ctx, c)
 	if err != nil {
 		return nil, err
+	}
+	hosts := c.connectedHosts(ctx)
+	if len(hosts) == 0 {
+		return local, nil
+	}
+	// The hosts' trees follow this one's, each prefixed (REQ-RMT-001). Asking them is a wait,
+	// so it runs beside the read loop; the counter was read above, before this tree, and every
+	// host notification relayed from here on takes a number above it.
+	return deferred(func(ctx context.Context) (any, error) {
+		// Every host is asked at once, so the merge waits for the slowest host's 5 s at most;
+		// the trees are appended in the hosts' order.
+		trees := make([]*snapshotResult, len(hosts))
+		var wg sync.WaitGroup
+		for i, host := range hosts {
+			wg.Go(func() { trees[i] = hostSnapshot(ctx, c, host) })
+		}
+		wg.Wait()
+		for _, theirs := range trees {
+			if theirs != nil {
+				mergeInto(&local, theirs)
+			}
+		}
+		return local, nil
+	}), nil
+}
+
+// relaySnapshotTimeout bounds how long one host may hold up a merged snapshot; a host that does
+// not answer is left out, and its `remote.state_changed` tells the client when to ask again.
+const relaySnapshotTimeout = 5 * time.Second
+
+// connectedHosts names the hosts whose links are up.
+func (c *conn) connectedHosts(ctx context.Context) []string {
+	svc := c.server.cfg.Remotes
+	if svc == nil {
+		return nil
+	}
+	list, err := svc.List(ctx)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, s := range list {
+		if s.State == remotedomain.StateConnected {
+			out = append(out, s.Host.Name)
+		}
+	}
+	return out
+}
+
+// hostSnapshot reads a host's tree and threads, with its ids prefixed and its workspaces
+// labelled; nil leaves the host out.
+func hostSnapshot(ctx context.Context, c *conn, host string) *snapshotResult {
+	ctx, cancel := context.WithTimeout(ctx, relaySnapshotTimeout)
+	defer cancel()
+	raw, err := c.relayCall(ctx, host, "session.snapshot", nil)
+	if err == nil {
+		raw, err = prefixIDs(raw, host)
+	}
+	var theirs snapshotResult
+	if err == nil {
+		err = json.Unmarshal(raw, &theirs)
+	}
+	if err != nil {
+		c.logger.Info("a remote host's snapshot is left out", slog.String("host", host), slog.Any("error", err))
+		return nil
+	}
+	return &theirs
+}
+
+// mergeInto appends a host's snapshot to the local one. The focus stays this daemon's.
+func mergeInto(into, theirs *snapshotResult) {
+	into.Workspaces = append(into.Workspaces, theirs.Workspaces...)
+	into.Tabs = append(into.Tabs, theirs.Tabs...)
+	into.Panes = append(into.Panes, theirs.Panes...)
+	into.Layouts = append(into.Layouts, theirs.Layouts...)
+	into.Threads = append(into.Threads, theirs.Threads...)
+}
+
+// localSnapshot is this daemon's own tree and threads.
+func localSnapshot(ctx context.Context, c *conn) (snapshotResult, error) {
+	tree, err := c.tree()
+	if err != nil {
+		return snapshotResult{}, err
 	}
 
 	seq := c.server.currentSeq()
 
 	snapshot, err := tree.Snapshot(ctx)
 	if err != nil {
-		return nil, err
+		return snapshotResult{}, err
 	}
 
 	workspaces := make([]Workspace, 0, len(snapshot.Workspaces))
@@ -65,7 +153,7 @@ func handleSessionSnapshot(ctx context.Context, c *conn, _ json.RawMessage) (any
 	if svc := c.server.cfg.Threads; svc != nil {
 		list, err := svc.List(ctx)
 		if err != nil {
-			return nil, err
+			return snapshotResult{}, err
 		}
 		for _, t := range list {
 			threadList = append(threadList, toWireThread(t))

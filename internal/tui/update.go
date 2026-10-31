@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -303,6 +304,13 @@ func (m *Model) applyEvent(msg daemonEventMsg) tea.Cmd {
 		if p := m.paneByID(ev.SessionID); p != nil {
 			m.detach(p)
 		}
+		// A remote host's link dropped (REQ-RMT-002): its session lives on there, and is
+		// attached again when `remote.state_changed` says the host is back.
+		if ev.Reason == remoteDisconnected {
+			host, _, _ := strings.Cut(ev.SessionID, "/")
+			m.status = "remote host " + host + " disconnected; waiting for it"
+			return m.waitForEvent()
+		}
 		m.status = "the daemon dropped a subscription; re-attaching"
 		return tea.Batch(m.subscribeCmd(ev.SessionID), m.waitForEvent())
 
@@ -348,6 +356,26 @@ func (m *Model) applyEvent(msg daemonEventMsg) tea.Cmd {
 
 	case ports.EventMcpServerState:
 		return tea.Batch(m.loadServersCmd(), m.waitForEvent())
+
+	case ports.EventRemoteState:
+		if ev.Status != remoteConnected {
+			if ev.Status == "disconnected" {
+				m.status = "remote host " + ev.Host + " disconnected; waiting for it"
+			}
+			return m.waitForEvent()
+		}
+		// The host is back: every pane of its sessions attaches from a fresh snapshot.
+		cmds := []tea.Cmd{m.waitForEvent()}
+		for _, p := range m.allPanes() {
+			if strings.HasPrefix(p.sessionID, ev.Host+"/") {
+				m.detach(p)
+				cmds = append(cmds, m.subscribeCmd(p.sessionID))
+			}
+		}
+		if len(cmds) > 1 {
+			m.status = "remote host " + ev.Host + " reconnected"
+		}
+		return tea.Batch(cmds...)
 
 	case ports.EventSkillChanged:
 		return tea.Batch(m.loadSkillsCmd(), m.waitForEvent())
@@ -437,6 +465,13 @@ func (m *Model) sessionIDs() []string {
 	}
 	return out
 }
+
+// The `session.unsubscribed` reason and the `remote.state_changed` state of a remote host's
+// link (API §5.44, §6).
+const (
+	remoteDisconnected = "remote_disconnected"
+	remoteConnected    = "connected"
+)
 
 // detach readies a pane for a fresh snapshot. The screen is emptied, because a snapshot only
 // reproduces the daemon's screen when it is replayed into an empty emulator: writing it over

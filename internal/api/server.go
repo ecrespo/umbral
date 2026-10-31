@@ -25,6 +25,7 @@ import (
 
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/config"
+	remoteports "github.com/ecrespo/umbral/internal/remote/ports"
 	sessports "github.com/ecrespo/umbral/internal/sessions/ports"
 	wsports "github.com/ecrespo/umbral/internal/workspaces/ports"
 )
@@ -103,7 +104,7 @@ func (s *Server) capabilities() []string {
 	seen := make(map[string]struct{}, len(s.methods))
 	for name, m := range s.methods {
 		prefix, _, found := strings.Cut(name, ".")
-		if !found || prefix == "system" || prefix == "api" {
+		if !found || prefix == namespaceSystem || prefix == "api" {
 			continue
 		}
 		if !m.served(s.cfg) {
@@ -192,6 +193,9 @@ type Config struct {
 	// NOT_IMPLEMENTED, and thread.create's `worktree` with them.
 	Worktrees       wtports.Worktrees
 	WorktreeThreads agentsports.WorktreeThreads
+	// Remotes is remote.* and the relay to remote hosts' daemons (REQ-RMT-001…003). A nil
+	// value leaves remote.* answering NOT_IMPLEMENTED and relays nothing.
+	Remotes remoteports.Hosts
 	// AgentPeer reports whether a process runs inside one of the agent runtime's terminals.
 	// A connection it names is refused every userOnly method (REQ-ORC-004). Nil checks
 	// nothing.

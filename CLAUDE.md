@@ -104,7 +104,7 @@ including across the API (Art. 6).
   are applied, `0005_agent` (T-F1-01) adds the agent subdomain and `0006_rule_state` (T-F1-30)
   the state of signed rule bundles, `0007_orchestration` (T-F2-01) the worktrees and the F2
   thread, tool-call and block columns, and `0008_full_auto` (T-F2-05) the triggers that clear
-  `full_auto` when a worktree leaves `active`. Migrations are forward-only
+  `full_auto` when a worktree leaves `active`, and `0009_remotes` (T-F2-41) the remote hosts. Migrations are forward-only
   (Art. 6), so an applied file is never edited; that is why the agent subdomain is `0005`
   and not the `0002` or `0004` older drafts name.
 - **Recommended flow:** start each task in Plan Mode, get the plan approved, implement it,

@@ -337,3 +337,22 @@ func TestActiveAIIsReadFromConfig_REQ_AAI_001(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoteSSHIsReadFromConfig_REQ_RMT_001(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, write(t, ""))
+	if err != nil || settings.Remote != (Remote{}) {
+		t.Fatalf("default remote %+v, %v, want empty (ssh and umb on PATH)", settings.Remote, err)
+	}
+	settings, err = LoadSettings(nil, write(t, "[remote]\nssh = \"/usr/bin/ssh\"\numb = \"~/.local/bin/umb\"\n"))
+	if err != nil || settings.Remote != (Remote{SSH: "/usr/bin/ssh", Umb: "~/.local/bin/umb"}) {
+		t.Fatalf("remote: %+v, %v", settings.Remote, err)
+	}
+	for _, bad := range []string{`ssh = ""`, `ssh = "-oProxyCommand=x"`, `umb = ""`, `umb = "-c"`} {
+		_, err := LoadSettings(nil, write(t, "[remote]\n"+bad+"\n"))
+		if !errors.Is(err, ErrSettingsInvalid) {
+			t.Errorf("%q: %v, want ErrSettingsInvalid", bad, err)
+		}
+	}
+}

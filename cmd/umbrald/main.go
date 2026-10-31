@@ -612,6 +612,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 	// The daemon's own lifetime from here: a handoff ends it without a signal.
 	ctx, stopDaemon := context.WithCancel(ctx)
 	defer stopDaemon()
+	// Remote daemons over ssh (T-F2-41), linked for this daemon's lifetime.
+	remoteHosts, err := startRemotes(ctx, settings.Remote, filepath.Dir(socket), db, eventBus, logger)
+	if err != nil {
+		logger.Error("cannot start the remote hosts", slog.Any("error", err))
+		return exitCantCreate
+	}
+	defer remoteHosts.Close()
 	// A client inside an agent's terminal, or inside a hosted ACP agent: the API refuses it
 	// what lands, drops or approves the agent's own work, and the handoff socket everything.
 	insideAnAgent := agentPeer(func() []int {
@@ -642,6 +649,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 		// worktree.* (T-F2-03): the engine, and the runtime's word on when a thread's may change.
 		Worktrees:       worktreeEngine,
 		WorktreeThreads: runtime,
+		// remote.* and the relay to remote hosts' daemons (T-F2-41).
+		Remotes: remoteHosts,
 		// A client inside an agent's terminal, or inside a hosted ACP agent, is refused what
 		// lands, drops or approves the agent's own work (REQ-ORC-004).
 		AgentPeer: insideAnAgent,

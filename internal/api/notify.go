@@ -11,6 +11,7 @@ import (
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	ctxports "github.com/ecrespo/umbral/internal/context/ports"
 	mcpports "github.com/ecrespo/umbral/internal/mcp/ports"
+	remoteports "github.com/ecrespo/umbral/internal/remote/ports"
 	secports "github.com/ecrespo/umbral/internal/security/ports"
 
 	"github.com/ecrespo/umbral/internal/bus"
@@ -69,6 +70,7 @@ var dispatchedKinds = []bus.Kind{
 	mcpports.KindServerState,
 	intports.KindPaneStateChanged,
 	secports.KindRuleUpdateRejected,
+	remoteports.KindHostState,
 }
 
 // Notify forwards module events to connected clients as JSON-RPC notifications
@@ -194,6 +196,8 @@ func toNotification(event bus.Event) (string, any) {
 		return "pane.state_changed", paneStateChangedPayload{
 			PaneID: e.PaneID, AttentionState: string(e.AttentionState), StateSource: emptyAsNull(e.StateSource),
 		}
+	case remoteports.HostState:
+		return notificationRemoteStateChanged, remoteStatePayload{Name: e.Name, State: string(e.State), LastError: emptyAsNull(e.LastError)}
 	case secports.RuleUpdateRejected:
 		return "rules.update_rejected", ruleUpdateRejectedPayload{Reason: string(e.Reason), Version: e.Version, Source: e.Source}
 

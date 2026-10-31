@@ -96,6 +96,8 @@ func runIO(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return finish(cmdSkill(ctx, args[1:], stdin, out, errOut), out, stderr)
 	case "mcp":
 		return finish(cmdMcp(ctx, args[1:], out, errOut), out, stderr)
+	case "remote":
+		return finish(cmdRemote(ctx, args[1:], out, errOut), out, stderr)
 	case "wait":
 		return finish(cmdWait(ctx, args[1:], out, errOut), out, stderr)
 	case "thread":
@@ -149,6 +151,9 @@ Usage:
                                  the installed skills for Umbral's agent (REQ-SKL-003)
   umb mcp add NAME (--stdio [--env NAME=keyring:PATH|env:VAR]… -- COMMAND [ARGS…] | --http URL)
   umb mcp list|remove NAME       MCP servers for the agent, always untrusted (REQ-CLI-008)
+  umb remote add NAME ssh://[user@]host[:port] | list | remove NAME
+                                 remote daemons reached over ssh, their workspaces
+                                 shown as NAME: … (REQ-RMT-001)
   umb wait ls [--json]           every open wait: target, age, whether its thread stalled
   umb wait cancel WAIT_ID        end one wait; the turn or command it watched goes on
                                  (REQ-AUT-006, REQ-AUT-007)
