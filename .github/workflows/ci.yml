@@ -114,7 +114,7 @@ jobs:
       - name: GTK 4, WebKitGTK 6.0 and a virtual display
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev xvfb xauth dbus-x11
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev xvfb xauth dbus-x11 x11-utils
       # The runner's AppArmor forbids unprivileged user namespaces, and WebKit's web process
       # sandbox (bubblewrap) needs them: without this it aborts at start. A user's desktop
       # allows them for WebKit; the sandbox stays on.
