@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-10-26` by the implementing agent under the Tech Lead's standing F2 instruction (extended to F2b … F2f on 2026-10-26), pending the Tech Lead's review |
-| **Date** | 2026-10-26 |
+| **Status** | `APPROVED 2026-10-31` by the implementing agent under the Tech Lead's standing F2 instruction (extended to F2b … F2f on 2026-10-26), pending the Tech Lead's review |
+| **Date** | 2026-10-26 (decisions), 2026-10-30 (measurement), 2026-10-31 (fold) |
 | **Task** | T-F2-23 |
 | **REQ** | REQ-FTU-001, REQ-AGT-006, REQ-OBS-002, REQ-RTR-002 |
 
@@ -42,7 +42,9 @@ model's work.
    `exit`) sends its keys and then waits as `wait_for` would, within `timeout_ms`, and answers
    with the send's summary, the wait's reason and the screen it ended on. A `timeout_ms`
    without a condition waits for nothing. The call is decided on its keys alone; the wait is a
-   read. A key taken over between the two answers `taken_over` and does not wait. A
+   read. A key taken over between the two answers `taken_over` and does not wait; a take-over
+   or any other failure of the wait after the keys were written is the send's result with the
+   wait's outcome added, never a bare error, so the model is not led to send the keys again. A
    `read_screen` that carries a condition is a `wait_for`: it answers with the screen once the
    condition holds, and stays a read. In the first measured run the model asked for the screen
    "when `pick` appears" and the refusal, repeated by its repair, ended the turn `tool_error`.
@@ -77,7 +79,11 @@ model's work.
    requires: there is no call to answer, so it is a user message — the call could not be read as
    JSON, write one object matching the schema with JSON's own escapes only — added to the
    request and never stored. A second unreadable step, or one in a step that was a repair, is
-   counted too and ends the turn with `tool_error`. What the failed step streamed before the error is
+   counted too and ends the turn with `tool_error`. The repair message stays in the turn's
+   history for the rest of the turn, as an invalid call's repair result does. This reads
+   REQ-AGT-006's "input is not JSON" as covering a call the provider could not parse, and
+   REQ-RTR-002's "failed call" as excluding it — the provider answered — so neither EARS
+   sentence changes; Tech §3.3 item 2 and DD-004 say it. What the failed step streamed before the error is
    kept as any failed step's is — its reasoning shown, its text, if any, stored — and the log
    line names the model, not the error, which carries the model's output.
 7. **A screen opens with who has the keyboard.** A screen in a result starts with
@@ -146,7 +152,8 @@ psql passed 10/10. The rebase failed 10/10, on the model's use of vim rather tha
 
 The daemon's properties held in every run. Each call was decided and recorded, and each
 destructive ask reached the user (run 7's `rm -fr .git/rebase-merge`). Decision 6's retry
-fired eight times and ended two turns as REQ-AGT-006 requires. Nothing was left behind.
+fired six times (runs 1, 3 twice, 4, 7, 9, from the daemon's log) and ended two turns, runs 4
+and 9, as REQ-AGT-006 requires. Nothing was left behind.
 Whether US-F2-002 passes is left to the Tech Lead, as T-F2-12's measurement was.
 
 Residuals for the Tech Lead:
@@ -163,4 +170,12 @@ Residuals for the Tech Lead:
 
 ## Review
 
-Pending spec-guardian.
+spec-guardian, 2026-10-31: FIX FIRST on one finding, `Provider.Stream`'s doc comment displaced
+by the new `ollamaError`, which failed `task lint`; moved back. Also applied: a take-over or
+any other failure of a send's wait now keeps the send's result (`taken_over` for the former,
+the wait's error in the text for the latter), with
+`TestSendKeysWaitFailureKeepsTheSend_REQ_FTU_002`; decision 6 says why no EARS sentence changes
+and that the repair message stays for the turn; the retry count is the log's six; the live
+test's comments and AGENTS.md's wording are corrected. Security: decisions 1 and 6 weaken no
+property — string keys reach the same `PlanKeys` and policy path as key objects, and the
+breaker exemption affects availability only.

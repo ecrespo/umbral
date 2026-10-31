@@ -424,11 +424,11 @@ func usf2002Turn(t *testing.T, parent context.Context, stream *client.Stream, cw
 	}
 }
 
-// usf2002ToolResults is what each tool call answered the model, for the transcript: the
-// notifications carry a summary only, and a failure is read from what the model was shown.
 // usf2002Dangerous is what the harness, as the user, never approves in a summary.
 var usf2002Dangerous = regexp.MustCompile(`(?i)\brm\s+-|\bdrop\s|\btruncate\b|\bdelete\s+from\b|--force|\breset\s+--hard|\bpush\b|\bmkfs|\bdd\s+if=|:!`)
 
+// usf2002ToolResults is what each tool call answered the model, for the transcript: the
+// notifications carry a summary only, and a failure is read from what the model was shown.
 func usf2002ToolResults(ctx context.Context, _ *client.Stream, threadID string) []string {
 	// The model reads a call's whole result, which only the database keeps (result_json).
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(os.Getenv("XDG_DATA_HOME"), "umbral", "umbral.db")+"?mode=ro&_pragma=busy_timeout(5000)")

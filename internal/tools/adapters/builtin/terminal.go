@@ -433,9 +433,18 @@ func (t terminalInteract) Run(ctx context.Context, env domain.Env, input json.Ra
 		cond.SkipEcho = len(p.keys) > 0 && p.keys[len(p.keys)-1].Name == keyEnter && !p.keys[len(p.keys)-1].Ctrl
 		out, err := t.keys.WaitFor(ctx, env.ThreadID, env.Cwd, cond)
 		if err != nil {
-			waited, err := heldOr(err)
-			if err != nil {
+			// The keys are written: the result says so whatever ends the wait, or the model
+			// would send them again. A take-over between the two answers taken_over.
+			if ctx.Err() != nil {
 				return domain.Result{}, err
+			}
+			waited, herr := heldOr(err)
+			if herr != nil {
+				res.Text += "the wait failed: " + herr.Error() + "\n"
+				return res, nil //nolint:nilerr // the keys are written; the wait's failure is told to the model
+			}
+			if waited.Summary == takenOver {
+				res.Summary = takenOver
 			}
 			res.Text += waited.Text
 			return res, nil

@@ -1460,7 +1460,8 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   sequence and NUL are refused. A zero value (`exit: false`, `idle_ms: 0`, `regex: ""`,
   `timeout_ms: 0`, `keys: []`) is absent. A `send_keys` that also carries a condition sends,
   then waits as `wait_for` would and answers with the send, the wait's reason and the screen;
-  the call is decided on its keys alone, a take-over between the two answers `taken_over`, and
+  the call is decided on its keys alone, a take-over between the two answers `taken_over`, any other failure of the wait is the send's
+  result with the wait's error, never a bare error that would have the keys sent again, and
   that wait's regex is matched against the plain text the terminal wrote after the keys — the
   thread's own terminal keeps its last 256 KiB of output by `seq`, a user's pane none — never
   the screen, where the previous prompt would match at once — after the echoed line when the

@@ -24,6 +24,8 @@ type fakeKeys struct {
 	cond   sessdomain.WaitCondition
 	seq    uint64
 	err    error
+	// waitErr fails the wait alone, after the keys were sent.
+	waitErr error
 }
 
 func (f *fakeKeys) InteractState(string, string) sessdomain.InteractState { return f.state }
@@ -56,6 +58,9 @@ func (f *fakeKeys) ReadScreen(context.Context, string, string) (sessdomain.Scree
 
 func (f *fakeKeys) WaitFor(_ context.Context, _, _ string, cond sessdomain.WaitCondition) (sessdomain.WaitOutcome, error) {
 	f.cond = cond
+	if f.waitErr != nil {
+		return sessdomain.WaitOutcome{}, f.waitErr
+	}
 	return sessdomain.WaitOutcome{Reason: sessdomain.WaitMatched, Screen: f.screen}, f.err
 }
 
@@ -508,5 +513,46 @@ func TestTheScreenLeadsWithWhoHoldsTheKeyboard_REQ_FTU_001(t *testing.T) {
 		if got := screenText(c.screen); got != c.want {
 			t.Errorf("screenText = %q, want %q", got, c.want)
 		}
+	}
+}
+
+// A send whose wait fails after the keys were written still tells the model they were sent: a
+// take-over between the two answers taken_over, and any other failure is the send's result with
+// the wait's error, never a bare error the model would answer by sending the keys again.
+func TestSendKeysWaitFailureKeepsTheSend_REQ_FTU_002(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		waitErr error
+		summary string
+		text    string
+	}{
+		{"taken over", sessdomain.ErrTakenOver, "taken_over", "taken_over: the user has taken over"},
+		{"other", errors.New("the terminal closed"), "entered", "the wait failed: the terminal closed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			term := &fakeKeys{state: sessdomain.InteractState{AtPrompt: true}, waitErr: tc.waitErr}
+			reg, err := registry.New(terminalInteract{keys: term})
+			if err != nil {
+				t.Fatal(err)
+			}
+			env := domain.Env{ThreadID: "thr_1", Cwd: "/work", WriteRoot: "/work"}
+			call := domain.Call{Tool: "terminal_interact", Input: in(map[string]any{
+				"action": "send_keys", "keys": []any{"psql\n"}, "regex": "postgres", "timeout_ms": 5000,
+			})}
+			action, err := reg.Action(env, call)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := secdomain.Decide(action, secdomain.ModeNormal, []secdomain.Rule{{Tool: "terminal_interact", Pattern: "*", Decision: secdomain.VerdictAllow}}, false)
+			res, err := reg.Invoke(context.Background(), env, call, domain.Grant{Action: action, Decision: d})
+			if err != nil {
+				t.Fatalf("a failed wait after sent keys is a bare error: %v", err)
+			}
+			if len(term.sent) != 1 || res.Summary != tc.summary || !strings.Contains(res.Text, "Entered at the prompt: psql") || !strings.Contains(res.Text, tc.text) {
+				t.Errorf("sent %d, result %+v", len(term.sent), res)
+			}
+		})
 	}
 }
