@@ -441,6 +441,29 @@ func (s *Service) AgentShellPIDs() []int {
 	return out
 }
 
+// AgentTreeHolding is the pid of the live agent-owned shell whose process tree holds pid, or 0.
+// It is the agent's-terminal check where the platform keeps a shell's tree in an object of its
+// own — a Job Object on Windows, which has no POSIX session — so a process the shell's children
+// left behind is still known as the agent's (REQ-ORC-004, delta `2026-10-windows-port`).
+func (s *Service) AgentTreeHolding(pid int) int {
+	s.mu.RLock()
+	lives := make([]*liveSession, 0, len(s.live))
+	for _, live := range s.live {
+		lives = append(lives, live)
+	}
+	s.mu.RUnlock()
+	for _, live := range lives {
+		session := live.snapshotState()
+		if session.OwnerThreadID == "" || session.State == domain.StateExited {
+			continue
+		}
+		if tree, ok := live.pty.(interface{ Holds(pid int) bool }); ok && tree.Holds(pid) {
+			return live.pty.Pid()
+		}
+	}
+	return 0
+}
+
 // Get reports one session. A live session is answered from memory, since its state is
 // fresher there than in the row.
 func (s *Service) Get(ctx context.Context, id string) (domain.Session, error) {

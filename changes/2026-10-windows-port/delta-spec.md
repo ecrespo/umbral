@@ -48,13 +48,25 @@
    pipe library is `Microsoft/go-winio`; the constitution's Stack row gains it.
 4. **Peer.** The daemon reads a client's pid with `GetNamedPipeClientProcessId`. Windows has no
    POSIX session, so the agent's-terminal check (REQ-ORC-004) walks that pid's ancestors from a
-   Toolhelp snapshot and nothing else. A pid whose parent was reused is the known limit of that
-   walk; the daemon stops at the first ancestor created after its child.
+   Toolhelp snapshot, dropping a parent link whose parent was created after its child (a reused
+   pid), and asks in place of the session whether the pid runs in an agent's Job Object: every
+   session's shell runs in one (decision 5) and every hosted agent (decision 10), so a process an
+   agent's children left behind is still the agent's. A process the check cannot ask about is
+   taken for an agent's while the job is open. Detection (REQ-XAG-001) reads a process's
+   executable, since its command line lives in its own memory.
 5. **PTY.** ConPTY through `aymanbagabas/go-pty`, behind the existing `sessions/ports` PTY port.
-   The emulator, blocks and snapshots are unchanged.
-6. **Shell.** PowerShell 7 (`pwsh`) is the default shell on Windows, with a bootstrap that emits
-   OSC 133 `A`/`B` from its prompt function, `C` from a PSReadLine Enter handler and `D` with the
-   last exit code. This is REQ-BLK-008, a MUST on Windows (REQ-WIN-002). `cmd.exe` and Windows
+   The emulator, blocks and snapshots are unchanged. The shell runs in a Job Object that kills its
+   processes when closed, Windows' process group: a hang-up closes the pseudo console
+   (CTRL_CLOSE_EVENT), a kill closes the job, the agent's cancel types Ctrl-C (CTRL_C_EVENT) and
+   its second half terminates the shell's descendants. The daemon clears its inherited "ignore
+   Ctrl-C" flag before its first shell, or a daemon started detached would hand it on. A shell is a
+   file whose extension `PATHEXT` runs, and a command name resolves through the child's
+   `PATHEXT`; `Path` is `PATH`.
+6. **Shell.** PowerShell 7 (`pwsh`) is the default shell on Windows when `$SHELL` is unset, then
+   `%ComSpec%`, with a bootstrap dot-sourced by `-NoExit -Command` after the user's profiles: it
+   emits OSC 133 `A`/`B` and OSC 7 from its prompt function, `633;E` and `C` from
+   `PSConsoleHostReadLine` once Enter returns a non-empty line, and `D` with a native command's
+   exit code, or 1 for a failed cmdlet. This is REQ-BLK-008, a MUST on Windows (REQ-WIN-002). `cmd.exe` and Windows
    PowerShell 5.1 run without integration, `integration: none`.
 7. **Secrets.** The keyring is the Windows Credential Manager through `go-keyring` (REQ-WIN-003).
    The environment fallback of Art. 5 is unchanged.
@@ -62,9 +74,11 @@
 9. **Skill store.** A bundle entry is refused when it is a reparse point (symlink or junction),
    or when `GetFileInformationByHandle` reports more than one link. Entries are opened with
    `FILE_FLAG_OPEN_REPARSE_POINT`, so a swapped entry is not followed.
-10. **Hosted ACP agents.** A hosted agent runs in a Job Object with
-    `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; ending its turn or its exit closes the job, which ends
-    every process it left. The peer check counts the job's processes as the agent's.
+10. **Hosted ACP agents.** A hosted agent starts suspended, joins a Job Object with
+    `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and is resumed, so nothing it starts escapes the job;
+    ending its turn or its exit closes the job, which ends every process it left. The job is
+    listed from the moment the agent joins it, before any handshake, and the peer check asks it
+    (decision 4).
 11. **Not on Windows in T-F2-50, each refused in words rather than half done:**
     - `umbrald --takeover` (REQ-HND-001) exits `EX_UNAVAILABLE` with "live handoff is not
       supported on Windows". ConPTY handles can be duplicated into another process, so this is a
@@ -77,6 +91,22 @@
     support Windows with the race detector, the VT conformance suite's MUST cases and the block
     tests under `pwsh` (REQ-WIN-002), a named-pipe round trip that a second user's token cannot
     open, and a Credential Manager round trip.
+
+14. **Commands ask on Windows.** The destructive floor parses POSIX shell lines
+    (`mvdan.cc/sh/v3/syntax`, delta `2026-10-shell-parser`); an agent's shell on Windows is
+    PowerShell or cmd, whose lines it cannot read. Every non-empty line therefore asks there,
+    reported by the destructive step as `windows_shell`: full-auto does not run it, an allow rule
+    does not carry it, and it is never remembered `always`. A deny rule still refuses. A parser for
+    PowerShell lines is later work.
+15. **Paths compare as NTFS does.** Deny and allow rules over paths match a target without case and
+    with `/` read as `\`, as the file system opens it; otherwise `c:/SECRETS/key` would step around
+    a deny of `C:\secrets\*`. The write root is compared the same way (`filepath.Rel` is
+    case-insensitive on Windows). Short names and links are the callers' to resolve first, as
+    symlinks already are.
+16. **The daemon's last words.** Closing a pipe's server end discards what the client has not read,
+    so a connection's close flushes for up to a second on a goroutine of its own before closing:
+    the UNAUTHORIZED or VALIDATION_ERROR sent before a hang-up arrives, and a client that stopped
+    reading cannot hold the close (REQ-API-006).
 
 ## Layers
 

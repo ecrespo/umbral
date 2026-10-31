@@ -285,7 +285,7 @@ func matchDeny(rules []Rule, action Action) (*Rule, bool) {
 		if r.Decision != VerdictDeny || !ruleApplies(r, action) {
 			continue
 		}
-		if glob(pattern(r), action.Target) {
+		if matchTarget(pattern(r), action.Target, action.Risk) {
 			return &rules[i], true
 		}
 		if action.Risk == RiskExec {
@@ -315,7 +315,7 @@ func matchAllow(rules []Rule, action Action) (*Rule, bool) {
 	for _, part := range parts {
 		found := false
 		for i, r := range rules {
-			if r.Decision == VerdictAllow && ruleApplies(r, action) && glob(pattern(r), part) {
+			if r.Decision == VerdictAllow && ruleApplies(r, action) && matchTarget(pattern(r), part, action.Risk) {
 				if first == nil {
 					first = &rules[i]
 				}
@@ -409,6 +409,16 @@ func cwdWithinWriteRoot(a Action) bool {
 	at := a
 	at.Target, at.Cwd = a.Cwd, ""
 	return withinWriteRoot(at)
+}
+
+// matchTarget is a rule's pattern against one target. A path is compared as the file system
+// compares it, which on Windows ignores case and reads `/` as `\`, so a deny rule cannot be
+// stepped around by spelling its path another way; a command line is compared as written.
+func matchTarget(pattern, target string, risk Risk) bool {
+	if risk == RiskExec {
+		return glob(pattern, target)
+	}
+	return glob(foldPath(pattern), foldPath(target))
 }
 
 // glob matches s against a pattern where `*` is any run of characters (slashes included) and

@@ -4,16 +4,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"testing"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
 // TestAHostedAgentsJobEndsWhatItLeft_REQ_ORC_004 is decision 10 of the Windows delta: an agent
-// runs in a Job Object from its first instruction, what it starts is listed as its own, and
-// ending the job ends all of it, the processes the agent left running included.
+// runs in a Job Object from its first instruction, what it starts is held by it — what the peer
+// check asks — and ending the job ends all of it, the processes the agent left running included.
 func TestAHostedAgentsJobEndsWhatItLeft_REQ_ORC_004(t *testing.T) {
 	t.Parallel()
 
@@ -33,17 +33,29 @@ func TestAHostedAgentsJobEndsWhatItLeft_REQ_ORC_004(t *testing.T) {
 	}
 	t.Cleanup(tr.end)
 
+	if tr.holds(os.Getpid()) {
+		t.Fatal("the job holds the daemon itself")
+	}
+	if !tr.holds(cmd.Process.Pid) {
+		t.Fatal("the job does not hold the agent")
+	}
 	var members []int
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if members = tr.members(); len(members) >= 3 {
+		if members = childrenOf(t, uint32(cmd.Process.Pid)); len(members) >= 2 {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if len(members) < 3 || !slices.Contains(members, cmd.Process.Pid) {
-		t.Fatalf("the job lists %v, want the agent (%d) and both pings", members, cmd.Process.Pid)
+	if len(members) < 2 {
+		t.Fatalf("the agent started %v, want both pings", members)
 	}
+	for _, pid := range members {
+		if !tr.holds(pid) {
+			t.Errorf("the job does not hold the agent's child %d", pid)
+		}
+	}
+	members = append(members, cmd.Process.Pid)
 
 	tr.end()
 	done := make(chan struct{})
@@ -67,7 +79,26 @@ func TestAHostedAgentsJobEndsWhatItLeft_REQ_ORC_004(t *testing.T) {
 			t.Errorf("process %d of the job outlived it", pid)
 		}
 	}
-	if tr.members() != nil {
-		t.Error("an ended job still lists processes")
+	if tr.holds(members[0]) {
+		t.Error("an ended job still holds a process")
 	}
+}
+
+// childrenOf lists the processes whose parent is pid.
+func childrenOf(t *testing.T, pid uint32) []int {
+	t.Helper()
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = windows.CloseHandle(snap) }()
+	var out []int
+	var pe windows.ProcessEntry32
+	pe.Size = uint32(unsafe.Sizeof(pe))
+	for err = windows.Process32First(snap, &pe); err == nil; err = windows.Process32Next(snap, &pe) {
+		if pe.ParentProcessID == pid && pe.ProcessID != pid {
+			out = append(out, int(pe.ProcessID))
+		}
+	}
+	return out
 }

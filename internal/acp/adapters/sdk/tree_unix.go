@@ -22,11 +22,17 @@ type tree struct{ pid int }
 // joinTree is the group the agent leads since isolateTree.
 func joinTree(pid int) (*tree, error) { return &tree{pid: pid}, nil }
 
-// end kills the agent's process group.
-func (t *tree) end() { _ = syscall.Kill(-t.pid, syscall.SIGKILL) }
+// endTreeAtExit is false: what the agent leaves in its session is the reaper's (reap_*.go).
+const endTreeAtExit = false
 
-// members is empty: the session check finds what the agent left (REQ-ORC-004).
-func (t *tree) members() []int { return nil }
+// signal kills the agent's process group, while its pid is still the agent's.
+func (t *tree) signal() { _ = syscall.Kill(-t.pid, syscall.SIGKILL) }
+
+// end does nothing more: a process group has no handle to close.
+func (t *tree) end() {}
+
+// holds is false: the POSIX session check finds what the agent left (REQ-ORC-004).
+func (t *tree) holds(int) bool { return false }
 
 // openNonblocking opens p for reading without waiting on a FIFO for a writer.
 func openNonblocking(p string) (*os.File, error) {

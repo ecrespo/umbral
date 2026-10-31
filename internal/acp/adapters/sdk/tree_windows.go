@@ -65,6 +65,12 @@ func joinTree(pid int) (*tree, error) {
 	return &tree{job: job}, nil
 }
 
+// endTreeAtExit is true: the job is closed when the agent exits, ending what it left.
+const endTreeAtExit = true
+
+// signal does nothing: end, which closes the job, is what terminates it.
+func (t *tree) signal() {}
+
 // end closes the job, which terminates everything in it.
 func (t *tree) end() {
 	t.mu.Lock()
@@ -75,30 +81,28 @@ func (t *tree) end() {
 	}
 }
 
-// members lists the processes in the job, the agent's own and what it left.
-func (t *tree) members() []int {
+// holds reports whether pid runs in the job. A process that cannot be asked about is reported
+// held while the job is open, so the peer check fails closed.
+func (t *tree) holds(pid int) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.job == 0 {
-		return nil
+		return false
 	}
-	// JOBOBJECT_BASIC_PROCESS_ID_LIST: two DWORD counts, then one ULONG_PTR pid per process.
-	type idList struct {
-		assigned, listed uint32
-		pids             [1024]uintptr
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return true
 	}
-	var list idList
-	if err := windows.QueryInformationJobObject(t.job, windows.JobObjectBasicProcessIdList,
-		uintptr(unsafe.Pointer(&list)), uint32(unsafe.Sizeof(list)), nil); err != nil {
-		return nil
+	defer func() { _ = windows.CloseHandle(h) }()
+	var in int32
+	if r, _, _ := isProcessInJob.Call(uintptr(h), uintptr(t.job), uintptr(unsafe.Pointer(&in))); r == 0 {
+		return true
 	}
-	n := min(int(list.listed), len(list.pids))
-	out := make([]int, 0, n)
-	for _, pid := range list.pids[:n] {
-		out = append(out, int(pid))
-	}
-	return out
+	return in != 0
 }
+
+// isProcessInJob is kernel32's IsProcessInJob, which x/sys/windows does not wrap.
+var isProcessInJob = windows.NewLazySystemDLL("kernel32.dll").NewProc("IsProcessInJob")
 
 // openNonblocking opens p for reading; a directory holds no FIFO on Windows.
 func openNonblocking(p string) (*os.File, error) {

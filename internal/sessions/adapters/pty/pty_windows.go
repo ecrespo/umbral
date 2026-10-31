@@ -41,6 +41,7 @@ func Open(spec ports.PTYSpec) (ports.PTY, error) {
 		return nil, err
 	}
 
+	ctrlCOnce.Do(enableCtrlC)
 	p, err := conpty.New()
 	if err != nil {
 		return nil, fmt.Errorf("pty: create a pseudo console: %w", err)
@@ -66,6 +67,19 @@ func Open(spec ports.PTYSpec) (ports.PTY, error) {
 	}
 	return &session{pty: p, cmd: cmd, pid: pid, job: job}, nil
 }
+
+// ctrlCOnce turns Ctrl-C handling back on for this process once, before its first shell.
+var ctrlCOnce sync.Once
+
+// enableCtrlC clears this process's "ignore Ctrl-C" flag, which a child inherits: a daemon
+// started detached in a new process group has it set, and a shell started under it would ignore
+// the CTRL_C_EVENT that ConPTY makes of a typed Ctrl-C, so the agent's cancel could not stop a
+// command (REQ-AGT-007).
+func enableCtrlC() {
+	_, _, _ = setConsoleCtrlHandler.Call(0, 0)
+}
+
+var setConsoleCtrlHandler = windows.NewLazySystemDLL("kernel32.dll").NewProc("SetConsoleCtrlHandler")
 
 // jobFor puts pid in a Job Object that ends every process in it when it is closed, which is
 // Windows' process group: the shell's children go with it rather than surviving as orphans.
@@ -107,10 +121,11 @@ type session struct {
 	job windows.Handle
 
 	closeOnce sync.Once
-	jobOnce   sync.Once
-	waitOnce  sync.Once
-	waitErr   error
-	exitCode  int
+	// jobMu guards job, which closeJob zeroes once closed.
+	jobMu    sync.Mutex
+	waitOnce sync.Once
+	waitErr  error
+	exitCode int
 	// exited is set once the child has been reaped, after which its pid is not ours.
 	exited atomic.Bool
 }
@@ -149,8 +164,43 @@ func (s *session) Close() error {
 }
 
 func (s *session) closeJob() {
-	s.jobOnce.Do(func() { _ = windows.CloseHandle(s.job) })
+	s.jobMu.Lock()
+	defer s.jobMu.Unlock()
+	if s.job != 0 {
+		_ = windows.CloseHandle(s.job)
+		s.job = 0
+	}
 }
+
+// Holds reports whether pid runs in the shell's job: the shell, what it started, and what those
+// left behind when their parent exited. It is how Windows answers what a POSIX session answers
+// on Unix (REQ-ORC-004). A process that cannot be opened is reported held, so the check fails
+// closed while the job is open.
+func (s *session) Holds(pid int) bool {
+	s.jobMu.Lock()
+	defer s.jobMu.Unlock()
+	if s.job == 0 {
+		return false
+	}
+	return inJob(s.job, pid)
+}
+
+// inJob asks the kernel whether pid is in job; true when pid cannot be asked about.
+func inJob(job windows.Handle, pid int) bool {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return true
+	}
+	defer func() { _ = windows.CloseHandle(h) }()
+	var in int32
+	if r, _, _ := isProcessInJob.Call(uintptr(h), uintptr(job), uintptr(unsafe.Pointer(&in))); r == 0 {
+		return true
+	}
+	return in != 0
+}
+
+// isProcessInJob is kernel32's IsProcessInJob, which x/sys/windows does not wrap.
+var isProcessInJob = windows.NewLazySystemDLL("kernel32.dll").NewProc("IsProcessInJob")
 
 // Resize resizes the pseudo console, which the console host turns into a window-size event for
 // the shell (REQ-TERM-007).

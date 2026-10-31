@@ -8,6 +8,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 
 	"github.com/ecrespo/umbral/internal/sessions/domain"
 	"github.com/ecrespo/umbral/internal/sessions/ports"
@@ -112,6 +115,24 @@ func TestConPTYKillEndsTheShellAndWhatItRuns_REQ_WIN_001(t *testing.T) {
 	}
 	out.waitFor(t, "Pinging")
 
+	// The shell's job holds what it runs — what the agent's-terminal check asks (REQ-ORC-004).
+	tree, ok := p.(interface{ Holds(pid int) bool })
+	if !ok {
+		t.Fatal("a Windows session does not say what its job holds")
+	}
+	if tree.Holds(os.Getpid()) {
+		t.Error("the shell's job holds the daemon")
+	}
+	pings := descendants(t, uint32(p.Pid()))
+	if len(pings) == 0 {
+		t.Fatal("the shell started nothing")
+	}
+	for _, pid := range pings {
+		if !tree.Holds(pid) {
+			t.Errorf("the shell's job does not hold its child %d", pid)
+		}
+	}
+
 	if err := p.Signal(ports.SignalKill); err != nil {
 		t.Fatalf("Signal(kill): %v", err)
 	}
@@ -172,4 +193,31 @@ func TestAProgramWithoutARunnableExtensionIsRefused(t *testing.T) {
 	if _, err := Open(ports.PTYSpec{Path: path, Size: domain.Size{Cols: 80, Rows: 24}}); err == nil {
 		t.Fatal("a text file was started as a shell")
 	}
+}
+
+// descendants lists the processes below pid.
+func descendants(t *testing.T, pid uint32) []int {
+	t.Helper()
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = windows.CloseHandle(snap) }()
+	children := map[uint32][]uint32{}
+	var pe windows.ProcessEntry32
+	pe.Size = uint32(unsafe.Sizeof(pe))
+	for err = windows.Process32First(snap, &pe); err == nil; err = windows.Process32Next(snap, &pe) {
+		if pe.ProcessID != pe.ParentProcessID {
+			children[pe.ParentProcessID] = append(children[pe.ParentProcessID], pe.ProcessID)
+		}
+	}
+	var out []int
+	queue := append([]uint32(nil), children[pid]...)
+	for len(queue) > 0 {
+		p := queue[0]
+		queue = queue[1:]
+		out = append(out, int(p))
+		queue = append(queue, children[p]...)
+	}
+	return out
 }

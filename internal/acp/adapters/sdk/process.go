@@ -100,12 +100,19 @@ func (p *process) start(cmd *exec.Cmd) error {
 	}
 	p.cmd, p.stdin, p.tree = cmd, stdin, t
 	p.h.trackPID(pid, true)
+	p.h.trackTree(t, pid, true)
 	go func() {
 		// What it started in its session ends with it, and its pid is forgotten, while the
 		// agent is still an unreaped zombie: neither can then reach a process that reused the
 		// pid. Where that cannot be done, the pid stays listed until kill (REQ-ORC-004, delta
 		// `2026-10-hosted-agent-peer`).
 		waitExit(cmd)
+		// A job ends with its agent: what the agent left in it goes too. Closing a handle
+		// cannot reach a process that reused the pid.
+		if endTreeAtExit {
+			p.tree.end()
+			p.h.trackTree(p.tree, pid, false)
+		}
 		close(p.gone)
 		p.reapMu.Lock()
 		p.reaped = true
@@ -195,10 +202,13 @@ func (p *process) kill() {
 			// process is being reaped, when its pid may already be someone else's.
 			p.reapMu.Lock()
 			if !p.reaped {
-				p.tree.end()
+				p.tree.signal()
 				_ = p.cmd.Process.Kill()
 			}
 			p.reapMu.Unlock()
+			// A job's handle is the daemon's own, so it is closed whatever the process did.
+			p.tree.end()
+			p.h.trackTree(p.tree, p.cmd.Process.Pid, false)
 			_ = p.stdin.Close()
 			select {
 			case <-p.exited:

@@ -346,7 +346,7 @@ func (c *conn) serve(ctx context.Context) {
 	}
 
 	if err := c.reader.Err(); err != nil && !errors.Is(err, net.ErrClosed) {
-		if !c.authenticated && errors.Is(err, os.ErrDeadlineExceeded) {
+		if !c.authenticated && isDeadline(err) {
 			c.writeError(nil, fmt.Errorf("%w: system.hello was not completed within %v",
 				ErrUnauthorized, c.server.cfg.handshakeTimeout))
 			return
@@ -647,4 +647,11 @@ func (c *conn) fromAgent() bool {
 		return false
 	}
 	return c.agentAtAccept || c.peerPID <= 0 || check(c.peerPID)
+}
+
+// isDeadline is a read stopped by its deadline: os.ErrDeadlineExceeded on a socket, a timeout of
+// go-winio's own on a Windows pipe.
+func isDeadline(err error) bool {
+	var ne net.Error
+	return errors.Is(err, os.ErrDeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout())
 }

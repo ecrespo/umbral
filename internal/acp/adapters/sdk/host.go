@@ -76,6 +76,9 @@ type Host struct {
 	// and the older one's release must not unlist the newer.
 	pidMu sync.Mutex
 	pids  map[int]int
+	// trees are the agents' process trees from the moment each joins its own, before any
+	// handshake: where a tree is a Job Object, membership is what the peer check asks.
+	trees map[*tree]int
 }
 
 // New builds a host.
@@ -107,7 +110,7 @@ func New(cfg Config) (*Host, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
-	h := &Host{cfg: cfg, entries: map[string]domain.Entry{}, agents: map[string]*process{}, pids: map[int]int{}}
+	h := &Host{cfg: cfg, entries: map[string]domain.Entry{}, agents: map[string]*process{}, pids: map[int]int{}, trees: map[*tree]int{}}
 	for _, e := range cfg.Entries {
 		if err := e.Validate(); err != nil {
 			return nil, fmt.Errorf("acp: %w", err)
@@ -430,15 +433,31 @@ func (h *Host) AgentPIDs() []int {
 		out = append(out, pid)
 	}
 	h.pidMu.Unlock()
-	// Where an agent's tree is a Job Object, what it left in the job counts as the agent's too.
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for _, p := range h.agents {
-		if p.tree != nil {
-			out = append(out, p.tree.members()...)
+	return out
+}
+
+// AgentTreeHolding is the pid of the hosted agent whose process tree holds pid, or 0: on Windows
+// the agent's Job Object, which keeps what the agent left behind known as the agent's after its
+// parent links are gone (REQ-ORC-004, delta `2026-10-windows-port`, decision 10).
+func (h *Host) AgentTreeHolding(pid int) int {
+	h.pidMu.Lock()
+	defer h.pidMu.Unlock()
+	for t, agent := range h.trees {
+		if t.holds(pid) {
+			return agent
 		}
 	}
-	return out
+	return 0
+}
+
+func (h *Host) trackTree(t *tree, agent int, live bool) {
+	h.pidMu.Lock()
+	defer h.pidMu.Unlock()
+	if live {
+		h.trees[t] = agent
+		return
+	}
+	delete(h.trees, t)
 }
 
 func (h *Host) trackPID(pid int, live bool) {
