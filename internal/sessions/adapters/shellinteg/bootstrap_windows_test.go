@@ -28,6 +28,10 @@ func startPwsh(t *testing.T, parent string) *pwshConsole {
 	t.Helper()
 	bin, err := exec.LookPath("pwsh")
 	if err != nil {
+		// REQ-WIN-002 is proved on CI's windows job; a runner without pwsh must not pass it by skipping.
+		if os.Getenv("CI") != "" {
+			t.Fatalf("PowerShell 7 is not installed on CI: %v", err)
+		}
 		t.Skipf("PowerShell 7 is not installed: %v", err)
 	}
 	b, err := Prepare(bin, parent)

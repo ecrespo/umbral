@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -130,7 +131,7 @@ func (r *rig) stored(t *testing.T) []string {
 	_ = filepath.WalkDir(r.dir, func(p string, _ os.DirEntry, err error) error {
 		if err == nil && p != r.dir && filepath.Base(p) != ownerMarker {
 			rel, _ := filepath.Rel(r.dir, p)
-			out = append(out, rel)
+			out = append(out, filepath.ToSlash(rel))
 		}
 		return nil
 	})
@@ -198,7 +199,8 @@ func TestInstallCopiesRecordsAndRunsNothing_REQ_SKL_001(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s not installed: %v", p, err)
 		}
-		if mode := info.Mode() & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky); mode != want {
+		// Windows keeps no permission bits beyond read-only: there the files' presence is checked.
+		if mode := info.Mode() & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky); runtime.GOOS != "windows" && mode != want {
 			t.Errorf("%s has mode %v, want %v", p, mode, want)
 		}
 	}

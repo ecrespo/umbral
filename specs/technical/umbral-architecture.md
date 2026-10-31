@@ -1622,8 +1622,9 @@ Windows 11 x86_64 runs the daemon, `umb`, the TUI and the desktop (REQ-WIN-001โ€
 twin, and `task vet:windows` keeps the packages that do not link libghostty compiling for Windows.
 
 - **Paths.** Runtime `%LOCALAPPDATA%\Umbral\run`, data `%LOCALAPPDATA%\Umbral\data`, config
-  `%APPDATA%\Umbral`; a set `XDG_*` variable still wins. The private check reads the owner and a
-  protected access list granting the current user's SID alone; the token gets the same list.
+  `%APPDATA%\Umbral`; a set `XDG_*` variable still wins. The private check reads the owner, the current user,
+  and an access list allowing only that user, SYSTEM and the Administrators, refusing an allow
+  entry of a kind it does not read; the token gets a protected list for the user alone.
   The instance lock is `LockFileEx`.
 - **Transport.** The named pipe of API ยง2 through `Microsoft/go-winio`, with 64 KiB buffers. A
   connection's close flushes for up to a second on its own goroutine, since closing a pipe's
@@ -1644,8 +1645,9 @@ twin, and `task vet:windows` keeps the packages that do not link libghostty comp
   on Windows (`windows_shell`), and so does a line of a program's input, which the shell may
   read next; path rules compare without case and with `/` read as `\`.
 - **Secrets.** The Windows Credential Manager through `go-keyring`.
-- **Not on Windows yet.** `umbrald --takeover` exits `EX_UNAVAILABLE`, and `remote.add` answers
-  `NOT_IMPLEMENTED`.
+- **Not on Windows yet.** `umbrald --takeover` exits `EX_UNAVAILABLE` (69) with "live handoff is
+  not supported on Windows", and the `remote` module is not wired, so every `remote.*` method
+  answers `NOT_IMPLEMENTED`.
 - **CI.** A `windows-latest` job runs the packages that support Windows with the race detector,
   builds libghostty-vt with Zig and links it as `ghostty-vt.dll` (`-tags dynamic`; the static
   archive needs Zig's compiler-rt and `ntdll`), runs the emulator tests, builds every

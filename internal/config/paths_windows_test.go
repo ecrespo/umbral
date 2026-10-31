@@ -49,6 +49,28 @@ func TestAPrivateFileAdmitsOnlyItsUser_REQ_WIN_001(t *testing.T) {
 		t.Errorf("a protected token was refused: %v", err)
 	}
 
+	// A conditional allow is refused whatever it names: the check does not read conditions.
+	conditional := filepath.Join(t.TempDir(), "conditional")
+	if err := os.Mkdir(conditional, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	csd, err := windows.SecurityDescriptorFromString("D:P(A;OICI;GA;;;OW)(XA;;GA;;;WD;(Member_of {SID(BA)}))")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cdacl, _, err := csd.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(conditional, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, cdacl, nil); err != nil {
+		t.Fatalf("give the directory a conditional entry: %v", err)
+	}
+	if err := verifyPrivateDir(conditional); err == nil {
+		t.Error("a runtime directory with a conditional allow for everyone was accepted")
+	}
+
 	if err := verifyPrivateDir(filepath.Join(t.TempDir(), "absent")); err != nil {
 		t.Errorf("an absent runtime directory was rejected: %v", err)
 	}

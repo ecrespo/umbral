@@ -101,3 +101,21 @@ func TestAProgramsInputAsksOnWindows_REQ_WIN_001(t *testing.T) {
 		t.Errorf("program input in full-auto = %s/%q by %s, want an ask by the destructive step", d.Verdict, d.Reason, d.Step)
 	}
 }
+
+// TestOnlyAPathIsFolded_REQ_WIN_001: decision 15 folds paths, which NTFS opens whatever their
+// case and separators; a URL's path is case-sensitive, so an allow rule for one URL does not
+// carry another spelled in other case.
+func TestOnlyAPathIsFolded_REQ_WIN_001(t *testing.T) {
+	t.Parallel()
+
+	allowed := []Rule{{Tool: "fetch_url", Pattern: "https://example.com/docs/*", Decision: VerdictAllow}}
+	fetch := func(url string) Action {
+		return Action{Tool: "fetch_url", Risk: RiskNetwork, Target: url, Cwd: `C:\repo`, WriteRoot: `C:\repo`}
+	}
+	if d := Decide(fetch("https://example.com/docs/intro"), ModeNormal, allowed, false); d.Verdict != VerdictAllow {
+		t.Errorf("the allowed URL = %s, want allow", d.Verdict)
+	}
+	if d := Decide(fetch("https://example.com/DOCS/private"), ModeNormal, allowed, false); d.Verdict == VerdictAllow {
+		t.Error("an allow rule for a URL carried another spelled in other case")
+	}
+}

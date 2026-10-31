@@ -172,6 +172,14 @@ func (s *session) closeJob() {
 	}
 }
 
+// TreeOpen reports whether the shell's job is still open: it outlives the shell until Close,
+// holding whatever the shell left running, which the agent's-terminal check still counts.
+func (s *session) TreeOpen() bool {
+	s.jobMu.Lock()
+	defer s.jobMu.Unlock()
+	return s.job != 0
+}
+
 // Holds reports whether pid runs in the shell's job: the shell, what it started, and what those
 // left behind when their parent exited. It is how Windows answers what a POSIX session answers
 // on Unix (REQ-ORC-004). A process that cannot be opened is reported held, so the check fails

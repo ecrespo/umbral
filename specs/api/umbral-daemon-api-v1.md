@@ -121,8 +121,10 @@ Without the check another local user could pre-create it and read the token, def
 before the daemon starts.
 
 On **Windows** (F2, REQ-WIN-001) the runtime directory is `%LOCALAPPDATA%\Umbral\run` unless
-`XDG_RUNTIME_DIR` is set, and it must be owned by the current user's SID with a protected access
-list granting that SID alone; the token file carries the same list. The protocol runs on the named
+`XDG_RUNTIME_DIR` is set. It must be owned by the current user's SID, and its access list may allow
+only that SID, SYSTEM and the Administrators — the accounts that read anything on the machine, as
+root does on Unix; an allow entry of a kind the check does not read (conditional, object or
+compound) is refused. The token file gets a protected list admitting the current user alone. The protocol runs on the named
 pipe `\\.\pipe\umbral-<the first 16 hex digits of the SHA-256 of the runtime directory>`, whose
 security descriptor `D:P(A;;GA;;;<user SID>)` admits the current user only. Its first instance is
 created exclusive, so a pipe another account created first stops the daemon, and a client checks

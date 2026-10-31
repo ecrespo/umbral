@@ -8,6 +8,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 
 	"github.com/ecrespo/umbral/internal/config"
@@ -88,4 +89,22 @@ func TestThePipeAndTheTokenAdmitOnlyTheirUser_REQ_WIN_001(t *testing.T) {
 	}
 
 	assertPrivate(t, filepath.Join(filepath.Dir(s.SocketPath()), TokenFileName))
+}
+
+// TestAPipeAlreadyCreatedStopsTheDaemon_REQ_WIN_001: the pipe's name is predictable, so another
+// process may create it first; the daemon's first instance is created exclusive and fails to
+// bind rather than serving behind it (decision 3).
+func TestAPipeAlreadyCreatedStopsTheDaemon_REQ_WIN_001(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "umbral", "umbral.sock")
+	squatter, err := winio.ListenPipe(config.PipeName(socket), nil)
+	if err != nil {
+		t.Fatalf("pre-create the pipe: %v", err)
+	}
+	defer func() { _ = squatter.Close() }()
+
+	ln, err := bind(t.Context(), Config{SocketPath: socket})
+	if err == nil {
+		_ = ln.Close()
+		t.Fatal("the daemon bound a pipe another process had already created")
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -588,8 +589,8 @@ func TestARedirectedWorktreeGitDirIsNotFollowed_REQ_WT_004(t *testing.T) {
 	evil := filepath.Join(t.TempDir(), "evil.git")
 	f.git(f.repo, "clone", "-q", "--bare", f.repo, evil)
 	f.git(evil, "config", "core.bare", "false")
-	f.git(evil, "config", "filter.x.clean", "touch "+marker+"; cat")
-	f.git(evil, "config", "core.fsmonitor", "touch "+marker+" #")
+	f.git(evil, "config", "filter.x.clean", "touch "+filepath.ToSlash(marker)+"; cat")
+	f.git(evil, "config", "core.fsmonitor", "touch "+filepath.ToSlash(marker)+" #")
 	f.write(w.Path, ".gitattributes", "* filter=x\n")
 	f.write(w.Path, "a.txt", "agent's change\n")
 	f.write(w.Path, ".git", "gitdir: "+evil+"\n")
@@ -719,9 +720,15 @@ func TestWorktreeDiffReadsPathsWhateverTheConfig_REQ_WT_003(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.git(f.repo, "config", "diff.noprefix", "true")
+	// A name git quotes: a double quote, which NTFS refuses, or on Windows a letter outside
+	// ASCII, which git prints as octal escapes.
+	quoted := `we"ird b.txt`
+	if runtime.GOOS == "windows" {
+		quoted = "wéird b.txt"
+	}
 	w := f.create("thr_a")
 	f.write(w.Path, "a.txt", "changed\n")
-	f.write(w.Path, `we"ird b.txt`, "new\n")
+	f.write(w.Path, quoted, "new\n")
 	diff, err := f.svc.Diff(t.Context(), w.ID)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
@@ -730,7 +737,7 @@ func TestWorktreeDiffReadsPathsWhateverTheConfig_REQ_WT_003(t *testing.T) {
 	for _, d := range diff.Files {
 		paths = append(paths, d.Path)
 	}
-	if strings.Join(paths, "|") != `a.txt|we"ird b.txt` {
+	if strings.Join(paths, "|") != "a.txt|"+quoted {
 		t.Errorf("paths %q", paths)
 	}
 }
@@ -742,7 +749,8 @@ func TestShowingARedirectedWorktreeRunsNoFilter_REQ_WT_003(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	marker := filepath.Join(t.TempDir(), "ran")
-	f.git(f.repo, "config", "filter.x.clean", "touch "+marker+"; cat")
+	// Git runs the filter through sh, which reads a Windows path's backslashes as escapes.
+	f.git(f.repo, "config", "filter.x.clean", "touch "+filepath.ToSlash(marker)+"; cat")
 	w := f.create("thr_a")
 	empty := filepath.Join(t.TempDir(), "empty.git")
 	f.git(f.repo, "init", "-q", "--bare", empty)

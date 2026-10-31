@@ -50,7 +50,8 @@ func ProtectPrivateFile(path string) error {
 }
 
 // verifyPrivateACL refuses a path the current user does not own, or whose DACL lets in an
-// account other than the user, SYSTEM and the Administrators.
+// account other than the user, SYSTEM and the Administrators, or carries an allow entry of a
+// kind it does not read.
 func verifyPrivateACL(path string) error {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
@@ -74,8 +75,14 @@ func verifyPrivateACL(path string) error {
 		if err := windows.GetAce(dacl, i, &ace); err != nil {
 			return fmt.Errorf("config: read the access list of %s: %w", path, err)
 		}
-		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
-			continue
+		switch ace.Header.AceType {
+		case windows.ACCESS_ALLOWED_ACE_TYPE:
+		case windows.ACCESS_DENIED_ACE_TYPE, accessDeniedObjectACE, accessDeniedCallbackACE, accessDeniedCallbackObjectACE:
+			continue // a deny only takes access away
+		default:
+			// A conditional, object or compound allow is one this check does not read: refused,
+			// so an access list it cannot judge never passes as private.
+			return fmt.Errorf("config: %s has an access entry of type %d this check does not read; refusing to put a token there", path, ace.Header.AceType)
 		}
 		sid := (*windows.SID)(unsafePointer(&ace.SidStart))
 		if !trustedSID(sid, me) {
@@ -110,3 +117,10 @@ func currentUserSID() (*windows.SID, error) {
 // VerifyPrivateFile refuses a file another account can reach, as a mode other than 0600 is
 // refused on Unix.
 func VerifyPrivateFile(path string) error { return verifyPrivateACL(path) }
+
+// The deny entry types x/sys/windows does not name (winnt.h).
+const (
+	accessDeniedObjectACE         = 0x6
+	accessDeniedCallbackACE       = 0xA
+	accessDeniedCallbackObjectACE = 0xC
+)

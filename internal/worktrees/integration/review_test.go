@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -180,7 +181,8 @@ func TestTheWorktreesFileTree_REQ_DSK_003(t *testing.T) {
 	}
 	run, _ := f.svc.ReadFile(t.Context(), w.ID, "run.sh")
 	mode, err := os.Stat(filepath.Join(w.Path, "run.sh"))
-	if err != nil || mode.Mode().Perm()&0o100 == 0 {
+	// Windows has no executable bit to check out.
+	if err != nil || (runtime.GOOS != "windows" && mode.Mode().Perm()&0o100 == 0) {
 		t.Fatalf("run.sh is checked out %v, %v; want it executable", mode, err)
 	}
 	if _, err := f.svc.WriteFile(t.Context(), domain.WriteFileRequest{ID: w.ID, Path: "run.sh", Content: "echo bye\n", ExpectedSHA256: run.SHA256}); err != nil {

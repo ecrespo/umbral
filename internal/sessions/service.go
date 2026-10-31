@@ -431,7 +431,11 @@ func (s *Service) AgentShellPIDs() []int {
 	var out []int
 	for _, live := range lives {
 		session := live.snapshotState()
-		if session.OwnerThreadID == "" || session.State == domain.StateExited {
+		// An exited shell still counts while its process tree is open: on Windows its Job
+		// Object outlives it until the session is closed, holding what it left behind
+		// (delta `2026-10-windows-port`, decision 4). Unix PTYs keep no such tree.
+		tree, hasTree := live.pty.(interface{ TreeOpen() bool })
+		if session.OwnerThreadID == "" || (session.State == domain.StateExited && (!hasTree || !tree.TreeOpen())) {
 			continue
 		}
 		if pid := live.pty.Pid(); pid > 0 {

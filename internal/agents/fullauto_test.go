@@ -19,7 +19,6 @@ func modePtr(m secdomain.Mode) *secdomain.Mode { return &m }
 // mode beside the flag, and its turn writes and runs inside the worktree without asking. Once the
 // worktree is no longer active the next turn decides under the thread's own mode again.
 func TestFullAutoOnlyInsideAWorktree_REQ_ORC_004(t *testing.T) {
-	posixLines(t)
 	repo, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +52,9 @@ func TestFullAutoOnlyInsideAWorktree_REQ_ORC_004(t *testing.T) {
 		t.Fatalf("thread %+v: want full_auto set beside its own mode normal", got)
 	}
 
+	// What full-auto runs unasked is a POSIX line; on Windows every line asks (decision 14),
+	// which TestFullAutoAsksForEveryCommandOnWindows_REQ_WIN_001 proves instead.
+	posixLines(t)
 	if _, end := r.send(t, th.ID, "build it", ""); end.StopReason != domain.StopEndTurn {
 		t.Fatalf("the turn ended %q, want end_turn without an approval", end.StopReason)
 	}

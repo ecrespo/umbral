@@ -37,14 +37,18 @@
 2. **Paths.** Runtime `%LOCALAPPDATA%\Umbral\run`, data `%LOCALAPPDATA%\Umbral\data`, config
    `%APPDATA%\Umbral`. A set `XDG_*` variable still wins, as on Linux, which is what keeps the
    tests hermetic. The runtime directory's private check reads its owner and DACL: owned by the
-   current user's SID, protected, and granting access to that SID only. Anything else is refused,
-   as a wrong mode is on Unix.
+   current user's SID, with allow entries for that SID, SYSTEM and the Administrators only — the
+   accounts that can read anything on the machine anyway, as root can on Unix — and no allow entry
+   of a kind it does not read (conditional, object, compound). Deny entries only take access away
+   and pass. Anything else is refused, as a wrong mode is on Unix. The token file gets a protected
+   DACL admitting the current user alone.
 3. **Transport.** The protocol runs over the named pipe `\\.\pipe\umbral-<16 hex of SHA-256 of
    the runtime directory>`, so two runtime directories never share a pipe. Its security
    descriptor is `D:P(A;;GA;;;<user SID>)`: the current user only (REQ-WIN-001). The token file
    stays in the runtime directory. A client dials the same name from the same directory. The
    name is predictable, so another account could create the pipe first: the daemon then fails to
-   start, because its first instance is created exclusive (`FILE_FLAG_FIRST_PIPE_INSTANCE`), and
+   start, because its first instance is created exclusive (go-winio creates a listener's first instance
+   so), and
    a client checks that the pipe's server process (`GetNamedPipeServerProcessId`) runs as the
    current user before it writes anything, so the token never reaches an impostor. The
    pipe library is `Microsoft/go-winio`; the constitution's Stack row gains it.
@@ -85,14 +89,19 @@
     - `umbrald --takeover` (REQ-HND-001) exits `EX_UNAVAILABLE` with "live handoff is not
       supported on Windows". ConPTY handles can be duplicated into another process, so this is a
       later task, not a design limit.
-    - Remote hosts (REQ-RMT-*): `remote.add` answers `NOT_IMPLEMENTED` on Windows, since Windows
-      OpenSSH's stream-local forwarding is not reliable enough to promise REQ-RMT-001.
+    - Remote hosts (REQ-RMT-*): the `remote` module is not wired on Windows, so every `remote.*`
+      method answers `NOT_IMPLEMENTED`, since Windows OpenSSH's stream-local forwarding is not
+      reliable enough to promise REQ-RMT-001.
 12. **Desktop.** `cmd/umbral-desktop` is built for Windows in CI, and the check REQ-PKG-005 left
     open reads the executable's icon group against the kit's `.ico`.
 13. **CI.** A `windows` job on `windows-latest` builds every binary, runs the packages that
-    support Windows with the race detector, the VT conformance suite's MUST cases and the block
-    tests under `pwsh` (REQ-WIN-002), a named-pipe round trip that a second user's token cannot
-    open, and a Credential Manager round trip.
+    support Windows with the race detector, the VT conformance suite's MUST cases, the PowerShell
+    bootstrap's OSC 133 tests under ConPTY (REQ-WIN-002; failing, not skipping, when `pwsh` is
+    missing on CI), the named pipe's and the token's access lists read back, a Credential Manager
+    round trip, and a smoke of `umbrald.exe` and `umb.exe`: a daemon started, `umb` answered over
+    the pipe, `remote.*` answering `NOT_IMPLEMENTED` and `--takeover` exiting 69. The packages
+    that link libghostty beyond the emulators — the sessions integration suite among them — run
+    on Linux and macOS only for now.
 
 14. **Commands ask on Windows.** The destructive floor parses POSIX shell lines
     (`mvdan.cc/sh/v3/syntax`, delta `2026-10-shell-parser`); an agent's shell on Windows is
@@ -114,10 +123,25 @@
     the UNAUTHORIZED or VALIDATION_ERROR sent before a hang-up arrives, and a client that stopped
     reading cannot hold the close (REQ-API-006).
 
+17. **Recorded limits.**
+    - A shell is assigned to its Job Object just after ConPTY starts it, since go-pty does not
+      start it suspended; a child spawned in that window would escape the job. The window is
+      before the bootstrap runs, so nothing the user or an agent typed can be in it.
+    - A process that asks for `CREATE_BREAKAWAY_FROM_JOB` is refused it: the jobs do not set
+      `JOB_OBJECT_LIMIT_BREAKAWAY_OK`.
+    - Path folding (decision 15) covers case and separators; 8.3 short names, alternate data
+      streams and `\\?\` prefixes are other NTFS spellings of a path, which the callers resolve
+      as they resolve symlinks, and a rule written for one spelling does not see another.
+    - libghostty-vt is built with `-Dsimd=false` on Windows: its SIMD UTF-8 path read a null
+      pointer on the first non-ASCII byte there.
+    - `windows-latest` is Windows Server, not Windows 11; the client SKU is untested in CI.
+    - The runner has one account, so the named pipe's refusal of a second user is checked by
+      reading the pipe's security descriptor, not by dialling it as another user.
+
 ## Layers
 
-T-F2-50 lands as one PR, built in this order. Each layer is green on the Windows job before the
-next starts:
+T-F2-50 landed as one PR, built in this order, each layer green on the Windows job before the
+next:
 
 1. Build seams: every Unix-only call behind a `_unix.go`/`_windows.go` pair, the Windows side
    refusing (`ErrUnsupported`) where its layer has not landed; `GOOS=windows CGO_ENABLED=0 go vet`

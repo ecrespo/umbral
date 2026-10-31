@@ -411,11 +411,13 @@ func cwdWithinWriteRoot(a Action) bool {
 	return withinWriteRoot(at)
 }
 
-// matchTarget is a rule's pattern against one target. A path is compared as the file system
-// compares it, which on Windows ignores case and reads `/` as `\`, so a deny rule cannot be
-// stepped around by spelling its path another way; a command line is compared as written.
+// matchTarget is a rule's pattern against one target. A path — the target of a write or a read
+// — is compared as the file system compares it, which on Windows ignores case and reads `/` as
+// `\`, so a deny rule cannot be stepped around by spelling its path another way. A command line,
+// a URL or any other target is compared as written, so folding never widens an allow rule past
+// a path (delta `2026-10-windows-port`, decision 15).
 func matchTarget(pattern, target string, risk Risk) bool {
-	if risk == RiskExec {
+	if risk != RiskWriteFS && risk != RiskReadOnly {
 		return glob(pattern, target)
 	}
 	return glob(foldPath(pattern), foldPath(target))
