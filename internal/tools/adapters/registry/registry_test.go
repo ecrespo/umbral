@@ -199,12 +199,13 @@ func TestTheActionCarriesTheDeclaredRisk(t *testing.T) {
 	t.Parallel()
 
 	r := builtins(t)
-	env := domain.Env{ThreadID: "thr_1", Cwd: "/work/repo/sub", WriteRoot: "/work/repo"}
+	repo := filepath.Join(abs("/work"), "repo")
+	env := domain.Env{ThreadID: "thr_1", Cwd: filepath.Join(repo, "sub"), WriteRoot: repo}
 	a, err := r.Action(env, domain.Call{Tool: "edit_file", Input: json.RawMessage(`{"path":"../x.go","old_string":"a","new_string":"b"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Tool != "edit_file" || a.Risk != secdomain.RiskWriteFS || a.Target != "/work/repo/x.go" || a.WriteRoot != "/work/repo" || a.ThreadID != "thr_1" {
+	if a.Tool != "edit_file" || a.Risk != secdomain.RiskWriteFS || a.Target != filepath.Join(repo, "x.go") || a.WriteRoot != repo || a.ThreadID != "thr_1" {
 		t.Errorf("action = %+v", a)
 	}
 	a, err = r.Action(env, domain.Call{Tool: "fetch_url", Input: json.RawMessage(`{"url":"https://example.com/a"}`)})
@@ -236,11 +237,7 @@ func TestAToolCannotLowerItsRisk_REQ_AGT_014(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := string(filepath.Separator)
-	if runtime.GOOS == "windows" {
-		root = `C:\` // rooted is not absolute there without a drive
-	}
-	a, err := r.Action(domain.Env{Cwd: root}, domain.Call{Tool: "writer"})
+	a, err := r.Action(domain.Env{Cwd: abs("/")}, domain.Call{Tool: "writer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,10 +254,10 @@ func TestAToolCannotLowerItsRisk_REQ_AGT_014(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a, _ := r.Action(domain.Env{Cwd: "/"}, domain.Call{Tool: "reader"}); a.Risk != secdomain.RiskReadOnly {
+	if a, _ := r.Action(domain.Env{Cwd: abs("/")}, domain.Call{Tool: "reader"}); a.Risk != secdomain.RiskReadOnly {
 		t.Errorf("a read-only call of a tool that declares them = %s", a.Risk)
 	}
-	if a, _ := r.Action(domain.Env{Cwd: "/"}, domain.Call{Tool: "raiser"}); a.Risk != secdomain.RiskWriteFS {
+	if a, _ := r.Action(domain.Env{Cwd: abs("/")}, domain.Call{Tool: "raiser"}); a.Risk != secdomain.RiskWriteFS {
 		t.Errorf("a call reported as Network = %s, want the declared WriteFS", a.Risk)
 	}
 }
@@ -418,4 +415,13 @@ func TestTheRepairNamesWhatIsWrong_REQ_AGT_006(t *testing.T) {
 			}
 		}
 	}
+}
+
+// abs makes a test's POSIX path absolute on this platform: as it is on Unix, on drive C: on
+// Windows, where a rooted path without a drive is not absolute (delta `2026-10-windows-port`).
+func abs(p string) string {
+	if runtime.GOOS == "windows" {
+		return `C:` + filepath.FromSlash(p)
+	}
+	return p
 }

@@ -257,15 +257,16 @@ jobs:
         run: |
           ./scripts/build_libghostty.sh "$RUNNER_TEMP/ghostty-vt"
           echo "PKG_CONFIG_PATH=$(cygpath -w "$RUNNER_TEMP/ghostty-vt/share/pkgconfig")" >> "$GITHUB_ENV"
+          # Windows loads ghostty-vt.dll from PATH (decision 1).
+          cygpath -w "$RUNNER_TEMP/ghostty-vt/bin" >> "$GITHUB_PATH"
       - name: The emulators link and pass on Windows, and every binary builds
         if: success() || failure()
-        # pkg-config names the static library by its path, which cgo's flag check refuses for a
-        # .lib; this admits the one library and nothing else.
+        # Zig's static archive leaves compiler-rt (__chkstk) and ntdll to Zig's own linker, which
+        # MinGW's ld does not supply; the DLL Zig builds beside it carries them (decision 1).
         env:
-          CGO_LDFLAGS_ALLOW: '.*[/\\]ghostty-vt-static\.lib'
+          GOFLAGS: -tags=dynamic
         run: |
-          cat "$RUNNER_TEMP/ghostty-vt/share/pkgconfig/"*.pc
-          ls -la "$RUNNER_TEMP/ghostty-vt/lib"
+          ls -la "$RUNNER_TEMP/ghostty-vt/lib" "$RUNNER_TEMP/ghostty-vt/bin"
           CGO_ENABLED=1 go test -race ./internal/sessions/adapters/ghostty/... ./internal/tui/adapters/ghosttyvt/... ./internal/desktop/adapters/vtframe/...
           CGO_ENABLED=1 go build ./cmd/...
       # REQ-PKG-005's last check: the .exe the linker produced carries the kit's icon group,
@@ -273,7 +274,7 @@ jobs:
       - name: The desktop builds for Windows and embeds the kit's icon
         if: success() || failure()
         env:
-          CGO_LDFLAGS_ALLOW: '.*[/\\]ghostty-vt-static\.lib'
+          GOFLAGS: -tags=dynamic
         run: |
           (cd cmd/umbral-desktop && CGO_ENABLED=1 go build -o "$RUNNER_TEMP/umbral-desktop.exe" .)
           UMBRAL_DESKTOP_EXE="$(cygpath -w "$RUNNER_TEMP/umbral-desktop.exe")" \

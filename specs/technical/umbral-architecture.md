@@ -1647,7 +1647,8 @@ twin, and `task vet:windows` keeps the packages that do not link libghostty comp
 - **Not on Windows yet.** `umbrald --takeover` exits `EX_UNAVAILABLE`, and `remote.add` answers
   `NOT_IMPLEMENTED`.
 - **CI.** A `windows-latest` job runs the packages that support Windows with the race detector,
-  builds libghostty-vt with Zig for `x86_64-windows-gnu`, runs the emulator tests, builds every
+  builds libghostty-vt with Zig and links it as `ghostty-vt.dll` (`-tags dynamic`; the static
+  archive needs Zig's compiler-rt and `ntdll`), runs the emulator tests, builds every
   binary and `umbral-desktop.exe`, and checks the executable's icon group (REQ-PKG-005).
 
 ### 5.4 Error Handling

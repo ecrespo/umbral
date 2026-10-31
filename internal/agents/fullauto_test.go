@@ -19,6 +19,7 @@ func modePtr(m secdomain.Mode) *secdomain.Mode { return &m }
 // mode beside the flag, and its turn writes and runs inside the worktree without asking. Once the
 // worktree is no longer active the next turn decides under the thread's own mode again.
 func TestFullAutoOnlyInsideAWorktree_REQ_ORC_004(t *testing.T) {
+	posixLines(t)
 	repo, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

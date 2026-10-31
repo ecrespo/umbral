@@ -156,7 +156,7 @@ func TestUmbReachesTheThreadMethodsItDrives_REQ_API_001(t *testing.T) {
 	if resp := c.hello(s.Token(), ClientCLI); resp.Error != nil {
 		t.Fatalf("handshake: %+v", resp.Error)
 	}
-	if resp := c.call(2, "thread.create", map[string]any{"cwd": "/w"}); resp.Error != nil {
+	if resp := c.call(2, "thread.create", map[string]any{"cwd": t.TempDir()}); resp.Error != nil {
 		t.Fatalf("thread.create from umb = %+v", resp.Error)
 	}
 	if resp := c.call(3, "thread.send", map[string]any{"thread_id": "thr_1", "text": "x"}); resp.Error != nil {
@@ -186,7 +186,7 @@ func TestThreadMethodsReachTheWire_REQ_AGT_001(t *testing.T) {
 	t.Parallel()
 	svc, c, _ := threadRig(t)
 
-	resp := c.call(2, "thread.create", map[string]any{"cwd": "/w"})
+	resp := c.call(2, "thread.create", map[string]any{"cwd": t.TempDir()})
 	raw, _ := json.Marshal(resp.Result)
 	if resp.Error != nil || !strings.Contains(string(raw), `"id":"thr_1"`) || !strings.Contains(string(raw), `"model":null`) {
 		t.Fatalf("thread.create = %s %+v", raw, resp.Error)

@@ -31,7 +31,9 @@
 ## Decisions
 
 1. **Target.** Windows 11 x86_64 (`windows/amd64`), cgo through MinGW-w64, libghostty-vt built
-   by the pinned Zig for `x86_64-windows-gnu` (`task deps:ghostty` on Windows).
+   by the pinned Zig (`task deps:ghostty` on Windows) and linked as `ghostty-vt.dll`, built with
+   `-tags dynamic` and shipped beside the binaries: Zig's static archive leaves compiler-rt
+   (`__chkstk`) and `ntdll` to Zig's own linker, which MinGW's `ld` does not supply.
 2. **Paths.** Runtime `%LOCALAPPDATA%\Umbral\run`, data `%LOCALAPPDATA%\Umbral\data`, config
    `%APPDATA%\Umbral`. A set `XDG_*` variable still wins, as on Linux, which is what keeps the
    tests hermetic. The runtime directory's private check reads its owner and DACL: owned by the
