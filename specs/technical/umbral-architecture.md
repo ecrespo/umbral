@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.82 |
+| **Version** | 1.83 |
 | **Date** | 2026-10-31 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -469,8 +469,8 @@ a peer of the same uid outside any agent's terminal. It speaks length-prefixed J
 - **Failure.** It exits 75 naming the step. Any failure before `ready` resumes the old daemon
   with its sessions untouched (REQ-HND-002).
 
-Clients reconnect and resume from `session.snapshot`; the TUI's and the desktop's
-reconnection is T-F2-42.
+Clients reconnect and resume from `session.snapshot`. The TUI and the desktop dial again on
+their own and attach every pane from a fresh snapshot (T-F2-42, §5.3h).
 
 ### DD-015: The protocol schema is generated from the code
 
@@ -1568,7 +1568,14 @@ Umbral's packages it imports `internal/client`, `internal/desktop` and its frame
   the threads view. A method outside the list is
   refused unsent; configuration, keys, rules, skills, MCP servers and limits stay with `umb`.
 - **Events.** `daemon` carries every notification as the daemon sent it, `frame` a terminal's
-  screen, `disconnected` the connection's end.
+  screen, and `disconnected` the connection's end.
+- **Following the daemon (REQ-HND-001, delta `2026-10-client-reconnect`).** When the daemon
+  closes the stream, as on a live handoff, the bridge emits `reconnecting` and dials again
+  through `client.Redial`, for up to 30 s and without autostart. On the new connection it
+  attaches every terminal again at its size, then emits `reconnected` with `lost`, the
+  sessions it could not attach. The page then reads its tree and view again. The TUI's adapter
+  does the same: its model subscribes every pane again, reads the thread list with its `seq`
+  floor reset, and focuses its thread again on the new connection.
 - **Terminals.** The client runs libghostty, as the TUI does, and sends frames: visible rows of
   styled runs, the cursor and the default colours, drawn with `textContent` under a CSP that
   allows only the page's own files, at most every 16 ms. Attaching resizes, subscribes and
@@ -2156,3 +2163,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.80 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-usf2-002-live` (T-F2-23): §5.3g the calls a local model writes — string keys, a lone control character as its key, zero values absent, `send_keys` that waits on the output after its keys, combined conditions, the holder line first; §3.3 item 2 an unreadable tool call is one retry with a repair message; DD-004's breakers do not count it |
 | 1.81 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-wails-icons` (T-PKG-04): §9.3 the Windows resource objects generated from the kit's icon and checked, the executable's check moved to T-F2-50; the window id read from the live window |
 | 1.82 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-pty-handoff` (T-F2-40): §5.2 the `handoff` leaf; DD-014 the live handoff over `handoff.sock`, its steps, what the new daemon skips, and the resume on failure; T-F2-42 for the clients' reconnection |
+| 1.83 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-client-reconnect` (T-F2-42): §5.3h and DD-014 the TUI and the desktop follow their daemon across a handoff through `client.Redial` and attach every pane again from a fresh snapshot |

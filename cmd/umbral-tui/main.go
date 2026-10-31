@@ -83,7 +83,19 @@ func run(args []string, stderr *os.File) int {
 	}
 
 	stream := client.NewStream(c)
-	adapter := daemonadapter.New(stream)
+	// The daemon closes the stream when a newer one takes its sessions over (REQ-HND-001):
+	// the TUI dials the same socket again, without starting a daemon of its own, and attaches
+	// its panes to whichever daemon answers.
+	redial := func(ctx context.Context) (*client.Stream, error) {
+		c, err := client.Connect(ctx, client.Options{
+			SocketPath: *socket, NoAutostart: true, ClientKind: client.ClientKindTUI,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return client.NewStream(c), nil
+	}
+	adapter := daemonadapter.NewReconnecting(stream, redial)
 	defer func() { _ = adapter.Close() }()
 
 	// Named as the port rather than as the adapter: what the model depends on is the

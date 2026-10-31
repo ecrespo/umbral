@@ -1336,3 +1336,44 @@ func TestAcceptingASuggestionOpensADraft_REQ_AAI_002(t *testing.T) {
 		t.Fatalf("sent %+v, want only the block attached", sent4)
 	}
 }
+
+// TestTheThreadPanelResumesOnTheNewDaemon_REQ_HND_001: after a reconnection the panel takes the
+// new daemon's thread list although its envelope seq starts again from a lower number — a
+// seq from the old daemon names nothing on the new one (API §6) — and focuses its thread again,
+// since a focus belongs to the connection that sent it (REQ-AGT-016).
+func TestTheThreadPanelResumesOnTheNewDaemon_REQ_HND_001(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.daemon.setThreads(ports.ThreadList{Seq: 500, WorkspaceID: "w1", Threads: []ports.Thread{
+		{ID: "thr_old", WorkspaceID: "w1", Attention: "idle", State: "idle"},
+	}})
+	h.openSession()
+	h.step(ctrlSpace())
+	h.typeText("hi")
+	h.step(keyPress(t, "enter"))
+	if got := h.daemon.focusCalls(); len(got) == 0 || got[len(got)-1] != "thr_fake" {
+		t.Fatalf("the setup did not focus the panel's thread: %q", got)
+	}
+	focused := len(h.daemon.focusCalls())
+
+	h.daemon.setThreads(ports.ThreadList{Seq: 3, WorkspaceID: "w1", Threads: []ports.Thread{
+		{ID: "thr_new", WorkspaceID: "w1", Attention: "working", State: "running"},
+	}})
+	h.event(ports.Event{Kind: ports.EventReconnecting})
+	h.event(ports.Event{Kind: ports.EventReconnected})
+
+	if row := threadRow(h.m.View().Content, "thr_new"); row == "" {
+		t.Fatalf("the new daemon's thread list was dropped as older than the old one's:\n%s", h.m.View().Content)
+	}
+	got := h.daemon.focusCalls()
+	if len(got) <= focused || got[len(got)-1] != "thr_fake" {
+		t.Fatalf("the panel's thread was not focused again on the new connection: %q", got)
+	}
+	// A listing the old daemon answers late, with its higher seq, is not applied.
+	h.step(threadsLoadedMsg{list: ports.ThreadList{Seq: 501, WorkspaceID: "w1", Threads: []ports.Thread{
+		{ID: "thr_stale", WorkspaceID: "w1", Attention: "idle", State: "idle"},
+	}}})
+	if row := threadRow(h.m.View().Content, "thr_stale"); row != "" {
+		t.Fatal("a listing asked on the old connection replaced the new daemon's")
+	}
+}

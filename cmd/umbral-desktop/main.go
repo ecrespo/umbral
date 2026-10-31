@@ -115,7 +115,16 @@ func main() {
 	}
 	app := application.New(appOptions(u, frontend))
 	u.app = app
-	u.bridge = desktop.New(stream, emitter{app}, vtframe.New)
+	// The daemon closes the stream when a newer one takes its sessions over (REQ-HND-001); the
+	// window dials it again, without starting one, and follows its terminals there.
+	redial := func(ctx context.Context) (*client.Stream, error) {
+		c, err := client.Connect(ctx, client.Options{ClientKind: client.ClientKindDesktop, NoAutostart: true})
+		if err != nil {
+			return nil, err
+		}
+		return client.NewUnboundedStream(c), nil
+	}
+	u.bridge = desktop.NewReconnecting(stream, redial, emitter{app}, vtframe.New)
 	defer func() { _ = u.bridge.Close() }()
 
 	app.Window.NewWithOptions(windowOptions())

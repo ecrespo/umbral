@@ -559,6 +559,19 @@ wails.Events.On("daemon", (ev) => {
   if (n.method === "thread.turn_finished" && n.params.thread_id === state.thread) { state.transcript.delete(state.thread); renderView(); }
 });
 wails.Events.On("disconnected", (ev) => status("disconnected from umbrald" + (ev.data?.error ? ": " + ev.data.error : ""), true));
+// A newer daemon took the sessions over (REQ-HND-001): the bridge dials it and attaches every
+// terminal again before saying so, and the page reads its tree and its view again.
+wails.Events.On("reconnecting", () => status("the daemon went away; reconnecting", true));
+wails.Events.On("reconnected", (ev) => {
+  const lost = ev.data?.lost ?? [], attached = new Set(ev.data?.attached ?? []);
+  // A terminal opened while the connection was down attached to the closed one: attach it now.
+  for (const [id, t] of state.attached) {
+    if (!attached.has(id) && !lost.includes(id) && t.cols && t.rows) bridge("Attach", id, t.cols, t.rows).catch(failed);
+  }
+  status(lost.length ? `reconnected; ${lost.length} terminal(s) are gone` : "reconnected to umbrald", lost.length > 0);
+  refresh();
+  renderView();
+});
 
 // The window is the page and nothing else: no link it draws and no file dropped on it
 // navigates the webview away.

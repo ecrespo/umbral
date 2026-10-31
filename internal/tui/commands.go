@@ -248,13 +248,13 @@ func (m *Model) loadApprovalsCmd() tea.Cmd {
 
 // loadThreadsCmd lists the threads and the focused workspace (REQ-ORC-003).
 func (m *Model) loadThreadsCmd() tea.Cmd {
-	daemon := m.daemon
+	daemon, conn := m.daemon, m.agent.conn
 	return func() tea.Msg {
 		ctx, cancel := withTimeout()
 		defer cancel()
 
 		list, err := daemon.Threads(ctx)
-		return threadsLoadedMsg{list: list, err: err}
+		return threadsLoadedMsg{list: list, err: err, conn: conn}
 	}
 }
 

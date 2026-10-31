@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -50,6 +51,8 @@ type fakeDaemon struct {
 	// takeOvers and handBacks are thread.take_over's and thread.hand_back's threads.
 	takeOvers []string
 	handBacks []string
+	// subscribed are the sessions session.subscribe was called for, in order.
+	subscribed []string
 }
 
 func newFakeDaemon() *fakeDaemon {
@@ -71,7 +74,10 @@ func (f *fakeDaemon) CreateSession(_ context.Context, size sessdomain.Size) (ses
 	}, nil
 }
 
-func (f *fakeDaemon) Subscribe(_ context.Context, _ string) ([]byte, uint64, error) {
+func (f *fakeDaemon) Subscribe(_ context.Context, id string) ([]byte, uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.subscribed = append(f.subscribed, id)
 	return []byte("\x1b[H\x1b[2J"), 7, nil
 }
 
@@ -472,6 +478,57 @@ func TestDroppedSubscriptionReattaches(t *testing.T) {
 	}
 	if !strings.Contains(h.m.Status(), "re-attaching") {
 		t.Errorf("status = %q, want it to say the client is re-attaching", h.m.Status())
+	}
+}
+
+// TestAReconnectionReattachesEveryPane_REQ_HND_001: when the daemon closes the stream for a
+// handoff, the model says so and keeps the panes; once the adapter has a new connection, every
+// pane is emptied and attached again from a fresh snapshot, and the thread list is read again.
+// The old subscriptions went with the old connection.
+func TestAReconnectionReattachesEveryPane_REQ_HND_001(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.openSession()
+	first := h.screen
+	h.step(keyPress(t, "ctrl+s")) // a second pane, so "every" means more than one
+	h.step(daemonEventMsg{event: ports.Event{
+		Kind: ports.EventOutput, SessionID: sessionID(1), Seq: 9, Data: []byte("before"),
+	}})
+	h.daemon.mu.Lock()
+	h.daemon.subscribed = nil
+	listings := h.daemon.listings
+	h.daemon.mu.Unlock()
+
+	h.step(daemonEventMsg{event: ports.Event{Kind: ports.EventReconnecting}})
+	if h.m.Disconnected() {
+		t.Fatal("a daemon going away for a handoff was taken as the end")
+	}
+	if !strings.Contains(h.m.Status(), "reconnecting") {
+		t.Errorf("status = %q, want it to say the client is reconnecting", h.m.Status())
+	}
+
+	h.step(daemonEventMsg{event: ports.Event{Kind: ports.EventReconnected}})
+	h.daemon.mu.Lock()
+	got := append([]string(nil), h.daemon.subscribed...)
+	relisted := h.daemon.listings > listings
+	h.daemon.mu.Unlock()
+	slices.Sort(got)
+	if want := []string{sessionID(1), sessionID(2)}; !slices.Equal(got, want) {
+		t.Fatalf("after the reconnection the panes attached were %v, want %v", got, want)
+	}
+	if first.resets == 0 || strings.Contains(string(first.written), "before") {
+		t.Error("a pane was not emptied before its fresh snapshot")
+	}
+	if !relisted {
+		t.Error("the thread list was not read again on the new connection")
+	}
+	// The new snapshot is current as of seq 7: a chunk after it is drawn.
+	h.step(daemonEventMsg{event: ports.Event{
+		Kind: ports.EventOutput, SessionID: sessionID(1), Seq: 8, Data: []byte("after"),
+	}})
+	if !strings.Contains(string(first.written), "after") {
+		t.Error("output after the fresh snapshot was not drawn")
 	}
 }
 
