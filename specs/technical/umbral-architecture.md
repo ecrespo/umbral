@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.83 |
+| **Version** | 1.84 |
 | **Date** | 2026-10-31 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -123,6 +123,7 @@ flowchart LR
 | `worktrees` | the `git` CLI ≥ 2.34 + SQLite | a thread's worktree outside the repository: create, diff with stable hunk ids, single hunks reverted, its file tree read and edited by the user, squash merge, discard, missing detection | WT-* (F2) |
 | `hunks` | stdlib only | the unified-diff parser, the stable hunk id of REQ-WT-003, a patch of chosen hunks and a content with chosen hunks applied (delta `2026-10-hunks-file-tree`) | WT-003, DSK-002 |
 | `handoff` | stdlib + `golang.org/x/sys` | the channel a newer `umbrald --takeover` takes the running daemon's sessions over: length-prefixed JSON frames with descriptors as `SCM_RIGHTS` on `handoff.sock`, the peer's uid and pid from the kernel (delta `2026-10-pty-handoff`) | HND-001, HND-002 |
+| `remote` | the system's `ssh` + SQLite | remote daemons: one supervisor per host asks `umb remote endpoint` over ssh for the socket and token, forwards the socket with `ssh -N -L`, reconnects with backoff; `api` relays the protocol over it (delta `2026-10-remote-hosts`) | RMT-001, RMT-002, RMT-003 |
 | `acp` | `github.com/coder/acp-go-sdk` over stdio | third-party agents hosted through a manifest: launch in an isolated home, `initialize`, `session/new`, prompt, the silence timer | ACP-* (F2) |
 | `obs` | OpenTelemetry Go, `log/slog` | traces, metrics | OBS-* |
 
@@ -710,6 +711,15 @@ The module is `activeai`, a leaf over its own ports, which `cmd` implements over
 the block reader. A value out of range stops the daemon naming the key. Not live: a change needs
 a restart (delta `2026-10-active-ai`).
 
+`[remote]` says how remote daemons are reached (REQ-RMT-001): `ssh`, the ssh binary (`ssh` on
+`PATH`), and `umb`, the command the remote side runs to print its endpoint (`umb`), which ssh
+hands to the remote user's shell. Neither may be empty or start with `-`. The hosts themselves
+live in the `remotes` table and are added with `remote.add` (API §5.44); their forwarded sockets
+are `remotes/<name>.<pid>.sock` beside the daemon's own, in a 0700 directory, named with the
+daemon's pid so the two daemons of a live handoff never remove each other's, and those of a
+daemon that is gone are swept at start. Not live: a change needs a restart (delta
+`2026-10-remote-hosts`).
+
 `[worktrees] commit_timeout` bounds a worktree merge's commit in whole seconds, 5 to 3600 (60).
 It covers the repository's hooks and signing. When it passes, the commit's whole process
 group is killed and the merge is refused `commit_failed` (REQ-WT-004). A value out of range
@@ -896,6 +906,7 @@ num_ctx = 4096
 | `activeai` | its own `ports` and `domain`, `ports` and `domain` of `sessions` (for `block.closed` and the escape-sequence stripper), plus `bus`, which its `ports` import to name `block.suggestion`; never `llmgw`, `agents` or `api`. `cmd/umbrald` implements its `Model` port over the router, always `LocalOnly`, and its `Blocks` port over the block reader (delta `2026-10-active-ai`) |
 | `hunks` | stdlib only: a leaf that `worktrees/domain`, the agents runtime, `tools/adapters` and `api` read diffs through, so a worktree's diff and an approval's give the same id to the same hunk (delta `2026-10-hunks-file-tree`) |
 | `handoff` | stdlib and `golang.org/x/sys` only: a leaf that moves frames and descriptors and knows nothing of what they are. Only `cmd/umbrald` imports it, which owns the steps and every module a handoff touches (delta `2026-10-pty-handoff`) |
+| `remote` | its own `ports` and `domain`, plus `bus`, which its `ports` import to name `remote.state_changed`; its adapters run the `ssh` binary and use `store`. It imports no other module. `api` imports the `ports` and `domain` of `remote`: the relay — routing by `host/` ids, a connection per client and host, ids prefixed back — lives in `api`, the only package that knows the wire format, and `cmd/umbrald` probes a host's daemon through `client` (delta `2026-10-remote-hosts`) |
 | `slots` | stdlib only: the arrival-order semaphore of the runtime's turn slots and the router's per-provider queues (T-F2-04). `agents` and `llmgw` may import it, so neither reaches the other through it |
 | `obs` | stdlib, and OpenTelemetry from T-F1-18; imported only by `cmd/*`. Modules count through a port of their own, which `cmd/umbrald` gives the `obs` implementation (delta `2026-10-tool-call-repair`) |
 | `cmd/*` | everything |
@@ -1050,7 +1061,8 @@ allows it as in `normal`.
   `2026-10-skill-catalog`); `umb worktree merge` or `discard`, so it cannot land or drop its own
   work without the user's review (delta `2026-10-worktree-methods`); `umb rules key add`, `rotate`
   or `remove`, `rollback` or `reset`, and `umb mcp remove`, so it cannot change the rules that
-  decide for it or drop a server the user added. The daemon refuses all of these `umb` methods to
+  decide for it or drop a server the user added; `umb remote add` or `remove`, so it cannot change
+  which machines the daemon reaches (delta `2026-10-remote-hosts`). The daemon refuses all of these `umb` methods to
   an agent's terminal whatever the line looks like; the patterns ask for what escapes that check
   (delta `2026-10-rules-mcp-patterns`). A rule bundle replaces it (REQ-SEC-010).
 - **MCP tools are `Network`**, whatever their transport and whatever the server says of them:
@@ -2164,3 +2176,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.81 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-wails-icons` (T-PKG-04): §9.3 the Windows resource objects generated from the kit's icon and checked, the executable's check moved to T-F2-50; the window id read from the live window |
 | 1.82 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-pty-handoff` (T-F2-40): §5.2 the `handoff` leaf; DD-014 the live handoff over `handoff.sock`, its steps, what the new daemon skips, and the resume on failure; T-F2-42 for the clients' reconnection |
 | 1.83 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-client-reconnect` (T-F2-42): §5.3h and DD-014 the TUI and the desktop follow their daemon across a handoff through `client.Redial` and attach every pane again from a fresh snapshot |
+| 1.84 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-remote-hosts` (T-F2-41): §3 and §5.2 the `remote` module; §5.1 `[remote]` and the forwarded sockets; the relay lives in `api` (API §5.44); §5.3's destructive list gains `umb_remote_change` |

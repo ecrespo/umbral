@@ -256,6 +256,10 @@ func TestDestructiveAlwaysAsk_REQ_SEC_005(t *testing.T) {
 		"umb mcp remove x",
 		"umb --socket /s mcp remove x",
 		"sudo umb mcp remove x",
+		// Changing the machines the daemon reaches (delta `2026-10-remote-hosts`).
+		"umb remote add nas ssh://me@nas",
+		"umb --socket /s remote remove nas",
+		`sh -c "umb remote add evil ssh://evil"`,
 	}
 	allowEverything := []Rule{allowRule("*", "*")}
 	for _, cmd := range destructive {
@@ -297,6 +301,8 @@ func TestDestructiveAlwaysAsk_REQ_SEC_005(t *testing.T) {
 		"umb skill show x --body",
 		"umb skill disable x",
 		"umb mcp list",
+		"umb remote list",
+		"umb remote endpoint",
 		"echo umb skill install x",
 		"umb rules status",
 		"umb rules key list",

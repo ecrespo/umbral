@@ -30,6 +30,8 @@ Each added column carries its own `CHECK`. SQLite accepts a `CHECK` in `ADD COLU
 
 Migration `0008_full_auto` keeps the flag from outliving its worktree: its triggers clear `full_auto` in the write that moves a worktree out of `active` or takes it from its thread ([[internal/store/migration0008_test.go#TestALeftWorktreeClearsFullAuto_REQ_ORC_004]]), and [[internal/agents/adapters/threadstore/threadstore.go#Store#UpdateThread]] sets it only while the worktree row is `active`.
 
+Migration `0009_remotes` holds a remote host's name and URL only; its link state is in memory and the remote daemon's token is never stored. The name's `CHECK` keeps out a `/`, since it prefixes every id the host hands out through the relay ([[internal/remote/adapters/hoststore/hoststore_test.go#TestMigration0009Constraints_REQ_RMT_001]]).
+
 `threads.workspace_id` is written at creation and must name a workspace; `threads.worktree_id` records the thread's latest worktree whatever its state, set by [[internal/agents/adapters/threadstore/threadstore.go#Store#SetWorktree]]. Whether a turn runs in it is the `worktrees` row's state, not this column.
 
 `threads.agent` and `threads.egress_visibility` are written at creation by [[internal/agents/adapters/threadstore/threadstore.go#Store#CreateThread]]: a hosted thread names its entry and is `unobserved`, every other `observed`. [[internal/agents/adapters/threadstore/threadstore.go#Store#SaveToolCall]] writes `tool_calls.via` and `decision` on every row, so `NULL` in either still means a row from before 0007.

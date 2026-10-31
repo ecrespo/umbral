@@ -70,6 +70,7 @@ components:
   # The MCP client (T-F1-17), for the same reason: the manager orchestrates the module's own
   # ports — the store, the SDK connector, the secrets, and the sink its tools go to.
   mcp-service: { in: internal/mcp }
+  remote-service: { in: internal/remote }
 
   waits-service: { in: internal/waits }
 
@@ -167,6 +168,9 @@ components:
   mcp-domain:   { in: internal/mcp/domain }
   mcp-ports:    { in: internal/mcp/ports }
   mcp-adapters: { in: internal/mcp/adapters/** }
+  remote-domain:   { in: internal/remote/domain }
+  remote-ports:    { in: internal/remote/ports }
+  remote-adapters: { in: internal/remote/adapters/** }
 
   waits-domain: { in: internal/waits/domain }
   worktrees-domain:   { in: internal/worktrees/domain }
@@ -251,6 +255,15 @@ deps:
     mayDependOn:
       - llmgw-domain
 
+  # The remote domain imports nothing but the standard library (T-F2-41); the allowance is
+  # unused, as mcp-domain's is.
+  # go-arch-lint refuses a component with no entry at all; remote's domain imports no other
+  # domain, and this one is the placeholder mcp-domain also carries.
+  remote-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - llmgw-domain
+
   # --- ports: domain types only; no infrastructure, no external libraries -----
   sessions-ports:
     anyVendorDeps: false
@@ -319,6 +332,12 @@ deps:
       - bus
       - mcp-domain
       - llmgw-domain
+
+  remote-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - bus
+      - remote-domain
 
   # --- adapters: its own ports, infrastructure and external libraries ---------
   # sessions and llmgw never reach the agent runtime (Tech Design §5.2).
@@ -488,6 +507,9 @@ deps:
       - workspaces-domain
       - mcp-ports
       - mcp-domain
+      # remote.* and the relay (T-F2-41).
+      - remote-ports
+      - remote-domain
       - waits-ports
       - waits-domain
       # block.suggestion (T-F2-22).
@@ -574,6 +596,22 @@ deps:
       - mcp-ports
       - mcp-domain
       - bus
+
+  # The links to remote daemons (T-F2-41): one supervisor per host over its ports.
+  remote-service:
+    anyVendorDeps: false
+    mayDependOn:
+      - remote-ports
+      - remote-domain
+      - bus
+
+  # The store over `remotes`, and the ssh tunnels with the fake ssh their tests build.
+  remote-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - remote-ports
+      - remote-domain
+      - store
 
   sessions-service:
     anyVendorDeps: true
@@ -673,6 +711,11 @@ deps:
       - acp-domain
       # The live handoff of a running daemon's sessions (T-F2-40).
       - handoff
+      # Remote daemons over ssh (T-F2-41).
+      - remote-service
+      - remote-ports
+      - remote-adapters
+      - remote-domain
 
 
   # --- the workspace tree (Tech Design §5.2) ----------------------------------

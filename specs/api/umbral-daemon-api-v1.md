@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.57 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.58 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -126,7 +126,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove`, `agent.explain`, `model.route`, `worktree.list`, `worktree.get`, `worktree.diff`, `worktree.merge`, `worktree.discard`, `worktree.files`, `worktree.read_file` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove`, `remote.list`, `remote.add`, `remote.remove`, `agent.explain`, `model.route`, `worktree.list`, `worktree.get`, `worktree.diff`, `worktree.merge`, `worktree.discard`, `worktree.files`, `worktree.read_file` |
 
 ### An agent's terminal
 
@@ -140,6 +140,7 @@ outside its terminal, with `PERMISSION_DENIED`, whatever its kind (REQ-ORC-004, 
 `worktree.merge`, `worktree.discard`, `worktree.close_group`, `worktree.reject_hunks`,
 `worktree.write_file`, `approval.respond`, `thread.update`,
 `skill.install`, `skill.set_enabled`, `skill.remove`, `mcp.server.add`, `mcp.server.remove`,
+`remote.add`, `remote.remove`,
 `rules.key.add`, `rules.key.remove`, `rules.key.rotate`, `rules.rollback`, `rules.reset`,
 `session.input`, `thread.take_over`, `thread.hand_back` (REQ-FTU-002: an agent must not hand its
 own terminal back to itself), and every method that starts a process — `session.create`, `pane.split`,
@@ -487,6 +488,15 @@ method and the ordering that produced it, so one handed to a different method is
 - `transport`: `stdio` | `http`
 - `trust`: `trusted` | `untrusted`
 - `state`: `connecting` | `connected` | `unavailable` | `disabled`
+
+### RemoteHost
+```json
+{"name":"nas","url":"ssh://me@nas.local","state":"connected","last_error":null,"created_at":1761900000000}
+```
+- `name`: 1–32 of `[a-z0-9-]`, starting with a letter; unique, and the prefix of every id the
+  host's daemon hands out through this one (§5.44)
+- `url`: `ssh://[user@]host[:port]` — ssh only, no password, no path
+- `state`: `connecting` | `connected` | `disconnected`; `last_error` says why it is not connected
 
 ### Skill
 ```json
@@ -1470,6 +1480,68 @@ terminal (§2).
 - The daemon never reads the chord from `session.input`: a byte sequence there could be typed or
   echoed by a program (delta `2026-10-terminal-interact`).
 
+### 5.44 `remote.list` / `remote.add` / `remote.remove` — REQ-RMT-001, REQ-RMT-002, REQ-RMT-003
+
+Remote daemons, reached over ssh, and the relay to them (capability `federation`, delta
+`2026-10-remote-hosts`). For `tui`, `desktop` and `cli`; `add` and `remove` are refused to an
+agent's terminal (§2).
+
+`list` params: `{}`. **Result:** `{items: RemoteHost[]}`, by name.
+
+`add` params: `{name, url}`. **Result:** the `RemoteHost`, `connecting`.
+
+`remove` params: `{name}`. **Result:** `{}`.
+
+- **The link.** For each host the daemon runs `ssh … -- [user@]host umb remote endpoint`, which
+  starts the remote daemon if need be and prints `{"socket", "token"}`, then
+  `ssh -N -L <local>:<socket>` with `BatchMode`, `ExitOnForwardFailure`, `StreamLocalBindUnlink`
+  and `StreamLocalBindMask=0177`: the remote daemon's Unix socket is forwarded to
+  `remotes/<name>.<pid>.sock` beside this one's, 0600. Both calls take `ControlMaster=no` and
+  `ControlPath=none`, so no shared master carries a forward past its end, and the endpoint call
+  takes `ClearAllForwardings=yes`. Neither opens a TCP port; a `LocalForward`, `RemoteForward` or
+  `DynamicForward` the user's own ssh config gives the host still applies to the forward, which
+  the daemon cannot clear without clearing its own `-L`. ssh opens the remote socket per
+  connection, so a forward that started says nothing of the remote daemon: the host is
+  `connected` only once a handshake with its daemon through the forward succeeds. The token is
+  asked for at every link (each relayed connection over it reuses it) and kept in memory only.
+  `[remote] ssh` and `[remote] umb` in `config.toml` name the two programs. A link that ends is
+  `disconnected` with its reason and tried again after 1, 2, 4, 8, 16, then every 30 s; one
+  host's link is independent of every other's (REQ-RMT-002). On Linux ssh ends with the daemon
+  that started it; elsewhere a daemon killed with `kill -9` leaves its forwards until their link
+  drops, and the next daemon removes their sockets. A name whose forwarded socket path would pass
+  103 bytes is `VALIDATION_ERROR`.
+- **Relaying.** A request whose `host` member names a host, or whose id members hold `name/…`
+  for a known host, is sent to that host's daemon with the member, or the prefix, taken off; its
+  answer and the host's notifications on that connection come back with every id prefixed
+  `name/` and each `Workspace`'s label as `name: label`. Id members are `id`, `workspace` and
+  every `*_id` and `*_ids`, at any depth, except `client_msg_id`, `connection_id`, `trace_id`,
+  `model_id` and `provider_id`; a `Model`'s own `id` is prefixed like any other, and a
+  `model_id` sent to a host is the host's catalog id as written. Ids are not unique across
+  daemons, so a request routed by a prefixed id may not also carry an unprefixed one; under a
+  `host` member every id is the host's as written. Each client connection gets its own connection
+  to the host, opened on first use, authenticated with the host's token and the client's own
+  kind, so the host applies its own §2 allowlist. The host's agent's-terminal check sees sshd,
+  not the client, so it is this daemon's list of `userOnly` methods (§2) that an agent's terminal
+  is refused through the relay, checked before relaying. A relayed notification takes this
+  daemon's envelope `seq` and goes through the connection's queue (§8), output included; a
+  host's `remote.*` and `system.*` notifications are not relayed. Agents, approvals and egress of
+  a host stay on that host: nothing is decided or recorded here (REQ-RMT-003). A method this
+  build does not know is `METHOD_NOT_FOUND` before any relaying.
+- **`session.snapshot`** without a `host` answers this daemon's tree followed by every connected
+  host's, prefixed; its `seq` and `focused` are this daemon's. The hosts are asked at once, and a
+  host that does not answer in 5 s is left out.
+- **A dropped link.** Every session subscribed through it receives `session.unsubscribed` with
+  `reason: "remote_disconnected"` and every call waiting on it `PROVIDER_UNAVAILABLE`; the
+  sessions live on on the host. When the ssh link dropped, `remote.state_changed` announces
+  `disconnected` and later `connected` to every client. When only the relayed connection ended —
+  the host's daemon restarted, handed its panes over or closed it — the ssh link is still up, and
+  the connection that lost it alone receives `remote.state_changed` `connected` once a new
+  connection to the host holds. Either way the client subscribes again on `connected` and gets a
+  fresh snapshot. A request for a host that is not connected is `PROVIDER_UNAVAILABLE`.
+- **Errors.** An invalid name or URL, ids of two daemons in one request, or a `host` that is not
+  a name is `VALIDATION_ERROR`; a name taken is `CONFLICT`; an unknown host, in `remove` or in
+  `host`, is `NOT_FOUND`. An id prefixed with a name that is no host's is this daemon's to judge.
+
 ## 6. Notifications (daemon → client)
 
 | Method | Payload | REQ |
@@ -1491,6 +1563,7 @@ terminal (§2).
 | `context.compacted` | `{thread_id, before_tokens, after_tokens}` | REQ-CTX-004 |
 | `model.health_changed` | `{model_id, health}` | REQ-LLM-003 |
 | `mcp.server_state` | `{name, state, last_error}` | REQ-MCP-003 |
+| `remote.state_changed` | `{name, state, last_error}`: a remote host's link changed (§5.44) | REQ-RMT-002 |
 | `workspace.created` / `.updated` / `.closed` / `.focused` | `Workspace` | REQ-WS-001, REQ-WS-006 |
 | `tab.created` / `.closed` / `.focused` | `Tab` | REQ-WS-001 |
 | `pane.created` / `.updated` / `.closed` / `.focused` | `Pane` — `.updated` also after a written `pane.report_metadata` (§5.32) and when `detected_agent` changes (§5.39) | REQ-WS-003, REQ-INT-004, REQ-XAG-001 |
@@ -1537,7 +1610,7 @@ above it — for the notifications that snapshot actually carries. §5.3 says wh
 
 `stop_reason`: `end_turn` | `cancelled` | `max_steps` | `budget` | `tool_error` | `provider_error` | `storage_error` | `context_overflow` | `agent_error`. `agent_error`: a hosted ACP agent exited, sent a message that is not ACP, or fell silent (REQ-ACP-006, §5.20). `storage_error`: a write failed, so the turn stopped without running or announcing what it could not record (Analyze C-01). `context_overflow`: what must be sent does not fit the model's window even compacted (REQ-CTX-004). Delta `2026-09-agent-runtime`.
 
-`session.unsubscribed`'s `reason`: `slow_client`.
+`session.unsubscribed`'s `reason`: `slow_client`, or `remote_disconnected` for a remote host's session whose link dropped (§5.44): the client subscribes again once `remote.state_changed` says `connected`.
 
 WHEN THE SYSTEM drops a subscription for exceeding the per-client queue limit of §8, THE
 SYSTEM SHALL emit `session.unsubscribed` for that session before it stops delivering. A
@@ -1612,7 +1685,7 @@ stateDiagram-v2
 - **Optional capabilities:** `system.hello` returns the namespaces the daemon **serves** at that
   moment (§2). The protocol's namespaces are `sessions`, `blocks`, `threads`, `mcp`, `models`,
   `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`, `wait_admin`,
-  `rules`, `skills`, `limits`, `config`, `agent_detection` and `worktrees`; `graphics`, `plugins` and `federation` are reserved for later. The §2
+  `rules`, `skills`, `limits`, `config`, `agent_detection`, `worktrees` and `federation` (§5.44); `graphics` and `plugins` are reserved for later. The §2
   example shows the full list and is illustrative: what a given daemon returns is whatever it can
   actually do, which is narrower than what its method table holds whenever a module is absent.
 - **Which error a missing method gets.** A name this build does not know receives
@@ -1710,3 +1783,4 @@ printf '%s\n' \
 | 1.55 | 2026-10-26 | Additive within `protocol_version = 1`. Delta `2026-10-active-ai` (T-F2-22): §6 `block.suggestion` (REQ-AAI-001) |
 | 1.56 | 2026-10-26 | Additive within `protocol_version = 1`. Delta `2026-10-hunks-file-tree` (T-F2-31): §5.41 `worktree.reject_hunks`, `files`, `read_file`, `write_file`; §4 `Approval`'s `hunks` and `hunks_selectable`; §5.25 `hunks`; §2 (REQ-DSK-002, REQ-DSK-003) |
 | 1.57 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-pty-handoff` (T-F2-40): §6 `session.exited`'s `exit_code` may be `null` after a live handoff. The handoff itself travels on `handoff.sock`, outside this protocol |
+| 1.58 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-remote-hosts` (T-F2-41): §5.44 `remote.list`, `add`, `remove` and the relay to remote daemons over ssh; §4 `RemoteHost`; §6 `remote.state_changed` and `session.unsubscribed`'s `remote_disconnected`; §2 `cli` row and an agent's terminal; §9 `federation` served (REQ-RMT-001, REQ-RMT-002, REQ-RMT-003) |

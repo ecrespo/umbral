@@ -560,6 +560,7 @@ func toEvent(n client.Notification) (ports.Event, bool) {
 		return ports.Event{
 			Kind:      ports.EventUnsubscribed,
 			SessionID: p.SessionID,
+			Reason:    p.Reason,
 			Err:       fmt.Errorf("the daemon dropped the subscription: %s", p.Reason),
 		}, true
 
@@ -612,6 +613,16 @@ func toEvent(n client.Notification) (ports.Event, bool) {
 
 	case "mcp.server_state":
 		return ports.Event{Kind: ports.EventMcpServerState}, true
+
+	case "remote.state_changed":
+		var p struct {
+			Name  string `json:"name"`
+			State string `json:"state"`
+		}
+		if err := n.Decode(&p); err != nil || p.Name == "" {
+			return ports.Event{}, false
+		}
+		return ports.Event{Kind: ports.EventRemoteState, Host: p.Name, Status: p.State}, true
 
 	case "thread.attention_changed":
 		var p struct {

@@ -19,6 +19,8 @@ import (
 type fakeDaemon struct {
 	mu       sync.Mutex
 	sessions int
+	// idPrefix makes the sessions it creates a remote host's, as the relay names them.
+	idPrefix string
 	blocks   map[string][]sessdomain.Block
 	input    [][]byte
 	inputIDs []string
@@ -67,7 +69,7 @@ func (f *fakeDaemon) CreateSession(_ context.Context, size sessdomain.Size) (ses
 	defer f.mu.Unlock()
 	f.sessions++
 	return sessdomain.Session{
-		ID:    sessionID(f.sessions),
+		ID:    f.idPrefix + sessionID(f.sessions),
 		CWD:   "/work",
 		Size:  size,
 		State: sessdomain.StateAlive,
@@ -605,5 +607,41 @@ func TestAPostedNotificationIsShown_REQ_NTF_001(t *testing.T) {
 	}})
 	if got := h.m.Status(); !strings.Contains(got, "claude needs you") || !strings.Contains(got, "approve the edit?") {
 		t.Errorf("status = %q, want the notification's title and body", got)
+	}
+}
+
+// TestARemoteHostsPanesWaitForItAndResume_REQ_RMT_002: a pane of a remote host whose link
+// dropped is not subscribed again at once, which would only fail, and is attached from a fresh
+// snapshot when the host is back; another host coming back leaves it alone.
+func TestARemoteHostsPanesWaitForItAndResume_REQ_RMT_002(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.daemon.idPrefix = "nas/"
+	h.openSession()
+	remote := "nas/" + sessionID(1)
+	h.daemon.mu.Lock()
+	h.daemon.subscribed = nil
+	h.daemon.mu.Unlock()
+
+	h.step(daemonEventMsg{event: ports.Event{Kind: ports.EventUnsubscribed, SessionID: remote, Reason: "remote_disconnected"}})
+	h.step(daemonEventMsg{event: ports.Event{Kind: ports.EventRemoteState, Host: "nas", Status: "disconnected"}})
+	h.step(daemonEventMsg{event: ports.Event{Kind: ports.EventRemoteState, Host: "box", Status: "connected"}})
+	h.daemon.mu.Lock()
+	early := append([]string(nil), h.daemon.subscribed...)
+	h.daemon.mu.Unlock()
+	if len(early) != 0 {
+		t.Fatalf("subscribed %v before nas was back", early)
+	}
+	if !strings.Contains(h.m.Status(), "nas disconnected") {
+		t.Errorf("status = %q, want it to say nas is disconnected", h.m.Status())
+	}
+
+	h.step(daemonEventMsg{event: ports.Event{Kind: ports.EventRemoteState, Host: "nas", Status: "connected"}})
+	h.daemon.mu.Lock()
+	got := append([]string(nil), h.daemon.subscribed...)
+	h.daemon.mu.Unlock()
+	if !slices.Equal(got, []string{remote}) {
+		t.Fatalf("after nas came back the panes attached were %v, want [%s]", got, remote)
 	}
 }

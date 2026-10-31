@@ -218,6 +218,10 @@ const (
 	// EventBlockSuggestion is a local model's one line for a failed block
 	// (`block.suggestion`, REQ-AAI-001): BlockID and SessionID, and Text.
 	EventBlockSuggestion
+	// EventRemoteState is a remote host's link changing (`remote.state_changed`,
+	// REQ-RMT-002): Host and Status, its state. Panes of a host that comes back are attached
+	// again.
+	EventRemoteState
 )
 
 // Event is one thing that happened, flattened so the model does not decode JSON.
@@ -233,6 +237,10 @@ type Event struct {
 	Seq uint64
 	// Err is why the connection ended, for EventDisconnected.
 	Err error
+	// Reason is why a subscription was dropped, for EventUnsubscribed.
+	Reason string
+	// Host is the remote host, for EventRemoteState.
+	Host string
 	// CWD is where a closed block's command ran, for EventBlockClosed.
 	CWD string
 	// BlockID is the closed block, for EventBlockClosed, and the block a suggestion is for, for

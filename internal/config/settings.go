@@ -65,6 +65,18 @@ type Settings struct {
 	// ActiveAI is `[active_ai]`: one-line suggestions on failed blocks from a local model
 	// (REQ-AAI-001). Off by default. Read at start.
 	ActiveAI ActiveAI
+	// Remote is `[remote]`: how remote daemons are reached over ssh (REQ-RMT-001). Read at
+	// start.
+	Remote Remote
+}
+
+// Remote is `[remote]` (delta `2026-10-remote-hosts`).
+type Remote struct {
+	// SSH is `ssh`: the ssh binary, "ssh" on PATH by default.
+	SSH string
+	// Umb is `umb`: the command the remote side runs to answer its endpoint, "umb" by default.
+	// ssh hands it to the remote user's shell.
+	Umb string
 }
 
 // ActiveAI is `[active_ai]` (delta `2026-10-active-ai`).
@@ -296,6 +308,16 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 					ErrSettingsInvalid, path, value)
 			}
 			settings.ActiveAI.Enabled = on
+		case "remote.ssh", "remote.umb":
+			if value == "" || strings.ContainsAny(value, "\n\r\x00") || strings.HasPrefix(value, "-") {
+				return Settings{}, fmt.Errorf("%w: %s: %s must be a command, not empty or an option",
+					ErrSettingsInvalid, path, key)
+			}
+			if key == "remote.ssh" {
+				settings.Remote.SSH = value
+			} else {
+				settings.Remote.Umb = value
+			}
 		case "active_ai.per_minute":
 			n, err := strconv.Atoi(value)
 			if err != nil || n < MinActiveAIPerMinute || n > MaxActiveAIPerMinute {

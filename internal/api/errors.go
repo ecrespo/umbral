@@ -167,6 +167,7 @@ var moduleErrors = []func(error) (int, string, bool){
 	rulesDomainError,
 	skillsDomainError,
 	worktreesDomainError,
+	remoteDomainError,
 }
 
 // workspaceDomainError maps the workspace tree's sentinels onto the §5.4 table.

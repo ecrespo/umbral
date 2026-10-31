@@ -530,7 +530,20 @@ wails.Events.On("daemon", (ev) => {
   if (threadChanged && state.view === "threads" && !state.thread) renderView();
   if (n.method === "session.unsubscribed") {
     const t = state.attached.get(n.params.session_id);
-    if (t) bridge("Attach", n.params.session_id, t.cols, t.rows).catch(failed);
+    // A remote host's link dropped (REQ-RMT-002): its terminal attaches again when the host is
+    // back, which remote.state_changed says.
+    if (n.params.reason === "remote_disconnected") status(`remote host ${n.params.session_id.split("/")[0]} disconnected; waiting for it`, true);
+    else if (t) bridge("Attach", n.params.session_id, t.cols, t.rows).catch(failed);
+  }
+  if (n.method === "remote.state_changed") {
+    if (n.params.state === "connected") {
+      for (const [id, t] of state.attached) {
+        if (id.startsWith(n.params.name + "/") && t.cols && t.rows) bridge("Attach", id, t.cols, t.rows).catch(failed);
+      }
+    } else if (n.params.state === "disconnected") {
+      status(`remote host ${n.params.name} disconnected; waiting for it`, true);
+    }
+    refresh();
   }
   if (n.method === "thread.delta" && n.params.thread_id === state.thread && n.params.kind !== "reasoning") {
     const log = state.transcript.get(state.thread) ?? [];

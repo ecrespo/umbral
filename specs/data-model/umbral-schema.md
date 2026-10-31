@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.26 |
-| **Date** | 2026-10-24 |
+| **Version** | 1.27 |
+| **Date** | 2026-10-31 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
 | **Related Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -744,6 +744,24 @@ CREATE TABLE mcp_servers (
 );
 ```
 
+### 2.14 `remotes` (migration 0009)
+
+The remote hosts the user added (REQ-RMT-001, delta `2026-10-remote-hosts`). A host is its name
+and URL only: its link state lives in the daemon's memory, and the remote daemon's token is asked
+for over ssh at each connection and never stored. The name prefixes every id the host's daemon
+hands out through this one (`nas/w1:p2`, API §5.44), so it holds no `/`.
+
+```sql
+CREATE TABLE remotes (
+  name       TEXT PRIMARY KEY CHECK (
+               length(name) BETWEEN 1 AND 32
+               AND substr(name, 1, 1) BETWEEN 'a' AND 'z'
+               AND name NOT GLOB '*[^a-z0-9-]*'),
+  url        TEXT NOT NULL CHECK (url LIKE 'ssh://_%'),
+  created_at INTEGER NOT NULL
+);
+```
+
 ## 3. Indexes ↔ queries
 
 | Query (API / Tech Design) | Index |
@@ -827,6 +845,7 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 | `0006_rule_state.sql` | F1 | `rule_bundles.content`, `rule_rejections`, `rule_update_state` and its one row, `trust_key_events` and `idx_trust_key_events_at` (§2.4e) — the state signed rule bundles need (T-F1-30) |
 | `0007_orchestration.sql` | F2 | `worktrees` and its three indexes (§2.4g); `threads.full_auto`, `queued`, `worktree_id`, `workspace_id`, `agent`, `egress_visibility` (§2.5); `tool_calls.via`, `decision` (§2.7); `blocks.via` (§2.2). No table rebuilt (T-F2-01) |
 | `0008_full_auto.sql` | F2 | The triggers `worktrees_leave_full_auto` and `threads_full_auto_needs_worktree` (§2.5): `full_auto` never outlives an active worktree (T-F2-05) |
+| `0009_remotes.sql` | F2 | `remotes` (§2.14): the remote hosts reached over ssh (T-F2-41) |
 
 `threads` belongs to 0001 even though the agent arrives in F1: `sessions.owner_thread_id` and
 `blocks.thread_id` point at it, and with `foreign_keys=ON` SQLite rejects every insert into those
@@ -909,3 +928,4 @@ earlier drafts named.
 | 1.24 | 2026-10-22 | delta `2026-10-orchestration-schema` (T-F2-01): migration `0007_orchestration` — §2.4g `worktrees`, the F2 columns of §2.5, §2.7 and §2.2 with their `CHECK`s in the `ALTER` (§2.5 corrects the claim that SQLite cannot add one), §5's 0007 row, §6 step 3 recovers a queued turn |
 | 1.25 | 2026-10-23 | delta `2026-10-full-auto` (T-F2-05): migration `0008_full_auto` — §2.5's two triggers that clear `full_auto` when its worktree leaves `active`, and §5's 0008 row |
 | 1.26 | 2026-10-24 | delta `2026-10-acp-mediation` (T-F2-08): §2.2 — an ACP terminal's block lives in a session of its own, owned by the thread; no schema change |
+| 1.27 | 2026-10-31 | delta `2026-10-remote-hosts` (T-F2-41): migration `0009_remotes` — §2.14 `remotes`, §5's 0009 row |
