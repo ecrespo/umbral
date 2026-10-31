@@ -3,6 +3,7 @@ package pty
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"testing"
 	"time"
@@ -28,7 +29,8 @@ func open(t *testing.T, script string) ports.PTY {
 	return p
 }
 
-// readAll reads until the PTY's end of output, failing on anything but a clean end.
+// readAll reads until the PTY's end of output, failing on anything but a clean end: no
+// bytes on Linux, whose EIO Read translates, and io.EOF on macOS.
 func readAll(t *testing.T, p ports.PTY) []byte {
 	t.Helper()
 	var out bytes.Buffer
@@ -36,6 +38,9 @@ func readAll(t *testing.T, p ports.PTY) []byte {
 	for {
 		n, err := p.Read(buf)
 		out.Write(buf[:n])
+		if errors.Is(err, io.EOF) {
+			return out.Bytes()
+		}
 		if err != nil {
 			t.Fatalf("read: %v", err)
 		}

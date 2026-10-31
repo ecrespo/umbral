@@ -149,6 +149,19 @@ func counter(n int) (command, transcript string) {
 	return fmt.Sprintf("for i in $(seq 1 %d); do echo c$i; sleep 0.05; done\n", n), b.String()
 }
 
+// counted is the counter's own lines in a block's output. The shell may print something of
+// its own between them — bash on macOS reports a `setpgid` race of its job control as a line
+// — which says nothing about whether a line was lost.
+func counted(output string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(output, "\n") {
+		if len(line) > 1 && line[0] == 'c' && strings.Trim(line[1:], "0123456789") == "" {
+			b.WriteString(line + "\n")
+		}
+	}
+	return b.String()
+}
+
 // sessionRow is a session as `session.list` reports it.
 type sessionRow struct {
 	ID       string `json:"id"`
@@ -257,7 +270,7 @@ func TestHandoffKeepsLivePanes_REQ_HND_001(t *testing.T) {
 	if b.State != "finished" || b.ExitCode == nil || *b.ExitCode != 0 {
 		t.Errorf("the counter's block is %s with %v, want finished with 0", b.State, b.ExitCode)
 	}
-	if !strings.Contains(b.OutputPlain, transcript) {
+	if counted(b.OutputPlain) != transcript {
 		t.Errorf("the counter's transcript across the handoff is %q, want every line", b.OutputPlain)
 	}
 
@@ -314,7 +327,7 @@ func TestHandoffFailureKeepsTheOldDaemon_REQ_HND_002(t *testing.T) {
 	if b.State != "finished" || b.ExitCode == nil || *b.ExitCode != 0 {
 		t.Errorf("the counter's block is %s with %v, want finished with 0", b.State, b.ExitCode)
 	}
-	if !strings.Contains(b.OutputPlain, transcript) {
+	if counted(b.OutputPlain) != transcript {
 		t.Errorf("across seven failed handoffs the transcript is %q, want every line", b.OutputPlain)
 	}
 }
