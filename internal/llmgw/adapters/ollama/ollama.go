@@ -262,7 +262,6 @@ type chatChunk struct {
 // maxLine bounds one NDJSON line; a tool call's arguments are the largest thing in one.
 const maxLine = 16 << 20
 
-// Stream implements ports.Provider.
 // ollamaError is an error Ollama reported, before the stream or in it. Its parser failing to read
 // the tool call the model wrote is the model's invalid call, not the provider's failure, and is
 // marked ErrMalformedToolCall (delta `2026-10-usf2-002-live`).
@@ -273,6 +272,7 @@ func ollamaError(detail string) error {
 	return errors.New(detail)
 }
 
+// Stream implements ports.Provider.
 func (p *Provider) Stream(ctx context.Context, req domain.Request) (iter.Seq2[domain.Event, error], error) {
 	body, err := p.request(req)
 	if err != nil {
