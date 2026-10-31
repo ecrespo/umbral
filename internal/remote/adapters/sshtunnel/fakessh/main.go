@@ -1,3 +1,5 @@
+//go:build unix
+
 // Command fakessh stands in for ssh in the remote module's tests. It understands the two command
 // lines sshtunnel runs:
 //
@@ -9,8 +11,6 @@
 //
 // FAKESSH_LOG appends each argv, FAKESSH_PIDDIR records a forward's pid as <host>.<pid>, and a
 // host named in FAKESSH_REFUSE is refused as an unreachable one is.
-//go:build unix
-
 package main
 
 import (

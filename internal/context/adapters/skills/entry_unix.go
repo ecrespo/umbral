@@ -7,11 +7,10 @@ import (
 	"syscall"
 )
 
-// hardlinked reports whether the file has another name somewhere.
-func hardlinked(info os.FileInfo) bool {
-	//nolint:unconvert // Nlink is uint64 on Linux and uint16 on macOS
+// hasOtherNames reports whether the file has another name somewhere: a hardlink.
+func hasOtherNames(info os.FileInfo) bool {
 	st, ok := info.Sys().(*syscall.Stat_t)
-	return ok && uint64(st.Nlink) > 1
+	return ok && uint64(st.Nlink) > 1 //nolint:unconvert // Nlink is uint64 on Linux and uint16 on macOS
 }
 
 // openEntry opens a bundle entry for reading. O_NOFOLLOW and O_NONBLOCK: a file swapped for a

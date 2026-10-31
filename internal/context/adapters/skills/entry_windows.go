@@ -7,9 +7,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// hardlinked is decided on the open handle on Windows, in openEntry: FileInfo carries no link
+// hasOtherNames is decided on the open handle on Windows, in openEntry: FileInfo carries no link
 // count there.
-func hardlinked(os.FileInfo) bool { return false }
+func hasOtherNames(os.FileInfo) bool { return false }
 
 // openEntry opens a bundle entry for reading without following a reparse point, and refuses one
 // that is a reparse point (a symlink or junction swapped in) or has another name (delta

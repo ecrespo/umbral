@@ -209,17 +209,37 @@ jobs:
       run:
         shell: bash
     steps:
+      # Test data is compared byte for byte; a checkout that turns LF into CRLF changes it.
+      - run: git config --global core.autocrlf false
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
       # The packages that render a terminal link libghostty through cgo; until it is built for
       # Windows (layer 3 of delta `2026-10-windows-port`) every other package is built and tested
-      # here, with the race detector, which needs cgo and the runner's MinGW gcc.
+      # here, with the race detector, which needs cgo and the runner's MinGW gcc. `pending` lists
+      # the packages a later layer ports, each beside its layer, and each layer removes its own;
+      # remote hosts are not supported on Windows (decision 11), so theirs stay out.
       - name: Test every package that does not link libghostty
         run: |
+          pending='
+          github.com/ecrespo/umbral/internal/sessions                       layer 3: ConPTY
+          github.com/ecrespo/umbral/internal/sessions/adapters/shellinteg   layer 3: pwsh bootstrap
+          github.com/ecrespo/umbral/internal/agents                         layer 4: Windows paths
+          github.com/ecrespo/umbral/internal/security                       layer 4: Windows paths
+          github.com/ecrespo/umbral/internal/security/domain                layer 4: Windows paths
+          github.com/ecrespo/umbral/internal/tools/adapters/builtin         layer 4: Windows paths
+          github.com/ecrespo/umbral/internal/tools/adapters/registry        layer 4: Windows paths
+          github.com/ecrespo/umbral/internal/llmgw/adapters/yzma            layer 4: Windows paths
+          github.com/ecrespo/umbral/internal/context/adapters/local         layer 4: git without sh
+          github.com/ecrespo/umbral/internal/context/adapters/skills        layer 4: skill store
+          github.com/ecrespo/umbral/internal/worktrees/integration          layer 4: git without sh
+          github.com/ecrespo/umbral/internal/remote                         unsupported: decision 11
+          github.com/ecrespo/umbral/internal/remote/adapters/sshtunnel      unsupported: decision 11
+          '
+          skip=$(printf '%s\n' "$pending" | awk 'NF {print $1}')
           cgo=$(go list -test -f '{{.ImportPath}} {{join .Deps " "}}' ./... | grep 'go.mitchellh.com/libghostty' | cut -d' ' -f1 | sed 's/_test$//' | sort -u)
-          pkgs=$(go list ./... | grep -vxF "$cgo")
+          pkgs=$(go list ./... | grep -vxF "$cgo" | grep -vxF "$skip")
           CGO_ENABLED=1 go test -race $pkgs
 
   test:

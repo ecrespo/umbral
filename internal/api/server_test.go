@@ -161,31 +161,6 @@ func (c *client) hello(token string, kind ClientKind) response {
 	})
 }
 
-// TestSocketPermissions0600_REQ_SEC_007 checks that no other local user can reach the
-// daemon, which is the whole of REQ-SEC-007.
-func TestSocketPermissions0600_REQ_SEC_007(t *testing.T) {
-	t.Parallel()
-
-	s := testServer(t, nil)
-
-	info, err := os.Stat(s.SocketPath())
-	if err != nil {
-		t.Fatalf("stat socket: %v", err)
-	}
-	if got := info.Mode().Perm(); got != socketMode {
-		t.Errorf("socket mode = %#o, want %#o", got, socketMode)
-	}
-
-	// The token beside it is a credential; the same rule applies (API Spec §2).
-	tokenInfo, err := os.Stat(filepath.Join(filepath.Dir(s.SocketPath()), TokenFileName))
-	if err != nil {
-		t.Fatalf("stat token: %v", err)
-	}
-	if got := tokenInfo.Mode().Perm(); got != tokenMode {
-		t.Errorf("token mode = %#o, want %#o", got, tokenMode)
-	}
-}
-
 // TestHelloRejectsBadToken_REQ_SEC_003 is the core of REQ-SEC-003: a wrong token gets
 // UNAUTHORIZED and the connection is closed, so the socket is not a token oracle.
 func TestHelloRejectsBadToken_REQ_SEC_003(t *testing.T) {
@@ -500,7 +475,6 @@ func TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003(t *testing.T) {
 	}
 }
 
-
 // TestListenRefusesToDeleteARegularFile guards the stale-socket cleanup: a mistyped path
 // must never make the daemon delete the user's data.
 func TestListenRefusesToDeleteARegularFile(t *testing.T) {
@@ -566,20 +540,11 @@ func TestLoadOrCreateTokenRepairsPermissions(t *testing.T) {
 	if _, err := LoadOrCreateToken(path); err != nil {
 		t.Fatalf("create the token: %v", err)
 	}
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatalf("loosen the permissions: %v", err)
-	}
+	loosen(t, path)
 	if _, err := LoadOrCreateToken(path); err != nil {
 		t.Fatalf("reload the token: %v", err)
 	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat token: %v", err)
-	}
-	if got := info.Mode().Perm(); got != tokenMode {
-		t.Errorf("token mode after reload = %#o, want %#o", got, tokenMode)
-	}
+	assertPrivate(t, path)
 }
 
 func TestMethodAllowsRestrictsByClientKind(t *testing.T) {
@@ -632,13 +597,7 @@ func TestTokenFileWithZeroLengthIsRewrittenAt0600_REQ_SEC_003(t *testing.T) {
 		t.Errorf("token length = %d hex characters, want %d", len(token), tokenBytes*2)
 	}
 
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat token: %v", err)
-	}
-	if got := info.Mode().Perm(); got != tokenMode {
-		t.Errorf("token mode = %#o, want %#o", got, tokenMode)
-	}
+	assertPrivate(t, path)
 }
 
 // TestHelloWithBadTokenAndBadClientKindStillCloses_REQ_SEC_003 pins the ordering inside

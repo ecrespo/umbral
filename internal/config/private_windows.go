@@ -22,10 +22,40 @@ func verifyPrivateDir(dir string) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("config: %s exists and is not a directory", dir)
 	}
-	sd, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+	return verifyPrivateACL(dir)
+}
+
+// ProtectPrivateFile replaces path's access list with a protected one that admits the current
+// user only, then reads it back. It is Windows' 0600: a token whose DACL was inherited from its
+// directory is only as private as whatever that directory allows (REQ-SEC-003, REQ-WIN-001).
+func ProtectPrivateFile(path string) error {
+	me, err := currentUserSID()
+	if err != nil {
+		return err
+	}
+	sd, err := windows.SecurityDescriptorFromString("D:P(A;;GA;;;" + me.String() + ")")
+	if err != nil {
+		return fmt.Errorf("config: build the access list for %s: %w", path, err)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return fmt.Errorf("config: build the access list for %s: %w", path, err)
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil); err != nil {
+		return fmt.Errorf("config: restrict %s to the current user: %w", path, err)
+	}
+	return verifyPrivateACL(path)
+}
+
+// verifyPrivateACL refuses a path the current user does not own, or whose DACL lets in an
+// account other than the user, SYSTEM and the Administrators.
+func verifyPrivateACL(path string) error {
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
-		return fmt.Errorf("config: read the security of %s: %w", dir, err)
+		return fmt.Errorf("config: read the security of %s: %w", path, err)
 	}
 	me, err := currentUserSID()
 	if err != nil {
@@ -33,23 +63,23 @@ func verifyPrivateDir(dir string) error {
 	}
 	owner, _, err := sd.Owner()
 	if err != nil || owner == nil || !owner.Equals(me) {
-		return fmt.Errorf("config: runtime directory %s is not owned by the current user", dir)
+		return fmt.Errorf("config: %s is not owned by the current user", path)
 	}
 	dacl, _, err := sd.DACL()
 	if err != nil || dacl == nil {
-		return fmt.Errorf("config: runtime directory %s has no access list; refusing to put a token there", dir)
+		return fmt.Errorf("config: %s has no access list; refusing to put a token there", path)
 	}
 	for i := range uint32(dacl.AceCount) {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, i, &ace); err != nil {
-			return fmt.Errorf("config: read the access list of %s: %w", dir, err)
+			return fmt.Errorf("config: read the access list of %s: %w", path, err)
 		}
 		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
 			continue
 		}
 		sid := (*windows.SID)(unsafePointer(&ace.SidStart))
 		if !trustedSID(sid, me) {
-			return fmt.Errorf("config: runtime directory %s lets in %s; refusing to put a token there", dir, sid.String())
+			return fmt.Errorf("config: %s lets in %s; refusing to put a token there", path, sid.String())
 		}
 	}
 	return nil
@@ -76,3 +106,7 @@ func currentUserSID() (*windows.SID, error) {
 	}
 	return u.User.Sid, nil
 }
+
+// VerifyPrivateFile refuses a file another account can reach, as a mode other than 0600 is
+// refused on Unix.
+func VerifyPrivateFile(path string) error { return verifyPrivateACL(path) }

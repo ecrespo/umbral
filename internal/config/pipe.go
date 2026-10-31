@@ -15,3 +15,7 @@ func PipeName(socketPath string) string {
 	sum := sha256.Sum256([]byte(dir))
 	return `\\.\pipe\umbral-` + hex.EncodeToString(sum[:8])
 }
+
+// PipeBufferSize is each direction's buffer on the daemon's pipe. With none, every write waits
+// for the reader to take it, and a burst of notifications crawls (REQ-WIN-001).
+const PipeBufferSize = 64 << 10

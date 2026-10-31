@@ -82,7 +82,7 @@ func addRegular(b *domain.BundleBuilder, p, rel string) error {
 	if !before.Mode().IsRegular() {
 		return fmt.Errorf("%w: entry %q: changed into something other than a regular file", domain.ErrSkillValidation, rel)
 	}
-	if hardlinked(before) {
+	if hasOtherNames(before) {
 		return fmt.Errorf("%w: entry %q: a hardlink", domain.ErrSkillValidation, rel)
 	}
 	f, err := openEntry(p)

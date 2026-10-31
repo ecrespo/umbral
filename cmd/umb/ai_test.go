@@ -61,8 +61,7 @@ func (d *aiDaemon) serve(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "token"), []byte("deadbeef"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var lc net.ListenConfig
-	ln, err := lc.Listen(context.Background(), "unix", socket)
+	ln, err := listenFake(socket)
 	if err != nil {
 		t.Fatal(err)
 	}

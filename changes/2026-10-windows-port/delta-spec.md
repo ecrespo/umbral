@@ -41,6 +41,10 @@
    the runtime directory>`, so two runtime directories never share a pipe. Its security
    descriptor is `D:P(A;;GA;;;<user SID>)`: the current user only (REQ-WIN-001). The token file
    stays in the runtime directory. A client dials the same name from the same directory. The
+   name is predictable, so another account could create the pipe first: the daemon then fails to
+   start, because its first instance is created exclusive (`FILE_FLAG_FIRST_PIPE_INSTANCE`), and
+   a client checks that the pipe's server process (`GetNamedPipeServerProcessId`) runs as the
+   current user before it writes anything, so the token never reaches an impostor. The
    pipe library is `Microsoft/go-winio`; the constitution's Stack row gains it.
 4. **Peer.** The daemon reads a client's pid with `GetNamedPipeClientProcessId`. Windows has no
    POSIX session, so the agent's-terminal check (REQ-ORC-004) walks that pid's ancestors from a

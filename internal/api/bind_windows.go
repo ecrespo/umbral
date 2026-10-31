@@ -29,7 +29,11 @@ func bind(_ context.Context, cfg Config) (net.Listener, error) {
 		return nil, err
 	}
 	name := config.PipeName(cfg.SocketPath)
-	ln, err := winio.ListenPipe(name, &winio.PipeConfig{SecurityDescriptor: sddl})
+	ln, err := winio.ListenPipe(name, &winio.PipeConfig{
+		SecurityDescriptor: sddl,
+		InputBufferSize:    config.PipeBufferSize,
+		OutputBufferSize:   config.PipeBufferSize,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("api: listen on %s: %w", name, err)
 	}

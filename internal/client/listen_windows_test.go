@@ -10,5 +10,8 @@ import (
 
 // listenFake serves a fake daemon on the pipe a client dials for socket.
 func listenFake(socket string) (net.Listener, error) {
-	return winio.ListenPipe(config.PipeName(socket), nil)
+	return winio.ListenPipe(config.PipeName(socket), &winio.PipeConfig{
+		InputBufferSize:  config.PipeBufferSize,
+		OutputBufferSize: config.PipeBufferSize,
+	})
 }

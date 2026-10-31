@@ -47,7 +47,7 @@ func LoadOrCreateToken(path string) (string, error) {
 	existing, err := os.ReadFile(path)
 	switch {
 	case err == nil && len(existing) > 0:
-		if err := os.Chmod(path, tokenMode); err != nil {
+		if err := securePrivateFile(path); err != nil {
 			return "", fmt.Errorf("api: fix the token file permissions: %w", err)
 		}
 		return string(existing), nil
@@ -85,15 +85,5 @@ func writeTokenFile(path, token string) error {
 		return fmt.Errorf("api: close the token file: %w", err)
 	}
 
-	if err := os.Chmod(path, tokenMode); err != nil {
-		return fmt.Errorf("api: set the token file permissions: %w", err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("api: verify the token file permissions: %w", err)
-	}
-	if got := info.Mode().Perm(); got != tokenMode {
-		return fmt.Errorf("api: token file is %#o, want %#o", got, tokenMode)
-	}
-	return nil
+	return securePrivateFile(path)
 }

@@ -8,7 +8,6 @@ import (
 	"os"
 	"sync"
 	"time"
-
 )
 
 // A daemon handoff (REQ-HND-001, delta `2026-10-pty-handoff`) suspends the server: it stops

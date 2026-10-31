@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -182,8 +181,7 @@ func serveFakeDaemonWithParams(t *testing.T, results map[string]any, seen chan<-
 		t.Fatalf("write the token: %v", err)
 	}
 
-	var lc net.ListenConfig
-	ln, err := lc.Listen(context.Background(), "unix", socket)
+	ln, err := listenFake(socket)
 	if err != nil {
 		t.Fatalf("listen on %s: %v", socket, err)
 	}
