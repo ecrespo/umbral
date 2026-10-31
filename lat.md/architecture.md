@@ -324,6 +324,8 @@ The window module carries Wails v3.0.0 and its GTK 4 and WebKitGTK 6.0 cgo depen
 
 [[packaging/deb/build.sh]] stages the three binaries, the eleven `hicolor` files and the `.desktop` entry copied from the kit, never regenerated (REQ-PKG-006), so the package carries what the `icons` job proved.
 
+That job, [[scripts/icons_check.sh]], regenerates the kit and compares it byte for byte, except that a rendered image passes when no pixel channel moves by more than two levels ([[scripts/icons_compare.py#TOLERANCE]]): pixman rounds a level apart on another runner's CPU.
+
 libghostty-vt is linked statically, so `Depends` names only the newest glibc symbol version the binaries reference. Only a `vMAJOR.MINOR.PATCH` tag is a release; an untagged build becomes `0.0.0+git.<hash>` and a prerelease `~rc`, so apt upgrades from either to the release. Modes and mtimes are fixed, so one commit builds one package. [[packaging/deb/postinst]] and [[packaging/deb/postrm]] refresh the icon cache and the desktop database only where the tools exist, so a minimal system installs without them.
 
 [[packaging/deb/check.sh]] reads the package back with `dpkg -c` and compares each file with the kit; [[packaging/deb/check_selftest.sh]] proves it rejects four broken packages; and [[packaging/deb/smoke.sh]] installs it in a clean Ubuntu 26.04 container, lets `umb` autostart the installed daemon, and checks the icon cache before and after removal. `task deb` and `task deb:smoke` run them, as does the CI `deb` job.

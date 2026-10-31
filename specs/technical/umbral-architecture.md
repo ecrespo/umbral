@@ -1977,8 +1977,12 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   The maintainer is GitHub's no-reply address.
 - **Verification:** `scripts/icons_check.sh`, run by `task icons` and by the `icons` CI job.
   It verifies `CHECKSUMS.sha256`, regenerates the kit with `build.py` and compares every
-  artifact byte for byte, then validates the `.desktop` file and asserts the release 0.1
-  launcher. The regeneration step is what REQ-PKG-006 needs: checking the checksums alone
+  artifact byte for byte, except that a rendered image — a PNG, or an `.icns` or `.ico` whose
+  entries are PNGs — also passes with the same sizes and entries when no channel of any pixel
+  moves by more than 2 (`scripts/icons_compare.py`): cairo rasterises through pixman, whose
+  SIMD paths round a level apart on another CPU, and the runner image of 2026-10-25 renders
+  the images of 512 px and over that way. It then validates the `.desktop` file and asserts
+  the release 0.1 launcher. The regeneration step is what REQ-PKG-006 needs: checking the checksums alone
   would pass a source edit committed together with its new checksum. The package is verified
   by the `deb` CI job and `task deb`/`task deb:smoke`: `packaging/deb/check.sh` compares what
   `dpkg -c` lists with the kit, its selftest proves it rejects four broken packages and checks
@@ -2082,4 +2086,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.76 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` decision 9: §5.3g a `terminal_interact` call at the prompt that enters nothing returns once the shell's output after it has settled |
 | 1.77 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-active-ai` (T-F2-22): §5.1 adds `[active_ai]` (`enabled`, `per_minute`), the router's `LocalOnly`, and the `activeai` leaf module; §5.2 its row |
 | 1.78 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-desktop-client` (T-F2-30): §5.2 rows for `desktop`, its ports and adapters; §5.3h the Wails client — a module of its own built in a container and CI, its import rule, the bridge's method list, frames of styled runs, attaching, the threads view of REQ-ORC-003 and the smoke |
-| 1.79 | 2026-10-30 | E. Crespo (assisted draft) | Delta `2026-10-hunks-file-tree` (T-F2-31): the `hunks` leaf in the module and dependency tables, `worktrees` reverting single hunks and serving its file tree; §5.3h the desktop review of hunks and the Files view |
+| 1.79 | 2026-10-30 | E. Crespo (assisted draft) | Delta `2026-10-hunks-file-tree` (T-F2-31): the `hunks` leaf in the module and dependency tables, `worktrees` reverting single hunks and serving its file tree; §5.3h the desktop review of hunks and the Files view. Delta `2026-10-icons-render-tolerance`: §9.3's regeneration compares rendered images within two levels |
