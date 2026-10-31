@@ -14,6 +14,7 @@ cd "$(dirname "$0")/.."
 
 UMBRALD="${UMBRALD:-bin/umbrald}"
 DESKTOP="${DESKTOP:-bin/umbral-desktop}"
+command -v xwininfo >/dev/null || { echo "desktop_smoke: xwininfo (x11-utils) is not installed" >&2; exit 1; }
 for bin in "$UMBRALD" "$DESKTOP"; do
   [ -x "$bin" ] || { echo "desktop_smoke: $bin is not built" >&2; exit 1; }
 done
@@ -57,11 +58,11 @@ export DESKTOP WORK
 UMBRAL_DESKTOP_SMOKE="$MARKER" GTK_A11Y=none \
   timeout 120 xvfb-run -a dbus-run-session -- bash -c '
     "$DESKTOP" & pid=$!
-    for _ in $(seq 100); do
+    # Polled for as long as the window lives, so a slow start is not a failure.
+    while kill -0 "$pid" 2>/dev/null; do
       xwininfo -root -tree 2>/dev/null | sed -n "s/^ *0x[0-9a-f]* \"Umbral\": (\(.*\)) .*/\1/p" >"$WORK/class"
       [ -s "$WORK/class" ] && break
-      kill -0 "$pid" 2>/dev/null || break
-      sleep 0.2
+      sleep 0.1
     done
     wait "$pid"' >"$WORK/desktop.log" 2>&1 || {
     cat "$WORK/desktop.log" >&2

@@ -3,9 +3,10 @@
 # delta `2026-10-wails-icons`): cmd/umbral-desktop/rsrc_windows_{amd64,arm64}.syso. Go links a
 # `*_windows_<arch>.syso` into Windows builds only, so the Linux build is unaffected.
 #
-# go-winres is the pure-Go tool behind Wails' own `generate syso`, pinned here and run outside
-# the module, so neither go.mod gains a dependency. `--check` regenerates into a temporary
-# directory and fails if the committed files differ.
+# go-winres is the pure-Go tool behind Wails' own `generate syso`, pinned here and run as
+# `go run pkg@version`, which builds it from its own go.mod and never touches Umbral's; an
+# empty GOFLAGS keeps an inherited -mod=... from applying to it. `--check` regenerates into a
+# temporary directory and fails if the committed files differ.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -13,13 +14,18 @@ WINRES="github.com/tc-hib/go-winres@v0.3.3"
 ICON="assets/branding/umbral-icons/windows/umbral.ico"
 DEST="cmd/umbral-desktop"
 
+case "${1:-}" in
+  "" | --check) ;;
+  *) echo "usage: $0 [--check]" >&2; exit 2 ;;
+esac
+
 out="$DEST"
 if [ "${1:-}" = "--check" ]; then
   out="$(mktemp -d)"
   trap 'rm -rf "$out"' EXIT
 fi
 
-GOFLAGS= go run "$WINRES" simply --icon "$ICON" --arch amd64,arm64 --out "$out/rsrc"
+GOFLAGS="" go run "$WINRES" simply --icon "$ICON" --arch amd64,arm64 --out "$out/rsrc"
 
 if [ "${1:-}" = "--check" ]; then
   for arch in amd64 arm64; do

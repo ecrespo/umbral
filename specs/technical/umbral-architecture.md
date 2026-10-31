@@ -1997,12 +1997,13 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   Wails' `generate syso`, outside the module, and writes `cmd/umbral-desktop/rsrc_windows_amd64.syso`
   and `_arm64.syso` from the kit's `umbral.ico`: its eight images as they are and go-winres's
   default manifest (`asInvoker`, system DPI awareness). Go links them into Windows builds only.
-  `packaging/desktop/syso_test.go` checks every image byte for byte and the icon group's
-  eight entries, and CI's `desktop` job regenerates and compares them (`--check`); that the
+  `packaging/desktop/syso_test.go` walks each object's resource directory — its machine, one icon group, each entry's
+  RT_ICON holding the kit's image byte for byte — and CI's `desktop` job regenerates and compares them (`--check`); that the
   executable embeds them is checked when T-F2-50 builds it (delta `2026-10-wails-icons`).
 - **Window id (REQ-PKG-004):** `io.github.ecrespo.Umbral` is the GTK application id and
   program name, so the Wayland `app_id` and the X11 `WM_CLASS`; `scripts/desktop_smoke.sh`
-  reads the live window's class with `xwininfo` under xvfb.
+  reads the live window's class with `xwininfo` under xvfb; the Wayland `app_id` and the dock's
+  icon are step 1 of `docs/qa/f2-desktop.md`, F2c's walk.
 - **macOS (F2):** the layers in `macos/icon-composer-layers/` are assembled in Icon Composer
   into `appicon.icon`; `umbral.icns` is the fallback for macOS ≤ 15.
 - **Debian package (release 0.1, delta `2026-10-deb-package`):** one package, `umbral`, built by
