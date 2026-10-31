@@ -202,6 +202,11 @@ tasks:
     cmds:
       - ./packaging/desktop/build.sh
 
+  desktop:syso:
+    desc: 'REQ-PKG-005: regenerate the Windows resource objects from the kit''s icon (runs the pinned go-winres; CLI_ARGS=--check compares instead)'
+    cmds:
+      - ./packaging/desktop/syso.sh {{.CLI_ARGS}}
+
   desktop:smoke:
     desc: 'REQ-DSK-001: the window draws a real daemon''s pane under xvfb (CI; WebKit''s sandbox needs user namespaces)'
     deps: [build, desktop]

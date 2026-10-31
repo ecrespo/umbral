@@ -134,6 +134,9 @@ jobs:
           install-mode: goinstall
           working-directory: cmd/umbral-desktop
           args: --config ../../.golangci.yml
+      # The committed .syso files are what the kit's icon generates (REQ-PKG-005).
+      - name: The Windows resource objects match the kit's icon
+        run: ./packaging/desktop/syso.sh --check
       - name: Build umbrald and the client
         run: |
           go build -o bin/umbrald ./cmd/umbrald
