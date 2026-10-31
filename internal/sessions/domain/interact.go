@@ -131,6 +131,9 @@ type Plan struct {
 	// line end, these keys included. Program is what of it a later call adds to.
 	Target  string
 	Program string
+	// Seq is the session's output sequence number before the keys were written: a wait for
+	// what they cause starts after it (WaitCondition.After).
+	Seq uint64
 }
 
 // PlanKeys reads keys against the state they are sent in (decision 4). At the prompt only
@@ -215,16 +218,26 @@ type Screen struct {
 	AtPrompt bool
 }
 
-// WaitCondition is what wait_for waits for: exactly one of a regex over the screen's plain
-// text, a stretch with no output, or the foreground program's end.
+// WaitCondition is what wait_for waits for: one or more of a regex over the screen's plain
+// text, a stretch with no output, or the foreground program's end; the wait ends at the first
+// that holds, a match before a quiet stretch.
 type WaitCondition struct {
 	Regex   *regexp.Regexp
 	Idle    time.Duration
 	Exit    bool
 	Timeout time.Duration
+	// Fresh matches Regex against the output after sequence number After, read as text,
+	// instead of the screen: a wait that follows keys must not match what was drawn before
+	// them, such as the prompt they answer (delta `2026-10-usf2-002-live`).
+	Fresh bool
+	After uint64
+	// SkipEcho, with Fresh, matches only the output after its first line end: keys that end
+	// with enter are echoed as a line, and a regex the line holds would match its echo before
+	// any answer (delta `2026-10-usf2-002-live`).
+	SkipEcho bool
 }
 
-// Validate checks that exactly one condition is set and the durations are in range.
+// Validate checks that a condition is set and the durations are in range.
 func (c WaitCondition) Validate() error {
 	set := 0
 	if c.Regex != nil {
@@ -239,8 +252,8 @@ func (c WaitCondition) Validate() error {
 	if c.Exit {
 		set++
 	}
-	if set != 1 {
-		return fmt.Errorf("%w: wait_for takes exactly one of regex, idle_ms and exit", ErrValidation)
+	if set == 0 {
+		return fmt.Errorf("%w: wait_for takes at least one of regex, idle_ms and exit", ErrValidation)
 	}
 	if c.Timeout <= 0 || c.Timeout > MaxWaitTime {
 		return fmt.Errorf("%w: timeout_ms must be between 1 and %d", ErrValidation, MaxWaitTime.Milliseconds())

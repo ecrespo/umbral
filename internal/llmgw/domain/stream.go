@@ -132,5 +132,11 @@ func (e *ProviderError) Retryable() bool {
 	return e.Status == 0 || e.Status == 429 || e.Status >= 500
 }
 
+// ErrMalformedToolCall is a model's output its provider could not read as a tool call — Ollama
+// answers it with an HTTP 500 "error parsing tool call" before any event. It is the model's
+// invalid call, which the agent runtime retries once (REQ-AGT-006, delta
+// `2026-10-usf2-002-live`); another candidate may still be tried first.
+var ErrMalformedToolCall = errors.New("the provider could not read the model's tool call")
+
 // ErrNoSuchProvider is a model whose provider is not configured.
 var ErrNoSuchProvider = errors.New("no such provider")

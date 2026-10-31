@@ -131,6 +131,9 @@ func (t *turnRun) run(ctx context.Context) domain.StopReason {
 			return domain.StopBudget
 		}
 		calls, err := t.step(ctx)
+		if err != nil && t.unreadableCall(ctx, err) {
+			continue
+		}
 		if err != nil {
 			return t.stopFor(ctx, err)
 		}
@@ -204,7 +207,7 @@ func (t *turnRun) stopFor(ctx context.Context, err error) domain.StopReason {
 		t.r.cfg.Logger.WarnContext(ctx, "a turn stopped: the hosted agent failed", slog.String("thread", t.thread.ID),
 			slog.String("turn", t.turnID), slog.String("agent", t.thread.Agent), slog.Any("error", err))
 		return domain.StopAgentError
-	case errors.Is(err, errRepairFailed):
+	case errors.Is(err, errRepairFailed), errors.Is(err, llm.ErrMalformedToolCall):
 		t.r.cfg.Logger.WarnContext(ctx, "a turn stopped: a tool call was invalid after its repair", slog.String("thread", t.thread.ID),
 			slog.String("turn", t.turnID), slog.String("model", t.servedModel()))
 		return domain.StopToolError

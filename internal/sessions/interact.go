@@ -109,6 +109,7 @@ func (s *Service) SendKeys(ctx context.Context, threadID, cwd string, keys []dom
 	if err != nil {
 		return domain.Plan{}, err
 	}
+	plan.Seq = before
 	// Keys at the prompt that enter nothing return once the shell's answer to them has settled.
 	// Text the line editor has not read yet is still in the terminal's input queue, where a
 	// ctrl+c sent next flushes part of it: CI ran `cho` for `echo pending`. (A line typed after
@@ -378,17 +379,24 @@ func (s *Service) WaitFor(ctx context.Context, threadID, cwd string, cond domain
 			return domain.WaitOutcome{}, domain.ErrTakenOver
 		case cond.Exit && state.AtPrompt:
 			return end(domain.WaitExited)
-		case cond.Idle != 0 && time.Since(quietSince) >= cond.Idle:
-			return end(domain.WaitIdle)
 		case cond.Regex != nil && (first || seq != checked):
 			first, checked = false, seq
-			text, _, _, err := s.ScreenText(ctx, live.snapshotState().ID)
-			if err != nil {
+			var text string
+			if cond.Fresh {
+				text = live.outputAfter(cond.After)
+				if cond.SkipEcho {
+					_, text, _ = strings.Cut(text, "\n")
+				}
+			} else if text, _, _, err = s.ScreenText(ctx, live.snapshotState().ID); err != nil {
 				return domain.WaitOutcome{}, err
 			}
 			if cond.Regex.MatchString(text) {
 				return end(domain.WaitMatched)
 			}
+		}
+		// Quiet is checked after the regex, so output that matches as it goes quiet is a match.
+		if cond.Idle != 0 && time.Since(quietSince) >= cond.Idle {
+			return end(domain.WaitIdle)
 		}
 		select {
 		case <-ctx.Done():

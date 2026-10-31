@@ -366,3 +366,36 @@ func TestALateSuccessDoesNotCloseAnOpenBreaker_REQ_RTR_002(t *testing.T) {
 		t.Errorf("a success that started before the breaker opened closed it: %q", got)
 	}
 }
+
+// TestAnUnreadableToolCallDoesNotTripTheBreaker_REQ_RTR_002: a 500 that is the provider unable
+// to read the model's tool call (ErrMalformedToolCall) still tries the next candidate, but it is
+// the model's invalid call, not the provider's failure: any number in a row leave the breaker
+// closed (delta `2026-10-usf2-002-live`).
+func TestAnUnreadableToolCallDoesNotTripTheBreaker_REQ_RTR_002(t *testing.T) {
+	t.Parallel()
+	unreadable := &domain.ProviderError{
+		Provider: "local", Status: 500,
+		Err: errors.Join(domain.ErrMalformedToolCall, errors.New("error parsing tool call")),
+	}
+	local := &streamProvider{id: "local", local: true, scripts: map[string]script{"m": {startErr: unreadable}}}
+	backup := &streamProvider{id: "backup", local: true, scripts: map[string]script{"m": {events: answer}}}
+	r := newRig(t, false, map[string][]string{"code": {"local/m", "backup/m"}},
+		[]*streamProvider{local, backup}, []domain.Model{model("local", "m"), model("backup", "m")})
+	r.router.SetPolicy(Policy{Order: PolicyQuality, BreakerFailures: 2, BreakerCooldown: time.Minute})
+
+	for i := range 3 {
+		if text, err := collect(t, r.router, hello("code")); err != nil || text != "hello" {
+			t.Fatalf("call %d: text %q, err %v; the next candidate must still be tried", i, text, err)
+		}
+	}
+	rt, err := r.router.Route(context.Background(), RouteQuery{Class: "code"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reasonOf(rt, "local/m"); got != ReasonEligible {
+		t.Errorf("after three unreadable tool calls the breaker reads %q, want %q", got, ReasonEligible)
+	}
+	if local.called() != 3 {
+		t.Errorf("the provider was called %d times, want 3", local.called())
+	}
+}
