@@ -31,12 +31,14 @@ var ErrUnsupportedShell = errors.New("shellinteg: unsupported shell")
 // Kind is a supported shell.
 type Kind string
 
-// The shells Umbral ships a bootstrap for. PowerShell is REQ-BLK-008, deferred to F2
-// with Windows.
+// The shells Umbral ships a bootstrap for. PowerShell 7 is REQ-BLK-008, a MUST on Windows
+// (REQ-WIN-002); Windows PowerShell 5.1 and cmd.exe run without one (delta
+// `2026-10-windows-port`, decision 6).
 const (
 	Bash Kind = "bash"
 	Zsh  Kind = "zsh"
 	Fish Kind = "fish"
+	Pwsh Kind = "pwsh"
 )
 
 // DetectKind identifies the shell from its executable path. It matches on the base name,
@@ -50,6 +52,8 @@ func DetectKind(shellPath string) (Kind, error) {
 		return Zsh, nil
 	case strings.HasPrefix(base, "fish"):
 		return Fish, nil
+	case strings.HasPrefix(strings.ToLower(base), "pwsh"):
+		return Pwsh, nil
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedShell, base)
 	}
@@ -109,6 +113,8 @@ func (b *Bootstrap) Close() error {
 //     restores it before sourcing anything.
 //   - fish: --init-command, which runs after config.fish rather than instead of it, so
 //     nothing needs restoring.
+//   - pwsh: -NoExit -Command dot-sourcing the script, which runs after the user's profiles
+//     and leaves the shell interactive.
 func Prepare(shellPath, parentDir string) (*Bootstrap, error) {
 	kind, err := DetectKind(shellPath)
 	if err != nil {
@@ -156,6 +162,14 @@ func Prepare(shellPath, parentDir string) (*Bootstrap, error) {
 		// --init-command is a line of fish, not an argv entry, so the path is quoted for fish:
 		// the runtime directory on macOS is ~/Library/Application Support/Umbral.
 		b.Args = []string{"--init-command", "source " + fishQuote(path)}
+
+	case Pwsh:
+		path, err := b.materialise("pwsh/umbral.ps1", "umbral.ps1")
+		if err != nil {
+			return nil, err
+		}
+		// -Command is a line of PowerShell, so the path is quoted for it, as for fish.
+		b.Args = []string{"-NoLogo", "-NoExit", "-Command", ". " + pwshQuote(path)}
 	}
 
 	return b, nil
@@ -165,6 +179,12 @@ func Prepare(shellPath, parentDir string) (*Bootstrap, error) {
 // `\'`, so escaping those two is the whole of it.
 func fishQuote(s string) string {
 	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'"
+}
+
+// pwshQuote makes s one PowerShell single-quoted string, in which only `'` is special and is
+// written twice.
+func pwshQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 // materialise copies one embedded script into the bootstrap directory.

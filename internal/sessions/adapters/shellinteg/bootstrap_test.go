@@ -1,3 +1,5 @@
+//go:build unix
+
 package shellinteg
 
 import (
@@ -222,7 +224,10 @@ func TestDetectKind(t *testing.T) {
 		{path: "/usr/bin/zsh", want: Zsh},
 		{path: "/opt/homebrew/bin/fish", want: Fish},
 		{path: "/bin/sh", err: true},
-		{path: "/usr/bin/pwsh", err: true},
+		{path: "/usr/bin/pwsh", want: Pwsh},
+		{path: "pwsh.exe", want: Pwsh},
+		{path: "powershell.exe", err: true},
+		{path: "cmd.exe", err: true},
 	} {
 		got, err := DetectKind(tc.path)
 		if tc.err {

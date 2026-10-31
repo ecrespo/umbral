@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/base64"
 	"os"
+	"runtime"
 	"slices"
 	"testing"
 	"time"
@@ -109,6 +110,11 @@ func BenchmarkOutputLatency_REQ_TERM_006(b *testing.B) {
 // package's serial tests before releasing its parallel ones, so this one measures alone.
 // The benchmark in `task perf` stays the gate of record.
 func TestOutputLatencyUnder5ms_REQ_TERM_006(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// REQ-WIN-001/002 bring the protocol and the blocks to Windows, not the NFR budgets;
+		// those are gated where `task perf` runs (delta `2026-10-windows-port`).
+		t.Skip("REQ-TERM-006's budget is gated on Linux and macOS by `task perf`")
+	}
 	sessions := newFakeSessions()
 	s := testServerWithSessions(t, sessions)
 	c := dial(t, s)

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -67,7 +68,12 @@ func TestThreadCommandsDriveAThread_REQ_CLI_009(t *testing.T) {
 		t.Fatalf("calls %v, want %v", got, want)
 	}
 	calls := d.callsExceptHello()
-	if p := calls[0].Params; p["cwd"] != "/work" || p["mode"] != "plan" || p["title"] != "nightly" {
+	// umb sends the directory made absolute, which on Windows gains the current drive.
+	work, err := filepath.Abs("/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := calls[0].Params; p["cwd"] != work || p["mode"] != "plan" || p["title"] != "nightly" {
 		t.Errorf("thread.create sent %v", p)
 	}
 	wantWait := map[string]any{"until": []any{"done", "blocked"}, "timeout_ms": float64(300000)}

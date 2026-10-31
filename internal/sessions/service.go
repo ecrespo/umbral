@@ -693,10 +693,3 @@ func runCleanup(cleanup func() error) {
 		_ = cleanup()
 	}
 }
-
-func defaultShell() string {
-	if sh := os.Getenv("SHELL"); sh != "" {
-		return sh
-	}
-	return "/bin/sh"
-}

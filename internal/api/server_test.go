@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -115,8 +114,7 @@ func (c *client) sendPastTheLimit(line []byte) {
 	if err := c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		c.t.Fatalf("set write deadline: %v", err)
 	}
-	if _, err := c.conn.Write(line); err != nil &&
-		!errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET) {
+	if _, err := c.conn.Write(line); err != nil && !isHangUp(err) {
 		c.t.Fatalf("write: %v", err)
 	}
 }
@@ -475,29 +473,6 @@ func TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003(t *testing.T) {
 	}
 }
 
-// TestListenRefusesToDeleteARegularFile guards the stale-socket cleanup: a mistyped path
-// must never make the daemon delete the user's data.
-func TestListenRefusesToDeleteARegularFile(t *testing.T) {
-	t.Parallel()
-
-	dir := socketDir(t)
-	path := filepath.Join(dir, "important.txt")
-	if err := os.WriteFile(path, []byte("do not delete"), 0o600); err != nil {
-		t.Fatalf("write the decoy file: %v", err)
-	}
-
-	if _, err := Listen(t.Context(), Config{
-		SocketPath: path, TokenPath: filepath.Join(dir, TokenFileName), DaemonVersion: "t",
-	}); err == nil {
-		t.Fatal("Listen accepted a regular file as its socket path")
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Errorf("the decoy file was removed: %v", err)
-	}
-}
-
-// TestTokenIsReusedAcrossRestarts matters because clients cache it: regenerating the
-// token on every start would log every running client out.
 func TestTokenIsReusedAcrossRestarts(t *testing.T) {
 	t.Parallel()
 

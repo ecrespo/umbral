@@ -223,8 +223,7 @@ jobs:
       - name: Test every package that does not link libghostty
         run: |
           pending='
-          github.com/ecrespo/umbral/internal/sessions                       layer 3: ConPTY
-          github.com/ecrespo/umbral/internal/sessions/adapters/shellinteg   layer 3: pwsh bootstrap
+          github.com/ecrespo/umbral/internal/sessions                       layer 3: launch tests use sh
           github.com/ecrespo/umbral/internal/agents                         layer 4: Windows paths
           github.com/ecrespo/umbral/internal/security                       layer 4: Windows paths
           github.com/ecrespo/umbral/internal/security/domain                layer 4: Windows paths
