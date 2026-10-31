@@ -32,6 +32,7 @@ type process struct {
 	iso    domain.Isolation
 
 	cmd     *exec.Cmd
+	tree    *tree
 	stdin   io.WriteCloser
 	conn    *acp.ClientSideConnection
 	session acp.SessionId
@@ -90,8 +91,14 @@ func (p *process) start(cmd *exec.Cmd) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	p.cmd, p.stdin = cmd, stdin
 	pid := cmd.Process.Pid
+	t, err := joinTree(pid)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return err
+	}
+	p.cmd, p.stdin, p.tree = cmd, stdin, t
 	p.h.trackPID(pid, true)
 	go func() {
 		// What it started in its session ends with it, and its pid is forgotten, while the
@@ -188,7 +195,7 @@ func (p *process) kill() {
 			// process is being reaped, when its pid may already be someone else's.
 			p.reapMu.Lock()
 			if !p.reaped {
-				killGroup(p.cmd.Process.Pid)
+				p.tree.end()
 				_ = p.cmd.Process.Kill()
 			}
 			p.reapMu.Unlock()

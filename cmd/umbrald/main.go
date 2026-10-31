@@ -27,8 +27,6 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/ecrespo/umbral/internal/agents"
 	"github.com/ecrespo/umbral/internal/api"
 	"github.com/ecrespo/umbral/internal/bus"
@@ -623,7 +621,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 	// what lands, drops or approves the agent's own work, and the handoff socket everything.
 	insideAnAgent := agentPeer(func() []int {
 		return append(sessionService.AgentShellPIDs(), acpHost.AgentPIDs()...)
-	}, proctree.Ancestors, unix.Getsid)
+	}, proctree.Ancestors, sessionOf)
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
 		Listener:      inherited,

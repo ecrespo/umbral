@@ -16,8 +16,17 @@ func isolateTree(cmd *exec.Cmd) error {
 	return nil
 }
 
-// killGroup kills the agent's process group.
-func killGroup(pid int) { _ = syscall.Kill(-pid, syscall.SIGKILL) }
+// tree is the agent's process group.
+type tree struct{ pid int }
+
+// joinTree is the group the agent leads since isolateTree.
+func joinTree(pid int) (*tree, error) { return &tree{pid: pid}, nil }
+
+// end kills the agent's process group.
+func (t *tree) end() { _ = syscall.Kill(-t.pid, syscall.SIGKILL) }
+
+// members is empty: the session check finds what the agent left (REQ-ORC-004).
+func (t *tree) members() []int { return nil }
 
 // openNonblocking opens p for reading without waiting on a FIFO for a writer.
 func openNonblocking(p string) (*os.File, error) {

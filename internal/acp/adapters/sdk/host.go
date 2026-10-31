@@ -425,10 +425,18 @@ func (h *Host) Running(threadID string) bool {
 // `2026-10-hosted-agent-peer`).
 func (h *Host) AgentPIDs() []int {
 	h.pidMu.Lock()
-	defer h.pidMu.Unlock()
 	out := make([]int, 0, len(h.pids))
 	for pid := range h.pids {
 		out = append(out, pid)
+	}
+	h.pidMu.Unlock()
+	// Where an agent's tree is a Job Object, what it left in the job counts as the agent's too.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, p := range h.agents {
+		if p.tree != nil {
+			out = append(out, p.tree.members()...)
+		}
 	}
 	return out
 }

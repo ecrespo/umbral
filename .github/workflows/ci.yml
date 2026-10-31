@@ -240,21 +240,28 @@ jobs:
           cgo=$(go list -test -f '{{.ImportPath}} {{join .Deps " "}}' ./... | grep 'go.mitchellh.com/libghostty' | cut -d' ' -f1 | sed 's/_test$//' | sort -u)
           pkgs=$(go list ./... | grep -vxF "$cgo" | grep -vxF "$skip")
           CGO_ENABLED=1 go test -race $pkgs
-      # Layer 3: libghostty-vt built for Windows by the pinned Zig, linked by MinGW's gcc.
+      # Layer 3: libghostty-vt built for Windows by the pinned Zig, linked by MinGW's gcc. These
+      # steps run whatever the tests above said, so one run reports both.
       - name: Zig, which builds libghostty-vt
+        if: success() || failure()
         uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
       - name: pkg-config, which cgo asks for libghostty-vt's flags
+        if: success() || failure()
         run: choco install -y --no-progress pkgconfiglite
       - name: Build libghostty-vt for Windows
-        run: ./scripts/build_libghostty.sh "$RUNNER_TEMP/ghostty-vt"
-      - run: echo "PKG_CONFIG_PATH=$(cygpath -w "$RUNNER_TEMP/ghostty-vt/share/pkgconfig")" >> "$GITHUB_ENV"
-      - name: The emulators link and pass on Windows
+        if: success() || failure()
+        run: |
+          ./scripts/build_libghostty.sh "$RUNNER_TEMP/ghostty-vt"
+          echo "PKG_CONFIG_PATH=$(cygpath -w "$RUNNER_TEMP/ghostty-vt/share/pkgconfig")" >> "$GITHUB_ENV"
+      - name: The emulators link and pass on Windows, and every binary builds
+        if: success() || failure()
         run: |
           cat "$RUNNER_TEMP/ghostty-vt/share/pkgconfig/"*.pc
           ls -la "$RUNNER_TEMP/ghostty-vt/lib"
           CGO_ENABLED=1 go test -race ./internal/sessions/adapters/ghostty/... ./internal/tui/adapters/ghosttyvt/... ./internal/desktop/adapters/vtframe/...
+          CGO_ENABLED=1 go build ./cmd/...
 
   test:
     name: Tests with the race detector (Art. 2)
