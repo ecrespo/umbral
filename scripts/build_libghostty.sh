@@ -46,7 +46,10 @@ git -C "$src/ghostty" fetch -q --depth 1 https://github.com/ghostty-org/ghostty 
 git -C "$src/ghostty" checkout -q FETCH_HEAD
 
 echo "libghostty-vt: building with $(zig version) into $PREFIX"
-( cd "$src/ghostty" && zig build -Demit-lib-vt --prefix "$PREFIX" )
+# GHOSTTY_ZIG_FLAGS adds build options: Windows passes -Dsimd=false (delta
+# `2026-10-windows-port`, decision 1).
+# shellcheck disable=SC2086 # the flags are words
+( cd "$src/ghostty" && zig build -Demit-lib-vt ${GHOSTTY_ZIG_FLAGS:-} --prefix "$PREFIX" )
 
 if [[ ! -f "$PC" ]]; then
   echo "libghostty-vt: the build finished but $PC is missing" >&2

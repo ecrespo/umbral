@@ -238,6 +238,7 @@ jobs:
       # What each pending package still fails on Windows, reported without failing the job, so
       # every layer starts from the runner's list rather than a guess.
       - name: What the pending packages still fail (report only)
+        if: success() || failure()
         continue-on-error: true
         run: |
           pkgs=$(sed -n '/^          pending=/,/^          '"'"'$/p' "$GITHUB_WORKSPACE/.github/workflows/ci.yml" | awk '/github.com/ {print $1}' | grep -v /remote)
@@ -254,6 +255,10 @@ jobs:
         run: choco install -y --no-progress pkgconfiglite
       - name: Build libghostty-vt for Windows
         if: success() || failure()
+        # Without SIMD: the SIMD UTF-8 path read a null pointer on the first non-ASCII byte in
+        # the MinGW-linked DLL (VT-12, the desktop frame), while every ASCII test passed.
+        env:
+          GHOSTTY_ZIG_FLAGS: -Dsimd=false
         run: |
           ./scripts/build_libghostty.sh "$RUNNER_TEMP/ghostty-vt"
           echo "PKG_CONFIG_PATH=$(cygpath -w "$RUNNER_TEMP/ghostty-vt/share/pkgconfig")" >> "$GITHUB_ENV"

@@ -354,11 +354,7 @@ func TestAFailingGitIsStatedNotDropped_REQ_CTX_003(t *testing.T) {
 	root := t.TempDir()
 	git(t, root, "init", "-q")
 	// A git that refuses the repository: the section says why rather than vanish.
-	refusing := filepath.Join(t.TempDir(), "git")
-	write(t, refusing, "#!/bin/sh\necho 'fatal: detected dubious ownership in repository' >&2\nexit 128\n")
-	if err := os.Chmod(refusing, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	refusing := fakeProgram(t, t.TempDir(), "git", "", "fatal: detected dubious ownership in repository", 128)
 	g, err := New(Config{Git: refusing}).Git(context.Background(), root)
 	if err != nil {
 		t.Fatal(err)

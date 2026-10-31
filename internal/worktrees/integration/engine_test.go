@@ -564,12 +564,9 @@ func TestWorktreeRefusesAnOldGit_REQ_WT_008(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	dir := t.TempDir()
-	f.write(dir, "git", "#!/bin/sh\necho 'git version 2.30.1'\n")
-	if err := os.Chmod(filepath.Join(dir, "git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	oldGit := fakeProgram(t, dir, "git", "git version 2.30.1", "", 0)
 	svc := worktrees.New(worktrees.Options{
-		Store: f.st, Git: gitcli.New(gitcli.Options{Bin: filepath.Join(dir, "git"), Env: f.env}), Root: f.data,
+		Store: f.st, Git: gitcli.New(gitcli.Options{Bin: oldGit, Env: f.env}), Root: f.data,
 		NewID: func() string { return "wtr_x" }, Now: time.Now,
 	})
 	_, err := svc.Create(t.Context(), worktrees.CreateRequest{ThreadID: "thr_a", Cwd: f.repo})

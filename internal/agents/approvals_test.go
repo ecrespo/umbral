@@ -244,6 +244,7 @@ func TestACancelledTurnExpiresItsApproval_REQ_AGT_004(t *testing.T) {
 // TestARememberedDenyAppliesToTheRestOfTheTurn_REQ_AGT_005: a `thread` deny is a rule at once:
 // the same call later in the turn is refused by it, without asking again.
 func TestARememberedDenyAppliesToTheRestOfTheTurn_REQ_AGT_005(t *testing.T) {
+	posixLines(t)
 	r := newRig(t, callTool("run", `{"path":"make deploy"}`), callTool("run", `{"path":"make deploy"}`), answer("ok"))
 	th := r.thread(t, domain.CreateParams{})
 	if _, err := r.rt.Send(t.Context(), ports.SendParams{ThreadID: th.ID, Text: "deploy"}); err != nil {
