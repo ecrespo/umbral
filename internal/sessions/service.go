@@ -58,6 +58,10 @@ type Config struct {
 	// while it holds the PTY in silence (stopAgent). Zero is agentInterruptEvery; tests shorten
 	// it to make the race between a late interrupt and the next command frequent.
 	AgentInterruptEvery time.Duration
+	// AdoptPTY and ResumeScanner rebuild the sessions a handoff carries (REQ-HND-001); a
+	// daemon without them cannot take sessions over.
+	AdoptPTY      ports.PTYAdopter
+	ResumeScanner ports.ScannerResumer
 }
 
 // Service implements ports.Sessions.
@@ -68,6 +72,10 @@ type Service struct {
 
 	mu   sync.RWMutex
 	live map[string]*liveSession
+	// frozen are the sessions a handoff paused, and adopted the ones it brought in that do
+	// not read yet (handoff.go). Guarded by mu.
+	frozen  []*liveSession
+	adopted []*liveSession
 }
 
 // recentChunk is one read of output and its sequence number.
@@ -192,6 +200,11 @@ type liveSession struct {
 	// discardLine is a hand-back: the agent's next write at the prompt drops whatever the
 	// user left on its line first (decision 6). Guarded by mu.
 	discardLine bool
+	// gate is a handoff's pause of this session's drain, nil when none is (handoff.go);
+	// pendingVerdict is an adopted session whose integration verdict was still waiting.
+	// Guarded by mu.
+	gate           *gate
+	pendingVerdict bool
 }
 
 // agentRun is one command the agent typed and is waiting for. claimed turns true once the

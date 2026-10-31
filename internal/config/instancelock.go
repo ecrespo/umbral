@@ -108,3 +108,11 @@ func (l *InstanceLock) Release() error {
 	l.f = nil
 	return err
 }
+
+// File is the lock's descriptor, which a handoff passes to the next daemon (REQ-HND-001): a
+// flock belongs to the open file description, so the next daemon holds the lock through its
+// own descriptor for it, and this one's closing does not release it.
+func (l *InstanceLock) File() *os.File { return l.f }
+
+// AdoptLock is a lock another daemon held, from the descriptor it passed.
+func AdoptLock(f *os.File) *InstanceLock { return &InstanceLock{f: f} }

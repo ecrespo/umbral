@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.56 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.57 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -1476,7 +1476,7 @@ terminal (§2).
 |---|---|---|
 | `session.output` | `{session_id, seq, data_b64}` | REQ-TERM-006 |
 | `session.resized` | `{session_id, cols, rows}` | REQ-TERM-007 |
-| `session.exited` | `{session_id, exit_code, exited_at}` | REQ-TERM-005 |
+| `session.exited` | `{session_id, exit_code, exited_at}`; `exit_code` is `null` for a session adopted across a live handoff, whose exit only the old daemon could read | REQ-TERM-005, REQ-HND-001 |
 | `session.integration` | `{session_id, integration}` | REQ-BLK-003 |
 | `session.input_owner` | `{session_id, input_owner}` | REQ-TERM-008, REQ-FTU-002 |
 | `session.unsubscribed` | `{session_id, reason}` | REQ-TERM-004 |
@@ -1709,3 +1709,4 @@ printf '%s\n' \
 | 1.54 | 2026-10-26 | Additive within `protocol_version = 1`. Delta `2026-10-terminal-interact` (T-F2-20): §5.43 `thread.take_over` and `thread.hand_back` (REQ-FTU-002); §2 refuses both to an agent's terminal; `session.input_owner` also announces a take-over |
 | 1.55 | 2026-10-26 | Additive within `protocol_version = 1`. Delta `2026-10-active-ai` (T-F2-22): §6 `block.suggestion` (REQ-AAI-001) |
 | 1.56 | 2026-10-26 | Additive within `protocol_version = 1`. Delta `2026-10-hunks-file-tree` (T-F2-31): §5.41 `worktree.reject_hunks`, `files`, `read_file`, `write_file`; §4 `Approval`'s `hunks` and `hunks_selectable`; §5.25 `hunks`; §2 (REQ-DSK-002, REQ-DSK-003) |
+| 1.57 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-pty-handoff` (T-F2-40): §6 `session.exited`'s `exit_code` may be `null` after a live handoff. The handoff itself travels on `handoff.sock`, outside this protocol |

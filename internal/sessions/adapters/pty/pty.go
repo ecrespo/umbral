@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	creack "github.com/creack/pty"
 
@@ -44,18 +45,46 @@ func Open(spec ports.PTYSpec) (ports.PTY, error) {
 	// SIGWINCH work. Without it the shell reports "no job control in this shell".
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 
-	file, err := creack.StartWithSize(cmd, winsize(spec.Size))
+	started, err := creack.StartWithSize(cmd, winsize(spec.Size))
 	if err != nil {
 		return nil, fmt.Errorf("pty: start %s: %w", spec.Path, err)
 	}
+	file, err := pollable(started)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, err
+	}
 
-	return &session{file: file, cmd: cmd}, nil
+	return &session{file: file, cmd: cmd, pid: cmd.Process.Pid}, nil
+}
+
+// pollable returns the master as a file in Go's poller, which is what lets a deadline wake a
+// read in progress (Pause). The file creack returns blocks in read(2), and a deadline on it
+// does nothing; a duplicate set non-blocking and wrapped anew joins the poller. The flag is on
+// the open file description, which the child's side does not share.
+func pollable(f *os.File) (*os.File, error) {
+	defer func() { _ = f.Close() }()
+	fd, err := syscall.Dup(int(f.Fd()))
+	if err != nil {
+		return nil, fmt.Errorf("pty: duplicate the master: %w", err)
+	}
+	syscall.CloseOnExec(fd)
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		_ = syscall.Close(fd)
+		return nil, fmt.Errorf("pty: make the master non-blocking: %w", err)
+	}
+	return os.NewFile(uintptr(fd), f.Name()), nil
 }
 
 // session is one open PTY and the process behind it.
 type session struct {
 	file *os.File
+	// cmd is the child this daemon started; nil for a PTY adopted in a handoff, whose child
+	// is pid and whose end is told by exit.
 	cmd  *exec.Cmd
+	pid  int
+	exit exitWatch
 
 	waitOnce sync.Once
 	waitErr  error
@@ -68,11 +97,35 @@ type session struct {
 // rather than EOF; it is translated so callers can treat the end of output uniformly.
 func (s *session) Read(p []byte) (int, error) {
 	n, err := s.file.Read(p)
-	if err != nil && isPTYClosed(err) {
+	switch {
+	case err == nil:
+	case isPTYClosed(err):
 		return n, nil
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		return n, ports.ErrPaused
 	}
 	return n, err
 }
+
+// Pause sets a deadline in the past, which wakes a read in progress and fails every next one
+// until Resume.
+func (s *session) Pause() error {
+	if err := s.file.SetReadDeadline(time.Unix(1, 0)); err != nil {
+		return fmt.Errorf("pty: pause: %w", err)
+	}
+	return nil
+}
+
+// Resume clears the deadline.
+func (s *session) Resume() error {
+	if err := s.file.SetReadDeadline(time.Time{}); err != nil {
+		return fmt.Errorf("pty: resume: %w", err)
+	}
+	return nil
+}
+
+// File implements ports.PTY.
+func (s *session) File() *os.File { return s.file }
 
 func (s *session) Write(p []byte) (int, error) { return s.file.Write(p) }
 
@@ -100,6 +153,13 @@ func (s *session) Resize(size domain.Size) error {
 // Wait blocks until the child exits and reports its code. It is safe to call from several
 // goroutines: only the first actually waits, because os/exec forbids a second Wait.
 func (s *session) Wait() (int, error) {
+	if s.cmd == nil {
+		s.waitOnce.Do(func() {
+			s.waitErr = s.exit.wait()
+			s.exited.Store(true)
+		})
+		return -1, s.waitErr
+	}
 	s.waitOnce.Do(func() {
 		err := s.cmd.Wait()
 		s.exited.Store(true)
@@ -124,17 +184,12 @@ func (s *session) Wait() (int, error) {
 }
 
 // Pid implements ports.PTY.
-func (s *session) Pid() int {
-	if s.cmd.Process == nil {
-		return 0
-	}
-	return s.cmd.Process.Pid
-}
+func (s *session) Pid() int { return s.pid }
 
 // Signal sends a signal to the child's process group, so that a shell's own children go
 // with it rather than surviving as orphans.
 func (s *session) Signal(sig ports.SignalKind) error {
-	if s.cmd.Process == nil {
+	if s.pid == 0 {
 		return errors.New("pty: the process is not running")
 	}
 
@@ -156,7 +211,7 @@ func (s *session) Signal(sig ports.SignalKind) error {
 	}
 
 	// The negative pid addresses the group. Setsid above made the shell its leader.
-	if err := syscall.Kill(-s.cmd.Process.Pid, signal); err != nil {
+	if err := syscall.Kill(-s.pid, signal); err != nil {
 		if errors.Is(err, syscall.ESRCH) {
 			// Already gone, which is the outcome the caller wanted.
 			return nil
@@ -173,10 +228,10 @@ func (s *session) Signal(sig ports.SignalKind) error {
 // turns into abandoning a loop of builtins and printing a new prompt. A shell that has
 // already exited is left alone: its pid may belong to someone else by now.
 func (s *session) signalForeground(signal syscall.Signal) error {
-	if s.cmd.Process == nil || s.exited.Load() {
+	if s.pid == 0 || s.exited.Load() {
 		return nil
 	}
-	shell := s.cmd.Process.Pid
+	shell := s.pid
 	groups := map[int]bool{}
 	for _, child := range childrenOf(shell) {
 		if pgid, err := syscall.Getpgid(child); err == nil && pgid != shell {
@@ -234,4 +289,25 @@ func validateDir(dir string) error {
 		return fmt.Errorf("%w: cwd %s is not a directory", domain.ErrValidation, dir)
 	}
 	return nil
+}
+
+// Adopt takes over a PTY another daemon started (REQ-HND-001): its master, received over the
+// handoff socket, and its child's pid. The child is not this daemon's, so its exit code is
+// not either: Wait reports ports.ErrExitUnknown once the child is gone. The watch on it is
+// taken here, while the previous daemon is still its parent and the pid cannot have been
+// reused.
+func Adopt(file *os.File, pid int) (ports.PTY, error) {
+	if pid <= 0 {
+		return nil, fmt.Errorf("pty: adopt pid %d", pid)
+	}
+	exit, err := watchExit(pid)
+	if err != nil {
+		return nil, err
+	}
+	master, err := pollable(file)
+	if err != nil {
+		exit.close()
+		return nil, err
+	}
+	return &session{file: master, pid: pid, exit: exit}, nil
 }

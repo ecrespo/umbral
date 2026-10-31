@@ -696,3 +696,11 @@ func isULID(s string) bool {
 	}
 	return true
 }
+
+// Busy reports whether a turn is running or queued. A daemon handoff refuses while one is
+// (REQ-HND-002, delta `2026-10-pty-handoff`): its tool calls wait on this daemon's sessions.
+func (r *Runtime) Busy() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.turns) > 0
+}

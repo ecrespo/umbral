@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -32,6 +33,7 @@ import (
 	"github.com/ecrespo/umbral/internal/api"
 	"github.com/ecrespo/umbral/internal/bus"
 	"github.com/ecrespo/umbral/internal/config"
+	"github.com/ecrespo/umbral/internal/handoff"
 	"github.com/ecrespo/umbral/internal/integrations"
 	"github.com/ecrespo/umbral/internal/integrations/adapters/proctree"
 	"github.com/ecrespo/umbral/internal/llmgw/adapters/egresslog"
@@ -74,14 +76,19 @@ func main() {
 	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int) {
 	fs := flag.NewFlagSet("umbrald", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	showVersion := fs.Bool("version", false, "print the daemon version and exit")
 	dbPath := fs.String("db", "", "database file (default $XDG_DATA_HOME/umbral/umbral.db)")
 	socketPath := fs.String("socket", "", "JSON-RPC socket (default $XDG_RUNTIME_DIR/umbral/umbral.sock)")
 	oneShot := fs.Bool("check", false, "open the database, recover and exit without serving")
+	takeover := fs.Bool("takeover", false, "take the live sessions of the daemon serving this runtime directory over")
 	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+	if *takeover && *oneShot {
+		_, _ = fmt.Fprintln(stderr, "umbrald: -takeover serves; it cannot be combined with -check")
 		return exitUsage
 	}
 
@@ -138,11 +145,40 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitConfig
 	}
 
+	// A handoff (REQ-HND-001, delta `2026-10-pty-handoff`): the running daemon pauses and passes
+	// its socket, its locks and its live sessions, and exits once this one confirms. Every
+	// failure until then leaves it serving (REQ-HND-002), and this daemon exits 75 naming the
+	// step.
+	var took *taken
+	committed := false
+	if *takeover {
+		if took, err = takeOver(ctx, filepath.Dir(socket), logger); err != nil {
+			logger.Error("the handoff failed; the running daemon keeps serving",
+				slog.String("step", handoffStep(err)), slog.Any("error", err))
+			return exitTempFail
+		}
+		defer func() {
+			if committed {
+				return
+			}
+			// Whatever stopped the start, a failed takeover is EX_TEMPFAIL (delta decision 3).
+			step := stepStart
+			code = exitTempFail
+			logger.Error("the handoff failed; the running daemon keeps serving", slog.String("step", step))
+			took.close()
+		}()
+	}
+
 	// Before the database, and before recovery above all. Recovery rewrites live rows on
 	// the premise that the previous process is gone (Data Model §6); a second daemon
 	// running it over a first one's sessions destroys state that is not stale. `umb`
 	// autostarts, so two daemons starting at once is ordinary rather than exotic.
-	lock, err := config.AcquireInstanceLock(filepath.Dir(socket))
+	var lock *config.InstanceLock
+	if took != nil {
+		lock = took.lock
+	} else {
+		lock, err = config.AcquireInstanceLock(filepath.Dir(socket))
+	}
 	if err != nil {
 		if errors.Is(err, config.ErrAlreadyRunning) {
 			// Not a failure: whoever holds the lock is serving this installation, which
@@ -165,7 +201,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// heuristic, no ownership check, no race to lose (REQ-TERM-012). Before the restore
 	// below, because the shells that restore launches write their own directories here and
 	// sweeping afterwards would delete the files they were started with.
-	if removed, err := shellinteg.Sweep(filepath.Dir(socket)); err != nil {
+	// Not on a handoff: the directories belong to the shells this daemon adopts.
+	if took != nil {
+		logger.Info("the bootstrap directories belong to the adopted shells; not sweeping")
+	} else if removed, err := shellinteg.Sweep(filepath.Dir(socket)); err != nil {
 		// Litter, not an outage: the user is waiting for a terminal, not for tidiness.
 		logger.Warn("could not remove every bootstrap directory left by a previous run",
 			slog.Int("removed", removed), slog.Any("error", err))
@@ -179,13 +218,27 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// a daemon of another runtime directory pointed at it with -db would otherwise recover
 	// over live sessions. Held elsewhere, nothing is serving the caller's socket and nothing
 	// failed to be created, so this is EX_TEMPFAIL rather than 0 or 73.
+	if took != nil {
+		// The database the old daemon holds open, whose lock came with the handoff.
+		if *dbPath != "" && *dbPath != took.dbPath {
+			logger.Error("the running daemon uses another database",
+				slog.String("database", took.dbPath), slog.String("asked", *dbPath))
+			return exitTempFail
+		}
+		*dbPath = took.dbPath
+	}
 	if *dbPath == "" {
 		if *dbPath, err = store.DefaultPath(); err != nil {
 			logger.Error("cannot locate the database", slog.Any("error", err))
 			return exitCantCreate
 		}
 	}
-	dbLock, err := config.AcquireDatabaseLock(*dbPath)
+	var dbLock *config.InstanceLock
+	if took != nil {
+		dbLock = took.dbLock
+	} else {
+		dbLock, err = config.AcquireDatabaseLock(*dbPath)
+	}
 	if err != nil {
 		if errors.Is(err, config.ErrDatabaseInUse) {
 			logger.Error("another umbrald, of a different runtime directory, is using this "+
@@ -218,10 +271,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// Data Model §6: every PTY died with the previous process, so any session still
 	// marked alive is stale. Blocks that were open become abandoned, never deleted.
-	report, err := db.Recover(ctx, time.Now())
-	if err != nil {
-		logger.Error("recovery after restart failed", slog.Any("error", err))
-		return exitDataErr
+	//
+	// Not on a handoff: every row it would repair is a session this daemon adopts, and the
+	// old daemon refused the handoff while a turn ran (decision 5).
+	var report store.RecoveryReport
+	if took == nil {
+		if report, err = db.Recover(ctx, time.Now()); err != nil {
+			logger.Error("recovery after restart failed", slog.Any("error", err))
+			return exitDataErr
+		}
 	}
 
 	schemaVersion, err := db.SchemaVersion(ctx)
@@ -272,9 +330,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		// A scanner per session: it carries the state of a sequence split across two
 		// PTY reads, so one shared between sessions would mix their streams.
 		NewScanner: func() sessports.Scanner { return shellinteg.NewScanner() },
-		Logger:     logger,
-		SocketPath: socket,
-		BinPath:    findUmb(logger),
+		// A handoff's sessions: the old daemon's PTYs, and their scanners where they were.
+		AdoptPTY:      pty.Adopt,
+		ResumeScanner: func(state []byte) (sessports.Scanner, error) { return shellinteg.ResumeScanner(state) },
+		Logger:        logger,
+		SocketPath:    socket,
+		BinPath:       findUmb(logger),
 	})
 	if err != nil {
 		logger.Error("cannot build the sessions module", slog.Any("error", err))
@@ -283,6 +344,26 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// Every PTY is closed on the way out so no shell is orphaned. The rows are repaired on
 	// the next start by store.Recover.
 	defer sessionService.Shutdown()
+	if took != nil {
+		if handoffFailAt == stepAdopt {
+			err = errInjected
+		} else {
+			err = sessionService.Adopt(ctx, took.handed, took.masters)
+		}
+		if err != nil {
+			logger.Error("the handoff failed; the running daemon keeps serving",
+				slog.String("step", stepAdopt), slog.Any("error", err))
+			committed = true // logged here; the deferred report would say "start"
+			took.close()
+			return exitTempFail
+		}
+		// Until the old daemon lets go the sessions are its own: a failure here touches none.
+		defer func() {
+			if !committed {
+				sessionService.DropAdopted()
+			}
+		}()
+	}
 
 	blockReader, err := sessions.NewReader(sessions.ReaderConfig{Blocks: blocks})
 	if err != nil {
@@ -335,14 +416,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// workspace could not be rebuilt would turn a lost layout into a lost terminal.
 	// Screens the setting no longer wants are deleted before anything can read them
 	// (Data Model §2.4d, a privacy promise rather than housekeeping).
+	// A takeover is a start too: the purge runs on it, and it deletes rows only.
 	if err := workspaceService.PrepareHistory(ctx); err != nil {
 		logger.Error("could not reconcile the stored pane screens with the setting",
 			slog.Any("error", err))
 	}
-
-	if err := workspaceService.Restore(ctx); err != nil {
-		logger.Error("could not restore the saved structure; starting with an empty tree",
-			slog.Any("error", err))
+	if took != nil {
+		// The panes keep their sessions: only the focus is read back (decision 5).
+		if err := workspaceService.ResumeFocus(ctx); err != nil {
+			logger.Error("could not read the focus back", slog.Any("error", err))
+		}
+	} else {
+		if err := workspaceService.Restore(ctx); err != nil {
+			logger.Error("could not restore the saved structure; starting with an empty tree",
+				slog.Any("error", err))
+		}
 	}
 
 	// The model catalog (REQ-LLM-002). Discovery runs in the background: a provider that is
@@ -517,8 +605,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitCantCreate
 	}
 
+	var inherited *net.UnixListener
+	if took != nil {
+		inherited = took.listener
+	}
+	// The daemon's own lifetime from here: a handoff ends it without a signal.
+	ctx, stopDaemon := context.WithCancel(ctx)
+	defer stopDaemon()
+	// A client inside an agent's terminal, or inside a hosted ACP agent: the API refuses it
+	// what lands, drops or approves the agent's own work, and the handoff socket everything.
+	insideAnAgent := agentPeer(func() []int {
+		return append(sessionService.AgentShellPIDs(), acpHost.AgentPIDs()...)
+	}, proctree.Ancestors, unix.Getsid)
 	server, err := api.Listen(ctx, api.Config{
 		SocketPath:    socket,
+		Listener:      inherited,
 		TokenPath:     tokenPath,
 		DaemonVersion: buildVersion(),
 		Status:        withMCP(withProviders(statusFromStore(db), providers), mcpClient),
@@ -543,11 +644,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		WorktreeThreads: runtime,
 		// A client inside an agent's terminal, or inside a hosted ACP agent, is refused what
 		// lands, drops or approves the agent's own work (REQ-ORC-004).
-		AgentPeer: agentPeer(func() []int {
-			return append(sessionService.AgentShellPIDs(), acpHost.AgentPIDs()...)
-		}, proctree.Ancestors, unix.Getsid),
-		Bus:    eventBus,
-		Logger: logger,
+		AgentPeer: insideAnAgent,
+		Bus:       eventBus,
+		Logger:    logger,
 		// The first live setting: `limits.set` rewrites it in this file and applies it to
 		// new connections without a restart (REQ-CLI-007, Tech Design §5.1).
 		MaxMessageBytes: settings.MaxMessageBytes,
@@ -564,6 +663,43 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			logger.Error("cannot close the socket", slog.Any("error", err))
 		}
 	}()
+	if took != nil {
+		// The socket's path stays the old daemon's while it may resume.
+		defer func() {
+			if !committed {
+				server.Abandon()
+			}
+		}()
+		if handoffFailAt == stepStart {
+			return exitTempFail
+		}
+		if err := took.confirm(); err != nil {
+			logger.Error("the handoff failed; the running daemon keeps serving",
+				slog.String("step", stepConfirm), slog.Any("error", err))
+			committed = true // the sessions stay the old daemon's
+			sessionService.DropAdopted()
+			server.Abandon()
+			took.close()
+			return exitTempFail
+		}
+		committed = true
+		//nolint:contextcheck // the sessions' drains outlive this call, as they do on a create
+		sessionService.StartAdopted()
+		logger.Info("took the running daemon's sessions over",
+			slog.Int("sessions", len(took.handed)), slog.Duration("since_connect", time.Since(took.started)))
+	}
+
+	// Every daemon can be taken over in its turn (REQ-HND-001).
+	handoffListener, err := handoff.Listen(filepath.Join(filepath.Dir(socket), handoff.SocketName))
+	if err != nil {
+		logger.Warn("no handoff socket; this daemon cannot be taken over", slog.Any("error", err))
+	} else {
+		g := &giver{
+			server: server, runtime: runtime, sessions: sessionService, lock: lock, dbLock: dbLock,
+			dbPath: *dbPath, logger: logger, agentPeer: insideAnAgent, handedOver: stopDaemon,
+		}
+		go g.serveHandoff(ctx, handoffListener)
+	}
 
 	// Forward module events to connected clients (API Spec §6).
 	go server.Notify(ctx)

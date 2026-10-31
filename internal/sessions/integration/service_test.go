@@ -220,8 +220,8 @@ func TestExitedEmitsCode_REQ_TERM_005(t *testing.T) {
 	}
 
 	event := waitFor(t, sub, func(e ports.SessionExited) bool { return e.SessionID == session.ID })
-	if event.ExitCode != 42 {
-		t.Errorf("session.exited carried exit code %d, want 42", event.ExitCode)
+	if event.ExitCode == nil || *event.ExitCode != 42 {
+		t.Errorf("session.exited carried exit code %v, want 42", event.ExitCode)
 	}
 	if event.ExitedAtMs == 0 {
 		t.Error("session.exited carried no exit time")

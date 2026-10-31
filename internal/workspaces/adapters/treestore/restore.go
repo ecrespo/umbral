@@ -71,8 +71,29 @@ func (s *Store) Restore(ctx context.Context) (ports.Restored, error) {
 	// Dropping the tab as well would leave the daemon with a focused workspace and no
 	// focused tab, which is a state the default handles by failing; landing on a tab the
 	// user did not choose is a smaller cost than that, and than losing the workspace too.
+	if restored.Focus, err = readFocus(ctx, tx); err != nil {
+		return ports.Restored{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return ports.Restored{}, fmt.Errorf("treestore: commit restore: %w", err)
+	}
+	return restored, nil
+}
+
+// Focus reads the focus a restore would, and changes nothing: what a daemon that took the
+// sessions over from another needs, since the panes keep theirs (REQ-HND-001).
+func (s *Store) Focus(ctx context.Context) (domain.Focus, error) {
+	return readFocus(ctx, s.db)
+}
+
+// readFocus is the focused workspace and its focused tab, as of the last run.
+func readFocus(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+},
+) (domain.Focus, error) {
 	var workspaceID, tabID sql.NullString
-	err = tx.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT w.id,
 		       COALESCE(
 		         (SELECT t.id FROM tabs t
@@ -85,14 +106,9 @@ func (s *Store) Restore(ctx context.Context) (ports.Restored, error) {
 		 ORDER BY w.focused_at DESC, w.created_at DESC, w.rowid DESC
 		 LIMIT 1`).Scan(&workspaceID, &tabID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return ports.Restored{}, fmt.Errorf("treestore: read the focused workspace: %w", err)
+		return domain.Focus{}, fmt.Errorf("treestore: read the focused workspace: %w", err)
 	}
-	restored.Focus = domain.Focus{WorkspaceID: workspaceID.String, TabID: tabID.String}
-
-	if err := tx.Commit(); err != nil {
-		return ports.Restored{}, fmt.Errorf("treestore: commit restore: %w", err)
-	}
-	return restored, nil
+	return domain.Focus{WorkspaceID: workspaceID.String, TabID: tabID.String}, nil
 }
 
 // SetFocus records which workspace is focused and which tab inside it.

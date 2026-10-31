@@ -1,6 +1,7 @@
 package shellinteg
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -60,6 +61,19 @@ type Scanner struct {
 
 // NewScanner returns a scanner in the ground state.
 func NewScanner() *Scanner { return &Scanner{} }
+
+// State is the scanner's state between two chunks, for a handoff (REQ-HND-001): where it is
+// in a sequence and the bytes of it already read.
+func (s *Scanner) State() []byte { return append([]byte{byte(s.state)}, s.carried...) }
+
+// ResumeScanner builds a scanner in the state State returned, so a marker cut between the
+// last read of one daemon and the first of the next is still one marker.
+func ResumeScanner(state []byte) (*Scanner, error) {
+	if len(state) == 0 || scanState(state[0]) > scanOSCEscape {
+		return nil, fmt.Errorf("shellinteg: a scanner state of %d bytes is not one State wrote", len(state))
+	}
+	return &Scanner{state: scanState(state[0]), carried: append([]byte(nil), state[1:]...)}, nil
+}
 
 // Scan splits one chunk of PTY output into ordinary byte runs and markers.
 //

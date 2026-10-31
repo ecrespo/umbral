@@ -226,3 +226,41 @@ func equalKinds(got, want []domain.EventKind) bool {
 	}
 	return true
 }
+
+// TestAScannerResumesInsideAMarker_REQ_HND_001: a scanner stopped in the middle of an OSC 133
+// marker, its state carried to a scanner built from it, still reads one marker and loses no
+// output — the cut between the old daemon's last read and the new one's first.
+func TestAScannerResumesInsideAMarker_REQ_HND_001(t *testing.T) {
+	stream := "before\x1b]133;D;3\x07after\x1b]7;file://h/tmp\x1b\\end"
+	for cut := 1; cut < len(stream); cut++ {
+		first := NewScanner()
+		var got collected
+		keep := func(events []domain.Event) {
+			for _, event := range events {
+				if event.Kind == domain.EventOutput {
+					got.output = append(got.output, event.Data...)
+					continue
+				}
+				got.events = append(got.events, event)
+			}
+		}
+		keep(first.Scan([]byte(stream[:cut])))
+		resumed, err := ResumeScanner(first.State())
+		if err != nil {
+			t.Fatal(err)
+		}
+		keep(resumed.Scan([]byte(stream[cut:])))
+
+		if string(got.output) != "beforeafterend" {
+			t.Fatalf("cut at %d: output %q", cut, got.output)
+		}
+		if len(got.events) != 2 || got.events[0].Kind != domain.EventCommandEnd ||
+			got.events[0].ExitCode == nil || *got.events[0].ExitCode != 3 ||
+			got.events[1].Kind != domain.EventCWD || got.events[1].Text != "/tmp" {
+			t.Fatalf("cut at %d: events %+v", cut, got.events)
+		}
+	}
+	if _, err := ResumeScanner([]byte{99}); err == nil {
+		t.Fatal("a state no scanner wrote was accepted")
+	}
+}

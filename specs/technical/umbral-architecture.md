@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.81 |
+| **Version** | 1.82 |
 | **Date** | 2026-10-31 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -122,6 +122,7 @@ flowchart LR
 | `notify` | client channel | normalization, rate limit, typed reasons | NTF-* |
 | `worktrees` | the `git` CLI ≥ 2.34 + SQLite | a thread's worktree outside the repository: create, diff with stable hunk ids, single hunks reverted, its file tree read and edited by the user, squash merge, discard, missing detection | WT-* (F2) |
 | `hunks` | stdlib only | the unified-diff parser, the stable hunk id of REQ-WT-003, a patch of chosen hunks and a content with chosen hunks applied (delta `2026-10-hunks-file-tree`) | WT-003, DSK-002 |
+| `handoff` | stdlib + `golang.org/x/sys` | the channel a newer `umbrald --takeover` takes the running daemon's sessions over: length-prefixed JSON frames with descriptors as `SCM_RIGHTS` on `handoff.sock`, the peer's uid and pid from the kernel (delta `2026-10-pty-handoff`) | HND-001, HND-002 |
 | `acp` | `github.com/coder/acp-go-sdk` over stdio | third-party agents hosted through a manifest: launch in an isolated home, `initialize`, `session/new`, prompt, the silence timer | ACP-* (F2) |
 | `obs` | OpenTelemetry Go, `log/slog` | traces, metrics | OBS-* |
 
@@ -444,10 +445,32 @@ sequenceDiagram
 |---|---|---|---|---|
 | Client detaches | keep running | returns | from the live terminal | keeps running |
 | Daemon restart | lost | restored (REQ-TERM-009) | only with `pane_history` (REQ-TERM-010) | history restored, turn `stopped` (REQ-AGT-017) |
-| Daemon update | lost in the MVP | restored | as above | as above |
+| Daemon update (restart) | lost | restored | as above | as above |
+| Daemon update (`umbrald --takeover`, F2) | keep running | kept | from the live terminal | kept; refused while a turn runs |
 
-Live PTY handoff between daemon versions is F2: it is worth it only once the daemon is something
-people leave running for days.
+Live PTY handoff between daemon versions is F2 (T-F2-40, delta `2026-10-pty-handoff`). A new
+`umbrald --takeover` dials the running daemon's `handoff.sock`, which is 0600 and accepts only
+a peer of the same uid outside any agent's terminal. It speaks length-prefixed JSON frames with descriptors as `SCM_RIGHTS`
+(the leaf `internal/handoff`), in named steps: `connect`, `hello`, `quiesce`, `transfer`,
+`adopt`, `start`, `confirm`.
+
+- **Quiesce.** The old daemon refuses while a turn runs, before it pauses anything. Otherwise it stops accepting, closes
+  every client and parks each drain between two reads with a deadline on a pollable
+  duplicate of the master.
+- **Transfer.** It sends the API listener, both `flock`s and each session: the master and pid,
+  the emulator snapshot, the sequence number, and the recorder, plain-text and scanner state.
+  Each descriptor goes as a duplicate, because `os.File.Fd` would make the shared description
+  blocking.
+- **Adopt and start.** The new daemon watches each shell through a pidfd (Linux) or `NOTE_EXIT`
+  (macOS) and records `exit_code` NULL. It skips `Recover`, the bootstrap sweep and the
+  restore, reads back the focus only, and still runs the `pane_history` purge. It starts its
+  drains and accepts only after the old daemon answers `released`, or closes the connection
+  having let go.
+- **Failure.** It exits 75 naming the step. Any failure before `ready` resumes the old daemon
+  with its sessions untouched (REQ-HND-002).
+
+Clients reconnect and resume from `session.snapshot`; the TUI's and the desktop's
+reconnection is T-F2-42.
 
 ### DD-015: The protocol schema is generated from the code
 
@@ -872,6 +895,7 @@ num_ctx = 4096
 | `mcp` | its own `ports` and `domain`, plus `bus`. `tools/adapters` may use `mcp/domain`, for `mcptools`, which offers a server's tools; `api` the `ports` and `domain` of `mcp`; only `cmd/*` wires the manager to the registry (delta `2026-10-mcp-client`) |
 | `activeai` | its own `ports` and `domain`, `ports` and `domain` of `sessions` (for `block.closed` and the escape-sequence stripper), plus `bus`, which its `ports` import to name `block.suggestion`; never `llmgw`, `agents` or `api`. `cmd/umbrald` implements its `Model` port over the router, always `LocalOnly`, and its `Blocks` port over the block reader (delta `2026-10-active-ai`) |
 | `hunks` | stdlib only: a leaf that `worktrees/domain`, the agents runtime, `tools/adapters` and `api` read diffs through, so a worktree's diff and an approval's give the same id to the same hunk (delta `2026-10-hunks-file-tree`) |
+| `handoff` | stdlib and `golang.org/x/sys` only: a leaf that moves frames and descriptors and knows nothing of what they are. Only `cmd/umbrald` imports it, which owns the steps and every module a handoff touches (delta `2026-10-pty-handoff`) |
 | `slots` | stdlib only: the arrival-order semaphore of the runtime's turn slots and the router's per-provider queues (T-F2-04). `agents` and `llmgw` may import it, so neither reaches the other through it |
 | `obs` | stdlib, and OpenTelemetry from T-F1-18; imported only by `cmd/*`. Modules count through a port of their own, which `cmd/umbrald` gives the `obs` implementation (delta `2026-10-tool-call-repair`) |
 | `cmd/*` | everything |
@@ -2131,3 +2155,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.79 | 2026-10-30 | E. Crespo (assisted draft) | Delta `2026-10-hunks-file-tree` (T-F2-31): the `hunks` leaf in the module and dependency tables, `worktrees` reverting single hunks and serving its file tree; §5.3h the desktop review of hunks and the Files view. Delta `2026-10-icons-render-tolerance`: §9.3's regeneration compares rendered images within two levels |
 | 1.80 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-usf2-002-live` (T-F2-23): §5.3g the calls a local model writes — string keys, a lone control character as its key, zero values absent, `send_keys` that waits on the output after its keys, combined conditions, the holder line first; §3.3 item 2 an unreadable tool call is one retry with a repair message; DD-004's breakers do not count it |
 | 1.81 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-wails-icons` (T-PKG-04): §9.3 the Windows resource objects generated from the kit's icon and checked, the executable's check moved to T-F2-50; the window id read from the live window |
+| 1.82 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-pty-handoff` (T-F2-40): §5.2 the `handoff` leaf; DD-014 the live handoff over `handoff.sock`, its steps, what the new daemon skips, and the resume on failure; T-F2-42 for the clients' reconnection |

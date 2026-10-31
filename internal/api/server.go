@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -209,6 +208,11 @@ type Config struct {
 	// not pretend to have raised it.
 	SettingsPath string
 
+	// Listener is a socket already bound and listening, inherited from the daemon this one
+	// took over (REQ-HND-001): Listen serves it instead of binding SocketPath. Clients that
+	// connected during the handoff are waiting in its backlog.
+	Listener *net.UnixListener
+
 	// handshakeTimeout replaces HandshakeTimeout. It is unexported because nothing
 	// legitimate needs another value (REQ-SEC-017): it exists so a test can measure the
 	// deadline on the real clock in milliseconds rather than seconds. Zero means
@@ -263,6 +267,11 @@ type Server struct {
 	// settingsMu serialises `limits.set`, so two clients raising the limit at once write
 	// the file one after the other and the daemon keeps the value the file ends with.
 	settingsMu sync.Mutex
+
+	// suspended is a handoff's hold on the accept loop, nil when there is none, and
+	// abandoned a server whose socket went to the next daemon (handoff.go). Guarded by mu.
+	suspended *suspension
+	abandoned bool
 }
 
 // nextSeq hands out the next notification number. Every notification the daemon emits goes
@@ -301,29 +310,9 @@ func Listen(ctx context.Context, cfg Config) (*Server, error) {
 		return nil, err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(cfg.SocketPath), config.RuntimeDirMode); err != nil {
-		return nil, fmt.Errorf("api: create the runtime directory: %w", err)
-	}
-	// A socket left behind by a crashed daemon would make Listen fail with EADDRINUSE,
-	// so it is removed. What makes that safe is the instance lock `cmd/umbrald` takes on
-	// the runtime directory before it gets here: a live daemon holds it, so anything
-	// still on disk belongs to a daemon that is gone. Nothing else may call New without
-	// holding that lock — an earlier comment here claimed a database lock did the job,
-	// and there is no such lock.
-	if err := removeStaleSocket(cfg.SocketPath); err != nil {
-		return nil, err
-	}
-
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "unix", cfg.SocketPath)
+	ln, err := bind(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("api: listen on %s: %w", cfg.SocketPath, err)
-	}
-	// net.Listen applies the umask, so the mode is set explicitly rather than assumed.
-	// This is REQ-SEC-007 and it is checked by a test, not by inspection.
-	if err := os.Chmod(cfg.SocketPath, socketMode); err != nil {
-		_ = ln.Close()
-		return nil, fmt.Errorf("api: set socket permissions: %w", err)
+		return nil, err
 	}
 
 	s := &Server{
@@ -360,6 +349,14 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	for {
 		netConn, acceptErr := s.listener.Accept()
+		if acceptErr != nil && ctx.Err() == nil {
+			if resumed, abandoned := s.parkIfSuspended(); resumed {
+				continue
+			} else if abandoned {
+				s.wg.Wait()
+				return nil
+			}
+		}
 		if acceptErr != nil {
 			// A closed listener is how Close and context cancellation stop this loop;
 			// that is a clean stop, not a failure to report.
@@ -390,6 +387,13 @@ func (s *Server) Close() error {
 
 	s.closeConns()
 	s.wg.Wait()
+	s.mu.Lock()
+	abandoned := s.abandoned
+	s.mu.Unlock()
+	if abandoned {
+		// The next daemon serves this path now.
+		return nil
+	}
 	if rmErr := os.Remove(s.cfg.SocketPath); rmErr != nil && !os.IsNotExist(rmErr) {
 		return errors.Join(err, fmt.Errorf("api: remove socket: %w", rmErr))
 	}

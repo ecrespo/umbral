@@ -71,6 +71,10 @@ func (s *Service) deliverPendingInput(live *liveSession, why string) {
 func takePendingInput(live *liveSession) []byte {
 	live.mu.Lock()
 	defer live.mu.Unlock()
+	if live.gate != nil {
+		// Frozen for a handoff: the text goes with the session, or waits for the thaw.
+		return nil
+	}
 	text := live.typeAtPrompt
 	live.typeAtPrompt = nil
 	return text

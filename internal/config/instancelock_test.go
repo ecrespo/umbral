@@ -303,3 +303,35 @@ func waitForLockFile(t *testing.T, dir string) {
 	}
 	t.Fatalf("the lock holder never created %s", path)
 }
+
+// TestAHandedLockStaysHeld_REQ_HND_001: a lock adopted from another descriptor for the same
+// open file stays held when the daemon that took it releases its own, which is how the next
+// daemon of a handoff owns the installation the moment the old one exits; and it is released
+// when the adopter lets go.
+func TestAHandedLockStaysHeld_REQ_HND_001(t *testing.T) {
+	dir := t.TempDir()
+	old, err := AcquireInstanceLock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fd, err := syscall.Dup(int(old.File().Fd()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := AdoptLock(os.NewFile(uintptr(fd), "lock"))
+	if err := old.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if third, err := AcquireInstanceLock(dir); !errors.Is(err, ErrAlreadyRunning) {
+		_ = third.Release()
+		t.Fatalf("a third daemon got %v while the adopted lock is held, want ErrAlreadyRunning", err)
+	}
+	if err := next.Release(); err != nil {
+		t.Fatal(err)
+	}
+	third, err := AcquireInstanceLock(dir)
+	if err != nil {
+		t.Fatalf("the lock was not released with its adopter: %v", err)
+	}
+	_ = third.Release()
+}

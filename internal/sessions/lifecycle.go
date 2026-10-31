@@ -235,11 +235,25 @@ func (s *Service) persistCreate(ctx context.Context, session domain.Session) err
 // promises the PTY and the screen survive with no client attached. Nothing here waits on a
 // subscriber: the bus drops rather than blocks, so a stalled client cannot stall the shell.
 func (s *Service) drain(live *liveSession) {
-	defer s.finish(live)
+	released := false
+	defer func() {
+		// A session released to the next daemon is not over: its shell runs on there.
+		if !released {
+			s.finish(live)
+		}
+	}()
 
 	buf := make([]byte, readBufferSize)
 	for {
+		if !live.park() {
+			released = true
+			return
+		}
 		n, err := live.pty.Read(buf)
+		if errors.Is(err, ports.ErrPaused) {
+			// A handoff's freeze: the next turn of the loop parks.
+			continue
+		}
 		if n > 0 {
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
@@ -286,7 +300,16 @@ func (s *Service) finish(live *liveSession) {
 	live.doneOnce.Do(func() {
 		defer close(live.done)
 
-		exitCode, waitErr := live.pty.Wait()
+		code, waitErr := live.pty.Wait()
+		// An adopted shell's code went to the daemon that started it (REQ-HND-001): the exit
+		// is recorded with none.
+		var exitCode *int
+		switch {
+		case errors.Is(waitErr, ports.ErrExitUnknown):
+			waitErr = nil
+		case waitErr == nil:
+			exitCode = &code
+		}
 		if waitErr != nil {
 			s.cfg.Logger.Error("wait failed",
 				slog.String("session_id", live.session.ID), slog.Any("error", waitErr))
@@ -309,7 +332,7 @@ func (s *Service) finish(live *liveSession) {
 
 		live.mu.Lock()
 		live.session.State = domain.StateExited
-		live.session.ExitCode = &exitCode
+		live.session.ExitCode = exitCode
 		live.session.ExitedAt = &exitedAt
 		sessionID := live.session.ID
 		live.mu.Unlock()
@@ -320,7 +343,7 @@ func (s *Service) finish(live *liveSession) {
 		defer cancel()
 		if _, err := s.cfg.Store.DB().ExecContext(ctx,
 			"UPDATE sessions SET state = 'exited', exit_code = ?, exited_at = ? WHERE id = ?",
-			exitCode, exitedAt.UTC().UnixMilli(), sessionID); err != nil {
+			nullableInt(exitCode), exitedAt.UTC().UnixMilli(), sessionID); err != nil {
 			s.cfg.Logger.Error("persist the session exit",
 				slog.String("session_id", sessionID), slog.Any("error", err))
 		}
