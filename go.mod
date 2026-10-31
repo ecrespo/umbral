@@ -5,6 +5,7 @@ go 1.27.3
 require (
 	charm.land/bubbletea/v2 v2.0.9
 	charm.land/fantasy v0.45.2
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/aymanbagabas/go-udiff v0.2.0
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/creack/pty v1.1.24

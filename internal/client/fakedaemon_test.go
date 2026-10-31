@@ -2,7 +2,6 @@ package client
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -139,8 +138,7 @@ func listenAndExpire(socket string) (net.Listener, bool) {
 	if socket == "" {
 		return nil, false
 	}
-	var lc net.ListenConfig
-	ln, err := lc.Listen(context.Background(), "unix", socket)
+	ln, err := listenFake(socket)
 	if err != nil {
 		return nil, false
 	}

@@ -191,7 +191,7 @@ func DialAs(ctx context.Context, socketPath, token, kind string) (*Client, error
 	dialCtx, cancel := context.WithTimeout(ctx, DialTimeout)
 	defer cancel()
 
-	conn, err := d.DialContext(dialCtx, "unix", socketPath)
+	conn, err := dialSocket(dialCtx, &d, socketPath)
 	if err != nil {
 		// A missing socket and a socket nobody is listening on are the same situation
 		// for the caller: the daemon is down. Both are worth an autostart; nothing else

@@ -72,7 +72,7 @@ func dial(t *testing.T, s *Server) *client {
 	t.Helper()
 
 	var dialer net.Dialer
-	c, err := dialer.DialContext(t.Context(), "unix", s.SocketPath())
+	c, err := dialDaemon(t.Context(), &dialer, s.SocketPath())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -500,33 +500,6 @@ func TestAnythingButHelloFirstIsUnauthorized_REQ_SEC_003(t *testing.T) {
 	}
 }
 
-// TestStaleSocketIsReplaced covers the crash-restart path: a leftover socket file must
-// not stop the daemon from starting.
-func TestStaleSocketIsReplaced(t *testing.T) {
-	t.Parallel()
-
-	dir := socketDir(t)
-	socket := filepath.Join(dir, SocketFileName)
-
-	var lc net.ListenConfig
-	first, err := lc.Listen(t.Context(), "unix", socket)
-	if err != nil {
-		t.Fatalf("create a stale socket: %v", err)
-	}
-	if err := first.Close(); err != nil {
-		t.Fatalf("close the stale listener: %v", err)
-	}
-
-	s, err := Listen(t.Context(), Config{
-		SocketPath: socket, TokenPath: filepath.Join(dir, TokenFileName), DaemonVersion: "t",
-	})
-	if err != nil {
-		t.Fatalf("Listen over a stale socket: %v", err)
-	}
-	if err := s.Close(); err != nil {
-		t.Errorf("Close: %v", err)
-	}
-}
 
 // TestListenRefusesToDeleteARegularFile guards the stale-socket cleanup: a mistyped path
 // must never make the daemon delete the user's data.

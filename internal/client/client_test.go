@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -260,8 +259,7 @@ func fakeServerWithParams(t *testing.T, handle func(method string, params map[st
 		t.Fatalf("write the token: %v", err)
 	}
 
-	var lc net.ListenConfig
-	ln, err := lc.Listen(context.Background(), "unix", socket)
+	ln, err := listenFake(socket)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
