@@ -299,26 +299,41 @@ func (m *Model) applyEvent(msg daemonEventMsg) tea.Cmd {
 	case ports.EventUnsubscribed:
 		// The subscription was dropped, not the connection. API Spec §6: subscribe
 		// again, and the fresh snapshot carries everything the dropped subscription had
-		// not delivered. The seq is reset first, or the new snapshot's own sequence
-		// number would be judged against the old stream's.
+		// not delivered.
 		if p := m.paneByID(ev.SessionID); p != nil {
-			// The screen is emptied before the fresh snapshot arrives, because a
-			// snapshot only reproduces the daemon's screen when it is replayed into an
-			// empty emulator. Writing it over the pre-drop screen would leave stale rows
-			// underneath. `subscribed` also goes back to false, so any chunk that
-			// arrives before the new snapshot waits for it instead of being drawn on a
-			// blank screen.
-			if p.screen != nil {
-				if err := p.screen.Reset(); err != nil {
-					m.status = err.Error()
-				}
-			}
-			p.lastSeq = 0
-			p.subscribed = false
-			p.pending = nil
+			m.detach(p)
 		}
 		m.status = "the daemon dropped a subscription; re-attaching"
 		return tea.Batch(m.subscribeCmd(ev.SessionID), m.waitForEvent())
+
+	case ports.EventReconnecting:
+		// The daemon closed the stream, as it does when a newer one takes its sessions over
+		// (REQ-HND-001). The adapter is dialling; the panes stay as they are until it has.
+		m.status = "the daemon went away; reconnecting"
+
+	case ports.EventReconnected:
+		// Everything this connection held went with it. Each pane attaches again from a fresh
+		// snapshot. The thread list is read again, and its envelope seq restarts: the new
+		// daemon's counter names nothing of the old one's (API §6). The panel's thread is
+		// focused again, since a focus belongs to the connection that sent it (REQ-AGT-016).
+		// The block list and the panel's extensions are read again too, for what changed in
+		// between.
+		m.agent.listedSeq = 0
+		m.agent.conn++
+		m.agent.viewing = ""
+		cmds := []tea.Cmd{m.loadThreadsCmd(), m.syncView(), m.waitForEvent()}
+		if m.showBlocks {
+			cmds = append(cmds, m.loadBlocksForFocus())
+		}
+		if m.agent.open {
+			cmds = append(cmds, m.loadExtensionsCmd())
+		}
+		for _, p := range m.allPanes() {
+			m.detach(p)
+			cmds = append(cmds, m.subscribeCmd(p.sessionID))
+		}
+		m.status = "reconnected to the daemon"
+		return tea.Batch(cmds...)
 
 	case ports.EventThreadDelta, ports.EventToolCall, ports.EventApprovalRequested, ports.EventTurnFinished,
 		ports.EventAttentionChanged, ports.EventWorkspaceFocused:
@@ -421,4 +436,21 @@ func (m *Model) sessionIDs() []string {
 		}
 	}
 	return out
+}
+
+// detach readies a pane for a fresh snapshot. The screen is emptied, because a snapshot only
+// reproduces the daemon's screen when it is replayed into an empty emulator: writing it over
+// the old screen would leave stale rows underneath. The seq is reset, or the new snapshot's
+// own sequence number would be judged against the old stream's, and `subscribed` goes back to
+// false so a chunk that arrives before the snapshot waits for it instead of being drawn on a
+// blank screen.
+func (m *Model) detach(p *pane) {
+	if p.screen != nil {
+		if err := p.screen.Reset(); err != nil {
+			m.status = err.Error()
+		}
+	}
+	p.lastSeq = 0
+	p.subscribed = false
+	p.pending = nil
 }
