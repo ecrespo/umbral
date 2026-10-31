@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-10-31`; self-approved by the implementing agent under the Tech Lead's standing F2 instruction once its first layer lands |
+| **Status** | `APPROVED 2026-10-31` by the implementing agent under the Tech Lead's standing F2 instruction; pending the Tech Lead's review |
 | **Date** | 2026-10-31 |
 | **Task** | T-F2-50 |
 | **REQ** | REQ-WIN-001, REQ-WIN-002, REQ-WIN-003; REQ-PKG-005's executable check |
-| **Folded into** | (when approved) API §1 transport, Tech §5.1 paths, §5.3 (peer check), §9 (Windows build), constitution's Stack row (named pipe library) |
+| **Folded into** | API 1.59 (header, §2), Tech 1.85 (§5.3i, §9.3), constitution 1.6 (Stack row) |
 
 ## Evidence
 

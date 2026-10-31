@@ -441,7 +441,7 @@ func (s *Service) AgentShellPIDs() []int {
 	return out
 }
 
-// AgentTreeHolding is the pid of the live agent-owned shell whose process tree holds pid, or 0.
+// AgentTreeHolding is the pid of the agent-owned shell whose process tree holds pid, or 0.
 // It is the agent's-terminal check where the platform keeps a shell's tree in an object of its
 // own — a Job Object on Windows, which has no POSIX session — so a process the shell's children
 // left behind is still known as the agent's (REQ-ORC-004, delta `2026-10-windows-port`).
@@ -453,8 +453,10 @@ func (s *Service) AgentTreeHolding(pid int) int {
 	}
 	s.mu.RUnlock()
 	for _, live := range lives {
-		session := live.snapshotState()
-		if session.OwnerThreadID == "" || session.State == domain.StateExited {
+		// An exited shell's tree is asked too: its job outlives the shell until finish closes
+		// it, and a process the shell left behind is the agent's until then. Holds answers
+		// false once the job is closed, which also ended everything in it.
+		if live.snapshotState().OwnerThreadID == "" {
 			continue
 		}
 		if tree, ok := live.pty.(interface{ Holds(pid int) bool }); ok && tree.Holds(pid) {

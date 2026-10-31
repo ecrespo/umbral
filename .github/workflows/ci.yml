@@ -259,11 +259,25 @@ jobs:
           echo "PKG_CONFIG_PATH=$(cygpath -w "$RUNNER_TEMP/ghostty-vt/share/pkgconfig")" >> "$GITHUB_ENV"
       - name: The emulators link and pass on Windows, and every binary builds
         if: success() || failure()
+        # pkg-config names the static library by its path, which cgo's flag check refuses
+        # unless it ends in .a; this admits the one library and nothing else.
+        env:
+          CGO_LDFLAGS_ALLOW: '.*[/\\]ghostty-vt-static\.lib'
         run: |
           cat "$RUNNER_TEMP/ghostty-vt/share/pkgconfig/"*.pc
           ls -la "$RUNNER_TEMP/ghostty-vt/lib"
           CGO_ENABLED=1 go test -race ./internal/sessions/adapters/ghostty/... ./internal/tui/adapters/ghosttyvt/... ./internal/desktop/adapters/vtframe/...
           CGO_ENABLED=1 go build ./cmd/...
+      # REQ-PKG-005's last check: the .exe the linker produced carries the kit's icon group,
+      # taken from cmd/umbral-desktop's rsrc_windows_amd64.syso (T-PKG-04, T-F2-50).
+      - name: The desktop builds for Windows and embeds the kit's icon
+        if: success() || failure()
+        env:
+          CGO_LDFLAGS_ALLOW: '.*[/\\]ghostty-vt-static\.lib'
+        run: |
+          (cd cmd/umbral-desktop && CGO_ENABLED=1 go build -o "$RUNNER_TEMP/umbral-desktop.exe" .)
+          UMBRAL_DESKTOP_EXE="$(cygpath -w "$RUNNER_TEMP/umbral-desktop.exe")" \
+            go test ./packaging/desktop/ -run TestTheWindowsExecutableEmbedsTheKitIcon_REQ_PKG_005 -v
 
   test:
     name: Tests with the race detector (Art. 2)

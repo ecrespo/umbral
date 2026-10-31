@@ -26,7 +26,9 @@ func concurrently(t *testing.T, r *Router, class string, n int) []error {
 func TestLocalCallsQueuePerProvider_REQ_ORC_005(t *testing.T) {
 	t.Parallel()
 
-	slow := script{delay: 60 * time.Millisecond, events: answer}
+	// 30 ms keeps three calls overlapping and leaves the remote's 150 ms first-token timeout a
+	// margin the Windows runner under -race needs; 60 ms ran out of it there.
+	slow := script{delay: 30 * time.Millisecond, events: answer}
 	local := &streamProvider{id: "ollama", local: true, scripts: map[string]script{"m": slow}}
 	remote := &streamProvider{id: "remote", scripts: map[string]script{"m": slow}}
 	wide := &streamProvider{id: "lmstudio", local: true, scripts: map[string]script{"m": slow}}
