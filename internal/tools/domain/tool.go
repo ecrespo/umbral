@@ -59,6 +59,9 @@ type Grant struct {
 	Action   secdomain.Action
 	Decision secdomain.Decision
 	Approved bool
+	// Hunks are the ids of the hunks of the call's diff the user accepted, nil when the call
+	// was approved whole (delta `2026-10-hunks-file-tree`, decision 4).
+	Hunks []string
 }
 
 // Allows reports whether the grant lets the call run: the policy allowed it, or it asked and

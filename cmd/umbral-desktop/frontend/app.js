@@ -267,7 +267,7 @@ function keydown(ev, sessionID) {
 function renderView() {
   const view = $("#view");
   view.replaceChildren();
-  ({ threads: renderThreads, approvals: renderApprovals, worktrees: renderWorktrees, blocks: renderBlocks })[state.view](view)
+  ({ threads: renderThreads, approvals: renderApprovals, worktrees: renderWorktrees, files: renderFiles, blocks: renderBlocks })[state.view](view)
     .catch((err) => view.append(el("p", "error", String(err?.message ?? err))));
 }
 
@@ -353,13 +353,47 @@ async function renderApprovals(view) {
   for (const a of items) {
     const item = el("div", "item");
     item.append(el("div", "title", `${a.tool} · ${a.risk}`), el("div", "meta", a.reason ?? ""), el("pre", "diff", a.summary ?? ""));
-    if (a.diff) item.append(diffView(a.diff));
+    // A diff whose hunks may be chosen shows each with a checkbox, all checked; approving with
+    // some unchecked sends the checked ids, and the call writes only those (REQ-DSK-002).
+    const picks = a.hunks_selectable && a.hunks ? hunkPicker(a.hunks) : null;
+    if (picks) item.append(picks.node); else if (a.diff) item.append(diffView(a.diff));
     const actions = el("div", "row-actions");
-    const respond = (decision, scope) => call("approval.respond", { approval_id: a.id, decision, scope }).then(() => renderView()).catch(failed);
-    actions.append(button("Approve once", () => respond("approve", "once"), "ok"), button("Approve for thread", () => respond("approve", "thread")), button("Deny", () => respond("deny", "once"), "danger"));
+    const respond = (decision, scope, hunks) => call("approval.respond", { approval_id: a.id, decision, scope, ...(hunks ? { hunks } : {}) }).then(() => renderView()).catch(failed);
+    actions.append(button("Approve once", () => {
+      const chosen = picks?.checked();
+      if (chosen && chosen.length === 0) { status("No hunk is checked: deny the call instead.", true); return; }
+      respond("approve", "once", chosen && chosen.length < picks.total ? chosen : undefined);
+    }, "ok"));
+    // A remembered rule approves whole calls to come, never part of one.
+    actions.append(button("Approve for thread", () => {
+      if (picks && picks.checked().length < picks.total) { status("A rule approves a whole call: check every hunk, or approve once.", true); return; }
+      respond("approve", "thread");
+    }), button("Deny", () => respond("deny", "once"), "danger"));
     item.append(actions);
     view.append(item);
   }
+}
+
+// hunkPicker draws a diff's files (worktree.diff's `files`, an approval's `hunks`) with a
+// checkbox on each hunk, all checked; checked() is the ids still checked.
+function hunkPicker(files) {
+  const node = el("div");
+  const boxes = [];
+  for (const f of files) {
+    node.append(el("div", "title", `${f.status} ${f.path}`));
+    if (!f.hunks?.length) node.append(el("div", "meta", "no hunks to choose: a binary file or a mode change"));
+    for (const h of f.hunks ?? []) {
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = true;
+      box.dataset.hunk = h.id;
+      const label = el("label", "hunk");
+      label.append(box, diffView([h.header, ...h.lines].join("\n")));
+      boxes.push(box);
+      node.append(label);
+    }
+  }
+  return { node, total: boxes.length, checked: () => boxes.filter((b) => b.checked).map((b) => b.dataset.hunk), unchecked: () => boxes.filter((b) => !b.checked).map((b) => b.dataset.hunk) };
 }
 
 function diffView(text) {
@@ -381,18 +415,25 @@ async function renderWorktrees(view) {
     if (w.state === "active") {
       const actions = el("div", "row-actions");
       const body = el("div");
+      let picks = null;
+      // showDiff draws a diff — worktree.diff's or reject_hunks' answer — and keeps its revision,
+      // which a reject and a merge both name.
+      const showDiff = (d) => {
+        picks = hunkPicker(d.files);
+        body.replaceChildren(picks.node);
+        body.dataset.revision = d.revision;
+      };
       actions.append(
-        button("Diff", async () => {
-          try {
-            const d = await call("worktree.diff", { worktree_id: w.id });
-            body.replaceChildren();
-            for (const f of d.files) {
-              body.append(el("div", "title", `${f.status} ${f.path}`));
-              for (const h of f.hunks ?? []) body.append(diffView([h.header, ...h.lines].join("\n")));
-            }
-            body.dataset.revision = d.revision;
-          } catch (err) { failed(err); }
-        }),
+        button("Diff", () => call("worktree.diff", { worktree_id: w.id }).then(showDiff).catch(failed)),
+        // Rejecting reverts the unchecked hunks in the worktree; what is left is what a merge
+        // lands, so "apply only the accepted hunks" is a reject, then a merge (REQ-DSK-002).
+        button("Reject unchecked", () => {
+          const revision = body.dataset.revision;
+          const ids = picks?.unchecked() ?? [];
+          if (!revision) { status("Show the diff before rejecting hunks.", true); return; }
+          if (!ids.length) { status("Every hunk is checked: nothing to reject.", true); return; }
+          call("worktree.reject_hunks", { worktree_id: w.id, revision, hunk_ids: ids }).then(showDiff).catch(failed);
+        }, "danger"),
         // A merge lands what the diff showed: it needs the diff read first, passes the
         // revision it was read as, and asks (REQ-WT-003).
         button("Merge", () => {
@@ -406,6 +447,44 @@ async function renderWorktrees(view) {
       item.append(actions, body);
     }
     view.append(item);
+  }
+}
+
+// renderFiles is the focused thread's active worktree as a file tree, changed files marked; a
+// file opens in a text area, read-only unless the daemon says it is editable, and "Save" sends
+// the digest it was read with, so a file changed since is refused (REQ-DSK-003).
+async function renderFiles(view) {
+  const ws = state.snap?.focused?.workspace_id;
+  const { items: worktrees } = await call("worktree.list", ws ? { workspace_id: ws } : {});
+  const active = worktrees.filter((w) => w.state === "active");
+  if (!active.length) { view.append(el("p", "meta", "No active worktree.")); return; }
+  const w = active.find((x) => x.thread_id === state.thread) ?? active[0];
+  const tree = await call("worktree.files", { worktree_id: w.id });
+  view.append(el("div", "title", w.branch || w.id));
+  if (tree.truncated) view.append(el("p", "meta", "Only the first files are listed."));
+  const editor = el("div");
+  const list = el("div", "files");
+  for (const f of tree.items) {
+    const row = el("div", "item file" + (f.status ? " changed" : ""), (f.status ? `${f.status[0].toUpperCase()} ` : "  ") + f.path);
+    if (f.status !== "deleted") row.addEventListener("click", () => openFile(editor, w.id, f.path).catch(failed));
+    list.append(row);
+  }
+  view.append(list, editor);
+}
+
+async function openFile(editor, worktreeID, path) {
+  const f = await call("worktree.read_file", { worktree_id: worktreeID, path });
+  editor.replaceChildren(el("div", "title", path), el("div", "meta", [f.size_bytes + " bytes", f.editable ? "editable" : "read-only"].join(" · ")));
+  if (f.content === null) { editor.append(el("p", "meta", f.binary ? "A binary file is not shown." : "This file is not shown.")); return; }
+  const area = document.createElement("textarea");
+  area.value = f.content;
+  area.readOnly = !f.editable;
+  area.spellcheck = false;
+  editor.append(area);
+  if (f.editable) {
+    let sha = f.sha256;
+    editor.append(button("Save", () => call("worktree.write_file", { worktree_id: worktreeID, path, content: area.value, expected_sha256: sha })
+      .then((r) => { sha = r.sha256; status(`Saved ${path}.`); }).catch(failed), "ok"));
   }
 }
 

@@ -5,30 +5,39 @@ import (
 	"encoding/json"
 
 	agentsdomain "github.com/ecrespo/umbral/internal/agents/domain"
+	"github.com/ecrespo/umbral/internal/hunks"
 )
 
 // Approval is API Spec §4's Approval.
 type Approval struct {
-	ID            string  `json:"id"`
-	ThreadID      string  `json:"thread_id"`
-	ToolCallID    string  `json:"tool_call_id"`
-	Tool          string  `json:"tool"`
-	Risk          string  `json:"risk"`
-	Reason        string  `json:"reason"`
-	Summary       string  `json:"summary"`
-	Diff          *string `json:"diff"`
-	State         string  `json:"state"`
-	DecisionScope *string `json:"decision_scope"`
-	CreatedAt     int64   `json:"created_at"`
-	DecidedAt     *int64  `json:"decided_at"`
+	ID         string  `json:"id"`
+	ThreadID   string  `json:"thread_id"`
+	ToolCallID string  `json:"tool_call_id"`
+	Tool       string  `json:"tool"`
+	Risk       string  `json:"risk"`
+	Reason     string  `json:"reason"`
+	Summary    string  `json:"summary"`
+	Diff       *string `json:"diff"`
+	// Hunks is the diff split as worktree.diff's files are, null without a diff; single hunks
+	// may be approved when HunksSelectable (delta `2026-10-hunks-file-tree`, decision 3).
+	Hunks           []worktreeDiffFile `json:"hunks"`
+	HunksSelectable bool               `json:"hunks_selectable"`
+	State           string             `json:"state"`
+	DecisionScope   *string            `json:"decision_scope"`
+	CreatedAt       int64              `json:"created_at"`
+	DecidedAt       *int64             `json:"decided_at"`
 }
 
 func toWireApproval(a agentsdomain.Approval) Approval {
-	return Approval{
+	out := Approval{
 		ID: a.ID, ThreadID: a.ThreadID, ToolCallID: a.ToolCallID, Tool: a.Tool, Risk: a.Risk, Reason: a.Reason,
-		Summary: a.Summary, Diff: emptyAsNull(a.Diff), State: string(a.State), DecisionScope: emptyAsNull(string(a.Scope)),
-		CreatedAt: a.CreatedAt, DecidedAt: a.DecidedAt,
+		Summary: a.Summary, Diff: emptyAsNull(a.Diff), HunksSelectable: a.HunksSelectable(), State: string(a.State),
+		DecisionScope: emptyAsNull(string(a.Scope)), CreatedAt: a.CreatedAt, DecidedAt: a.DecidedAt,
 	}
+	if a.Diff != "" {
+		out.Hunks = toWireDiffFiles(hunks.Parse(a.Diff))
+	}
+	return out
 }
 
 // approvalMethods is §5.24–§5.25. §2's cli row names no approval.*: answering one is an
@@ -73,6 +82,8 @@ type respondParams struct {
 	ApprovalID string `json:"approval_id"`
 	Decision   string `json:"decision"`
 	Scope      string `json:"scope"`
+	// Hunks, when given, are the only hunks of the approval's diff approved.
+	Hunks []string `json:"hunks" api:"optional"`
 }
 
 func handleApprovalRespond(ctx context.Context, c *conn, raw json.RawMessage) (any, error) {
@@ -91,7 +102,7 @@ func handleApprovalRespond(ctx context.Context, c *conn, raw json.RawMessage) (a
 		return nil, ValidationError("decision must be approve or deny", ErrorField{Field: "decision", Issue: "invalid"})
 	}
 	a, err := svc.Respond(ctx, agentsdomain.Response{
-		ApprovalID: p.ApprovalID, Approve: p.Decision == "approve", Scope: agentsdomain.Scope(p.Scope),
+		ApprovalID: p.ApprovalID, Approve: p.Decision == "approve", Scope: agentsdomain.Scope(p.Scope), Hunks: p.Hunks,
 	})
 	if err != nil {
 		return nil, err

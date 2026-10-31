@@ -16,6 +16,7 @@ import (
 
 	"github.com/aymanbagabas/go-udiff"
 
+	"github.com/ecrespo/umbral/internal/hunks"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 	"github.com/ecrespo/umbral/internal/tools/domain"
 )
@@ -213,6 +214,58 @@ func (w writeFile) Run(ctx context.Context, env domain.Env, input json.RawMessag
 	return domain.Result{Summary: fmt.Sprintf("wrote %s (%d bytes)", in.Path, len(in.Content)), Text: d}, nil
 }
 
+// RunHunks writes the file with only the accepted hunks of its change (REQ-DSK-002).
+func (writeFile) RunHunks(_ context.Context, env domain.Env, input json.RawMessage, keep map[string]bool) (domain.Result, error) {
+	var in writeInput
+	if err := decode(input, &in); err != nil {
+		return domain.Result{}, err
+	}
+	old, err := current(target(env, in.Path))
+	if err != nil {
+		return domain.Result{}, err
+	}
+	return writeHunks(env, in.Path, old, in.Content, keep)
+}
+
+// writeHunks writes path as old with only the hunks keep holds of the diff from old to updated,
+// computed again now: a hunk the user accepted that is not in it was made against a file that
+// has changed since, and nothing is written. The result names the hunks the user rejected, so
+// the model knows the file does not hold its whole change.
+func writeHunks(env domain.Env, path, old, updated string, keep map[string]bool) (domain.Result, error) {
+	files := hunks.Parse(diff(path, old, updated))
+	var all []hunks.Hunk
+	if len(files) == 1 {
+		all = files[0].Hunks
+	}
+	present := map[string]bool{}
+	for _, h := range all {
+		present[h.ID] = true
+	}
+	for id := range keep {
+		if !present[id] {
+			return domain.Result{}, fmt.Errorf("%s changed since the change was approved: hunk %s is not in it, and nothing was written", path, id)
+		}
+	}
+	content, err := hunks.Apply(old, files[0], keep)
+	if err != nil {
+		return domain.Result{}, err
+	}
+	if err := replace(writeTarget(env, path), []byte(content)); err != nil {
+		return domain.Result{}, err
+	}
+	var rejected strings.Builder
+	for _, h := range all {
+		if !keep[h.ID] {
+			rejected.WriteString(h.Header + "\n" + strings.Join(h.Lines, "\n") + "\n")
+		}
+	}
+	text := diff(path, old, content)
+	if rejected.Len() > 0 {
+		text += "\nThe user rejected these hunks of the change; the file does not hold them:\n" + rejected.String()
+	}
+	return domain.Result{Summary: fmt.Sprintf("wrote %s: %d of %d hunks", path, len(keep), len(all)), Text: text}, nil
+}
+
 // editFile is edit_file: replace an exact piece of a file.
 type editFile struct{}
 
@@ -281,6 +334,19 @@ func (e editFile) Preview(_ context.Context, env domain.Env, input json.RawMessa
 		return "", err
 	}
 	return diff(in.Path, old, updated), nil
+}
+
+// RunHunks makes the edit with only the accepted hunks of its change (REQ-DSK-002).
+func (e editFile) RunHunks(_ context.Context, env domain.Env, input json.RawMessage, keep map[string]bool) (domain.Result, error) {
+	var in editInput
+	if err := decode(input, &in); err != nil {
+		return domain.Result{}, err
+	}
+	old, updated, err := e.edited(env, in)
+	if err != nil {
+		return domain.Result{}, err
+	}
+	return writeHunks(env, in.Path, old, updated, keep)
 }
 
 func (e editFile) Run(_ context.Context, env domain.Env, input json.RawMessage) (domain.Result, error) {

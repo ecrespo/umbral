@@ -13,6 +13,7 @@ import (
 	agentsdomain "github.com/ecrespo/umbral/internal/agents/domain"
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	"github.com/ecrespo/umbral/internal/bus"
+	"github.com/ecrespo/umbral/internal/hunks"
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 )
 
@@ -672,5 +673,39 @@ func TestTakeOverMethods_REQ_FTU_002(t *testing.T) {
 	}
 	if got := terms.releases(); len(got) != 1 || got[0] != holder {
 		t.Errorf("released %q on close, want %q", got, holder)
+	}
+}
+
+// TestAnApprovalsHunksReachTheWire_REQ_DSK_002: an approval's diff is listed with its hunks and
+// whether single ones may be accepted; approval.respond passes the accepted ids through, and
+// keeps an absent list absent so the call is approved whole.
+func TestAnApprovalsHunksReachTheWire_REQ_DSK_002(t *testing.T) {
+	t.Parallel()
+	diff := "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-one\n+uno\n"
+	svc := &fakeThreads{approval: agentsdomain.Approval{ID: "apr_1", Tool: "write_file", Diff: diff, State: agentsdomain.ApprovalPending}}
+	s := testServerWithConfig(t, Config{Threads: svc, Bus: bus.New()})
+	c := dial(t, s)
+	c.hello(s.Token(), ClientDesktop)
+	resp := c.call(2, "approval.list", map[string]any{})
+	var list approvalListResult
+	if raw, _ := json.Marshal(resp.Result); resp.Error != nil || json.Unmarshal(raw, &list) != nil || len(list.Items) != 1 {
+		t.Fatalf("approval.list = %s %+v", raw, resp.Error)
+	}
+	a := list.Items[0]
+	id := hunks.Parse(diff)[0].Hunks[0].ID
+	if !a.HunksSelectable || len(a.Hunks) != 1 || a.Hunks[0].Path != "a.txt" || len(a.Hunks[0].Hunks) != 1 || a.Hunks[0].Hunks[0].ID != id {
+		t.Fatalf("the approval's hunks %+v", a)
+	}
+	if resp := c.call(3, "approval.respond", map[string]any{"approval_id": "apr_1", "decision": "approve", "scope": "once", "hunks": []string{id}}); resp.Error != nil {
+		t.Fatal(resp.Error)
+	}
+	if resp := c.call(4, "approval.respond", map[string]any{"approval_id": "apr_1", "decision": "approve", "scope": "once"}); resp.Error != nil {
+		t.Fatal(resp.Error)
+	}
+	if len(svc.answered) != 2 || len(svc.answered[0].Hunks) != 1 || svc.answered[0].Hunks[0] != id || svc.answered[1].Hunks != nil {
+		t.Errorf("the runtime got %+v", svc.answered)
+	}
+	if resp := c.call(5, "approval.respond", map[string]any{"approval_id": "apr_1", "decision": "approve", "scope": "always", "hunks": []string{id}}); resp.Error == nil || resp.Error.Code != codeValidationError {
+		t.Errorf("hunks with a rule: %+v", resp.Error)
 	}
 }

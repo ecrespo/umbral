@@ -514,6 +514,11 @@ type fakeTool struct {
 	actionErr error
 	// tainted marks every result as untrusted content, as skill_load's are.
 	tainted bool
+	// diff is what Preview shows for the tool's calls.
+	diff string
+
+	hunksMu sync.Mutex
+	hunks   [][]string // each run's grant.Hunks
 
 	envMu sync.Mutex
 	env   toolsdomain.Env // the environment of the last call that ran
@@ -567,7 +572,10 @@ func (f *fakeTools) Action(env toolsdomain.Env, call toolsdomain.Call) (secdomai
 	return secdomain.Action{ThreadID: env.ThreadID, Tool: call.Tool, Risk: t.risk, Target: in.Path, Cwd: env.Cwd, WriteRoot: env.WriteRoot}, nil
 }
 
-func (f *fakeTools) Preview(context.Context, toolsdomain.Env, toolsdomain.Call) (string, error) {
+func (f *fakeTools) Preview(_ context.Context, _ toolsdomain.Env, call toolsdomain.Call) (string, error) {
+	if t, ok := f.tools[call.Tool]; ok {
+		return t.diff, nil
+	}
 	return "", nil
 }
 
@@ -577,6 +585,9 @@ func (f *fakeTools) Invoke(_ context.Context, env toolsdomain.Env, call toolsdom
 	}
 	t := f.tools[call.Tool]
 	t.ran.Add(1)
+	t.hunksMu.Lock()
+	t.hunks = append(t.hunks, grant.Hunks)
+	t.hunksMu.Unlock()
 	t.envMu.Lock()
 	t.env = env
 	t.envMu.Unlock()

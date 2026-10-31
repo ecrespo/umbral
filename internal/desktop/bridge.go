@@ -32,7 +32,7 @@ const (
 )
 
 // Methods is what the page may call through Call: the methods its views of REQ-DSK-001 use —
-// workspaces, tabs, panes, blocks, threads, approvals and worktrees — and nothing else, so
+// workspaces, tabs, panes, blocks, threads, approvals, worktrees and their files — and nothing else, so
 // nothing that manages the daemon's configuration, keys or extensions, which stay with `umb`
 // (delta `2026-10-desktop-client`, decision 2). Terminals go through Attach, Input and Resize,
 // and the threads view's list through Threads.
@@ -45,6 +45,8 @@ var Methods = []string{
 	"thread.create", "thread.send", "thread.cancel", "thread.get", "thread.focus",
 	"approval.list", "approval.respond",
 	"worktree.list", "worktree.diff", "worktree.merge", "worktree.discard",
+	// The review of REQ-DSK-002 and the file tree of REQ-DSK-003 (delta `2026-10-hunks-file-tree`).
+	"worktree.reject_hunks", "worktree.files", "worktree.read_file", "worktree.write_file",
 }
 
 // paramSessionID is the parameter every session method takes (API §5).
