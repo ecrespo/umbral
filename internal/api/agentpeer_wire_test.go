@@ -13,7 +13,7 @@ var agentRefused = []string{
 	"rules.key.remove", "rules.key.rotate", "rules.reset", "rules.rollback", "session.create", "session.input",
 	"skill.install", "skill.remove", "skill.set_enabled", "tab.create", "thread.hand_back", "thread.take_over",
 	"thread.update", "workspace.create",
-	"worktree.close_group", "worktree.discard", "worktree.merge",
+	"worktree.close_group", "worktree.discard", "worktree.merge", "worktree.reject_hunks", "worktree.write_file",
 }
 
 // TestAnAgentsTerminalCannotLandItsOwnWork_REQ_ORC_004: a client whose process runs inside an

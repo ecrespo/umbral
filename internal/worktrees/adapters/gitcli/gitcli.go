@@ -402,6 +402,48 @@ func (c *CLI) Diff(ctx context.Context, repoRoot, worktree, base string) (text, 
 	return r.stdout, tree, nil
 }
 
+// Revert implements ports.Git. The patch is applied in reverse to the working copy alone —
+// never the index — through the main repository's record of the worktree, with no filter
+// driver run, and `git apply` refuses a path that leaves the worktree or passes a link.
+func (c *CLI) Revert(ctx context.Context, repoRoot, worktree, revision, patch string) error {
+	tree, err := c.snapshot(ctx, repoRoot, worktree, true)
+	if err != nil {
+		return err
+	}
+	if tree != revision {
+		return &domain.Refusal{Reason: domain.ReasonChanged, Detail: "the worktree changed since its diff was read"}
+	}
+	_, env, err := c.pinned(ctx, repoRoot, worktree)
+	if err != nil {
+		return err
+	}
+	r := c.run(ctx, call{dir: worktree, sanitized: true, env: env, stdin: []byte(patch), args: []string{
+		"-c", "apply.whitespace=nowarn", "-c", "core.autocrlf=false", "apply", "-R", "--whitespace=nowarn", "-",
+	}})
+	if r.err != nil {
+		if r.exitCode() > 0 {
+			return &domain.Refusal{Reason: domain.ReasonChanged, Detail: "the hunks no longer apply", Output: domain.Clip(r.stderr)}
+		}
+		return r.failure("apply")
+	}
+	return nil
+}
+
+// Tree implements ports.Git: the tree is an object, so it is listed in the main copy.
+func (c *CLI) Tree(ctx context.Context, repoRoot, tree string) ([]string, error) {
+	r := c.run(ctx, call{dir: repoRoot, sanitized: true, args: []string{"ls-tree", "-r", "-z", nameOnly, tree}})
+	if r.err != nil {
+		return nil, r.failure("ls-tree")
+	}
+	var paths []string
+	for _, p := range strings.Split(r.stdout, "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
 // Squash implements ports.Git. The main copy is clean when it is called (the engine checks), so
 // `reset --hard HEAD` returns it exactly to where it was after a conflict or a failed commit.
 func (c *CLI) Squash(ctx context.Context, repoRoot, worktree, base, revision, message string, timeout time.Duration) (string, error) {

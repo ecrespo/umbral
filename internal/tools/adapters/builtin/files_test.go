@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +12,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ecrespo/umbral/internal/hunks"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
+	"github.com/ecrespo/umbral/internal/tools/adapters/registry"
 	"github.com/ecrespo/umbral/internal/tools/domain"
 )
 
@@ -391,5 +394,74 @@ func TestClipKeepsCharactersWhole(t *testing.T) {
 	got := clip(line)
 	if !utf8.ValidString(got) || !strings.HasSuffix(got, "…") || len(got) > maxLineChars+len("…") {
 		t.Errorf("clip = %q", got[len(got)-10:])
+	}
+}
+
+// TestAWriteRunsWithTheAcceptedHunks_REQ_DSK_002: a write or an edit approved for some hunks of
+// its diff writes the old content with only those applied and tells the model which the user
+// rejected; its preview's hunks are the ones an approval names. A file that no longer holds an
+// accepted hunk writes nothing, and a tool that cannot apply part of itself is not run with ids.
+func TestAWriteRunsWithTheAcceptedHunks_REQ_DSK_002(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	env := domain.Env{ThreadID: "thr_1", Cwd: dir, WriteRoot: dir}
+	path := filepath.Join(dir, "a.txt")
+	twelve := "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n"
+	write(t, path, twelve)
+	reg, err := registry.New(writeFile{}, editFile{}, readFile{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invoke := func(call domain.Call, ids []string) (domain.Result, error) {
+		t.Helper()
+		action, err := reg.Action(env, call)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return reg.Invoke(context.Background(), env, call, domain.Grant{
+			Action: action, Decision: secdomain.Decision{Verdict: secdomain.VerdictAllow}, Hunks: ids,
+		})
+	}
+	both := strings.Replace(strings.Replace(twelve, "one", "uno", 1), "twelve", "doce", 1)
+	call := domain.Call{Tool: "write_file", Input: in(map[string]any{"path": "a.txt", "content": both})}
+	preview, err := reg.Preview(context.Background(), env, call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := hunks.Parse(preview)
+	if len(files) != 1 || len(files[0].Hunks) != 2 {
+		t.Fatalf("the preview's hunks %+v", files)
+	}
+	first, last := files[0].Hunks[0], files[0].Hunks[1]
+
+	res, err := invoke(call, []string{first.ID})
+	if err != nil {
+		t.Fatalf("a write of one hunk: %v", err)
+	}
+	if got := read(t, path); got != strings.Replace(twelve, "one", "uno", 1) {
+		t.Errorf("after accepting the first hunk:\n%s", got)
+	}
+	if !strings.Contains(res.Text, "rejected") || !strings.Contains(res.Text, last.Header) || !strings.Contains(res.Summary, "1 of 2") {
+		t.Errorf("the model is not told what was rejected: %+v", res)
+	}
+
+	// The file holds the first hunk now: an id of the old diff that is no longer in the new one
+	// writes nothing.
+	before := read(t, path)
+	if _, err := invoke(call, []string{first.ID}); err == nil || !strings.Contains(err.Error(), "changed since") {
+		t.Errorf("a stale hunk: %v", err)
+	}
+	if read(t, path) != before {
+		t.Error("a stale hunk wrote the file")
+	}
+
+	edit := domain.Call{Tool: "edit_file", Input: in(map[string]any{"path": "a.txt", "old_string": "twelve", "new_string": "XII"})}
+	ep, _ := reg.Preview(context.Background(), env, edit)
+	if _, err := invoke(edit, []string{hunks.Parse(ep)[0].Hunks[0].ID}); err != nil || !strings.Contains(read(t, path), "XII") {
+		t.Errorf("an edit of its one hunk: %v\n%s", err, read(t, path))
+	}
+
+	if _, err := invoke(domain.Call{Tool: "read_file", Input: in(map[string]any{"path": "a.txt"})}, []string{first.ID}); !errors.Is(err, domain.ErrNotAuthorized) {
+		t.Errorf("a tool without hunks run with ids: %v", err)
 	}
 }

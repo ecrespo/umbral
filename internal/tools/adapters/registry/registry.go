@@ -21,6 +21,7 @@ import (
 	"golang.org/x/text/language"
 	xmessage "golang.org/x/text/message"
 
+	"github.com/ecrespo/umbral/internal/hunks"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 	"github.com/ecrespo/umbral/internal/tools/domain"
 	"github.com/ecrespo/umbral/internal/tools/ports"
@@ -257,5 +258,13 @@ func (r *Registry) Invoke(ctx context.Context, env domain.Env, call domain.Call,
 	}
 	e, _ := r.checked(call)
 	env.Target, env.ProgramInput = a.Target, a.ProgramInput
+	if grant.Hunks != nil {
+		// Some hunks were accepted: only a tool that can apply part of itself runs, never whole.
+		p, ok := e.tool.(ports.Partial)
+		if !ok {
+			return domain.Result{}, fmt.Errorf("%w: %s cannot run with only some hunks", domain.ErrNotAuthorized, call.Tool)
+		}
+		return p.RunHunks(ctx, env, normalize(call), hunks.Set(grant.Hunks))
+	}
 	return e.tool.Run(ctx, env, normalize(call))
 }

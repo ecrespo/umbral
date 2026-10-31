@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.78 |
-| **Date** | 2026-10-26 |
+| **Version** | 1.79 |
+| **Date** | 2026-10-30 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
 | **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
@@ -120,7 +120,8 @@ flowchart LR
 | `waits` | server-owned, event-driven | pinned waits on threads and output | AUT-* |
 | `integrations` | socket + env | external state reports, display metadata, authority | INT-* |
 | `notify` | client channel | normalization, rate limit, typed reasons | NTF-* |
-| `worktrees` | the `git` CLI ≥ 2.34 + SQLite | a thread's worktree outside the repository: create, diff with stable hunk ids, squash merge, discard, missing detection | WT-* (F2) |
+| `worktrees` | the `git` CLI ≥ 2.34 + SQLite | a thread's worktree outside the repository: create, diff with stable hunk ids, single hunks reverted, its file tree read and edited by the user, squash merge, discard, missing detection | WT-* (F2) |
+| `hunks` | stdlib only | the unified-diff parser, the stable hunk id of REQ-WT-003, a patch of chosen hunks and a content with chosen hunks applied (delta `2026-10-hunks-file-tree`) | WT-003, DSK-002 |
 | `acp` | `github.com/coder/acp-go-sdk` over stdio | third-party agents hosted through a manifest: launch in an isolated home, `initialize`, `session/new`, prompt, the silence timer | ACP-* (F2) |
 | `obs` | OpenTelemetry Go, `log/slog` | traces, metrics | OBS-* |
 
@@ -835,7 +836,7 @@ num_ctx = 4096
 
 | From | May import |
 |---|---|
-| `*/domain` | stdlib and other `*/domain`; `security/domain` also `mvdan.cc/sh/v3/syntax`, the shell parser behind the destructive floor, which does no I/O (delta `2026-10-shell-parser`) |
+| `*/domain` | stdlib and other `*/domain`; `security/domain` also `mvdan.cc/sh/v3/syntax`, the shell parser behind the destructive floor, which does no I/O (delta `2026-10-shell-parser`); `worktrees/domain` also `hunks`, a stdlib-only leaf with no I/O, read as a domain package (delta `2026-10-hunks-file-tree`) |
 | `*/ports` | its own `domain` and other `*/domain` |
 | `*/adapters` | its own `ports`, its own `domain` and external libraries |
 | `agents` | `ports` of `sessions`, `tools`, `context`, `llmgw`, `security`, `store` |
@@ -854,11 +855,12 @@ num_ctx = 4096
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api`. The tree resolves a pane's state in DD-012's order (`workspaces/domain.ResolveAttention`); `integrations` writes the external reports and announces every change. It hears the changes it did not make — blocks, integration verdicts, exits, thread attention — through events `cmd/umbrald` subscribes it to, and re-reads the whole tree on each (delta `2026-10-integration-surface`). Display metadata is written by `integrations` and read by the tree into a `Pane`'s `metadata`, never on the state path: `ResolveAttention`, the rollup, waits and notifications do not read it, and a written report is announced as `pane.updated` only (delta `2026-10-display-metadata`). Third-party agent detection lives here too (delta `2026-10-agent-detection`): `integrations/adapters/manifests` reads the local manifests and `integrations/adapters/proctree` the process table, without running a command; the detector reaches a pane's shell pid through `integrations/ports.Shells`, which `cmd/umbrald` satisfies with the sessions service, and keeps its labels in memory, keyed by session, for the tree to read through `workspaces/ports.AgentLabels` — never on the state path |
 | `notify` | `bus` and stdlib only; it is a sink and imports no other module. `api` implements its `Deliverer` port — the foreground client of API §5.35 — and is handed to it by `cmd/umbrald` once the server exists; `cmd/umbrald` adapts `integrations`' `Notifier` port to it for an external `blocked`. Both modules deliver outside their locks, and `api` through a per-connection queue, so a client that stops reading stalls no source (delta `2026-10-notifications`) |
 | `acp` | its own `ports` and `domain`, and `security/domain` for a kind's risk; its adapters use `acp-go-sdk`. It imports no other module. The agents runtime reaches it through a port of its own, `agents/ports.ExternalAgents`, which `cmd/umbrald` adapts, as it does `Worktrees`; `config` reads its entries into `acp/domain.Entry` (delta `2026-10-acp-client`) |
-| `worktrees` | its own `ports` and `domain`; its adapters run the `git` binary and use `store`. It imports no other module. Its `ports` publish `Worktrees`, the inbound port `api` serves as `worktree.*`; the agents runtime reaches a thread's worktree through a port of its own, `agents/ports.Worktrees`, which `cmd/umbrald` adapts, and decides through `agents/ports.WorktreeThreads` when one may change: never while the thread's turn runs (T-F2-03). Reading a worktree to show it runs with fsmonitor, filter drivers, external diff and textconv off. Landing it runs as the user's `git commit` would — hooks and signing included — in a session with no terminal, killed whole at `[worktrees] commit_timeout` (delta `2026-10-worktree-engine`) |
+| `worktrees` | its own `ports` and `domain`, and the `hunks` leaf; its adapters run the `git` binary and use `store`. It imports no other module. Its `ports` publish `Worktrees`, the inbound port `api` serves as `worktree.*`; the agents runtime reaches a thread's worktree through a port of its own, `agents/ports.Worktrees`, which `cmd/umbrald` adapts, and decides through `agents/ports.WorktreeThreads` when one may change: never while the thread's turn runs (T-F2-03). Reading a worktree to show it runs with fsmonitor, filter drivers, external diff and textconv off. Landing it runs as the user's `git commit` would — hooks and signing included — in a session with no terminal, killed whole at `[worktrees] commit_timeout` (delta `2026-10-worktree-engine`) |
 | `security` | stdlib, `go-keyring` in its adapter, `bus` in its ports (to name `rules.update_rejected`) and the root `llmgw/domain` (for the egress record a rejection writes). Its root holds policy.explain, which reads a thread's mode, directory and rules through its own `ExplainSource` port and asks the same pure `Decide` a turn uses; `cmd/umbrald` adapts the agent thread store to that port and hands both the runtime and the explainer one `isRepo`, so an explanation and a turn agree about the write root (delta `2026-10-policy-explain`). Its root also holds the `Rules` manager of signed bundles (DD-016), which reaches storage through its own `RuleStore` port and replaces the active set's base through `RuleBase`. `tools/rulesign` depends on `security/domain` only (delta `2026-10-signed-rule-bundles`) |
 | `context` | its own `ports` and `domain`, `store` and `bus` in its adapters, and `bus` in its ports, to name `skill.changed` (delta `2026-10-skill-store`) |
 | `mcp` | its own `ports` and `domain`, plus `bus`. `tools/adapters` may use `mcp/domain`, for `mcptools`, which offers a server's tools; `api` the `ports` and `domain` of `mcp`; only `cmd/*` wires the manager to the registry (delta `2026-10-mcp-client`) |
 | `activeai` | its own `ports` and `domain`, `ports` and `domain` of `sessions` (for `block.closed` and the escape-sequence stripper), plus `bus`, which its `ports` import to name `block.suggestion`; never `llmgw`, `agents` or `api`. `cmd/umbrald` implements its `Model` port over the router, always `LocalOnly`, and its `Blocks` port over the block reader (delta `2026-10-active-ai`) |
+| `hunks` | stdlib only: a leaf that `worktrees/domain`, the agents runtime, `tools/adapters` and `api` read diffs through, so a worktree's diff and an approval's give the same id to the same hunk (delta `2026-10-hunks-file-tree`) |
 | `slots` | stdlib only: the arrival-order semaphore of the runtime's turn slots and the router's per-provider queues (T-F2-04). `agents` and `llmgw` may import it, so neither reaches the other through it |
 | `obs` | stdlib, and OpenTelemetry from T-F1-18; imported only by `cmd/*`. Modules count through a port of their own, which `cmd/umbrald` gives the `obs` implementation (delta `2026-10-tool-call-repair`) |
 | `cmd/*` | everything |
@@ -1525,6 +1527,15 @@ Umbral's packages it imports `internal/client`, `internal/desktop` and its frame
   `thread.attention_changed` and `thread.turn_finished`, focuses the thread it shows and
   unfocuses it when it leaves. A merge needs the worktree's diff read first, asks, and passes
   its revision.
+- **Review and files (REQ-DSK-002, REQ-DSK-003; delta `2026-10-hunks-file-tree`).** The page
+  never applies a diff itself. A worktree's diff and an approval's `hunks` show each hunk with a
+  checkbox, all checked. "Reject unchecked" sends `worktree.reject_hunks` with the diff's
+  revision and draws the diff it answers, so a merge then lands only the accepted hunks; an
+  approval approved once with some unchecked sends the checked ids in `approval.respond`'s
+  `hunks`, and one approved for the thread must keep every hunk. The Files view lists the active
+  worktree's `worktree.files`, changed paths marked, and opens a file through
+  `worktree.read_file` in a text area, read-only unless `editable`; "Save" sends
+  `worktree.write_file` with the `sha256` it read, so a file changed since is refused.
 - **Smoke.** `scripts/desktop_smoke.sh` runs the window under xvfb against a real daemon: the
   page types `echo smoke-$((<marker>+1))` into its first pane and quits once its own DOM shows
   the sum, which only the shell can print. A `notification.posted` the window receives as
@@ -1966,8 +1977,12 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   The maintainer is GitHub's no-reply address.
 - **Verification:** `scripts/icons_check.sh`, run by `task icons` and by the `icons` CI job.
   It verifies `CHECKSUMS.sha256`, regenerates the kit with `build.py` and compares every
-  artifact byte for byte, then validates the `.desktop` file and asserts the release 0.1
-  launcher. The regeneration step is what REQ-PKG-006 needs: checking the checksums alone
+  artifact byte for byte, except that a rendered image — a PNG, or an `.icns` or `.ico` whose
+  entries are PNGs — also passes with the same sizes and entries when no channel of any pixel
+  moves by more than 2 (`scripts/icons_compare.py`): cairo rasterises through pixman, whose
+  SIMD paths round a level apart on another CPU, and the runner image of 2026-10-25 renders
+  the images of 512 px and over that way. It then validates the `.desktop` file and asserts
+  the release 0.1 launcher. The regeneration step is what REQ-PKG-006 needs: checking the checksums alone
   would pass a source edit committed together with its new checksum. The package is verified
   by the `deb` CI job and `task deb`/`task deb:smoke`: `packaging/deb/check.sh` compares what
   `dpkg -c` lists with the kit, its selftest proves it rejects four broken packages and checks
@@ -2071,3 +2086,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.76 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` decision 9: §5.3g a `terminal_interact` call at the prompt that enters nothing returns once the shell's output after it has settled |
 | 1.77 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-active-ai` (T-F2-22): §5.1 adds `[active_ai]` (`enabled`, `per_minute`), the router's `LocalOnly`, and the `activeai` leaf module; §5.2 its row |
 | 1.78 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-desktop-client` (T-F2-30): §5.2 rows for `desktop`, its ports and adapters; §5.3h the Wails client — a module of its own built in a container and CI, its import rule, the bridge's method list, frames of styled runs, attaching, the threads view of REQ-ORC-003 and the smoke |
+| 1.79 | 2026-10-30 | E. Crespo (assisted draft) | Delta `2026-10-hunks-file-tree` (T-F2-31): the `hunks` leaf in the module and dependency tables, `worktrees` reverting single hunks and serving its file tree; §5.3h the desktop review of hunks and the Files view. Delta `2026-10-icons-render-tolerance`: §9.3's regeneration compares rendered images within two levels |

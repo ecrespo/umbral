@@ -55,7 +55,9 @@ jobs:
           python-version: '3.13'
       - name: Install the kit's render dependencies and the .desktop validator
         run: |
-          python3 -m pip install --quiet cairosvg Pillow
+          # Pinned: the regeneration is compared byte for byte, and Pillow 13.0.0 encodes the
+          # kit's PNGs differently from the versions they were built with.
+          python3 -m pip install --quiet cairosvg==2.9.0 Pillow==12.0.0
           sudo apt-get update && sudo apt-get install -y desktop-file-utils
       - name: Checksums, reproducible regeneration and .desktop validation
         run: ./scripts/icons_check.sh

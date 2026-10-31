@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.55 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.56 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`, see §2) |
@@ -126,7 +126,7 @@ before the daemon starts.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove`, `agent.explain`, `model.route`, `worktree.list`, `worktree.get`, `worktree.diff`, `worktree.merge`, `worktree.discard` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove`, `agent.explain`, `model.route`, `worktree.list`, `worktree.get`, `worktree.diff`, `worktree.merge`, `worktree.discard`, `worktree.files`, `worktree.read_file` |
 
 ### An agent's terminal
 
@@ -137,7 +137,8 @@ shell, or a hosted ACP agent's process (§5.19), is its process or one of its pa
 its POSIX session — the methods that would
 land, drop or approve the agent's own work, change what decides for it, or start a process
 outside its terminal, with `PERMISSION_DENIED`, whatever its kind (REQ-ORC-004, delta `2026-10-full-auto`):
-`worktree.merge`, `worktree.discard`, `worktree.close_group`, `approval.respond`, `thread.update`,
+`worktree.merge`, `worktree.discard`, `worktree.close_group`, `worktree.reject_hunks`,
+`worktree.write_file`, `approval.respond`, `thread.update`,
 `skill.install`, `skill.set_enabled`, `skill.remove`, `mcp.server.add`, `mcp.server.remove`,
 `rules.key.add`, `rules.key.remove`, `rules.key.rotate`, `rules.rollback`, `rules.reset`,
 `session.input`, `thread.take_over`, `thread.hand_back` (REQ-FTU-002: an agent must not hand its
@@ -451,9 +452,15 @@ method and the ordering that produced it, so one handed to a different method is
 ### Approval
 ```json
 {"id":"apr_…","thread_id":"thr_…","tool_call_id":"tc_…","tool":"run_command","risk":"Exec",
- "reason":"policy","summary":"go test ./...","diff":null,"state":"pending",
+ "reason":"policy","summary":"go test ./...","diff":null,"hunks":null,"hunks_selectable":false,"state":"pending",
  "decision_scope":null,"created_at":1757592029000,"decided_at":null}
 ```
+- `diff`: the unified diff of what the call would change (`write_file`, `edit_file`, a hosted agent's
+  `fs/write_text_file`), `null` for a call without one. `hunks` is that diff split as
+  `worktree.diff`'s `files` are (§5.41), with the same ids, `null` without a diff;
+  `hunks_selectable` is whether `approval.respond` may accept single hunks of it — true for
+  Umbral's own tools, false for a hosted agent's write, which is answered without its content
+  (REQ-DSK-002, delta `2026-10-hunks-file-tree`)
 - `reason`: `policy` | `destructive` | `tainted` | `outside_write_root`
 - `state`: `pending` | `approved` | `denied` | `expired`
 - `decision_scope`: `once` | `thread` | `always`
@@ -855,7 +862,7 @@ thread, or no thread for `null` (REQ-AGT-016, delta `2026-10-attention-focus`):
 narrows to one thread. Oldest first. Interactive clients only (§2).
 
 ### 5.25 `approval.respond` — REQ-AGT-004, REQ-AGT-005
-**Params:** `{approval_id, decision:"approve"|"deny", scope:"once"|"thread"|"always"}`.
+**Params:** `{approval_id, decision:"approve"|"deny", scope:"once"|"thread"|"always", hunks?}`.
 
 Rules:
 - `scope = always` persists an `allow` or `deny` rule (table `policy_rules`).
@@ -868,8 +875,14 @@ Rules:
 - The decision is persisted, then the paused turn resumes; a denial gives the model a
   `denied_by_user` result and the turn goes on (REQ-AGT-005). A turn cancelled while it waits
   leaves the approval `expired`.
+- `hunks` approves only those hunks of the approval's `hunks` (REQ-DSK-002): the call runs with
+  them alone — `write_file` and `edit_file` write the old content with only the accepted hunks
+  applied, and the model's result names the hunks the user rejected — and fails without writing
+  when the file no longer holds every accepted hunk. Absent, the call is approved whole. It
+  needs `decision: "approve"`, `scope: "once"`, at least one id, each a hunk of the approval, and
+  `hunks_selectable`; anything else is `VALIDATION_ERROR` and decides nothing.
 - **Errors:** `NOT_FOUND`; `CONFLICT` if already decided or expired; `VALIDATION_ERROR` for a
-  `decision` or `scope` outside the lists. Interactive clients only (§2).
+  `decision` or `scope` outside the lists, or `hunks` as above. Interactive clients only (§2).
 
 ### 5.26 `model.list` — REQ-LLM-002
 **Params:** `{refresh?: false}`. **Result:** `{items: Model[]}`.
@@ -1291,13 +1304,13 @@ plus response reserve (0 needs no particular window). **Result:**
 - A class `models.toml` does not declare answers no candidates. An unknown class name, both
   `class` and `model` or neither, or a negative `input_tokens` is `VALIDATION_ERROR`.
 
-### 5.41 `worktree.create` / `list` / `get` / `diff` / `merge` / `discard` / `close_group` — REQ-WT-001, REQ-WT-002, REQ-WT-003, REQ-WT-004, REQ-WT-005, REQ-WT-006, REQ-WT-007, REQ-WT-008
+### 5.41 `worktree.create` / `list` / `get` / `diff` / `merge` / `discard` / `close_group` / `reject_hunks` / `files` / `read_file` / `write_file` — REQ-WT-001, REQ-WT-002, REQ-WT-003, REQ-WT-004, REQ-WT-005, REQ-WT-006, REQ-WT-007, REQ-WT-008, REQ-DSK-002, REQ-DSK-003
 A thread's isolated copy of its repository, under the `worktrees` capability. `umb` may call
-`list`, `get`, `diff`, `merge` and `discard` (§2); `create` and `close_group` are the interactive
-clients'. Every method that returns a worktree checks it first: an `active` one whose directory or
+`list`, `get`, `diff`, `merge`, `discard`, `files` and `read_file` (§2); `create`, `close_group`,
+`reject_hunks` and `write_file` are the interactive clients'. Every method that returns a worktree checks it first: an `active` one whose directory or
 branch has gone is answered, and stored, `missing` (REQ-WT-006).
 
-`create` params: `{thread_id, base?}`. `list` params: `{thread_id?, workspace_id?}`. `get` params: `{worktree_id}`. `diff` params: `{worktree_id}`. `merge` params: `{worktree_id, message?, revision?}`. `discard` params: `{worktree_id, confirm?}`. `close_group` params: `{workspace_id?, thread_ids?, discard?, confirm?}`.
+`create` params: `{thread_id, base?}`. `list` params: `{thread_id?, workspace_id?}`. `get` params: `{worktree_id}`. `diff` params: `{worktree_id}`. `merge` params: `{worktree_id, message?, revision?}`. `discard` params: `{worktree_id, confirm?}`. `close_group` params: `{workspace_id?, thread_ids?, discard?, confirm?}`. `reject_hunks` params: `{worktree_id, revision, hunk_ids}`. `files` params: `{worktree_id}`. `read_file` params: `{worktree_id, path}`. `write_file` params: `{worktree_id, path, content, expected_sha256}`.
 
 - **`create`** makes the thread's worktree on `umbral/<thread_id>` from the repository's `HEAD`, or
   `base`, and answers the `Worktree`. A thread has at most one `active` worktree (`CONFLICT`
@@ -1331,19 +1344,50 @@ branch has gone is answered, and stored, `missing` (REQ-WT-006).
   and one outside the group is `VALIDATION_ERROR` `not_in_group`. Every check, the running turns'
   included, is made before the first discard, and the discards run while every one of their
   threads is held from starting a turn, so a refused request discards nothing (REQ-WT-007).
-- **No change under a running turn.** `create`, `merge`, `discard` and a `close_group` that
-  discards answer `CONFLICT` `running` while the worktree's thread has a turn running (its state is
+- **`reject_hunks`** reverts the named hunks of the diff read as `revision` in the worktree's
+  working copy and answers the diff after it, as `diff` does (REQ-DSK-002). The hunks left are what
+  a `merge` with the new `revision` lands: accepting a hunk is keeping it. `revision` is required;
+  a worktree whose content is no longer that revision, or whose hunks no longer apply, is
+  `CONFLICT` `changed`; an id the diff does not hold is `VALIDATION_ERROR` `unknown_hunk`, and an
+  empty list `no_hunks`. The revert applies whole or not at all, to the working copy and never its
+  index, through the main repository's record of the worktree with no filter driver run. A binary
+  file and a mode change have no hunk; rejecting them is `discard`.
+- **`files`** answers `{worktree_id, revision, items: [{path, status}], truncated}`: every path of
+  the worktree's content as a merge reads it — untracked files in, ignored ones out — by path,
+  `status` `added`, `modified` or `deleted` from the same snapshot's diff and `null` for an
+  unchanged file, a deleted file listed with its status; at most 20 000 items, `truncated`
+  saying more exist (REQ-DSK-003).
+- **`read_file`** answers `{path, size_bytes, sha256, binary, content, editable}`. `path` is a clean
+  relative path with no `.git` component at any depth or in any case and no link among its
+  directories (`VALIDATION_ERROR` `bad_path`), opened inside the worktree's directory without
+  following a link out of it; a missing one is `NOT_FOUND`, and a worktree that is not active
+  `CONFLICT` `not_active`. `content` is the
+  text, `null` for a file over 1 MiB, not UTF-8 or holding a NUL (`binary`), or not a regular
+  file; `sha256` is `""` for a file that is not a regular one. `editable` is whether `write_file`
+  would take it now: a regular text file within the limit, in an active worktree whose thread has
+  no turn running.
+- **`write_file`** replaces an existing regular text file's content with `content` (UTF-8 without
+  NUL, at most 1 MiB: `VALIDATION_ERROR` `not_text` or `too_large`) and answers `{path,
+  size_bytes, sha256}`. `expected_sha256` is `read_file`'s: a file changed since is `CONFLICT`
+  `changed`, and a link, a directory or a file `read_file` would not show as text `CONFLICT`
+  `not_editable`. The file keeps its mode, is written through a temporary file renamed over it
+  inside the worktree's directory, and is never created. It is the user's own edit, not a tool
+  call, so it does not pass through the policy engine (REQ-DSK-003).
+- **No change under a running turn.** `create`, `merge`, `discard`, `reject_hunks`, `write_file`
+  and a `close_group` that discards answer `CONFLICT` `running` while the worktree's thread has a turn running (its state is
   `running` or `awaiting_approval`), and hold off a new turn while they run: a turn keeps the
   directory and write root it started with. A turn has ended once `thread.turn_finished` is sent.
 - **Refusals** carry `data.reason` (§3). `VALIDATION_ERROR`: `not_git`, `bare`, `old_git` (git
   older than 2.34), `no_commit`, `bad_thread`, `confirm_required`, `not_in_group` (REQ-WT-008: the
-  thread keeps working without isolation). `CONFLICT`: `dirty`, `other_branch`, `detached` (the
+  thread keeps working without isolation), `no_hunks`, `unknown_hunk`, `bad_path`, `not_text` and
+  `too_large`. `CONFLICT`: `dirty`, `other_branch`, `detached` (the
   main copy has uncommitted changes, is on another branch, or on a detached `HEAD`), `conflict`
   (with `data.paths`), `commit_failed` (a hook, signing or `[worktrees] commit_timeout`, with
-  `data.output`), `changed`, `exists`, `not_active` (the worktree is merged, discarded or missing)
-  and `running`. Every refusal leaves the main copy and the worktree as they were. An unknown
+  `data.output`), `changed`, `exists`, `not_active` (the worktree is merged, discarded or missing),
+  `not_editable` and `running`. Every refusal leaves the main copy and the worktree as they were. An unknown
   worktree is `NOT_FOUND`.
-- **Not from an agent's terminal.** `merge`, `discard` and `close_group` are refused with
+- **Not from an agent's terminal.** `merge`, `discard`, `close_group`, `reject_hunks` and
+  `write_file` are refused with
   `PERMISSION_DENIED` to a client running inside an agent's terminal (§2): landing or dropping a
   turn's work is the user's review, and `full-auto` runs commands unasked (REQ-ORC-004).
 
@@ -1664,3 +1708,4 @@ printf '%s\n' \
 | 1.53 | 2026-10-24 | No change to the wire. Delta `2026-10-shell-parser` (T-HRD-06): §5.22 full-auto still asks for a command line the policy cannot read statically; §5.36 the destructive step's `detail` may be `dynamic_word`, `stdin_script` or `unparseable`, names a rule file may not use |
 | 1.54 | 2026-10-26 | Additive within `protocol_version = 1`. Delta `2026-10-terminal-interact` (T-F2-20): §5.43 `thread.take_over` and `thread.hand_back` (REQ-FTU-002); §2 refuses both to an agent's terminal; `session.input_owner` also announces a take-over |
 | 1.55 | 2026-10-26 | Additive within `protocol_version = 1`. Delta `2026-10-active-ai` (T-F2-22): §6 `block.suggestion` (REQ-AAI-001) |
+| 1.56 | 2026-10-26 | Additive within `protocol_version = 1`. Delta `2026-10-hunks-file-tree` (T-F2-31): §5.41 `worktree.reject_hunks`, `files`, `read_file`, `write_file`; §4 `Approval`'s `hunks` and `hunks_selectable`; §5.25 `hunks`; §2 (REQ-DSK-002, REQ-DSK-003) |

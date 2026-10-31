@@ -3,7 +3,8 @@
 #
 # Three things are checked, in order:
 #   1. every committed artifact matches CHECKSUMS.sha256;
-#   2. regenerating the kit from tools/build.py reproduces those artifacts byte for byte;
+#   2. regenerating the kit from tools/build.py reproduces those artifacts: byte for byte, or
+#      for a rendered image pixel for pixel within scripts/icons_compare.py's tolerance;
 #   3. the .desktop file passes desktop-file-validate and carries the release 0.1 launcher.
 #
 # REQ-PKG-006 is the reason step 2 exists: a build pipeline that regenerates an icon from
@@ -53,8 +54,11 @@ else
     generated="$rebuilt/${relative#./}"
     # preview/ and the sources under tools/ are not produced by build.py.
     [[ -f "$generated" ]] || continue
-    if ! cmp -s "$generated" "$KIT/$relative"; then
-      echo "icons: $relative differs from what tools/build.py produces" >&2
+    cmp -s "$generated" "$KIT/$relative" && continue
+    if verdict="$(python3 scripts/icons_compare.py "$generated" "$KIT/$relative")"; then
+      echo "icons: $relative renders within tolerance: $verdict"
+    else
+      echo "icons: $relative differs from what tools/build.py produces: $verdict" >&2
       failed=1
     fi
   done < <( cd "$KIT" && checksummed_files )

@@ -17,6 +17,11 @@ type Worktrees interface {
 	// List returns the worktrees of these threads, every one when threadIDs is nil.
 	List(ctx context.Context, threadIDs []string) ([]domain.Worktree, error)
 	Diff(ctx context.Context, id string) (domain.DiffResult, error)
+	// RejectHunks reverts the named hunks and returns the diff after it.
+	RejectHunks(ctx context.Context, req domain.RejectRequest) (domain.DiffResult, error)
+	Files(ctx context.Context, id string) (domain.FileTree, error)
+	ReadFile(ctx context.Context, id, path string) (domain.FileContent, error)
+	WriteFile(ctx context.Context, req domain.WriteFileRequest) (domain.FileContent, error)
 	Merge(ctx context.Context, req domain.MergeRequest) (domain.MergeResult, error)
 	Discard(ctx context.Context, id string, confirm bool) error
 	CloseGroup(ctx context.Context, req domain.CloseGroupRequest) ([]domain.GroupEntry, error)
@@ -71,6 +76,12 @@ type Git interface {
 	// A non-empty revision is a Diff revision: the content committed must be the content it
 	// names, checked after the snapshot that is committed, or the squash is refused `changed`.
 	Squash(ctx context.Context, repoRoot, worktree, base, revision, message string, timeout time.Duration) (string, error)
+	// Revert applies patch, a part of a Diff read as revision, in reverse to the worktree's
+	// working copy, whole or not at all. A worktree whose content is no longer revision, or a
+	// patch that does not apply, is refused ReasonChanged.
+	Revert(ctx context.Context, repoRoot, worktree, revision, patch string) error
+	// Tree lists the paths of tree, a Diff revision, by path.
+	Tree(ctx context.Context, repoRoot, tree string) ([]string, error)
 	// RemoveWorktree removes the worktree's directory and its branch; either may already be gone.
 	RemoveWorktree(ctx context.Context, repoRoot, path, branch string) error
 }

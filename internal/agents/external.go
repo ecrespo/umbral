@@ -345,7 +345,7 @@ func (s *externalSink) Permission(ctx context.Context, ec ports.ExternalToolCall
 
 	allowed := d.decision.Verdict == secdomain.VerdictAllow
 	if d.decision.Verdict == secdomain.VerdictAsk {
-		if allowed, err = s.t.awaitApproval(ctx, c, d.action, d.decision, ""); err != nil {
+		if allowed, _, err = s.t.awaitApproval(ctx, c, d.action, d.decision, ""); err != nil {
 			return false, err
 		}
 	}
@@ -409,11 +409,17 @@ func (s *externalSink) Request(ctx context.Context, op ports.ExternalOp, perform
 		if op.Method == ports.OpWriteFile {
 			diff, _ = s.t.r.cfg.Tools.Preview(ctx, s.env(""), toolsdomain.Call{Tool: "write_file", Input: mustJSON(map[string]string{argPath: op.Path, "content": op.Content})})
 		}
-		allowed, err = s.t.awaitApproval(ctx, c, a, d, diff)
+		var accepted []string
+		allowed, accepted, err = s.t.awaitApproval(ctx, c, a, d, diff)
 		if err != nil {
 			s.deciding.Unlock()
 			_ = finish(domain.ToolError, "cancelled")
 			return err
+		}
+		// A hosted agent's write is decided whole (delta `2026-10-hunks-file-tree`, decision
+		// 5): respond refuses hunks for it, and should one reach here, nothing runs.
+		if accepted != nil {
+			allowed = false
 		}
 		status = domain.ToolDeniedByUser
 	}
