@@ -80,7 +80,7 @@ func TestTheDestinationIsNeverAnOption_REQ_RMT_001(t *testing.T) {
 
 func TestAnEndpointIsAskedOfTheRemoteUmb_REQ_RMT_001(t *testing.T) {
 	ssh := buildFakeSSH(t)
-	dir := t.TempDir()
+	dir := socketDir(t)
 	umb := filepath.Join(dir, "umb")
 	script := "#!/bin/sh\n[ \"$1 $2\" = \"remote endpoint\" ] || exit 3\nprintf '{\"socket\":\"%s/r.sock\",\"token\":\"tok\"}\\n' \"$XDG_RUNTIME_DIR\"\n"
 	if err := os.WriteFile(umb, []byte(script), 0o700); err != nil {
@@ -104,7 +104,7 @@ func TestAnEndpointIsAskedOfTheRemoteUmb_REQ_RMT_001(t *testing.T) {
 
 func TestAForwardCarriesTheSocketAndEndsWithClose_REQ_RMT_001(t *testing.T) {
 	ssh := buildFakeSSH(t)
-	dir := t.TempDir()
+	dir := socketDir(t)
 	remote, local := filepath.Join(dir, "r.sock"), filepath.Join(dir, "l.sock")
 	echo(t, remote)
 
@@ -145,7 +145,7 @@ func TestAForwardCarriesTheSocketAndEndsWithClose_REQ_RMT_001(t *testing.T) {
 
 func TestAForwardThatCannotStartSaysWhy_REQ_RMT_002(t *testing.T) {
 	ssh := buildFakeSSH(t)
-	dir := t.TempDir()
+	dir := socketDir(t)
 	local := filepath.Join(dir, "missing-dir", "l.sock")
 	_, err := New(ssh, "").Forward(t.Context(), domain.Target{Host: "nas"}, local, filepath.Join(dir, "r.sock"))
 	if err == nil || !strings.Contains(err.Error(), "missing-dir") {
@@ -158,7 +158,7 @@ func TestAForwardThatCannotStartSaysWhy_REQ_RMT_002(t *testing.T) {
 // why the remote module probes the daemon before calling a host connected.
 func TestAForwardSaysNothingOfTheRemoteDaemon_REQ_RMT_002(t *testing.T) {
 	ssh := buildFakeSSH(t)
-	dir := t.TempDir()
+	dir := socketDir(t)
 	local := filepath.Join(dir, "l.sock")
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()

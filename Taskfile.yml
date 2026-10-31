@@ -96,7 +96,7 @@ tasks:
         trap 'rm -rf "$base"' EXIT
         long="$base/a-temporary-directory-as-long-as-the-one-macos-hands-every-process"
         mkdir -p "$long"
-        TMPDIR="$long" go test -race -count=1 ./internal/client/ ./internal/api/ ./cmd/umb/ ./cmd/umbrald/
+        TMPDIR="$long" go test -race -count=1 ./internal/client/ ./internal/api/ ./cmd/umb/ ./cmd/umbrald/ ./internal/remote/...
 
   test:hygiene:selftest:
     desc: Prove the hygiene gate rejects a leak

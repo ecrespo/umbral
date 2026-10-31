@@ -132,24 +132,12 @@ func (r *recorder) waitState(t *testing.T, name string, state domain.State) port
 	}
 }
 
-// shortDir is a temporary directory whose forwarded sockets fit maxSocketPath: t.TempDir's
-// carries the test's name.
-func shortDir(t *testing.T) string {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "rmt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return dir
-}
-
 func newManager(t *testing.T, tun *fakeTunnels, probe ...func(context.Context, ports.Link) error) (*Manager, *recorder, *memStore) {
 	t.Helper()
 	st := &memStore{hosts: map[string]domain.Host{}}
 	rec := &recorder{wake: make(chan struct{}, 1)}
 	m, err := New(Options{
-		Store: st, Tunnels: tun, Publisher: rec, Dir: filepath.Join(shortDir(t), "remotes"),
+		Store: st, Tunnels: tun, Publisher: rec, Dir: filepath.Join(socketDir(t), "remotes"),
 		Backoff: func(int) time.Duration { return 10 * time.Millisecond },
 	})
 	if len(probe) > 0 {
