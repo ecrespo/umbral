@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.78 |
-| **Date** | 2026-10-26 |
+| **Version** | 1.79 |
+| **Date** | 2026-10-30 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
 | **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
@@ -175,7 +175,16 @@ sequenceDiagram
    (delta `2026-10-tool-call-repair`). The repair message carries the schema validator's own
    English text for each failing location — `list_dir: /: additional properties 'depth' not
    allowed` — never the error kind's Go value, which told the model nothing it could act on
-   (delta `2026-10-us003-e2e`).
+   (delta `2026-10-us003-e2e`). A tool call the provider cannot read — Ollama reports `error parsing tool call` as an HTTP
+   500 before any event or, streaming, as an error line after its reasoning — is marked
+   `ErrMalformedToolCall` by the adapter. Before the first event it stays a 500, so another
+   candidate is tried, without counting against its breaker. When the router gives up and any
+   candidate failed that way, or the stream failed that way, the runtime counts an invalid call
+   and asks the same step again once with a repair message added to the request, never stored —
+   there is no call to answer — and a second unreadable step, or one in a repair step, is counted
+   and ends the turn with `tool_error`. What the step streamed before is kept as any failed
+   step's is, and the log line names the model, not the error, which carries the model's output
+   (delta `2026-10-usf2-002-live`).
 3. `thread.cancel` → the turn's `context.Context` is cancelled and the process groups the thread
    PTY's shell launched get `SIGTERM`; after 300 ms, `SIGKILL` (REQ-AGT-007). `thread.cancel`
    answers once the turn has recorded its end, leaving the thread `stopped` (delta
@@ -241,7 +250,9 @@ sequenceDiagram
   call falls back on — a 429, a 5xx, a transport failure, a missing first token — and opens at
   `breaker_failures` in a row for `breaker_cooldown`; then one call probes it, a first event
   closing it and a failure reopening it. A 4xx, an unsupported request or a cancel counts
-  nothing, and the breakers live in memory, kept across a reload.
+  nothing, nor does a 500 that is the provider unable to read the model's tool call
+  (`ErrMalformedToolCall`, §3.3 item 2), which still falls back; the breakers live in memory,
+  kept across a reload.
 - **How the router walks them** (T-F1-07, `internal/llmgw/router.go`):
   - A candidate must be in the catalog: not yet discovered, or `down` for any reason — offline
     included — it is skipped. The capability filter drops it when the request has tools and it
@@ -1433,9 +1444,28 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   libghostty's key encoder set from the terminal's modes, so `up` reaches `vim` as `ESC O A`;
   raw bytes and escape sequences are refused. `read_screen` returns the screen's plain text (its
   last 64 KiB), the cursor, the size and whether the shell is at its prompt. `wait_for` waits for
-  exactly one of a regex on the screen, `idle_ms` (100 to 10 000) without output, or `exit`
-  (the shell back at its prompt, or the session gone), within `timeout_ms` (default 10 s, at
-  most 120 s), and returns `matched`, `idle`, `exited` or `timeout` with the screen.
+  one or more of a regex on the screen, `idle_ms` (100 to 10 000) without output, or `exit`
+  (the shell back at its prompt, or the session gone), ending at the first that holds, within
+  `timeout_ms` (default 10 s, at most 120 s), and returns `matched`, `idle`, `exited` or
+  `timeout` with the screen.
+- **The calls a local model writes** (delta `2026-10-usf2-002-live`). A key may be a string:
+  text, each line end in it (`\n`, `\r`, `\r\n`) an `enter`, a key named between angle brackets
+  (`<Esc>`, `<CR>`, `<C-c>`, `<ctrl+c>`, case aside) that key and a bracketed word naming none
+  text; a string of one control character alone is the key that encodes it (ESC `escape`, LF
+  and CR `enter`, TAB `tab`, DEL and BS `backspace`, the rest of `0x01`–`0x1a` ctrl and a
+  letter). A string is decided as the
+  keys it stands for and adds no capability; a control character inside text, an escape
+  sequence and NUL are refused. A zero value (`exit: false`, `idle_ms: 0`, `regex: ""`,
+  `timeout_ms: 0`, `keys: []`) is absent. A `send_keys` that also carries a condition sends,
+  then waits as `wait_for` would and answers with the send, the wait's reason and the screen;
+  the call is decided on its keys alone, a take-over between the two answers `taken_over`, and
+  that wait's regex is matched against the plain text the terminal wrote after the keys — the
+  thread's own terminal keeps its last 256 KiB of output by `seq`, a user's pane none — never
+  the screen, where the previous prompt would match at once — after the echoed line when the
+  keys end with `enter`. A regex that matches the empty string is a wait for 500 ms of quiet.
+  A `read_screen` with a condition is a `wait_for`, and stays a read. A screen in a result opens
+  with who has the keyboard (`[the shell is at its prompt; cursor at …]` or `[a program is in
+  the foreground, not the shell: …]`), then its text.
 - **Risk.** The tool is `Exec` and listed so; a tool whose `Spec.ReadOnlyCalls` is set may lower
   one call's action to `ReadOnly`, which `read_screen` and `wait_for` do. The registry lets a
   call lower its risk this way and never otherwise change it. A read uses the thread's PTY only
@@ -2071,3 +2101,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.76 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` decision 9: §5.3g a `terminal_interact` call at the prompt that enters nothing returns once the shell's output after it has settled |
 | 1.77 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-active-ai` (T-F2-22): §5.1 adds `[active_ai]` (`enabled`, `per_minute`), the router's `LocalOnly`, and the `activeai` leaf module; §5.2 its row |
 | 1.78 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-desktop-client` (T-F2-30): §5.2 rows for `desktop`, its ports and adapters; §5.3h the Wails client — a module of its own built in a container and CI, its import rule, the bridge's method list, frames of styled runs, attaching, the threads view of REQ-ORC-003 and the smoke |
+| 1.79 | 2026-10-30 | E. Crespo (assisted draft) | Delta `2026-10-usf2-002-live` (T-F2-23): §5.3g the calls a local model writes — string keys, a lone control character as its key, zero values absent, `send_keys` that waits on the output after its keys, combined conditions, the holder line first; §3.3 item 2 an unreadable tool call is one retry with a repair message; DD-004's breakers do not count it |

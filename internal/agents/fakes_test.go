@@ -445,6 +445,22 @@ func costly(name, input string, cost int64) []llm.Event {
 	return events
 }
 
+// kindUnreadable marks a script whose call fails as unreadable(): it is never a real event.
+const kindUnreadable llm.EventKind = "test_unreadable"
+
+// unreadable is a script whose call fails before its first event: the provider could not read
+// the tool call the model wrote (Ollama's HTTP 500 "error parsing tool call").
+func unreadable() []llm.Event { return []llm.Event{{Kind: kindUnreadable}} }
+
+// kindUnreadableInStream marks where a stream fails as unreadableInStream's does.
+const kindUnreadableInStream llm.EventKind = "test_unreadable_in_stream"
+
+// unreadableInStream is a script whose call streams reasoning, then fails: Ollama writes the
+// "error parsing tool call" line in the stream, after the first event, so no fallback follows.
+func unreadableInStream() []llm.Event {
+	return []llm.Event{{Kind: llm.EventReasoningDelta, Text: "squash them"}, {Kind: kindUnreadableInStream}}
+}
+
 // callTool is a script that asks for one tool.
 func callTool(name, input string) []llm.Event {
 	return []llm.Event{
@@ -476,6 +492,17 @@ func (m *scripted) Stream(ctx context.Context, call ports.ModelCall) (iter.Seq2[
 			}
 		}
 		for i, ev := range events {
+			if ev.Kind == kindUnreadableInStream {
+				yield(llm.Event{}, &llm.ProviderError{Provider: "ol", Err: fmt.Errorf("%w: error parsing tool call", llm.ErrMalformedToolCall)})
+				return
+			}
+			if ev.Kind == kindUnreadable {
+				// The router's error for a call whose every candidate failed before its first
+				// event, here because the provider could not read the model's tool call.
+				yield(llm.Event{}, fmt.Errorf("%w: class %q: %w", llm.ErrNoCandidate, call.Class,
+					&llm.ProviderError{Provider: "ol", Status: 500, Err: fmt.Errorf("%w: error parsing tool call", llm.ErrMalformedToolCall)}))
+				return
+			}
 			if !yield(ev, nil) {
 				return
 			}
@@ -891,4 +918,15 @@ func (r *rig) send(t *testing.T, threadID, text, clientID string) (ports.SendRes
 		t.Fatal("the turn did not finish")
 	}
 	return res, ports.TurnFinished{}
+}
+
+// total is every invalid call counted, whatever its model.
+func (m *fakeMetrics) total() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, c := range m.invalid {
+		n += c
+	}
+	return n
 }

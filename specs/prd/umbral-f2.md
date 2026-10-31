@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`. Slice F2a implemented and closed on 2026-10-24 (delta `2026-10-f2a-close`); F2b started on 2026-10-26 |
-| **Version** | 0.12 |
-| **Date** | 2026-10-26 |
+| **Version** | 0.13 |
+| **Date** | 2026-10-31 |
 | **Reviewers** | spec-guardian (Analyze and two verify passes); Tech Lead, ratified 2026-10-22 |
 | **Source** | `docs/ARCHITECTURE.md` §5.4–5.8 and §10 (F2 ADE row); `specs/prd/umbral-mvp.md` §5.2–5.3; Plan 1.14 §4 |
 | **Builds on** | PRD MVP 1.21, API 1.41, Tech 1.55, Data Model 1.23, constitution 1.3 |
@@ -281,6 +281,11 @@ independent of F2 and can close alongside F2a.
   sees neither (delta `2026-10-usf2-live`).
 - **US-F2-002 — interactive programs.** The agent is asked to "answer the prompts": a `psql` session
   waiting for a query, then `git rebase -i` opening an editor with three picks to squash into one.
+  Measured on 2026-10-30 with `gpt-oss:20b` (`docs/reports/usf2-002-2026-10-30.md`): 0 of 10 runs
+  green — psql 10/10, the rebase 0/10, every failure the model's use of vim (the cursor after an
+  edit, `Esc` written as text, an escape glued to `:`); the daemon decided and recorded every call
+  and put every destructive one to the user. Whether US-F2-002 passes is the Tech Lead's (delta
+  `2026-10-usf2-002-live`).
 
 ## 10. Decisions and open questions
 
@@ -350,3 +355,4 @@ Still open, with the draft's default:
 | 0.10 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-shell-parser` (T-HRD-06): REQ-ORC-004 says the destructive list it keeps asking for includes a command line the system cannot read statically, as REQ-SEC-005 1.23 does |
 | 0.11 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-terminal-interact` (T-F2-20): REQ-FTU-003 says how a program's input is decided, the shell receiving what the program leaves unread |
 | 0.12 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-active-ai` (T-F2-22): REQ-AAI-001 names a user's block, the exits 0 and 130 excluded, one suggestion at a time; REQ-AAI-002 the pane's last block and a suggestion that attaches nothing |
+| 0.13 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-usf2-002-live` (T-F2-23): §9's US-F2-002 says what the live run measured — 0 of 10 green, psql 10/10 and the rebase 0/10 on the model's vim — and leaves whether it passes to the Tech Lead |

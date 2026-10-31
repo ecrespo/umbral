@@ -20,6 +20,8 @@ type fakeOllama struct {
 	bodies []map[string]any
 	lines  []string
 	status int
+	// failure is the error a refused call answers, "model is loading" when empty.
+	failure string
 }
 
 const tags = `{"models":[
@@ -50,7 +52,11 @@ func (f *fakeOllama) server(t *testing.T) *httptest.Server {
 		f.mu.Unlock()
 		if f.status != 0 {
 			w.WriteHeader(f.status)
-			_, _ = io.WriteString(w, `{"error":"model is loading"}`)
+			msg := f.failure
+			if msg == "" {
+				msg = "model is loading"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 			return
 		}
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -434,5 +440,48 @@ func TestARequestThatCannotBeBuiltIsNotRetried_REQ_LLM_003(t *testing.T) {
 	var pe *domain.ProviderError
 	if !errors.As(err, &pe) || pe.Retryable() {
 		t.Errorf("err = %v, want a ProviderError that is not retryable", err)
+	}
+}
+
+// TestAnUnreadableToolCallIsMarked_REQ_AGT_006: Ollama answers a tool call it cannot parse out
+// of the model's output with a 500 before any event; the adapter marks it ErrMalformedToolCall,
+// the model's invalid call the runtime retries once, and keeps it a retryable 500. Another 500
+// and a 503 are not marked (delta `2026-10-usf2-002-live`).
+func TestAnUnreadableToolCallIsMarked_REQ_AGT_006(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeOllama{status: http.StatusServiceUnavailable}
+	srv := f.server(t)
+	p, _ := New(Config{ID: "ollama", BaseURL: srv.URL})
+	req := domain.Request{Model: "m", Messages: []domain.Message{{Role: domain.RoleUser, Text: "x"}}}
+	var pe *domain.ProviderError
+	_, err := drain(t, p, req)
+	if errors.Is(err, domain.ErrMalformedToolCall) {
+		t.Errorf("a 503 is taken for an unreadable tool call: %v", err)
+	}
+	// Ollama answers a tool call it cannot parse out of the model's output with a 500 before
+	// any event: the model's invalid call, which the runtime retries once.
+	f.status, f.failure = http.StatusInternalServerError, `error parsing tool call: raw='We need rows.{"action":"x"}', err=invalid character 'W' looking for beginning of value`
+	if _, err := drain(t, p, req); !errors.Is(err, domain.ErrMalformedToolCall) || !errors.As(err, &pe) || pe.Status != 500 || !pe.Retryable() {
+		t.Errorf("an unreadable tool call = %v", err)
+	}
+	f.failure = "llama runner process has terminated"
+	if _, err := drain(t, p, req); errors.Is(err, domain.ErrMalformedToolCall) {
+		t.Errorf("another 500 is taken for an unreadable tool call: %v", err)
+	}
+
+	// While streaming, Ollama writes the same failure as an error line after the reasoning it
+	// already sent; the live run's every unreadable call came this way.
+	f.status, f.failure = 0, ""
+	f.lines = []string{
+		`{"message":{"role":"assistant","content":"","thinking":"squash them"},"done":false}`,
+		`{"error":"error parsing tool call: raw='{\"keys\":[\"\\x1b\"]}', err=invalid character 'x' in string escape code"}`,
+	}
+	if _, err := drain(t, p, req); !errors.Is(err, domain.ErrMalformedToolCall) || !errors.As(err, &pe) {
+		t.Errorf("an unreadable tool call in the stream = %v", err)
+	}
+	f.lines = []string{`{"message":{"role":"assistant","content":"a"},"done":false}`, `{"error":"out of memory"}`}
+	if _, err := drain(t, p, req); errors.Is(err, domain.ErrMalformedToolCall) {
+		t.Errorf("another error in the stream is taken for an unreadable tool call: %v", err)
 	}
 }

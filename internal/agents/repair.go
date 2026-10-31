@@ -3,8 +3,10 @@ package agents
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/ecrespo/umbral/internal/agents/domain"
+	llm "github.com/ecrespo/umbral/internal/llmgw/domain"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 	toolsdomain "github.com/ecrespo/umbral/internal/tools/domain"
 )
@@ -31,6 +33,34 @@ func (t *turnRun) invalidCall(ctx context.Context, c domain.ToolCall, action sec
 		return errRepairFailed
 	}
 	return t.finishTool(ctx, c, domain.ToolInvalidArgs, repairMessage(c.Tool, cause), "", false)
+}
+
+// unreadableRepair is the repair message of a step whose tool call its provider could not read
+// (REQ-AGT-006): there is no call to answer, so it is a user message added to the retry.
+const unreadableRepair = "Your last tool call could not be read as JSON. Call the tool again with its " +
+	"arguments as one JSON object that matches its input schema, with no text before or after it " +
+	"and no escapes but JSON's own (\\n, \\t, \\\" and \\uXXXX)."
+
+// unreadableCall handles a step whose tool call its provider could not read: the call failed
+// before its first event — every candidate tried, one of them that way — or in the stream after
+// the reasoning it showed. It is the model's invalid call (REQ-AGT-006, REQ-OBS-002): counted,
+// and the step is asked again once with unreadableRepair added to the request only, never
+// stored. In a step that was itself a retry it is counted but not handled, and the turn stops
+// with tool_error.
+func (t *turnRun) unreadableCall(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || !errors.Is(err, llm.ErrMalformedToolCall) {
+		return false
+	}
+	t.r.cfg.Metrics.ToolCallInvalid(t.servedModel())
+	if t.repairing {
+		return false
+	}
+	// The error is not logged: Ollama's carries the model's own output.
+	t.r.cfg.Logger.InfoContext(ctx, "the provider could not read the model's tool call; the step is asked again",
+		slog.String("thread", t.thread.ID), slog.String("turn", t.turnID), slog.String("model", t.servedModel()))
+	t.history = append(t.history, llm.Message{Role: llm.RoleUser, Text: unreadableRepair})
+	t.repairing = true
+	return true
 }
 
 // repairMessage is the one retry's instruction (REQ-AGT-006): what was wrong, and what a

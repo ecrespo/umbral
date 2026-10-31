@@ -425,3 +425,67 @@ func TestAProgramsUnenteredInputNeverJoinsTheNextLine_REQ_FTU_003(t *testing.T) 
 		t.Errorf("the shell ran the program's leftover with the agent's line: %d joined, %d alone", joined, alone)
 	}
 }
+
+// TestAWaitAfterKeysSeesOnlyTheirOutput_REQ_FTU_001: a wait that follows keys (send_keys with a
+// condition) matches its regex against the output after them, read as text, and not against
+// the screen, where an earlier prompt matching the same regex is still drawn. The keys' plan
+// carries the output sequence number they were sent after (delta `2026-10-usf2-002-live`).
+func TestAWaitAfterKeysSeesOnlyTheirOutput_REQ_FTU_001(t *testing.T) {
+	h := newHarness(t)
+	cwd := t.TempDir()
+	threadID := thread(t, h, cwd)
+	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
+	defer cancel()
+
+	send(t, h, ctx, threadID, cwd, keyText("cat"), keyEnter)
+	waitKeys(t, h, ctx, threadID, cwd, domain.WaitCondition{Idle: 300 * time.Millisecond})
+	plan := send(t, h, ctx, threadID, cwd, keyText("ready-1"), keyEnter)
+	waitKeys(t, h, ctx, threadID, cwd, domain.WaitCondition{Regex: regexp.MustCompile(`ready-1\s+ready-1`)})
+
+	// ready-1 is on the screen; keys that print nothing new do not match it again.
+	quiet := send(t, h, ctx, threadID, cwd, keyText("x"))
+	old := regexp.MustCompile(`ready-1`)
+	if out := waitKeys(t, h, ctx, threadID, cwd, domain.WaitCondition{Regex: old, Fresh: true, After: quiet.Seq, Timeout: 700 * time.Millisecond}); out.Reason != domain.WaitTimeout {
+		t.Errorf("a wait after keys matched the screen's old output: %q", out.Reason)
+	}
+	if out := waitKeys(t, h, ctx, threadID, cwd, domain.WaitCondition{Regex: old, Timeout: 700 * time.Millisecond}); out.Reason != domain.WaitMatched {
+		t.Errorf("a wait on the screen did not see ready-1: %q", out.Reason)
+	}
+	if quiet.Seq <= plan.Seq {
+		t.Errorf("the plan's seq %d is not after the earlier keys' %d", quiet.Seq, plan.Seq)
+	}
+	next := send(t, h, ctx, threadID, cwd, keyEnter, keyText("ready-2"), keyEnter)
+	out := waitKeys(t, h, ctx, threadID, cwd, domain.WaitCondition{Regex: regexp.MustCompile(`ready-2`), Fresh: true, After: next.Seq})
+	if out.Reason != domain.WaitMatched || !strings.Contains(out.Screen.Text, "ready-2") {
+		t.Errorf("the wait after ready-2: %q, screen %q", out.Reason, out.Screen.Text)
+	}
+	// Conditions combine and the first that holds ends the wait: the output, else the quiet.
+	third := send(t, h, ctx, threadID, cwd, keyText("ready-3"), keyEnter)
+	both := domain.WaitCondition{Regex: regexp.MustCompile(`ready-3`), Idle: domain.MinWaitIdle, Fresh: true, After: third.Seq}
+	if out := waitKeys(t, h, ctx, threadID, cwd, both); out.Reason != domain.WaitMatched {
+		t.Errorf("regex or quiet after ready-3: %q", out.Reason)
+	}
+	both.Regex = regexp.MustCompile(`never-printed`)
+	if out := waitKeys(t, h, ctx, threadID, cwd, both); out.Reason != domain.WaitIdle {
+		t.Errorf("regex or quiet with nothing matching: %q", out.Reason)
+	}
+	send(t, h, ctx, threadID, cwd, keyCtrlD)
+	waitKeys(t, h, ctx, threadID, cwd, domain.WaitCondition{Exit: true})
+
+	// SkipEcho reads the output after the line the keys entered: the terminal's echo of that
+	// line does not answer a wait, as `regex: "postgres"` after typing `psql -U postgres` did.
+	send(t, h, ctx, threadID, cwd, keyText("sh -c 'read x; echo got-$x'"), keyEnter)
+	waitKeys(t, h, ctx, threadID, cwd, domain.WaitCondition{Idle: 300 * time.Millisecond})
+	line := send(t, h, ctx, threadID, cwd, keyText("mark"), keyEnter)
+	if out := waitKeys(t, h, ctx, threadID, cwd, domain.WaitCondition{Regex: regexp.MustCompile(`got-mark`), Fresh: true, After: line.Seq, SkipEcho: true}); out.Reason != domain.WaitMatched {
+		t.Errorf("the program's answer after its line: %q", out.Reason)
+	}
+	echo := domain.WaitCondition{Regex: regexp.MustCompile(`(?m)^mark\s*$`), Fresh: true, After: line.Seq, Timeout: 700 * time.Millisecond}
+	if out := waitKeys(t, h, ctx, threadID, cwd, echo); out.Reason != domain.WaitMatched {
+		t.Errorf("without SkipEcho the echo did not match: %q", out.Reason)
+	}
+	echo.SkipEcho = true
+	if out := waitKeys(t, h, ctx, threadID, cwd, echo); out.Reason != domain.WaitTimeout {
+		t.Errorf("a wait after the entered line matched its echo: %q", out.Reason)
+	}
+}

@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -220,5 +221,101 @@ func TestTheRuntimeRequiresMetrics_REQ_OBS_002(t *testing.T) {
 	cfg.Metrics = nil
 	if _, err := New(t.Context(), cfg); err == nil {
 		t.Fatal("New accepted a Config with no Metrics")
+	}
+}
+
+// TestAnUnreadableToolCallIsRetriedOnce_REQ_AGT_006: a step whose tool call the provider could
+// not read — it failed before its first event with ErrMalformedToolCall — is an invalid call
+// of the model's: it is counted against the model, and the step is asked again once with a
+// repair message added to the request and never stored; a valid answer then goes on to the
+// turn's end (delta `2026-10-usf2-002-live`).
+func TestAnUnreadableToolCallIsRetriedOnce_REQ_AGT_006(t *testing.T) {
+	r := newRig(t,
+		unreadable(),
+		callToolOn("ol/a", "read_file", `{"path":"a"}`),
+		answer("done"),
+	)
+	th := r.thread(t, domain.CreateParams{})
+	_, end := r.send(t, th.ID, "read", "")
+	if end.StopReason != domain.StopEndTurn {
+		t.Fatalf("stop %s, want end_turn after the retry", end.StopReason)
+	}
+	reqs := r.models.requests()
+	if len(reqs) != 3 || len(reqs[1].Request.Messages) != len(reqs[0].Request.Messages)+1 {
+		t.Fatalf("%d calls; the retry must be the same request and its repair message", len(reqs))
+	}
+	retry := reqs[1].Request.Messages
+	if last := retry[len(retry)-1]; last.Role != llm.RoleUser || last.Text != unreadableRepair {
+		t.Errorf("the retry ends with %+v, want the repair message", last)
+	}
+	model := th.Model
+	if model == "" {
+		model = unknown
+	}
+	if got, total := r.metrics.count(model), r.metrics.total(); got != 1 || total != 1 {
+		t.Errorf("%d invalid calls counted against %q (%d in all), want 1", got, model, total)
+	}
+	msgs, err := r.rt.Messages(context.Background(), th.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range msgs {
+		if strings.Contains(m.Content, unreadableRepair) {
+			t.Errorf("the repair message was stored: %+v", m)
+		}
+	}
+	if r.tools.tools["read_file"].ran.Load() != 1 {
+		t.Error("the retried step's call did not run")
+	}
+}
+
+// TestAnUnreadableRetryEndsTheTurn_REQ_AGT_006: a retried step that is unreadable again ends
+// the turn with tool_error, as a repaired call that is invalid again does, and the model is
+// not asked a third time.
+func TestAnUnreadableRetryEndsTheTurn_REQ_AGT_006(t *testing.T) {
+	r := newRig(t, unreadable(), unreadable(), answer("never reached"))
+	th := r.thread(t, domain.CreateParams{})
+	_, end := r.send(t, th.ID, "read", "")
+	if end.StopReason != domain.StopToolError {
+		t.Fatalf("stop %s, want tool_error", end.StopReason)
+	}
+	if n := len(r.models.requests()); n != 2 {
+		t.Fatalf("the model was called %d times, want 2", n)
+	}
+}
+
+// TestAnUnreadableToolCallIsCounted_REQ_OBS_002: each step whose tool call the provider could
+// not read counts once in umbral_tool_calls_invalid_total, under the model the thread names
+// when the router reported none (delta `2026-10-usf2-002-live`).
+func TestAnUnreadableToolCallIsCounted_REQ_OBS_002(t *testing.T) {
+	r := newRig(t, unreadable(), unreadable())
+	th := r.thread(t, domain.CreateParams{})
+	_, _ = r.send(t, th.ID, "read", "")
+	model := th.Model
+	if model == "" {
+		model = unknown
+	}
+	if got, total := r.metrics.count(model), r.metrics.total(); got != 2 || total != 2 {
+		t.Errorf("%d counted against %q (%d in all), want both steps", got, model, total)
+	}
+}
+
+// TestAnUnreadableToolCallInTheStreamIsRetried_REQ_AGT_006: Ollama reports a tool call it could
+// not read as an error line after the reasoning it streamed, so the router cannot fall back; the
+// runtime still takes it for the model's invalid call and retries the step once with the repair
+// message (delta `2026-10-usf2-002-live`). The live run's unreadable calls all came this way.
+func TestAnUnreadableToolCallInTheStreamIsRetried_REQ_AGT_006(t *testing.T) {
+	r := newRig(t, unreadableInStream(), answer("done"))
+	th := r.thread(t, domain.CreateParams{})
+	_, end := r.send(t, th.ID, "read", "")
+	if end.StopReason != domain.StopEndTurn {
+		t.Fatalf("stop %s, want end_turn after the retry", end.StopReason)
+	}
+	reqs := r.models.requests()
+	if len(reqs) != 2 {
+		t.Fatalf("%d calls, want the step and its retry", len(reqs))
+	}
+	if retry := reqs[1].Request.Messages; retry[len(retry)-1].Text != unreadableRepair {
+		t.Errorf("the retry ends with %+v, want the repair message", retry[len(retry)-1])
 	}
 }

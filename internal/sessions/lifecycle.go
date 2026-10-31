@@ -255,6 +255,7 @@ func (s *Service) drain(live *liveSession) {
 			live.mu.Lock()
 			live.seq++
 			seq := live.seq
+			live.keepRecent(seq, chunk)
 			live.mu.Unlock()
 			live.snapshotMu.Unlock()
 

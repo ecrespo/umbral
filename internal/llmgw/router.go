@@ -383,7 +383,8 @@ type item struct {
 // succeeded, or it failed in a way the next candidate cannot fix — and false with the reason
 // when the next candidate should be tried. It reports to the provider's breaker as soon as it
 // knows, so a probe frees its slot at the first event rather than at the end of a long answer:
-// a first event is a success, a timeout or a retryable failure is a failure, and anything else
+// a first event is a success, a timeout or a retryable failure is a failure — but not a tool
+// call the provider could not read, which the provider answered — and anything else
 // says nothing.
 func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain.Request, probe bool, yield func(domain.Event, error) bool) (finished bool, _ error) {
 	reported := false
@@ -496,7 +497,9 @@ func (r *Router) attempt(ctx context.Context, call Call, c candidate, req domain
 	}
 	if first.err != nil {
 		finished, retried, err := r.failedBeforeFirst(ctx, rec, start, first.err, yield)
-		if retried {
+		// A tool call the provider could not read is the model's invalid call: the next
+		// candidate is still tried, but the provider answered (delta `2026-10-usf2-002-live`).
+		if retried && !errors.Is(first.err, domain.ErrMalformedToolCall) {
 			settle(outcomeFailure)
 		}
 		return finished, err

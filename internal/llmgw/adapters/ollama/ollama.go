@@ -263,6 +263,16 @@ type chatChunk struct {
 const maxLine = 16 << 20
 
 // Stream implements ports.Provider.
+// ollamaError is an error Ollama reported, before the stream or in it. Its parser failing to read
+// the tool call the model wrote is the model's invalid call, not the provider's failure, and is
+// marked ErrMalformedToolCall (delta `2026-10-usf2-002-live`).
+func ollamaError(detail string) error {
+	if strings.HasPrefix(detail, "error parsing tool call") {
+		return fmt.Errorf("%w: %s", domain.ErrMalformedToolCall, detail)
+	}
+	return errors.New(detail)
+}
+
 func (p *Provider) Stream(ctx context.Context, req domain.Request) (iter.Seq2[domain.Event, error], error) {
 	body, err := p.request(req)
 	if err != nil {
@@ -294,7 +304,11 @@ func (p *Provider) Stream(ctx context.Context, req domain.Request) (iter.Seq2[do
 		if json.Unmarshal(msg, &e) == nil && e.Error != "" {
 			detail = e.Error
 		}
-		return nil, &domain.ProviderError{Provider: p.cfg.ID, Status: resp.StatusCode, Err: errors.New(detail)}
+		err := errors.New(detail)
+		if resp.StatusCode == http.StatusInternalServerError {
+			err = ollamaError(detail)
+		}
+		return nil, &domain.ProviderError{Provider: p.cfg.ID, Status: resp.StatusCode, Err: err}
 	}
 	return func(yield func(domain.Event, error) bool) {
 		defer func() { _ = resp.Body.Close() }()
@@ -320,7 +334,7 @@ func (p *Provider) read(body io.Reader, yield func(domain.Event, error) bool) {
 			return
 		}
 		if c.Error != "" {
-			fail(errors.New(c.Error))
+			fail(ollamaError(c.Error))
 			return
 		}
 		if c.Message.Thinking != "" && !yield(domain.Event{Kind: domain.EventReasoningDelta, Text: c.Message.Thinking}, nil) {

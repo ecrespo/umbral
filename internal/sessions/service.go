@@ -70,6 +70,44 @@ type Service struct {
 	live map[string]*liveSession
 }
 
+// recentChunk is one read of output and its sequence number.
+type recentChunk struct {
+	seq  uint64
+	data []byte
+}
+
+// maxRecentBytes is how much output a thread's terminal keeps for a Fresh wait: more than one
+// screen of a full-screen program's redraw.
+const maxRecentBytes = 256 << 10
+
+// keepRecent adds a chunk to recent and drops the oldest past maxRecentBytes. Only a thread's
+// own terminal keeps any: terminal_interact waits on no other session, and a user's pane would
+// hold 256 KiB for nothing. Called with mu held.
+func (l *liveSession) keepRecent(seq uint64, data []byte) {
+	if l.session.OwnerThreadID == "" {
+		return
+	}
+	l.recent = append(l.recent, recentChunk{seq: seq, data: data})
+	l.recentBytes += len(data)
+	for l.recentBytes > maxRecentBytes && len(l.recent) > 1 {
+		l.recentBytes -= len(l.recent[0].data)
+		l.recent = l.recent[1:]
+	}
+}
+
+// outputAfter is the output after sequence number after that recent still holds, as text.
+func (l *liveSession) outputAfter(after uint64) string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	var p domain.PlainText
+	for _, c := range l.recent {
+		if c.seq > after {
+			p.Write(c.data)
+		}
+	}
+	return p.String()
+}
+
 // liveSession is one running PTY and everything attached to it.
 type liveSession struct {
 	// mu guards the mutable fields below. The PTY and the emulator have their own
@@ -89,6 +127,10 @@ type liveSession struct {
 
 	seq     uint64
 	cleanup func() error
+	// recent is the latest output, by sequence number, for a wait that reads what came after
+	// some keys (WaitFor's Fresh); at most recentBytes of it. Guarded by mu.
+	recent      []recentChunk
+	recentBytes int
 
 	// ctx is the session's own lifetime, used by every block write. A block outlives the
 	// request that started its command, so the request's context is the wrong one.
