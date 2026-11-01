@@ -6,7 +6,8 @@
 #
 # The container runs systemd as its init, so a lingering user gets a real user manager. As that
 # user, `systemctl --user start umbrald` must serve `umb status` without autostarting another
-# daemon, and a stop must leave no process of the user behind. The unit must be installed and
+# daemon and open a pane, a live handoff must be refused with the pane's shell untouched, and a
+# stop must leave nothing in the unit's cgroup — the shell included. The unit must be installed and
 # not enabled. The package is mounted under /srv: systemd mounts a tmpfs over /tmp. Booting systemd needs a privileged container sharing the host's cgroup tree.
 set -euo pipefail
 
@@ -57,7 +58,28 @@ docker exec -e DEB="/srv/$name" "$box" bash -euo pipefail -c '
   as_smoke umb status --no-autostart
   test "$(pgrep -u smoke -x umbrald | wc -l)" -eq 1
 
+  # A pane: its shell is one of the unit'"'"'s processes.
+  as_smoke umb workspace create /home/smoke --label smoke --no-autostart >/dev/null
+  cgroup="/sys/fs/cgroup$(as_smoke systemctl --user show -p ControlGroup --value umbrald.service)"
+  procs() { cat "$cgroup/cgroup.procs" 2>/dev/null | wc -l; }
+  for _ in $(seq 1 50); do [ "$(procs)" -ge 2 ] && break; sleep 0.2; done
+  before="$(procs)"
+  [ "$before" -ge 2 ] || { echo "smoke: the pane'"'"'s shell is not in the unit ($before processes)" >&2; exit 1; }
+
+  # A live handoff is refused under the unit and changes nothing.
+  if as_smoke umbrald --takeover >/dev/null 2>&1; then
+    echo "smoke: a handoff was given under systemd" >&2
+    exit 1
+  fi
+  as_smoke systemctl --user is-active -q umbrald.service
+  as_smoke umb status --no-autostart >/dev/null
+  [ "$(procs)" -eq "$before" ] || { echo "smoke: the refused handoff changed the unit'"'"'s processes" >&2; exit 1; }
+
   as_smoke systemctl --user stop umbrald.service
+  if [ "$(procs)" -ne 0 ]; then
+    echo "smoke: $(procs) processes left in the unit after it stopped" >&2
+    exit 1
+  fi
   if pgrep -u smoke -x umbrald >/dev/null; then
     echo "smoke: umbrald still runs after the unit stopped" >&2
     exit 1

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -513,5 +514,68 @@ func TestAHandoffFromAnAgentsTerminalIsRefused_REQ_HND_002(t *testing.T) {
 	}
 	if len(asked) != 1 || asked[0] != os.Getpid() {
 		t.Fatalf("the check was asked about %v, want this process", asked)
+	}
+}
+
+// TestAHandoffUnderAServiceManagerIsRefused_REQ_HND_002: a daemon a service manager runs is
+// refused a handoff at hello. Its exit would end the unit, and a stop kills what is left in the
+// unit's processes: every shell the new daemon just adopted. The user is told to restart the
+// unit instead (delta `2026-10-service-units`).
+func TestAHandoffUnderAServiceManagerIsRefused_REQ_HND_002(t *testing.T) {
+	path := filepath.Join(socketDir(t), handoff.SocketName)
+	ln, err := handoff.Listen(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	g := &giver{logger: slog.New(slog.DiscardHandler), manager: "systemd"}
+	gave := make(chan bool, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			gave <- true
+			return
+		}
+		defer func() { _ = c.Close() }()
+		// No server, sessions or locks: anything past the refusal would panic.
+		gave <- g.give(t.Context(), c)
+	}()
+
+	c, err := handoff.Dial(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	_ = c.Send(handoffFrame{Op: opHello, Protocol: api.ProtocolVersion})
+	var got handoffFrame
+	if _, err := c.Recv(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Op != opError || got.Step != stepHello || !strings.Contains(got.Error, "systemctl --user restart umbrald") {
+		t.Fatalf("a daemon under systemd answered %+v, want a refusal at hello naming the restart", got)
+	}
+	if <-gave {
+		t.Fatal("a daemon under systemd handed its sessions over")
+	}
+}
+
+// TestTheServiceManagerIsReadFromTheEnvironment: systemd sets SYSTEMD_EXEC_PID to the pid it
+// executed for a unit, so only that process is the unit's daemon. A daemon `umb` autostarted
+// from a terminal some unit or scope started inherits the variable, and INVOCATION_ID, with
+// another pid, and is not.
+func TestTheServiceManagerIsReadFromTheEnvironment(t *testing.T) {
+	t.Setenv("INVOCATION_ID", "5c1e0d9f2a7b4e3c8d6f1a2b3c4d5e6f")
+	for _, tc := range []struct {
+		execPID, want string
+	}{
+		{"", ""},
+		{strconv.Itoa(os.Getppid()), ""},
+		{"not a pid", ""},
+		{strconv.Itoa(os.Getpid()), "systemd"},
+	} {
+		t.Setenv("SYSTEMD_EXEC_PID", tc.execPID)
+		if got := serviceManager(); got != tc.want {
+			t.Errorf("SYSTEMD_EXEC_PID=%q: the manager is %q, want %q", tc.execPID, got, tc.want)
+		}
 	}
 }

@@ -9,13 +9,17 @@ Documentation=https://github.com/ecrespo/umbral
 Type=simple
 # The user manager sets XDG_RUNTIME_DIR, where the socket goes, as a login does.
 ExecStart=/usr/bin/umbrald
-# A stop ends the daemon and every pane's shell with it: they are the unit's processes.
-KillMode=control-group
+# A stop sends SIGTERM to the daemon alone, which records its sessions and closes their
+# terminals, so each shell gets the SIGHUP a closed terminal sends; whatever is left after
+# TimeoutStopSec is killed. A live handoff is refused under this unit, since the daemon's exit
+# would end the unit with the adopted shells in it: restart the unit instead.
+KillMode=mixed
 Restart=on-failure
-# 75: the database is held by a daemon of another runtime directory; 78: config.toml cannot be
-# read. Neither is cured by trying again. An exit 0 because a daemon `umb` autostarted already
-# serves this installation is not a failure, so the unit just ends.
-RestartPreventExitStatus=75 78
+# Not cured by trying again: 64 a bad flag, 65 a database newer than this binary or a recovery
+# that fails, 75 the database held by a daemon of another runtime directory, 78 a settings or
+# models file that cannot be read. An exit 0 because a daemon `umb` autostarted already serves
+# this installation is not a failure, so the unit just ends.
+RestartPreventExitStatus=64 65 75 78
 
 [Install]
 WantedBy=default.target
