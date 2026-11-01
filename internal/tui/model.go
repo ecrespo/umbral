@@ -55,6 +55,9 @@ type Model struct {
 	held       *pane
 	heldThread string
 
+	// pluginKeys are the installed plugins' bindings by key (plugins.go).
+	pluginKeys map[string]ports.PluginKey
+
 	// status is the one-line message under the panes: what just happened, or what went
 	// wrong. Empty means the key hints are shown instead.
 	status string
@@ -131,7 +134,7 @@ func New(daemon ports.Daemon, screens ports.ScreenFactory) *Model {
 
 // Init opens the first session and starts listening for daemon events.
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.openTabCmd(), m.waitForEvent(), m.loadApprovalsCmd(), m.loadExtensionsCmd(), m.loadThreadsCmd())
+	return tea.Batch(m.openTabCmd(), m.waitForEvent(), m.loadApprovalsCmd(), m.loadExtensionsCmd(), m.loadThreadsCmd(), m.loadPluginKeysCmd())
 }
 
 // Update is the single place the model changes.
@@ -198,6 +201,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case skillsLoadedMsg:
 		m.skillsLoaded(msg)
+		return m, nil
+
+	case pluginKeysLoadedMsg:
+		m.pluginKeysLoaded(msg)
 		return m, nil
 
 	case takenOverMsg:

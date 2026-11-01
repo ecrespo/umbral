@@ -28,6 +28,9 @@ type Screen interface {
 	Lines() ([]string, error)
 	// Cursor reports the cursor's cell.
 	Cursor() (x, y uint16, err error)
+	// AtPrompt reports whether the cursor sits at a shell prompt or its input, as the
+	// OSC 133 markers say; false on the alternate screen and when no marker was seen.
+	AtPrompt() (bool, error)
 	// Reset empties the screen and its scrollback, leaving it as a newly created one of
 	// the same size.
 	//
@@ -92,6 +95,9 @@ type Daemon interface {
 	// empty list, not an error: having no MCP client or skill store is a configuration.
 	McpServers(ctx context.Context) ([]McpServer, error)
 	Skills(ctx context.Context) ([]Skill, error)
+	// PluginKeys is every installed plugin's key bindings with the argv each runs
+	// (`plugin.list`, delta `2026-10-plugins`); a daemon without plugins answers none.
+	PluginKeys(ctx context.Context) ([]PluginKey, error)
 	// TakeOver gives the user a thread's terminal and returns its session
 	// (`thread.take_over`, REQ-FTU-002); HandBack gives it back to the agent
 	// (`thread.hand_back`).
@@ -164,6 +170,13 @@ type Skill struct {
 	Enabled bool
 }
 
+// PluginKey is a plugin's key binding: Key, as Bubble Tea names it, types Argv at the focused
+// pane's prompt.
+type PluginKey struct {
+	Key, Plugin, Command string
+	Argv                 []string
+}
+
 // EventKind says what an Event carries.
 type EventKind int
 
@@ -209,6 +222,9 @@ const (
 	// from what it stored before it published (DD-007).
 	EventMcpServerState
 	EventSkillChanged
+	// EventPluginChanged is a plugin installed or removed (`plugin.changed`): the TUI lists
+	// its key bindings again.
+	EventPluginChanged
 	// EventAttentionChanged is a thread's attention state changing
 	// (`thread.attention_changed`), and EventWorkspaceFocused the daemon's focused workspace
 	// changing (`workspace.focused`, or `workspace.closed`, which can move it). The panel

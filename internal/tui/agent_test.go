@@ -90,6 +90,12 @@ func (f *fakeDaemon) Skills(context.Context) ([]ports.Skill, error) {
 	return append([]ports.Skill(nil), f.skills...), nil
 }
 
+func (f *fakeDaemon) PluginKeys(context.Context) ([]ports.PluginKey, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]ports.PluginKey(nil), f.pluginKeys...), nil
+}
+
 func (f *fakeDaemon) Threads(context.Context) (ports.ThreadList, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

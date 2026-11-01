@@ -85,6 +85,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.agent.mode {
 		return m, m.handleAgentKey(msg)
 	}
+	// A plugin's binding is ctrl+alt+ and a letter or digit, which no shortcut above takes.
+	if cmd, ok := m.pluginKey(msg); ok {
+		return m, cmd
+	}
 
 	p := m.focusedPane()
 	if p == nil || p.exited {
@@ -379,6 +383,9 @@ func (m *Model) applyEvent(msg daemonEventMsg) tea.Cmd {
 
 	case ports.EventSkillChanged:
 		return tea.Batch(m.loadSkillsCmd(), m.waitForEvent())
+
+	case ports.EventPluginChanged:
+		return tea.Batch(m.loadPluginKeysCmd(), m.waitForEvent())
 
 	case ports.EventNotification:
 		m.status = ev.Title

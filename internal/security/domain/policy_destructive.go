@@ -56,6 +56,10 @@ var DefaultDestructivePatterns = []DestructivePattern{
 	// Nor change which machines this daemon reaches and as whom; refused to an agent's terminal
 	// too (delta `2026-10-remote-hosts`, REQ-ORC-004).
 	{"umb_remote_change", regexp.MustCompile(`^umb( \S+)* remote( \S+)* (add|remove)( |$)`)},
+	// Nor install, remove or run a plugin: what it adds — servers, skills, commands — is the
+	// user's to accept, and its commands run as the user's; refused to an agent's terminal too
+	// (delta `2026-10-plugins`, REQ-PLG-002).
+	{"umb_plugin_change", regexp.MustCompile(`^umb( \S+)* plugin( \S+)* (install|remove|run)( |$)`)},
 }
 
 // What makes a line ask when no pattern names it: the shell, not the line, decides what runs

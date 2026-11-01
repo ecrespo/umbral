@@ -190,3 +190,31 @@ func TestAClosedScreenFailsRatherThanCrashing(t *testing.T) {
 		t.Error("resizing a closed screen was accepted")
 	}
 }
+
+// TestAtPromptFollowsTheShellsMarkers_REQ_PLG_002: a plugin key types only at a prompt, and
+// the prompt is what the shell's OSC 133 markers say. Before any marker, while a command runs
+// and on the alternate screen the answer is no (delta `2026-10-plugins`, decision 8).
+func TestAtPromptFollowsTheShellsMarkers_REQ_PLG_002(t *testing.T) {
+	t.Parallel()
+	s := newScreen(t, 40, 10)
+	at := func() bool {
+		t.Helper()
+		got, err := s.AtPrompt()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if _, _ = s.Write([]byte("no markers yet ")); at() {
+		t.Error("a screen with no OSC 133 marker reported a prompt")
+	}
+	if _, _ = s.Write([]byte("\r\n\x1b]133;A\x07$ \x1b]133;B\x07")); !at() {
+		t.Error("the cursor after a prompt marker is not at a prompt")
+	}
+	if _, _ = s.Write([]byte("\x1b[?1049h")); at() {
+		t.Error("the alternate screen reported a prompt")
+	}
+	if _, _ = s.Write([]byte("\x1b[?1049l\r\n\x1b]133;C\x07running\r\n")); at() {
+		t.Error("a running command's output reported a prompt")
+	}
+}

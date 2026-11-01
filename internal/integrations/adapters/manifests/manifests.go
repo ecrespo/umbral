@@ -41,6 +41,13 @@ func Load(dir string) (manifests []domain.Manifest, skipped []domain.SkippedMani
 		return nil, []domain.SkippedManifest{{File: dir, Reason: err.Error()}}
 	}
 	sort.Strings(paths)
+	return LoadFiles(paths)
+}
+
+// LoadFiles reads the given manifest files in order, as Load reads a directory's: a file that
+// fails is skipped whole, and two naming one agent keep the later. Installed plugins' detection
+// manifests are read this way (delta `2026-10-plugins`, decision 7).
+func LoadFiles(paths []string) (manifests []domain.Manifest, skipped []domain.SkippedManifest) {
 	byName := map[string]int{}
 	for _, p := range paths {
 		m, err := read(p)
@@ -75,10 +82,16 @@ func read(path string) (domain.Manifest, error) {
 		return domain.Manifest{}, fmt.Errorf("%w: not a regular file", domain.ErrInvalidManifest)
 	}
 	raw, err := io.ReadAll(io.LimitReader(fh, maxFileBytes+1))
-	switch {
-	case err != nil:
+	if err != nil {
 		return domain.Manifest{}, fmt.Errorf("%w: cannot be read", domain.ErrInvalidManifest)
-	case len(raw) > maxFileBytes:
+	}
+	return Parse(raw, path)
+}
+
+// Parse reads one manifest's bytes; origin names where they came from. A plugin's detection
+// manifests are checked with it at inspect (delta `2026-10-plugins`, decision 2).
+func Parse(raw []byte, origin string) (domain.Manifest, error) {
+	if len(raw) > maxFileBytes {
 		return domain.Manifest{}, fmt.Errorf("%w: larger than %d bytes", domain.ErrInvalidManifest, maxFileBytes)
 	}
 	var f file
@@ -100,7 +113,7 @@ func read(path string) (domain.Manifest, error) {
 	}
 	return domain.Manifest{
 		Name: f.Name, DisplayName: f.DisplayName, StateSource: f.StateSource,
-		Executables: f.Detect.Executables, Argv: f.Detect.Argv, Origin: path,
+		Executables: f.Detect.Executables, Argv: f.Detect.Argv, Origin: origin,
 	}.Compile()
 }
 

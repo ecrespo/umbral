@@ -602,8 +602,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 		return exitCantCreate
 	}
 
+	// The plugin store (T-F2-60), whose servers and skills go through the MCP client and the
+	// skill store, and whose detection manifests the detector reads below.
+	plugins, err := newPlugins(ctx, db, mcpClient, skillStore, eventBus, logger)
+	if err != nil {
+		logger.Error("cannot build the plugin store", slog.Any("error", err))
+		return exitCantCreate
+	}
+	pluginDetection, err := plugins.DetectionFiles(ctx)
+	if err != nil {
+		logger.Error("cannot list the plugins' detection manifests", slog.Any("error", err))
+		return exitCantCreate
+	}
+
 	// Third-party agent detection (T-F2-10): a label beside the pane, never its state (DD-012).
-	detector, err := startDetection(ctx, settingsPath, agentLabels, sessionService, workspaceService, eventBus, logger)
+	detector, err := startDetection(ctx, settingsPath, pluginDetection, agentLabels, sessionService, workspaceService, eventBus, logger)
 	if err != nil {
 		logger.Error("cannot build agent detection", slog.Any("error", err))
 		return exitCantCreate
@@ -656,6 +669,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 		PolicyExplain: explainer,
 		Rules:         ruleManager,
 		Skills:        skillStore,
+		Plugins:       plugins,
 		// worktree.* (T-F2-03): the engine, and the runtime's word on when a thread's may change.
 		Worktrees:       worktreeEngine,
 		WorktreeThreads: runtime,

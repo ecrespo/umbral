@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -208,12 +207,7 @@ func confirmWorktree(stdin io.Reader, stderr *printer, verb, question string) bo
 		return false
 	}
 	stderr.printf("%s [y/N] ", question)
-	line, err := bufio.NewReader(stdin).ReadString('\n')
-	if err != nil && line == "" {
-		stderr.println("")
-	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "y", "yes":
+	if answeredYes(stdin, stderr) {
 		return true
 	}
 	stderr.printf("umb worktree %s: nothing done\n", verb)

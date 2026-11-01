@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.59 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.60 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`; Windows: the named pipe `\\.\pipe\umbral-<16 hex>`, see §2) |
@@ -137,7 +137,7 @@ framing are unchanged.
 |---|---|---|
 | `tui` | Interactive client | All |
 | `desktop` | Wails client (F2) | All |
-| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove`, `remote.list`, `remote.add`, `remote.remove`, `agent.explain`, `model.route`, `worktree.list`, `worktree.get`, `worktree.diff`, `worktree.merge`, `worktree.discard`, `worktree.files`, `worktree.read_file` |
+| `cli` | `umb` | `system.*`, `api.*`, `limits.get`, `limits.set`, `block.*`, `workspace.*`, `tab.*`, `pane.*` except `pane.move`, `layout.*`, `thread.create`, `thread.send`, `thread.cancel`, `thread.get`, `thread.wait`, `model.list`, `notification.show`, `policy.explain`, `rules.*`, `wait.list`, `wait.cancel`, `skill.*`, `plugin.*`, `mcp.server.list`, `mcp.server.add`, `mcp.server.remove`, `remote.list`, `remote.add`, `remote.remove`, `agent.explain`, `model.route`, `worktree.list`, `worktree.get`, `worktree.diff`, `worktree.merge`, `worktree.discard`, `worktree.files`, `worktree.read_file` |
 
 ### An agent's terminal
 
@@ -151,7 +151,7 @@ outside its terminal, with `PERMISSION_DENIED`, whatever its kind (REQ-ORC-004, 
 `worktree.merge`, `worktree.discard`, `worktree.close_group`, `worktree.reject_hunks`,
 `worktree.write_file`, `approval.respond`, `thread.update`,
 `skill.install`, `skill.set_enabled`, `skill.remove`, `mcp.server.add`, `mcp.server.remove`,
-`remote.add`, `remote.remove`,
+`plugin.install`, `plugin.remove`, `plugin.run`, `remote.add`, `remote.remove`,
 `rules.key.add`, `rules.key.remove`, `rules.key.rotate`, `rules.rollback`, `rules.reset`,
 `session.input`, `thread.take_over`, `thread.hand_back` (REQ-FTU-002: an agent must not hand its
 own terminal back to itself), and every method that starts a process — `session.create`, `pane.split`,
@@ -224,7 +224,7 @@ own terminal back to itself), and every method that starts a process — `sessio
 ## 3. General Conventions
 
 ### Identifiers
-- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`, `trn_` for a turn (`turn_id`, T-F1-13), `wt_` for a wait (`wait_id`, T-F1-31), `skl_` for a skill (T-F1-34), `wtr_` for a worktree (T-F2-01; not `wt_`, which is a wait's), and `key_` for a trust key — fixed by the binary's trust seed for the project's keys, so every install shows the same id, and minted at `rules.key.add` otherwise
+- Type-prefixed ULIDs: `ses_`, `blk_`, `thr_`, `msg_`, `tc_`, `apr_`, `mcp_`, `con_`, `trn_` for a turn (`turn_id`, T-F1-13), `wt_` for a wait (`wait_id`, T-F1-31), `skl_` for a skill (T-F1-34), `plg_` for a plugin (T-F2-60), `wtr_` for a worktree (T-F2-01; not `wt_`, which is a wait's), and `key_` for a trust key — fixed by the binary's trust seed for the project's keys, so every install shows the same id, and minted at `rules.key.add` otherwise
   (Constitution Art. 6). Example: `blk_01J9Z3K8T2QH6W4V5X7Y8Z9A0B`.
 - **Structural identifiers** are the documented exception to that rule (Art. 6, amendment of
   2026-09-20): a workspace is `w<n>`, a tab `w<n>:t<m>` and a pane `w<n>:p<m>`, with `n` and `m`
@@ -523,6 +523,24 @@ method and the ordering that produced it, so one handed to a different method is
 - `version`: `null` when the front matter has none
 - `source`: the path it was installed from, for display only — the stored copy is what is used
 - `sha256`: the bundle's digest (§5.42)
+
+### Plugin
+```json
+{"id":"plg_…","name":"acme","source":"/home/me/plugins/acme","sha256":"5e1d…","size_bytes":2210,
+ "installed_at":1761900000000,
+ "manifest":{"name":"acme","version":"1.2.0","description":"Acme tools",
+  "commands":[{"name":"deploy","description":"Deploy","argv":["make","deploy"]}],
+  "mcp_servers":[{"name":"acme","transport":"stdio","command":"acme-mcp","args":["--stdio"],
+                  "url":null,"env_refs":{"TOKEN":"keyring:acme/token"}}],
+  "skills":[{"name":"acme-review","path":"skills/review"}],
+  "detection":["detect/acme.toml"],
+  "keys":[{"key":"ctrl+alt+d","command":"deploy"}]}}
+```
+- `name`: 1–32 of `[a-z0-9]`; unique, and how methods address a plugin
+- `manifest`: the parsed `umbral-plugin.toml` (§5.45); each skill's `name` is the one its
+  `SKILL.md` gives; `mcp_servers` carry no trust, since every one is added `untrusted`
+- `source`: the path it was installed from, for display only — the stored copy is what is used
+- `sha256`: the bundle's digest, computed as a skill's (§5.42)
 
 ## 5. Methods
 
@@ -1557,6 +1575,62 @@ agent's terminal (§2).
   a name is `VALIDATION_ERROR`; a name taken is `CONFLICT`; an unknown host, in `remove` or in
   `host`, is `NOT_FOUND`. An id prefixed with a name that is no host's is this daemon's to judge.
 
+### 5.45 `plugin.inspect` / `plugin.install` / `plugin.list` / `plugin.get` / `plugin.remove` / `plugin.run` — REQ-PLG-001, REQ-PLG-002
+
+Declarative plugins (capability `plugins`, delta `2026-10-plugins`): a local directory or
+`.tar.gz` whose root holds `umbral-plugin.toml`, read with a skill bundle's limits and refusals
+(§5.42). The manifest declares commands, MCP servers, skills, agent detection manifests and key
+bindings; any key it does not define refuses it. Nothing a plugin carries runs in the daemon.
+Every client kind may call them (§2); `install`, `remove` and `run` are refused to an agent's
+terminal.
+
+`inspect` params: `{path}`. **Result:**
+`{manifest, files: [{path, size_bytes}], size_bytes, sha256}`, `manifest` as in §4 `Plugin`.
+It checks the bundle and every contribution — each skill directory as a skill bundle, each
+detection file as a detection manifest, each server as `mcp.server.add` would, its URL and
+`env_refs` included — and writes nothing. `manifest.mcp_servers[].env_refs` lists every secret
+reference a server would be started with, which `umb plugin install` shows before asking.
+
+`install` params: `{path, expected_sha256}`. **Result:** the `Plugin`.
+
+`list` params: `{}`. **Result:** `{items: Plugin[]}`, by name.
+
+`get` params: `{name}`. **Result:** the `Plugin`.
+
+`remove` params: `{name}`. **Result:** `{}`.
+
+`run` params: `{plugin, command, pane_id}`. **Result:** as `pane.split` (§5.6): the pane is split
+to the right with the command's `argv` and focused.
+
+- **Install** reads the bundle again and installs it only if its digest is `expected_sha256`.
+  The copy is staged and renamed into `plugins/<name>/` beside the database with its row. Each
+  MCP server is then added through `mcp.server.add` with `trust: "untrusted"`, and each skill
+  installed through `skill.install` from the stored copy, so they are ordinary servers and skills
+  the user may change or remove. A `stdio` server starts at once, with its `env_refs` resolved.
+  A failure there removes what this install added and nothing else, and nothing is installed
+  (REQ-PLG-001). Until its last server and skill are in, the plugin is not listed; one a crash
+  interrupted is undone at the next start (Data Model §6 step 10).
+- **Commands** are the user's: `run` launches one as `pane.split` with a `command` does, and the
+  daemon decides nothing for it, as for any command the user launches. The policy engine decides
+  every way an agent reaches one: they are not offered to the agent, `run` is refused to an
+  agent's terminal, `umb plugin install|remove|run` are destructive patterns, and a command line
+  the agent types itself is decided as any other (REQ-PLG-002).
+- **Detection manifests** are read at the daemon's start, after the built-in ones and before the
+  local `agents/*.toml`, each overriding the layer before by name.
+- **Key bindings** are `ctrl+alt+` and one of `a-z` or `0-9`, each naming one of the plugin's
+  commands; the TUI types the bound command at its focused pane's prompt without pressing Enter,
+  and types nothing when the pane is not at a prompt (no OSC 133 prompt, or the alternate
+  screen). A command's words hold no control character.
+- **Remove** removes the servers the manifest declares that are still `untrusted` and the skills
+  that still hold the digest the plugin installed, then the plugin. A server the user made
+  trusted, by removing it and adding it again, or a skill the user replaced, is the user's and
+  stays.
+- **Announced** with `plugin.changed` (§6) once stored.
+- **Errors.** A remote or relative path, a bundle without `umbral-plugin.toml`, an unknown key,
+  or any contribution its own check refuses is `VALIDATION_ERROR`. A changed digest, or a
+  plugin, server or skill name or a key already taken, is `CONFLICT`, found before anything is
+  written. An unknown plugin, or a command it does not declare, is `NOT_FOUND`.
+
 ## 6. Notifications (daemon → client)
 
 | Method | Payload | REQ |
@@ -1589,6 +1663,7 @@ agent's terminal (§2).
 | `thread.attention_changed` | `{thread_id, attention_state}` — after every change written: a turn starts (`working`), asks for an approval (`blocked`), is answered (`working`), ends (`done`, or `idle` when viewed or cancelled), or a `done` thread is focused (`idle`). Not sent for the changes Data Model §6 makes at start, before any client connects | REQ-AGT-016 |
 | `thread.stalled` | `{thread_id, turn_id, idle_ms, last_event}` — once per stall of a running turn (§5.33); `last_event` is the last activity seen: `turn_started`, `text`, `reasoning`, `tool_call`, `tool_result`, `output` or `approval` | REQ-AUT-008 |
 | `skill.changed` | `{name, change}` — `change` one of `installed`, `replaced`, `enabled`, `disabled`, `removed` — once the change is stored (§5.42) | REQ-SKL-007 |
+| `plugin.changed` | `{name, change}` — `change` `installed` or `removed` — once the change is stored (§5.45) | REQ-PLG-001 |
 | `rules.update_rejected` | `{reason, version, source}` — `reason` as §5.34's `last_rejection`, `version` the bundle's own when its signature verified and 0 otherwise — unverified bytes are never parsed — `source` `"remote"`. Sent to every client once per bundle: a bundle already rejected is not announced again. The daemon also raises a user notification for it under its own source `umbral:rules` (§5.35) | REQ-SEC-013 |
 | `limits.notification_dropped` | `{method, size_bytes, limit_bytes}` — in place of a notification over the frame limit, under that notification's `seq` (§1) | REQ-API-005 |
 
@@ -1700,7 +1775,7 @@ stateDiagram-v2
 - **Optional capabilities:** `system.hello` returns the namespaces the daemon **serves** at that
   moment (§2). The protocol's namespaces are `sessions`, `blocks`, `threads`, `mcp`, `models`,
   `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`, `wait_admin`,
-  `rules`, `skills`, `limits`, `config`, `agent_detection`, `worktrees` and `federation` (§5.44); `graphics` and `plugins` are reserved for later. The §2
+  `rules`, `skills`, `limits`, `config`, `agent_detection`, `worktrees`, `federation` (§5.44) and `plugins` (§5.45); `graphics` is reserved for later. The §2
   example shows the full list and is illustrative: what a given daemon returns is whatever it can
   actually do, which is narrower than what its method table holds whenever a module is absent.
 - **Which error a missing method gets.** A name this build does not know receives
@@ -1800,3 +1875,4 @@ printf '%s\n' \
 | 1.57 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-pty-handoff` (T-F2-40): §6 `session.exited`'s `exit_code` may be `null` after a live handoff. The handoff itself travels on `handoff.sock`, outside this protocol |
 | 1.58 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-remote-hosts` (T-F2-41): §5.44 `remote.list`, `add`, `remove` and the relay to remote daemons over ssh; §4 `RemoteHost`; §6 `remote.state_changed` and `session.unsubscribed`'s `remote_disconnected`; §2 `cli` row and an agent's terminal; §9 `federation` served (REQ-RMT-001, REQ-RMT-002, REQ-RMT-003) |
 | 1.59 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-windows-port` (T-F2-50): the Windows transport — the named pipe, its owner-only descriptor and squatting checks — and runtime directory in §2; the agent's-terminal check on Windows reads Job Objects. |
+| 1.60 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-plugins` (T-F2-60): §4 `Plugin`; §5.45 `plugin.inspect`, `install`, `list`, `get`, `remove` and `run`; §6 `plugin.changed`; §2 `plugin.*` for `cli` and `plugin.install`, `remove` and `run` refused to an agent's terminal; §3 the `plg_` prefix; §9 the `plugins` capability |

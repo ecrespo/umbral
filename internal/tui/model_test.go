@@ -45,6 +45,8 @@ type fakeDaemon struct {
 	servers []ports.McpServer
 	skills  []ports.Skill
 	listed  int
+	// pluginKeys are what plugin.list's bindings answer.
+	pluginKeys []ports.PluginKey
 	// list is what the thread listing answers; workspaces are the workspace each
 	// thread.create was given, "" for none.
 	list       ports.ThreadList
@@ -140,6 +142,8 @@ type fakeScreen struct {
 	written []byte
 	closed  bool
 	resets  int
+	// busy says a program, not a shell prompt, holds the cursor (Screen.AtPrompt).
+	busy bool
 }
 
 func (s *fakeScreen) Write(p []byte) (int, error) {
@@ -151,6 +155,7 @@ func (s *fakeScreen) Lines() ([]string, error) {
 	return strings.Split(strings.TrimSuffix(string(s.written), "\n"), "\n"), nil
 }
 func (s *fakeScreen) Cursor() (uint16, uint16, error) { return 0, 0, nil }
+func (s *fakeScreen) AtPrompt() (bool, error)         { return !s.busy, nil }
 
 // Reset empties it, as the real one does by building a fresh terminal. Recording the count
 // is what lets a test tell "the snapshot was replayed into an empty screen" from "it was

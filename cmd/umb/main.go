@@ -57,8 +57,9 @@ func main() {
 	os.Exit(runIO(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-// run is runIO with nothing on stdin. Only `umb ai` and `umb skill install`'s confirmation
-// read the stdin they are given; `umb layout apply --from -` reads the process's own.
+// run is runIO with nothing on stdin. Only `umb ai` and the install confirmations of `umb skill`
+// and `umb plugin` read the stdin they are given; `umb layout apply --from -` reads the
+// process's own.
 func run(args []string, stdout, stderr io.Writer) int {
 	return runIO(args, strings.NewReader(""), stdout, stderr)
 }
@@ -96,6 +97,8 @@ func runIO(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return finish(cmdSkill(ctx, args[1:], stdin, out, errOut), out, stderr)
 	case "mcp":
 		return finish(cmdMcp(ctx, args[1:], out, errOut), out, stderr)
+	case "plugin":
+		return finish(cmdPlugin(ctx, args[1:], stdin, out, errOut), out, stderr)
 	case "remote":
 		return finish(cmdRemote(ctx, args[1:], out, errOut), out, stderr)
 	case "wait":
@@ -151,6 +154,11 @@ Usage:
                                  the installed skills for Umbral's agent (REQ-SKL-003)
   umb mcp add NAME (--stdio [--env NAME=keyring:PATH|env:VAR]… -- COMMAND [ARGS…] | --http URL)
   umb mcp list|remove NAME       MCP servers for the agent, always untrusted (REQ-CLI-008)
+  umb plugin install PATH [--yes] | inspect PATH
+                                 show a plugin's manifest and digest, confirm, install that
+                                 digest; its MCP servers are untrusted (REQ-PLG-001)
+  umb plugin list|show NAME|remove NAME|run PLUGIN COMMAND [--pane ID]
+                                 installed plugins; run splits the pane with a command
   umb remote add NAME ssh://[user@]host[:port] | list | remove NAME
                                  remote daemons reached over ssh, their workspaces
                                  shown as NAME: … (REQ-RMT-001)

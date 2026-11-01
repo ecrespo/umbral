@@ -94,7 +94,7 @@ func cmdSkill(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	case name == skillList && len(pos) == 0:
 		params = map[string]any{}
 	case name == skillInstall && len(pos) == 1:
-		params = map[string]any{"path": sourcePath(pos[0])}
+		params = map[string]any{paramPath: sourcePath(pos[0])}
 	case method != "" && name != skillList && name != skillInstall && len(pos) == 1:
 		params = map[string]any{paramName: pos[0]}
 		switch name {
@@ -139,7 +139,7 @@ func cmdSkill(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		if !*yes && !confirmInstall(stdin, stderr, m) {
 			return exitFailure
 		}
-		install := map[string]any{"path": params["path"], "expected_sha256": m.SHA256}
+		install := map[string]any{paramPath: params[paramPath], "expected_sha256": m.SHA256}
 		if *replace {
 			install["replace"] = true
 		}
@@ -234,12 +234,7 @@ func confirmInstall(stdin io.Reader, stderr *printer, m skillManifest) bool {
 		return false
 	}
 	stderr.printf("Install %s with digest %s? [y/N] ", printable(m.Name), printable(m.SHA256))
-	line, err := bufio.NewReader(stdin).ReadString('\n')
-	if err != nil && line == "" {
-		stderr.println("")
-	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "y", "yes":
+	if answeredYes(stdin, stderr) {
 		return true
 	}
 	stderr.println("umb skill install: not installed")
@@ -300,4 +295,17 @@ func firstLine(s string, n int) string {
 		return string(r[:n-1]) + "…"
 	}
 	return s
+}
+
+// answeredYes reads one line from stdin and says whether it was "y" or "yes", any case.
+func answeredYes(stdin io.Reader, stderr *printer) bool {
+	line, err := bufio.NewReader(stdin).ReadString('\n')
+	if err != nil && line == "" {
+		stderr.println("")
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true
+	}
+	return false
 }

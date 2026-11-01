@@ -22,16 +22,34 @@ const maxTarStream = domain.MaxSkillBundleBytes + domain.MaxSkillEntries*4096
 // The path is classified as local before anything resolves it (decision 4), and must be
 // absolute: `umb` resolves it, and the daemon's own working directory means nothing.
 func ReadBundle(path string) (domain.Bundle, error) {
+	b, err := build(path)
+	if err != nil {
+		return domain.Bundle{}, err
+	}
+	return b.Finish()
+}
+
+// ReadFiles checks the bundle at path as ReadBundle does, with root in place of SKILL.md, and
+// returns its files: a plugin's bundle is read this way (delta `2026-10-plugins`, decision 1).
+func ReadFiles(path, root string) (map[string][]byte, error) {
+	b, err := build(path)
+	if err != nil {
+		return nil, err
+	}
+	return b.Files(root)
+}
+
+func build(path string) (*domain.BundleBuilder, error) {
 	if domain.IsRemoteSource(path) {
-		return domain.Bundle{}, fmt.Errorf("%w: %q is not a local path; skills install from a directory or .tar.gz on this machine only, until signed skill bundles exist (Art. 5)",
+		return nil, fmt.Errorf("%w: %q is not a local path; bundles install from a directory or .tar.gz on this machine only, until signed bundles exist (Art. 5)",
 			domain.ErrSkillValidation, path)
 	}
 	if !filepath.IsAbs(path) {
-		return domain.Bundle{}, fmt.Errorf("%w: %q must be an absolute path", domain.ErrSkillValidation, path)
+		return nil, fmt.Errorf("%w: %q must be an absolute path", domain.ErrSkillValidation, path)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return domain.Bundle{}, fmt.Errorf("%w: %s: %w", domain.ErrSkillValidation, path, err)
+		return nil, fmt.Errorf("%w: %s: %w", domain.ErrSkillValidation, path, err)
 	}
 	switch {
 	case info.IsDir():
@@ -39,11 +57,11 @@ func ReadBundle(path string) (domain.Bundle, error) {
 	case info.Mode().IsRegular() && (strings.HasSuffix(path, ".tar.gz") || strings.HasSuffix(path, ".tgz")):
 		return readTarball(path)
 	default:
-		return domain.Bundle{}, fmt.Errorf("%w: %s is neither a directory nor a .tar.gz", domain.ErrSkillValidation, path)
+		return nil, fmt.Errorf("%w: %s is neither a directory nor a .tar.gz", domain.ErrSkillValidation, path)
 	}
 }
 
-func readDir(root string) (domain.Bundle, error) {
+func readDir(root string) (*domain.BundleBuilder, error) {
 	b := domain.NewBundleBuilder()
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -67,9 +85,9 @@ func readDir(root string) (domain.Bundle, error) {
 		}
 	})
 	if err != nil {
-		return domain.Bundle{}, err
+		return nil, err
 	}
-	return b.Finish()
+	return b, nil
 }
 
 // addRegular reads one file the walk saw as regular, refusing a hardlink and a file swapped
@@ -97,15 +115,15 @@ func addRegular(b *domain.BundleBuilder, p, rel string) error {
 	return b.AddFile(rel, f)
 }
 
-func readTarball(path string) (domain.Bundle, error) {
+func readTarball(path string) (*domain.BundleBuilder, error) {
 	f, err := os.Open(path) // #nosec G304 -- the tarball the user asked to inspect
 	if err != nil {
-		return domain.Bundle{}, fmt.Errorf("%w: %s: %w", domain.ErrSkillValidation, path, err)
+		return nil, fmt.Errorf("%w: %s: %w", domain.ErrSkillValidation, path, err)
 	}
 	defer func() { _ = f.Close() }()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return domain.Bundle{}, fmt.Errorf("%w: %s is not gzip: %w", domain.ErrSkillValidation, path, err)
+		return nil, fmt.Errorf("%w: %s is not gzip: %w", domain.ErrSkillValidation, path, err)
 	}
 	defer func() { _ = gz.Close() }()
 	stream := &io.LimitedReader{R: gz, N: maxTarStream}
@@ -117,7 +135,7 @@ func readTarball(path string) (domain.Bundle, error) {
 			break
 		}
 		if err != nil {
-			return domain.Bundle{}, fmt.Errorf("%w: %s: %w", domain.ErrSkillValidation, path, err)
+			return nil, fmt.Errorf("%w: %s: %w", domain.ErrSkillValidation, path, err)
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
@@ -128,13 +146,13 @@ func readTarball(path string) (domain.Bundle, error) {
 			err = fmt.Errorf("%w: entry %q: only regular files and directories are allowed", domain.ErrSkillValidation, hdr.Name)
 		}
 		if err != nil {
-			return domain.Bundle{}, err
+			return nil, err
 		}
 	}
 	// A cut on a block boundary reads as a clean end: a stream that reached its bound is
 	// refused whole instead of read as the entries before the cut.
 	if stream.N <= 0 {
-		return domain.Bundle{}, fmt.Errorf("%w: %s decompresses past %d bytes of tar stream", domain.ErrSkillValidation, path, maxTarStream)
+		return nil, fmt.Errorf("%w: %s decompresses past %d bytes of tar stream", domain.ErrSkillValidation, path, maxTarStream)
 	}
-	return b.Finish()
+	return b, nil
 }

@@ -380,7 +380,7 @@ func handleWorktreeWriteFile(ctx context.Context, c *conn, raw json.RawMessage) 
 	case p.WorktreeID == "":
 		return nil, ValidationError("worktree_id is required", ErrorField{Field: fieldWorktreeID, Issue: requiredTag})
 	case p.ExpectedSHA256 == "":
-		return nil, ValidationError("expected_sha256 is required: read_file's", ErrorField{Field: "expected_sha256", Issue: requiredTag})
+		return nil, ValidationError("expected_sha256 is required: read_file's", ErrorField{Field: fieldExpectedSHA256, Issue: requiredTag})
 	}
 	w, err := svc.Get(ctx, p.WorktreeID)
 	if err != nil {

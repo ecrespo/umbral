@@ -11,7 +11,8 @@ import (
 
 // agentRefused is API §2 "An agent's terminal": every method a client inside one is refused.
 var agentRefused = []string{
-	"approval.respond", "layout.apply", "mcp.server.add", "mcp.server.remove", "pane.split", "remote.add", "remote.remove", "rules.key.add",
+	"approval.respond", "layout.apply", "mcp.server.add", "mcp.server.remove", "pane.split", "plugin.install", "plugin.remove", "plugin.run",
+	"remote.add", "remote.remove", "rules.key.add",
 	"rules.key.remove", "rules.key.rotate", "rules.reset", "rules.rollback", "session.create", "session.input",
 	"skill.install", "skill.remove", "skill.set_enabled", "tab.create", "thread.hand_back", "thread.take_over",
 	"thread.update", "workspace.create",

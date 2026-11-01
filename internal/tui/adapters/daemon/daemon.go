@@ -383,6 +383,39 @@ func (d *Daemon) McpServers(ctx context.Context) ([]ports.McpServer, error) {
 	return list, nil
 }
 
+// PluginKeys lists the installed plugins' key bindings with their commands (API Spec §5.45).
+func (d *Daemon) PluginKeys(ctx context.Context) ([]ports.PluginKey, error) {
+	var out struct {
+		Items []struct {
+			Name     string `json:"name"`
+			Manifest struct {
+				Commands []struct {
+					Name string   `json:"name"`
+					Argv []string `json:"argv"`
+				} `json:"commands"`
+				Keys []struct {
+					Key     string `json:"key"`
+					Command string `json:"command"`
+				} `json:"keys"`
+			} `json:"manifest"`
+		} `json:"items"`
+	}
+	if err := d.current().Call(ctx, "plugin.list", map[string]any{}, &out); err != nil {
+		return nil, notImplementedIsEmpty(err)
+	}
+	var list []ports.PluginKey
+	for _, p := range out.Items {
+		for _, k := range p.Manifest.Keys {
+			for _, c := range p.Manifest.Commands {
+				if c.Name == k.Command {
+					list = append(list, ports.PluginKey{Key: k.Key, Plugin: p.Name, Command: c.Name, Argv: c.Argv})
+				}
+			}
+		}
+	}
+	return list, nil
+}
+
 // Skills lists the installed skills (API Spec §5.42).
 func (d *Daemon) Skills(ctx context.Context) ([]ports.Skill, error) {
 	var out struct {
@@ -640,6 +673,9 @@ func toEvent(n client.Notification) (ports.Event, bool) {
 
 	case "skill.changed":
 		return ports.Event{Kind: ports.EventSkillChanged}, true
+
+	case "plugin.changed":
+		return ports.Event{Kind: ports.EventPluginChanged}, true
 
 	case "block.suggestion":
 		var p struct {
