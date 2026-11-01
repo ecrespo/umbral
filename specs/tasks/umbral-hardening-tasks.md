@@ -70,7 +70,7 @@ its matrix lists commands.
   `packaging/systemd/umbrald.service`, check 5/5 of `packaging/deb/check.sh` with three selftest
   mutants, and `packaging/deb/smoke_systemd.sh`, run by `task deb:smoke` and CI's `deb` job.
 
-### [ ] T-PKG-07 · tar.gz archives and the `launchd` plist
+### [x] 2026-10-31 T-PKG-07 · tar.gz archives and the `launchd` plist
 - **What:** the Linux and macOS tar.gz archives of the three binaries, the Linux one with the
   kit's `share/` tree, and a `launchd` agent plist for `umbrald` in the macOS one (Tech §9,
   Plan's Hardening phase, delta `2026-10-deb-package`).
@@ -78,7 +78,9 @@ its matrix lists commands.
 - **Files:** `packaging/tar/**`, `packaging/launchd/`
 - **Depends on:** T-PKG-03
 - **Done:** each archive is built in CI on its OS and unpacks to binaries that print their
-  version; the plist passes `plutil -lint`.
+  version; the plist passes `plutil -lint`. Written as `packaging/tar/build.sh`, `check.sh`,
+  `check_selftest.sh` and `packaging/launchd/io.github.ecrespo.umbral.umbrald.plist`, run by
+  `task tar` and CI's `archives` job on `ubuntu-latest` and `macos-latest`.
 
 ### [ ] T-REL-01 · A week of the TUI as the main terminal, before release 0.1
 - **What:** the TUI used for one week as the main terminal without blocking regressions —
@@ -283,8 +285,8 @@ its matrix lists commands.
 
 | REQ | Tasks | Verification |
 |---|---|---|
-| REQ-PKG-001 | T-PKG-01, T-PKG-03 | `icons` job; the `deb` job's `packaging/deb/check.sh` (`dpkg -c`, each file compared with the kit), `check_selftest.sh` and `smoke.sh` |
-| REQ-PKG-002 | T-PKG-02, T-PKG-03 | `desktop-file-validate`, on the kit's file and on the packaged one |
+| REQ-PKG-001 | T-PKG-01, T-PKG-03, T-PKG-07 | `icons` job; the `deb` job's `packaging/deb/check.sh` (`dpkg -c`, each file compared with the kit), `check_selftest.sh` and `smoke.sh`; the `archives` job's `packaging/tar/check.sh` (step 2) and `check_selftest.sh` |
+| REQ-PKG-002 | T-PKG-02, T-PKG-03, T-PKG-07 | `desktop-file-validate`, on the kit's file and on the packaged one; the Linux archive's `.desktop` compared byte for byte with the kit's by `packaging/tar/check.sh` |
 | REQ-PKG-003 | T-PKG-02, T-PKG-03 | `.desktop` review in CI; `packaging/deb/check.sh` step 3 on the packaged file |
 | REQ-PKG-006 | T-PKG-01 | the `icons` job regenerates the kit with `build.py` and compares byte for byte, rendered images pixel for pixel within two levels (delta `2026-10-icons-render-tolerance`); checksums alone would pass a source edit committed with its new checksum |
 | REQ-TUI-001, 002, 003, 004 | T-REL-02 (walk) | `docs/qa/f1-tui.md`; the harness tests are F1's |
@@ -321,3 +323,4 @@ its matrix lists commands.
 | 2026-10-31 | T-HRD-11 | done | Delta `2026-10-opencode-fixed-env` (PRD F2 0.15 REQ-ACP-009, Tech 1.88 §5.3f). `Manifest.FixedEnv` holds OpenCode's `OPENCODE_DISABLE_AUTOUPDATE`, `_DEFAULT_PLUGINS`, `_LSP_DOWNLOAD`, `_MODELS_FETCH` and `_SHARE`, read from the installed binary; `Environment` sets them after the refs and `ReservesEnv` refuses a ref naming one. Red first (no field); dropping the loop or the reservation reddens the test. The provider package from npm has no switch and stays the agent's own traffic. |
 | 2026-10-31 | T-HRD-12 | done | No delta: PRD F2 0.9 REQ-ACP-007 already carries the sentence (delta `2026-10-hrd02-open-questions`); Tech 1.89 §5.3e, §5.3f and §9.4 follow it. `umb thread create --agent`'s stderr and the agent panel's hosted-thread line add that the agent can read the repository's main copy and every other thread's worktree. Red first in both disclosure tests; the panel's check reads the wrapped notice across lines. Both name the agent rather than "it", which could be read as Umbral; the desktop's thread view, which creates no hosted thread, carries the sentence too. |
 | 2026-10-31 | T-PKG-06 | done | Tech 1.90 §9.3 and DD-014, delta `2026-10-service-units`. Spec-guardian found that a live handoff under the unit would kill the adopted shells when the unit stopped: a daemon systemd runs as its unit (`SYSTEMD_EXEC_PID` equal to its pid, not `INVOCATION_ID`, which a terminal under any unit passes on and which failed every handoff test on the first `task ci`) now refuses at `hello` (`TestAHandoffUnderAServiceManagerIsRefused_REQ_HND_002`, red without the check), the unit stops with `KillMode=mixed` and does not retry exits 64, 65, 75 and 78, and the smoke opens a pane, is refused a takeover and finds the unit's cgroup empty after the stop. Before that: `check.sh` was red first (the unit missing from the package); its selftest rejects a package without the unit, one running another binary and one whose postinst enables it. `smoke_systemd.sh` boots `ubuntu:26.04` with systemd as init in a privileged container sharing the host's cgroups; as a lingering user the unit is `disabled`, `systemctl --user start` serves `umb status --no-autostart`, one `umbrald` runs, and a stop leaves none. A package whose unit runs `sleep` instead fails it (no token). The package is mounted under `/srv`, since systemd mounts a tmpfs over `/tmp`. |
+| 2026-10-31 | T-PKG-07 | done | Tech 1.91 §9.3, delta `2026-10-service-units`. After spec-guardian's review: the plist is never restarted by launchd, so an exit 75 or 78 cannot respawn every 10 s; `check.sh` fails a binary that does not print the archive's version and an archive with `._*` entries, with four more mutants (a failing `umbrald`, a silent `umb`, an `umbral-tui` of another version, an AppleDouble file); bsdtar writes without xattrs or AppleDouble entries, and BSD `touch -t` is given UTC. The `archives` job ran green on `ubuntu-latest` and `macos-latest`, `plutil -lint` included, on the commit before these fixes; the PR's run checks them. Before that: `build.sh` packs `umbral-<version>-<os>-<arch>.tar.gz`; `check.sh` runs each binary's version on its own OS and compares the Linux `share/` with the kit and the macOS plist with `packaging/launchd/`. The selftest builds the other OS's layout from the same binaries and rejects eight broken archives: a binary missing or not executable, an icon missing, a `.desktop` edited, a plist on Linux, none on macOS, a plist running another path, no `LICENSE`. Built and checked locally on Linux. |

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.90 |
+| **Version** | 1.91 |
 | **Date** | 2026-10-31 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -2187,6 +2187,20 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   already serves the installation ends the unit. A daemon under systemd refuses a live handoff
   (DD-014). Its panes get the user manager's environment, which `~/.config/environment.d`
   extends, not a terminal's.
+- **tar.gz archives and the `launchd` plist (T-PKG-07, delta `2026-10-service-units`):** `packaging/tar/build.sh` packs one
+  directory, `umbral-<version>-<os>-<arch>`, as `umbral-<version>-<os>-<arch>.tar.gz`: `bin/` with
+  the three binaries, `LICENSE` and a `README`; the Linux archive adds the kit's `share/`
+  (`applications/` and `icons/hicolor/`, as they are, REQ-PKG-006), and the macOS one
+  `share/launchd/io.github.ecrespo.umbral.umbrald.plist`. The plist, from `packaging/launchd/`,
+  runs `/usr/local/bin/umbrald` at load and is never restarted by launchd (`KeepAlive` false):
+  an exit no retry cures would otherwise respawn every 10 s, and `umb` autostarts the daemon
+  when it is needed. The archive never loads it. The socket is found from `HOME` on macOS (API
+  Spec §2); the panes get launchd's environment, which `launchctl setenv` extends. A live
+  handoff is expected to work under launchd — the old daemon's exit is not restarted, and each
+  pane's shell leads its own session, outside the job's process group — reasoned, not measured. Archives carry no owner names, the
+  commit's mtimes, and on macOS no AppleDouble or extended-attribute entries.
+  Each archive is built on its own OS by CI's `archives` job, since the binaries link
+  libghostty-vt through cgo, and by `task tar`; macOS archives are unsigned in 0.1.
 - **Verification:** `scripts/icons_check.sh`, run by `task icons` and by the `icons` CI job.
   It verifies `CHECKSUMS.sha256`, regenerates the kit with `build.py` and compares every
   artifact byte for byte, except that a rendered image — a PNG, or an `.icns` or `.ico` whose
@@ -2204,7 +2218,12 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   `systemctl --user start umbrald` serves `umb status --no-autostart` and opens a pane whose
   shell is in the unit's cgroup, `umbrald --takeover` is refused with that cgroup unchanged, and
   a stop leaves the cgroup empty.
-  `task ci` does not run them, because they need `dpkg-deb` and docker.
+  `task ci` does not run them, because they need `dpkg-deb` and docker. An archive is verified
+  by `packaging/tar/check.sh` — one top directory and no `._*` entries, the binaries printing
+  the archive's version on their own OS, the Linux `share/` byte for byte the kit's, the macOS plist identical to
+  `packaging/launchd/`'s and passing `plutil -lint` — and its selftest, which builds the other
+  OS's layout from the same binaries and proves twelve broken archives are rejected; CI's
+  `archives` job runs both on `ubuntu-latest` and `macos-latest` and lints the plist.
 
 ## 10. Open Questions
 
@@ -2315,3 +2334,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.88 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-opencode-fixed-env` (T-HRD-11): §5.3f — the manifest's fixed variables, OpenCode's `OPENCODE_DISABLE_*` switches, set last and reserved |
 | 1.89 | 2026-10-31 | E. Crespo (assisted draft) | T-HRD-12, no delta (PRD F2 0.9 REQ-ACP-007 already says it): §5.3e, §5.3f and §9.4 — the disclosure adds that a hosted agent can read the repository's main copy and every other thread's worktree |
 | 1.90 | 2026-10-31 | E. Crespo (assisted draft) | T-PKG-06, delta `2026-10-service-units`: §9.3 the `systemd --user` unit — shipped, not enabled, `KillMode=mixed`, its restart policy, the manager's environment and its verification; DD-014 a daemon under systemd refuses a live handoff |
+| 1.91 | 2026-10-31 | E. Crespo (assisted draft) | T-PKG-07, delta `2026-10-service-units`: §9.3 the tar.gz archives and the `launchd` agent plist (never restarted by launchd), and their verification |

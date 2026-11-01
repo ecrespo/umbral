@@ -97,6 +97,42 @@ jobs:
       - name: Start umbrald from its systemd --user unit in a container booted with systemd (T-PKG-06)
         run: packaging/deb/smoke_systemd.sh dist/umbral_*.deb
 
+  archives:
+    name: tar.gz archives (T-PKG-07, REQ-PKG-001, 002)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the archive's version comes from git describe
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Zig, which builds libghostty-vt
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Build libghostty-vt (cgo dependency of the sessions emulator)
+        run: ./scripts/build_libghostty.sh
+      - run: echo "PKG_CONFIG_PATH=$HOME/.local/ghostty-vt/share/pkgconfig" >> "$GITHUB_ENV"
+      - name: Build the binaries and this OS's archive
+        run: |
+          version="$(git describe --tags --always)"
+          for bin in umbrald umb umbral-tui; do
+            go build -ldflags "-s -w -X main.version=$version" -o "bin/$bin" "./cmd/$bin"
+          done
+          packaging/tar/build.sh bin "$version" dist
+      - name: The archive unpacks to binaries that print their version, and the checker still bites
+        run: |
+          packaging/tar/check.sh dist/umbral-*.tar.gz
+          packaging/tar/check_selftest.sh dist/umbral-*.tar.gz
+      - name: The launchd plist passes plutil -lint
+        if: runner.os == 'macOS'
+        run: plutil -lint packaging/launchd/io.github.ecrespo.umbral.umbrald.plist
+
   desktop:
     name: Desktop client (T-F2-30, REQ-DSK-001)
     runs-on: ubuntu-latest

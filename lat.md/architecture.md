@@ -356,6 +356,8 @@ libghostty-vt is linked statically, so `Depends` names only the newest glibc sym
 
 The package also ships [[packaging/systemd/umbrald.service]] as a `systemd --user` unit, never enabled by it, so `umb` autostarts the daemon until a user enables the unit. The unit stops with `KillMode=mixed` and does not retry exits a retry cannot cure, and a daemon it runs refuses a live handoff ([[cmd/umbrald/handoff.go#serviceManager]]), whose adopted shells the unit's stop would kill (delta `2026-10-service-units`). [[packaging/deb/smoke_systemd.sh]] boots systemd in a container: the unit's daemon serves `umb status`, opens a pane whose shell is in the unit's cgroup, refuses a takeover, and leaves the cgroup empty when stopped.
 
+[[packaging/tar/build.sh]] packs the same binaries as `umbral-<version>-<os>-<arch>.tar.gz` on each OS: the Linux archive carries the kit's `share/` tree, the macOS one [[packaging/launchd/io.github.ecrespo.umbral.umbrald.plist]], a launchd agent the archive never loads and launchd never restarts. [[packaging/tar/check.sh]] runs the binaries on their own OS, requires the archive's version in what each prints, and compares the kit's files, and its selftest builds the other OS's layout so both paths are proved on either runner.
+
 [[packaging/deb/check.sh]] reads the package back with `dpkg -c` and compares each file with the kit; [[packaging/deb/check_selftest.sh]] proves it rejects seven broken packages; and [[packaging/deb/smoke.sh]] installs it in a clean Ubuntu 26.04 container, lets `umb` autostart the installed daemon, and checks the icon cache before and after removal. `task deb` and `task deb:smoke` run them, as does the CI `deb` job.
 
 ## Unix-only calls sit behind per-platform files
