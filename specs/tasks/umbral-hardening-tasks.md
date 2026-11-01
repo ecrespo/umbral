@@ -207,12 +207,12 @@ its matrix lists commands.
 - **Depends on:** —
 - **Done:** a test that the fixed variables reach the agent and a ref cannot override them; the disclosure stays true.
 
-### [ ] T-HRD-12 · The disclosure names the readable worktrees
+### [x] 2026-10-31 T-HRD-12 · The disclosure names the readable worktrees
 - **What:** Q11: what `umb thread create --agent` and the agent panel show for a hosted thread adds that the agent can read the repository's main copy and every other thread's worktree, as PRD F2 0.9 REQ-ACP-007 now says. (delta `2026-10-hrd02-open-questions`).
 - **REQ:** REQ-ACP-007
 - **Files:** `cmd/umb/thread.go`, `internal/tui/**` (the hosted-thread notice)
 - **Depends on:** —
-- **Done:** both texts carry the sentence, checked by their existing disclosure tests.
+- **Done:** both texts carry the sentence, checked by their existing disclosure tests. Written in `cmd/umb/thread.go` and `internal/tui/agent.go` (`threadLines`); `TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007`, `TestAgentPanelSaysAHostedThreadIsUnobserved_REQ_ACP_007`.
 
 ### [x] 2026-10-24 T-HRD-03 · Three defects known when F1 closed
 - **What** (delta `2026-10-f1-close`):
@@ -292,7 +292,7 @@ its matrix lists commands.
 | REQ-SEC-005, REQ-ACP-003 | T-HRD-06, T-HRD-07 | TestDestructiveEvasionsAsk_REQ_SEC_005, TestARunCommandEvasionAsks_REQ_SEC_005, TestAnACPExecuteEvasionAsks_REQ_ACP_003; TestDestructiveAlwaysAsk_REQ_SEC_005 (the new patterns) |
 | REQ-SKL-005 | T-HRD-08, T-HRD-09 | TestSkillLoadRefusesAnEditedStoredCopy_REQ_SKL_005, TestSkillLoadServesACopyInstalledFromATarball_REQ_SKL_005; TestTheCatalogIsADelimitedThirdPartyBlock_REQ_SKL_005 |
 | REQ-AGT-007 (zsh), REQ-AGT-003 | T-HRD-10 | TestAZshThreadKeepsAnUnterminatedLastLine_REQ_AGT_007, TestAZshThreadKeepsPromptSPOffUnderAFramework_REQ_AGT_007 |
-| REQ-ACP-009, REQ-ACP-007 | T-HRD-11, T-HRD-12 | fixed manifest variables; the disclosure's worktree sentence |
+| REQ-ACP-009, REQ-ACP-007 | T-HRD-11, T-HRD-12 | fixed manifest variables; `TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007`, `TestAgentPanelSaysAHostedThreadIsUnobserved_REQ_ACP_007` |
 | REQ-AGT-018, REQ-API-005, REQ-API-004, REQ-CLI-001 | T-HRD-03 | TestFetchUrlFollowsFiveRedirects_REQ_AGT_018; TestAPlainCutMatchesTheEncoder_REQ_API_005, TestAPlainCutEncodesAFewTimes_REQ_API_005 and the macOS job over repeated runs; `task schema`; TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001 |
 | REQ-API-006 | T-HRD-04 | TestASlowClientHoldsUpNoOtherClient_REQ_API_006, TestASlowClientIsClosedNotTrimmed_REQ_API_006 |
 
@@ -316,3 +316,4 @@ its matrix lists commands.
 | 2026-10-24 | T-HRD-08 | done | Delta `2026-10-skill-load-digest` (Tech 1.71 §5.3b), stacked on T-HRD-07's branch. `ReadSkill` reads the stored copy once with the install reader, compares its digest with the row's and serves the entry from that read; an edited, added or removed file refuses every load of the skill with `VALIDATION_ERROR` naming it and saying to reinstall. Red first on all four edits; skipping the comparison reddens them. |
 | 2026-10-24 | T-HRD-09 | done | Delta `2026-10-catalog-third-party` (Tech 1.72 §5.3b), stacked on T-HRD-08's branch. The `# Skills` section wraps the catalog in a `<skills>` block after a preamble naming the descriptions third-party text, not instructions; `&`, `<` and `>` in each entry are escaped when the prompt is rendered, so a description writing `</skills>` or a `<rules>` tag stays inside. Red first (no block); not escaping reddens it. |
 | 2026-10-24 | T-HRD-10 | done | Delta `2026-10-zsh-prompt-sp` (Tech 1.73 §5.2b), stacked on T-HRD-09's branch. A thread-owned session gets `UMBRAL_AGENT_SESSION=1`; the zsh bootstrap turns `PROMPT_SP` off after the user's rc and again in `__umbral_precmd` and `__umbral_preexec`. `printf x` in a zsh thread came back `" "`, red, and now returns `x`, under a framework that sets the option every prompt too; a user's zsh pane keeps it. Not setting the variable, or dropping the precmd re-apply, reddens the tests. |
+| 2026-10-31 | T-HRD-12 | done | No delta: PRD F2 0.9 REQ-ACP-007 already carries the sentence (delta `2026-10-hrd02-open-questions`); Tech 1.89 §5.3e, §5.3f and §9.4 follow it. `umb thread create --agent`'s stderr and the agent panel's hosted-thread line add that the agent can read the repository's main copy and every other thread's worktree. Red first in both disclosure tests; the panel's check reads the wrapped notice across lines. |

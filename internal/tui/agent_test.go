@@ -1157,8 +1157,9 @@ func TestNoSwitchWhileTheThreadIsCreated_REQ_ORC_003(t *testing.T) {
 
 // TestAgentPanelSaysAHostedThreadIsUnobserved_REQ_ACP_007: a thread an external agent runs is
 // listed with its agent and `unobserved`, and selecting it says, in a line of its own, that
-// Umbral records neither that agent's network traffic nor its file reads. Umbral's own thread
-// says neither.
+// Umbral records neither that agent's network traffic nor its file reads, and that the agent can
+// read the repository's main copy and every other thread's worktree. Umbral's own thread says
+// neither.
 func TestAgentPanelSaysAHostedThreadIsUnobserved_REQ_ACP_007(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -1182,8 +1183,13 @@ func TestAgentPanelSaysAHostedThreadIsUnobserved_REQ_ACP_007(t *testing.T) {
 		t.Errorf("the notice shows before the hosted thread is selected:\n%s", view)
 	}
 	h.step(keyPress(t, "down"))
-	if view := h.m.View().Content; !strings.Contains(view, "network traffic") || !strings.Contains(view, "file reads") {
-		t.Errorf("selecting the hosted thread does not say what Umbral cannot see:\n%s", view)
+	view = h.m.View().Content
+	// The notice wraps to the panel's width, so its words are read across lines.
+	words := strings.Join(strings.Fields(view), " ")
+	for _, want := range []string{"network traffic", "file reads", "main copy", "every other thread's worktree"} {
+		if !strings.Contains(words, want) {
+			t.Errorf("selecting the hosted thread does not say %q:\n%s", want, view)
+		}
 	}
 	h.step(keyPress(t, "down"))
 	if view := h.m.View().Content; strings.Contains(view, "network traffic") {

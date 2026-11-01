@@ -641,7 +641,7 @@ func (m *Model) threadLines(width int) []string {
 	}
 	for _, t := range shown {
 		if t.ID == m.agent.threadID && t.Agent != "" {
-			for _, line := range wrap(oneLine(t.Agent)+" runs this thread: Umbral does not record its own network traffic or file reads", width-2) {
+			for _, line := range wrap(oneLine(t.Agent)+" runs this thread: Umbral does not record its own network traffic or file reads, and it can read the repository's main copy and every other thread's worktree", width-2) {
 				rows = append(rows, "  "+line)
 			}
 		}
