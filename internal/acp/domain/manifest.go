@@ -28,6 +28,10 @@ type Manifest struct {
 	// env_refs may not name: through them it could set a permission back to `allow` or load a
 	// plugin, around UserKeys.
 	EnvPrefixes []string
+	// FixedEnv are variables the agent always gets, set after the entry's env refs and
+	// reserved like EnvPrefixes, so no ref names or overrides one: switches that keep the agent
+	// from reaching the network on its own initiative (T-HRD-11).
+	FixedEnv map[string]string
 	// Fixed is the configuration Umbral imposes. It is written over the entry's, so no
 	// UserKeys may name one of its keys.
 	Fixed map[string]any
@@ -58,6 +62,9 @@ func (m Manifest) Generate(entry map[string]any) ([]byte, error) {
 // from, or the one naming Umbral's.
 func (m Manifest) ReservesEnv(name string) bool {
 	if m.ConfigEnv != "" && name == m.ConfigEnv {
+		return true
+	}
+	if _, ok := m.FixedEnv[name]; ok {
 		return true
 	}
 	for _, prefix := range m.EnvPrefixes {
@@ -94,6 +101,15 @@ func openCode() Manifest {
 		// OPENCODE_CONFIG, OPENCODE_CONFIG_CONTENT, OPENCODE_CONFIG_DIR, OPENCODE_PERMISSION and
 		// whatever flag a later version adds.
 		EnvPrefixes: []string{"OPENCODE_"},
+		// What OpenCode fetches at start on its own: its updates, its default plugins from npm,
+		// language servers, the models.dev catalogue; and sharing a session (PRD F2 §9).
+		FixedEnv: map[string]string{
+			"OPENCODE_DISABLE_AUTOUPDATE":      "1",
+			"OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
+			"OPENCODE_DISABLE_LSP_DOWNLOAD":    "1",
+			"OPENCODE_DISABLE_MODELS_FETCH":    "1",
+			"OPENCODE_DISABLE_SHARE":           "1",
+		},
 		Fixed: map[string]any{
 			"$schema":    "https://opencode.ai/config.json",
 			"permission": orderedAsk(OpenCodePermissions),

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`. Slice F2a implemented and closed on 2026-10-24 (delta `2026-10-f2a-close`); F2b started on 2026-10-26 |
-| **Version** | 0.14 |
+| **Version** | 0.15 |
 | **Date** | 2026-10-31 |
 | **Reviewers** | spec-guardian (Analyze and two verify passes); Tech Lead, ratified 2026-10-22 |
 | **Source** | `docs/ARCHITECTURE.md` §5.4–5.8 and §10 (F2 ADE row); `specs/prd/umbral-mvp.md` §5.2–5.3; Plan 1.14 §4 |
@@ -170,7 +170,7 @@ makes it ask (spike T-F2-00). So Umbral:
   - isolates the agent from configuration Umbral did not write: the process gets its own `HOME` and XDG directories under the daemon's runtime directory, so the user's global agent configuration is not read;
   - names the files through which a repository configures the agent (for OpenCode, `opencode.json`, `opencode.jsonc` and `.opencode/`). IF the launch directory or a directory above it up to the repository's top holds one, THEN THE SYSTEM SHALL refuse to launch, unless the manifest declares a mechanism that overrides it and a test proves that a repository's file setting a permission to `allow` is still asked. Found in the thread's directory before anything is written, the refusal is `thread.create`'s `VALIDATION_ERROR` with `data.reason = project_config`; found only in the worktree just made, the thread and its worktree are kept and `thread.create` answers `agent_unavailable` with `reason = project_config`; found at a later launch, the turn ends `agent_error`.
 
-  The process's environment is an allowlist like an MCP stdio server's (Tech §6.1): `PATH`, `LANG` and the isolated `HOME` and XDG variables, the entry's resolved env references, and the generated configuration's location; no other inherited variable, no secret and no `UMBRAL_*`. An env reference may not name a variable the manifest reserves as the agent's own configuration (for OpenCode, `OPENCODE_*`), which would set a permission around the generated file; such an entry stops the daemon at start. The agent's stderr is discarded, since it can print the credentials its env references carry.
+  The process's environment is an allowlist like an MCP stdio server's (Tech §6.1): `PATH`, `LANG` and the isolated `HOME` and XDG variables, the entry's resolved env references, the generated configuration's location, and the manifest's fixed variables — switches that keep the agent from reaching the network on its own initiative (for OpenCode, `OPENCODE_DISABLE_AUTOUPDATE`, `_DEFAULT_PLUGINS`, `_LSP_DOWNLOAD`, `_MODELS_FETCH` and `_SHARE`), which no env reference names or overrides; no other inherited variable, no secret and no `UMBRAL_*`. An env reference may not name a variable the manifest reserves as the agent's own configuration (for OpenCode, `OPENCODE_*`), which would set a permission around the generated file; such an entry stops the daemon at start. The agent's stderr is discarded, since it can print the credentials its env references carry.
 
 ### 6.4 Third-party agents (XAG) — F2a
 
@@ -277,8 +277,8 @@ independent of F2 and can close alongside F2a.
   write, command and fetch of the ACP thread was a `session/request_permission` decided by Umbral's
   policy engine and recorded in `tool_calls`. The ACP agent is OpenCode pointed at the same local
   Ollama, so its model calls stay on the machine; anything else its own process sends is its own
-  traffic — measured on OpenCode 1.18.33, its provider package from npm and a model catalogue at
-  start — and its thread reads `egress_visibility = unobserved` (REQ-ACP-007), because Umbral
+  traffic — measured on OpenCode 1.18.33, before T-HRD-11's switches, its provider package from
+  npm and a model catalogue at start — and its thread reads `egress_visibility = unobserved` (REQ-ACP-007), because Umbral
   sees neither (delta `2026-10-usf2-live`).
 - **US-F2-002 — interactive programs.** The agent is asked to "answer the prompts": a `psql` session
   waiting for a query, then `git rebase -i` opening an editor with three picks to squash into one.
@@ -294,8 +294,10 @@ Decided by the Tech Lead on 2026-10-22:
 
 - **Q-F2-01 — the reference ACP agent is OpenCode**, pointed at the local Ollama, so its model
   calls stay local. *(0.7: the live run found that the agent's own process still fetches its
-  provider package and a model catalogue at start — see §9; whether that should be switched off is
-  T-HRD-02's.)*
+  provider package and a model catalogue at start — see §9. 0.15: answered by T-HRD-11 (delta
+  `2026-10-opencode-fixed-env`): the manifest switches off the catalogue, updates, default plugins,
+  language-server downloads and sharing; the provider package has no `OPENCODE_*` switch and stays
+  the agent's own traffic.)*
 - **Q-F2-02 — Art. 4 and hosted agents.** A hosted agent's own network traffic (its model calls,
   an allowed `fetch` and anything else its process sends) and its file reads are disclosed, not
   audited: the thread's `egress_visibility = unobserved` (REQ-ACP-007). This is written
@@ -358,3 +360,4 @@ Still open, with the draft's default:
 | 0.12 | 2026-10-26 | E. Crespo (assisted draft) | Delta `2026-10-active-ai` (T-F2-22): REQ-AAI-001 names a user's block, the exits 0 and 130 excluded, one suggestion at a time; REQ-AAI-002 the pane's last block and a suggestion that attaches nothing |
 | 0.13 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-usf2-002-live` (T-F2-23): §9's US-F2-002 says what the live run measured — 0 of 10 green, psql 10/10 and the rebase 0/10 on the model's vim — and leaves whether it passes to the Tech Lead |
 | 0.14 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-plugins` (T-F2-60): REQ-PLG-002 gains its reading — decided whenever an agent reaches a plugin's command, not decided when the user runs one |
+| 0.15 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-opencode-fixed-env` (T-HRD-11): REQ-ACP-009's allowlist gains the manifest's fixed variables, OpenCode's `OPENCODE_DISABLE_*` switches, which no env reference overrides |
