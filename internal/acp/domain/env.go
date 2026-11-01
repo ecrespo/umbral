@@ -39,7 +39,8 @@ func (i Isolation) Dirs() []string {
 var Inherited = []string{"PATH", "LANG"}
 
 // Environment is the agent process's whole environment (REQ-ACP-009): Inherited from the
-// daemon's, the isolation, the generated configuration's location, and the resolved refs.
+// daemon's, the isolation, the generated configuration's location, the resolved refs, and the
+// manifest's fixed variables last, so no ref overrides one.
 func Environment(daemon []string, iso Isolation, m Manifest, refs map[string]string) []string {
 	env := map[string]string{}
 	for _, kv := range daemon {
@@ -60,6 +61,9 @@ func Environment(daemon []string, iso Isolation, m Manifest, refs map[string]str
 	env["XDG_STATE_HOME"] = iso.State()
 	if m.ConfigEnv != "" {
 		env[m.ConfigEnv] = filepath.Join(iso.Config(), m.ConfigPath)
+	}
+	for name, value := range m.FixedEnv {
+		env[name] = value
 	}
 	out := make([]string, 0, len(env))
 	for name, value := range env {

@@ -357,7 +357,8 @@ func TestAnAgentWithoutAManifestIsRefused_REQ_ACP_009(t *testing.T) {
 
 // TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009: of the daemon's environment the agent gets
 // PATH and LANG only — not a provider key, not the user's HOME, not UMBRAL_* — plus the
-// isolation, the configuration's location and its entry's resolved references.
+// isolation, the configuration's location, the manifest's fixed variables and its entry's
+// resolved references.
 func TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009(t *testing.T) {
 	t.Parallel()
 	h := newHost(t, func(c *Config) {
@@ -376,7 +377,12 @@ func TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009(t *testing.T) {
 		name, value, _ := strings.Cut(kv, "=")
 		got[name] = value
 	}
-	want := []string{"PATH", "LANG", "HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "OPENCODE_CONFIG", "MODEL_TOKEN"}
+	want := []string{
+		"PATH", "LANG", "HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "OPENCODE_CONFIG", "MODEL_TOKEN",
+		// The manifest's fixed switches (T-HRD-11).
+		"OPENCODE_DISABLE_AUTOUPDATE", "OPENCODE_DISABLE_DEFAULT_PLUGINS", "OPENCODE_DISABLE_LSP_DOWNLOAD",
+		"OPENCODE_DISABLE_MODELS_FETCH", "OPENCODE_DISABLE_SHARE",
+	}
 	for _, name := range want {
 		if _, ok := got[name]; !ok {
 			t.Errorf("the agent's environment lacks %s", name)
