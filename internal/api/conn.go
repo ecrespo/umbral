@@ -128,6 +128,10 @@ type conn struct {
 	authenticated bool
 	clientKind    ClientKind
 	connectionID  string
+	// graphics says the client's hello listed `graphics`: its output and snapshots carry a
+	// pane's Kitty graphics escapes. Without it they are filtered (REQ-PLG-003). Written by
+	// system.hello before any subscription exists, and read by them.
+	graphics bool
 	// peerPID is the pid of the process that connected, as the kernel reports it; 0 when it
 	// cannot be read. It is read once, on accept.
 	peerPID int
@@ -654,4 +658,14 @@ func (c *conn) fromAgent() bool {
 func isDeadline(err error) bool {
 	var ne net.Error
 	return errors.Is(err, os.ErrDeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout())
+}
+
+// clientCapabilities are the client's own capabilities as its hello gave them, as far as the
+// daemon reads them: what the relay asks a host's daemon for in the client's name, so a host
+// filters its panes' graphics for exactly the clients this daemon would (REQ-PLG-003).
+func (c *conn) clientCapabilities() []string {
+	if c.graphics {
+		return []string{capabilityGraphics}
+	}
+	return nil
 }

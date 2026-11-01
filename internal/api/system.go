@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/ecrespo/umbral/internal/store"
@@ -249,6 +250,7 @@ func handleHello(_ context.Context, c *conn, raw json.RawMessage) (any, error) {
 	c.limit.Store(limit)
 	c.authenticated = true
 	c.clientKind = kind
+	c.graphics = slices.Contains(params.Capabilities, capabilityGraphics)
 	c.interactive.Store(isInteractive(kind))
 	c.connectionID = store.NewID(store.PrefixConnection)
 	if isInteractive(kind) {

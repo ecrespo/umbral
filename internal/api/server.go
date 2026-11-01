@@ -69,6 +69,11 @@ func (k ClientKind) valid() bool {
 // namespace §2 names the same way its methods are named.
 const capabilityWorkspaces = "workspaces"
 
+// capabilityGraphics is §9's `graphics`: a client lists it in its hello to receive a pane's
+// Kitty graphics escapes, and a daemon that streams panes advertises it (delta
+// `2026-10-pane-graphics`).
+const capabilityGraphics = "graphics"
+
 var capabilityOf = map[string]string{
 	"session": "sessions",
 	"block":   "blocks",
@@ -121,6 +126,11 @@ func (s *Server) capabilities() []string {
 		seen[namespace] = struct{}{}
 	}
 
+	// A daemon that streams panes serves `graphics`: a client that asks gets their Kitty
+	// graphics escapes, any other a placeholder (REQ-PLG-003).
+	if _, ok := seen["sessions"]; ok {
+		seen[capabilityGraphics] = struct{}{}
+	}
 	out := make([]string, 0, len(seen))
 	for namespace := range seen {
 		out = append(out, namespace)

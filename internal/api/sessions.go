@@ -222,10 +222,15 @@ func handleSessionSubscribe(ctx context.Context, c *conn, raw json.RawMessage) (
 	// its snapshot before any output, and the chunks queued above are already waiting.
 	c.afterReply = append(c.afterReply, func() { c.releaseSubscription(params.SessionID) })
 
+	data := snapshot.Data
+	if !c.graphics {
+		var f sessdomain.GraphicsFilter
+		data = f.Filter(nil, data)
+	}
 	return sessionSubscribeResult{
 		Snapshot: screenSnapshot{
 			Format:  "vt",
-			DataB64: base64.StdEncoding.EncodeToString(snapshot.Data),
+			DataB64: base64.StdEncoding.EncodeToString(data),
 			Cursor:  cursorPosition{X: snapshot.CursorX, Y: snapshot.CursorY},
 		},
 		Seq: snapshot.Seq,
