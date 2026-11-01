@@ -310,7 +310,7 @@ async function renderThread(view, id) {
   call("thread.focus", { thread_id: id }).catch(() => {});
   const back = button("← threads", () => { leaveThread(); renderView(); });
   view.append(back, el("div", "title", t.title || t.id), el("div", "meta", [t.state, t.attention_state, t.mode, t.model].filter(Boolean).join(" · ")));
-  if (t.egress_visibility === "unobserved") view.append(el("p", "meta", "This agent's own traffic and file reads are not recorded by Umbral."));
+  if (t.egress_visibility === "unobserved") view.append(el("p", "meta", "This agent's own traffic and file reads are not recorded by Umbral. The agent can read the repository's main copy and every other thread's worktree."));
   const log = el("div", "transcript");
   for (const m of messages) log.append(el("div", "msg " + m.role, messageText(m)));
   for (const m of state.transcript.get(id) ?? []) log.append(el("div", "msg " + m.role, m.text));
