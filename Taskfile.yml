@@ -194,6 +194,15 @@ tasks:
       - packaging/deb/check.sh {{.ROOT_DIR}}/dist/umbral_*.deb
       - packaging/deb/check_selftest.sh {{.ROOT_DIR}}/dist/umbral_*.deb
 
+  tar:
+    desc: 'T-PKG-07: build this OS''s umbral-<version>-<os>-<arch>.tar.gz into ./dist and verify it'
+    deps: [build]
+    cmds:
+      - rm -rf {{.ROOT_DIR}}/dist
+      - packaging/tar/build.sh {{.BIN}} {{.VERSION}} {{.ROOT_DIR}}/dist
+      - packaging/tar/check.sh {{.ROOT_DIR}}/dist/umbral-*.tar.gz
+      - packaging/tar/check_selftest.sh {{.ROOT_DIR}}/dist/umbral-*.tar.gz
+
   deb:smoke:
     desc: 'T-PKG-03: install the .deb in a clean Ubuntu 26.04 container and use it (needs docker)'
     deps: [deb]

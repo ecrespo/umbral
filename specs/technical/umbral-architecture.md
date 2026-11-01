@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.88 |
+| **Version** | 1.91 |
 | **Date** | 2026-10-31 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -2165,6 +2165,17 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   `postrm` run `gtk-update-icon-cache` and `update-desktop-database` where they exist. Modes and
   mtimes (`SOURCE_DATE_EPOCH`, the commit's time) are fixed, so one commit builds one package.
   The maintainer is GitHub's no-reply address.
+- **tar.gz archives and the `launchd` plist (T-PKG-07):** `packaging/tar/build.sh` packs one
+  directory, `umbral-<version>-<os>-<arch>`, as `umbral-<version>-<os>-<arch>.tar.gz`: `bin/` with
+  the three binaries, `LICENSE` and a `README`; the Linux archive adds the kit's `share/`
+  (`applications/` and `icons/hicolor/`, as they are, REQ-PKG-006), and the macOS one
+  `share/launchd/io.github.ecrespo.umbral.umbrald.plist`. The plist, from `packaging/launchd/`,
+  runs `/usr/local/bin/umbrald` at load and again only after a failure (`KeepAlive` with
+  `SuccessfulExit` false), so an exit 0 because an autostarted daemon already serves the
+  installation ends it; the archive never loads it, and `umb` keeps autostarting the daemon.
+  The socket is found from `HOME` on macOS (API Spec §2), so the agent needs no environment.
+  Each archive is built on its own OS by CI's `archives` job, since the binaries link
+  libghostty-vt through cgo, and by `task tar`; macOS archives are unsigned in 0.1.
 - **Verification:** `scripts/icons_check.sh`, run by `task icons` and by the `icons` CI job.
   It verifies `CHECKSUMS.sha256`, regenerates the kit with `build.py` and compares every
   artifact byte for byte, except that a rendered image — a PNG, or an `.icns` or `.ico` whose
@@ -2177,7 +2188,12 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   by the `deb` CI job and `task deb`/`task deb:smoke`: `packaging/deb/check.sh` compares what
   `dpkg -c` lists with the kit, its selftest proves it rejects four broken packages and checks
   the version ordering, and `smoke.sh` installs and uses it in a clean Ubuntu 26.04 container.
-  `task ci` does not run them, because they need `dpkg-deb` and docker.
+  `task ci` does not run them, because they need `dpkg-deb` and docker. An archive is verified
+  by `packaging/tar/check.sh` — one top directory, the binaries printing their version on their
+  own OS, the Linux `share/` byte for byte the kit's, the macOS plist identical to
+  `packaging/launchd/`'s and passing `plutil -lint` — and its selftest, which builds the other
+  OS's layout from the same binaries and proves eight broken archives are rejected; CI's
+  `archives` job runs both on `ubuntu-latest` and `macos-latest` and lints the plist.
 
 ## 10. Open Questions
 
@@ -2286,3 +2302,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.86 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-plugins` (T-F2-60): §3 and §5.2 the `plugins` module; §5.3's destructive list gains `umb_plugin_change`; §5.3j plugins — reading, installing, what reaches the agent, detection and keys; §9.4 `umb plugin` |
 | 1.87 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-pane-graphics` (T-F2-61): §5.3k pane graphics — a client's `graphics`, the filter and placeholder for any other, the relay |
 | 1.88 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-opencode-fixed-env` (T-HRD-11): §5.3f — the manifest's fixed variables, OpenCode's `OPENCODE_DISABLE_*` switches, set last and reserved |
+| 1.91 | 2026-10-31 | E. Crespo (assisted draft) | T-PKG-07 (delta `2026-10-deb-package`): §9.3 the tar.gz archives and the `launchd` agent plist, and their verification |

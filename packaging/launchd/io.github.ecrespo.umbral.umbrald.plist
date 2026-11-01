@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  umbrald as a launchd agent (T-PKG-07). Shipped in the macOS archive, never loaded by it:
+  `umb` starts the daemon when this agent is not in use. The binaries go in /usr/local/bin.
+  The socket and token are under ~/Library/Application Support/Umbral, found from HOME.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.github.ecrespo.umbral.umbrald</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/umbrald</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- Started again only after a failure; an exit 0 because a daemon `umb` started already
+       serves this installation ends the agent. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+</dict>
+</plist>

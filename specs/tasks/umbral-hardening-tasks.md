@@ -68,7 +68,7 @@ its matrix lists commands.
 - **Done:** in the Ubuntu 26.04 smoke container with a user manager, `systemctl --user start
   umbrald` serves `umb status`, a stop leaves no process, and `dpkg -c` lists the unit.
 
-### [ ] T-PKG-07 · tar.gz archives and the `launchd` plist
+### [x] 2026-10-31 T-PKG-07 · tar.gz archives and the `launchd` plist
 - **What:** the Linux and macOS tar.gz archives of the three binaries, the Linux one with the
   kit's `share/` tree, and a `launchd` agent plist for `umbrald` in the macOS one (Tech §9,
   Plan's Hardening phase, delta `2026-10-deb-package`).
@@ -76,7 +76,9 @@ its matrix lists commands.
 - **Files:** `packaging/tar/**`, `packaging/launchd/`
 - **Depends on:** T-PKG-03
 - **Done:** each archive is built in CI on its OS and unpacks to binaries that print their
-  version; the plist passes `plutil -lint`.
+  version; the plist passes `plutil -lint`. Written as `packaging/tar/build.sh`, `check.sh`,
+  `check_selftest.sh` and `packaging/launchd/io.github.ecrespo.umbral.umbrald.plist`, run by
+  `task tar` and CI's `archives` job on `ubuntu-latest` and `macos-latest`.
 
 ### [ ] T-REL-01 · A week of the TUI as the main terminal, before release 0.1
 - **What:** the TUI used for one week as the main terminal without blocking regressions —
@@ -317,3 +319,4 @@ its matrix lists commands.
 | 2026-10-24 | T-HRD-09 | done | Delta `2026-10-catalog-third-party` (Tech 1.72 §5.3b), stacked on T-HRD-08's branch. The `# Skills` section wraps the catalog in a `<skills>` block after a preamble naming the descriptions third-party text, not instructions; `&`, `<` and `>` in each entry are escaped when the prompt is rendered, so a description writing `</skills>` or a `<rules>` tag stays inside. Red first (no block); not escaping reddens it. |
 | 2026-10-24 | T-HRD-10 | done | Delta `2026-10-zsh-prompt-sp` (Tech 1.73 §5.2b), stacked on T-HRD-09's branch. A thread-owned session gets `UMBRAL_AGENT_SESSION=1`; the zsh bootstrap turns `PROMPT_SP` off after the user's rc and again in `__umbral_precmd` and `__umbral_preexec`. `printf x` in a zsh thread came back `" "`, red, and now returns `x`, under a framework that sets the option every prompt too; a user's zsh pane keeps it. Not setting the variable, or dropping the precmd re-apply, reddens the tests. |
 | 2026-10-31 | T-HRD-11 | done | Delta `2026-10-opencode-fixed-env` (PRD F2 0.15 REQ-ACP-009, Tech 1.88 §5.3f). `Manifest.FixedEnv` holds OpenCode's `OPENCODE_DISABLE_AUTOUPDATE`, `_DEFAULT_PLUGINS`, `_LSP_DOWNLOAD`, `_MODELS_FETCH` and `_SHARE`, read from the installed binary; `Environment` sets them after the refs and `ReservesEnv` refuses a ref naming one. Red first (no field); dropping the loop or the reservation reddens the test. The provider package from npm has no switch and stays the agent's own traffic. |
+| 2026-10-31 | T-PKG-07 | done | Tech 1.91 §9.3, under delta `2026-10-deb-package`. `build.sh` packs `umbral-<version>-<os>-<arch>.tar.gz`; `check.sh` runs each binary's version on its own OS and compares the Linux `share/` with the kit and the macOS plist with `packaging/launchd/`. The selftest builds the other OS's layout from the same binaries and rejects eight broken archives: a binary missing or not executable, an icon missing, a `.desktop` edited, a plist on Linux, none on macOS, a plist running another path, no `LICENSE`. Built and checked locally on Linux; the macOS archive and `plutil -lint` run in CI's `archives` job. |
