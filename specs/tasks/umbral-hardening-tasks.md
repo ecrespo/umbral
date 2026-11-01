@@ -58,15 +58,17 @@ its matrix lists commands.
 - **Done:** `dpkg -c umbral_*.deb` lists the 11 icon files and the `.desktop` file; smoke test in an
   Ubuntu 26.04 container.
 
-### [ ] T-PKG-06 · `umbrald` as a `systemd --user` service
+### [x] 2026-10-31 T-PKG-06 · `umbrald` as a `systemd --user` service
 - **What:** a `systemd --user` unit for `umbrald`, shipped in the `.deb` under
   `/usr/lib/systemd/user/` and not enabled by default; `umb` keeps autostarting the daemon
   when the unit is not in use (Tech §9, delta `2026-10-deb-package`).
-- **REQ:** Tech §9 (0.1 distribution); no REQ
+- **REQ:** Art. 9 — a 0.1 distribution item the Plan and Tech §9 set; no REQ
 - **Files:** `packaging/deb/**`, `packaging/systemd/`
 - **Depends on:** T-PKG-03
 - **Done:** in the Ubuntu 26.04 smoke container with a user manager, `systemctl --user start
-  umbrald` serves `umb status`, a stop leaves no process, and `dpkg -c` lists the unit.
+  umbrald` serves `umb status`, a stop leaves no process, and `dpkg -c` lists the unit. Written as
+  `packaging/systemd/umbrald.service`, check 5/5 of `packaging/deb/check.sh` with three selftest
+  mutants, and `packaging/deb/smoke_systemd.sh`, run by `task deb:smoke` and CI's `deb` job.
 
 ### [ ] T-PKG-07 · tar.gz archives and the `launchd` plist
 - **What:** the Linux and macOS tar.gz archives of the three binaries, the Linux one with the
@@ -317,3 +319,4 @@ its matrix lists commands.
 | 2026-10-24 | T-HRD-09 | done | Delta `2026-10-catalog-third-party` (Tech 1.72 §5.3b), stacked on T-HRD-08's branch. The `# Skills` section wraps the catalog in a `<skills>` block after a preamble naming the descriptions third-party text, not instructions; `&`, `<` and `>` in each entry are escaped when the prompt is rendered, so a description writing `</skills>` or a `<rules>` tag stays inside. Red first (no block); not escaping reddens it. |
 | 2026-10-24 | T-HRD-10 | done | Delta `2026-10-zsh-prompt-sp` (Tech 1.73 §5.2b), stacked on T-HRD-09's branch. A thread-owned session gets `UMBRAL_AGENT_SESSION=1`; the zsh bootstrap turns `PROMPT_SP` off after the user's rc and again in `__umbral_precmd` and `__umbral_preexec`. `printf x` in a zsh thread came back `" "`, red, and now returns `x`, under a framework that sets the option every prompt too; a user's zsh pane keeps it. Not setting the variable, or dropping the precmd re-apply, reddens the tests. |
 | 2026-10-31 | T-HRD-11 | done | Delta `2026-10-opencode-fixed-env` (PRD F2 0.15 REQ-ACP-009, Tech 1.88 §5.3f). `Manifest.FixedEnv` holds OpenCode's `OPENCODE_DISABLE_AUTOUPDATE`, `_DEFAULT_PLUGINS`, `_LSP_DOWNLOAD`, `_MODELS_FETCH` and `_SHARE`, read from the installed binary; `Environment` sets them after the refs and `ReservesEnv` refuses a ref naming one. Red first (no field); dropping the loop or the reservation reddens the test. The provider package from npm has no switch and stays the agent's own traffic. |
+| 2026-10-31 | T-PKG-06 | done | Tech 1.90 §9.3, under delta `2026-10-deb-package`. `check.sh` was red first (the unit missing from the package); its selftest rejects a package without the unit, one running another binary and one whose postinst enables it. `smoke_systemd.sh` boots `ubuntu:26.04` with systemd as init in a privileged container sharing the host's cgroups; as a lingering user the unit is `disabled`, `systemctl --user start` serves `umb status --no-autostart`, one `umbrald` runs, and a stop leaves none. A package whose unit runs `sleep` instead fails it (no token). The package is mounted under `/srv`, since systemd mounts a tmpfs over `/tmp`. |

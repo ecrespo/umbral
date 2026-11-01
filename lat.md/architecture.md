@@ -354,6 +354,8 @@ That job, [[scripts/icons_check.sh]], regenerates the kit and compares it byte f
 
 libghostty-vt is linked statically, so `Depends` names only the newest glibc symbol version the binaries reference. Only a `vMAJOR.MINOR.PATCH` tag is a release; an untagged build becomes `0.0.0+git.<hash>` and a prerelease `~rc`, so apt upgrades from either to the release. Modes and mtimes are fixed, so one commit builds one package. [[packaging/deb/postinst]] and [[packaging/deb/postrm]] refresh the icon cache and the desktop database only where the tools exist, so a minimal system installs without them.
 
+The package also ships [[packaging/systemd/umbrald.service]] as a `systemd --user` unit, never enabled by it, so `umb` autostarts the daemon until a user enables the unit. [[packaging/deb/smoke_systemd.sh]] boots systemd in a container and checks that the unit's daemon serves `umb status` and that a stop leaves none behind.
+
 [[packaging/deb/check.sh]] reads the package back with `dpkg -c` and compares each file with the kit; [[packaging/deb/check_selftest.sh]] proves it rejects four broken packages; and [[packaging/deb/smoke.sh]] installs it in a clean Ubuntu 26.04 container, lets `umb` autostart the installed daemon, and checks the icon cache before and after removal. `task deb` and `task deb:smoke` run them, as does the CI `deb` job.
 
 ## Unix-only calls sit behind per-platform files

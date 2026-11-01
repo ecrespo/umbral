@@ -94,6 +94,8 @@ jobs:
           packaging/deb/check_selftest.sh dist/umbral_*.deb
       - name: Install and use it in a clean Ubuntu 26.04 container
         run: packaging/deb/smoke.sh dist/umbral_*.deb
+      - name: Start umbrald from its systemd --user unit in a container booted with systemd (T-PKG-06)
+        run: packaging/deb/smoke_systemd.sh dist/umbral_*.deb
 
   desktop:
     name: Desktop client (T-F2-30, REQ-DSK-001)

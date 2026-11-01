@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.88 |
+| **Version** | 1.90 |
 | **Date** | 2026-10-31 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -2165,6 +2165,15 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   `postrm` run `gtk-update-icon-cache` and `update-desktop-database` where they exist. Modes and
   mtimes (`SOURCE_DATE_EPOCH`, the commit's time) are fixed, so one commit builds one package.
   The maintainer is GitHub's no-reply address.
+- **`systemd --user` unit (T-PKG-06):** `packaging/systemd/umbrald.service` ships at
+  `/usr/lib/systemd/user/umbrald.service`, not enabled: no `.wants` link is packaged and no
+  maintainer script calls `systemctl`, so `umb` keeps autostarting the daemon until a user runs
+  `systemctl --user enable --now umbrald.service`. `ExecStart=/usr/bin/umbrald` with no flags:
+  the user manager sets `XDG_RUNTIME_DIR`, where the socket goes. `KillMode=control-group`, so a
+  stop ends every pane's shell with the daemon; `Restart=on-failure` with
+  `RestartPreventExitStatus=75 78`, since a database held elsewhere or an unreadable
+  `config.toml` is not cured by a retry, and an exit 0 because an autostarted daemon already
+  serves the installation just ends the unit.
 - **Verification:** `scripts/icons_check.sh`, run by `task icons` and by the `icons` CI job.
   It verifies `CHECKSUMS.sha256`, regenerates the kit with `build.py` and compares every
   artifact byte for byte, except that a rendered image — a PNG, or an `.icns` or `.ico` whose
@@ -2175,8 +2184,12 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   the release 0.1 launcher. The regeneration step is what REQ-PKG-006 needs: checking the checksums alone
   would pass a source edit committed together with its new checksum. The package is verified
   by the `deb` CI job and `task deb`/`task deb:smoke`: `packaging/deb/check.sh` compares what
-  `dpkg -c` lists with the kit, its selftest proves it rejects four broken packages and checks
-  the version ordering, and `smoke.sh` installs and uses it in a clean Ubuntu 26.04 container.
+  `dpkg -c` lists with the kit and the unit with `packaging/systemd`, runs `systemd-analyze
+  verify` and refuses an enabled unit; its selftest proves it rejects seven broken packages and
+  checks the version ordering; `smoke.sh` installs and uses it in a clean Ubuntu 26.04
+  container, and `smoke_systemd.sh` boots one with systemd, where a lingering user's
+  `systemctl --user start umbrald` serves `umb status --no-autostart` and a stop leaves no
+  `umbrald` behind.
   `task ci` does not run them, because they need `dpkg-deb` and docker.
 
 ## 10. Open Questions
@@ -2286,3 +2299,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.86 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-plugins` (T-F2-60): §3 and §5.2 the `plugins` module; §5.3's destructive list gains `umb_plugin_change`; §5.3j plugins — reading, installing, what reaches the agent, detection and keys; §9.4 `umb plugin` |
 | 1.87 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-pane-graphics` (T-F2-61): §5.3k pane graphics — a client's `graphics`, the filter and placeholder for any other, the relay |
 | 1.88 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-opencode-fixed-env` (T-HRD-11): §5.3f — the manifest's fixed variables, OpenCode's `OPENCODE_DISABLE_*` switches, set last and reserved |
+| 1.90 | 2026-10-31 | E. Crespo (assisted draft) | T-PKG-06 (delta `2026-10-deb-package`): §9.3 the `systemd --user` unit — shipped, not enabled, its restart policy and its verification |

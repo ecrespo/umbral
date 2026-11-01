@@ -1,0 +1,21 @@
+# umbrald as a systemd --user service (T-PKG-06). Shipped, not enabled: `umb` autostarts the
+# daemon when this unit is not in use, and a user who wants it at login runs
+#   systemctl --user enable --now umbrald.service
+[Unit]
+Description=Umbral daemon: PTY sessions, blocks and the agent
+Documentation=https://github.com/ecrespo/umbral
+
+[Service]
+Type=simple
+# The user manager sets XDG_RUNTIME_DIR, where the socket goes, as a login does.
+ExecStart=/usr/bin/umbrald
+# A stop ends the daemon and every pane's shell with it: they are the unit's processes.
+KillMode=control-group
+Restart=on-failure
+# 75: the database is held by a daemon of another runtime directory; 78: config.toml cannot be
+# read. Neither is cured by trying again. An exit 0 because a daemon `umb` autostarted already
+# serves this installation is not a failure, so the unit just ends.
+RestartPreventExitStatus=75 78
+
+[Install]
+WantedBy=default.target
