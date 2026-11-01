@@ -67,10 +67,16 @@ docker exec -e DEB="/srv/$name" "$box" bash -euo pipefail -c '
   [ "$before" -ge 2 ] || { echo "smoke: the pane'"'"'s shell is not in the unit ($before processes)" >&2; exit 1; }
 
   # A live handoff is refused under the unit and changes nothing.
-  if as_smoke umbrald --takeover >/dev/null 2>&1; then
+  if takeover="$(as_smoke umbrald --takeover 2>&1)"; then
     echo "smoke: a handoff was given under systemd" >&2
     exit 1
   fi
+  # Refused for the right reason, at hello, naming the restart: not a takeover that failed to
+  # reach the daemon at all.
+  case "$takeover" in
+    *hello*"systemctl --user restart umbrald"*) ;;
+    *) echo "smoke: the takeover failed, but not as a refusal under systemd: $takeover" >&2; exit 1 ;;
+  esac
   as_smoke systemctl --user is-active -q umbrald.service
   as_smoke umb status --no-autostart >/dev/null
   [ "$(procs)" -eq "$before" ] || { echo "smoke: the refused handoff changed the unit'"'"'s processes" >&2; exit 1; }

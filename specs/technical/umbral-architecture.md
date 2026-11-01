@@ -448,7 +448,7 @@ sequenceDiagram
 | Client detaches | keep running | returns | from the live terminal | keeps running |
 | Daemon restart | lost | restored (REQ-TERM-009) | only with `pane_history` (REQ-TERM-010) | history restored, turn `stopped` (REQ-AGT-017) |
 | Daemon update (restart) | lost | restored | as above | as above |
-| Daemon update (`umbrald --takeover`, F2) | keep running | kept | from the live terminal | kept; refused while a turn runs, and under systemd |
+| Daemon update (`umbrald --takeover`, F2; not under a systemd unit, where it is refused and the unit is restarted as in the row above) | keep running | kept | from the live terminal | kept; refused while a turn runs |
 
 Live PTY handoff between daemon versions is F2 (T-F2-40, delta `2026-10-pty-handoff`). A new
 `umbrald --takeover` dials the running daemon's `handoff.sock`, which is 0600 and accepts only
@@ -460,7 +460,7 @@ a peer of the same uid outside any agent's terminal. It speaks length-prefixed J
   inherited value names another process) refuses: its
   exit would end its unit, and the unit's stop would kill the shells it handed over, which are
   still the unit's processes. It says to run `systemctl --user restart umbrald` instead
-  (delta `2026-10-service-units`). Under launchd a handoff goes ahead (§9.3).
+  (delta `2026-10-service-units`). Under launchd a handoff goes ahead (that delta's decision 4).
 - **Quiesce.** The old daemon refuses while a turn runs, before it pauses anything. Otherwise it stops accepting, closes
   every client and parks each drain between two reads with a deadline on a pollable
   duplicate of the master.

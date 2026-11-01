@@ -559,11 +559,11 @@ func TestAHandoffUnderAServiceManagerIsRefused_REQ_HND_002(t *testing.T) {
 	}
 }
 
-// TestTheServiceManagerIsReadFromTheEnvironment: systemd sets SYSTEMD_EXEC_PID to the pid it
+// TestTheServiceManagerIsReadFromTheEnvironment_REQ_HND_002: systemd sets SYSTEMD_EXEC_PID to the pid it
 // executed for a unit, so only that process is the unit's daemon. A daemon `umb` autostarted
 // from a terminal some unit or scope started inherits the variable, and INVOCATION_ID, with
 // another pid, and is not.
-func TestTheServiceManagerIsReadFromTheEnvironment(t *testing.T) {
+func TestTheServiceManagerIsReadFromTheEnvironment_REQ_HND_002(t *testing.T) {
 	t.Setenv("INVOCATION_ID", "5c1e0d9f2a7b4e3c8d6f1a2b3c4d5e6f")
 	for _, tc := range []struct {
 		execPID, want string

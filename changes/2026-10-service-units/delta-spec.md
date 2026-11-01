@@ -6,7 +6,7 @@
 | **Date** | 2026-10-31 |
 | **Tasks** | T-PKG-06, T-PKG-07 |
 | **REQ** | REQ-HND-001, REQ-HND-002 (the handoff under a unit); REQ-PKG-001, REQ-PKG-002 (the Linux archive's `share/`) |
-| **Folded into** | Tech 1.90 (DD-014, §9.3) and 1.91 (§9.3) |
+| **Folded into** | PRD F2 0.16 (REQ-HND-001, §8), Tech 1.90 (DD-014, §9.3) and 1.91 (§9.3) |
 
 ## Evidence
 
@@ -42,8 +42,9 @@
    restarted by launchd (`KeepAlive` false): `umb` autostarts the daemon when it is not
    running, which covers a crash without a respawn loop on an exit no retry cures, or on a
    binary Gatekeeper kills. `ProcessType` is `Interactive`. Under launchd a live handoff works:
-   the old daemon's exit 0 is not restarted, and every pane's shell leads its own session, so
-   launchd ending the job's process group does not reach it; the new daemon then runs outside
+   the old daemon's exit 0 is not restarted, and every pane's shell leads its own session
+   (`Setsid` in the PTY adapter), so launchd ending the job's process group (`launchd.plist(5)`,
+   `AbandonProcessGroup`) does not reach it — reasoned from both, not measured on macOS; the new daemon then runs outside
    launchd until the next login. The archive never loads the agent.
 5. **The archives.** `umbral-<version>-<os>-<arch>.tar.gz`, `<version>` being `git describe`
    without its `v`, holds one directory of that name: `bin/` with the three binaries, `LICENSE`
