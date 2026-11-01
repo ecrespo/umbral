@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.87 |
+| **Version** | 1.88 |
 | **Date** | 2026-10-31 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1373,11 +1373,14 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   - that home is `acp/<thread_id>/` of the daemon's runtime directory: `home`, `config`, `data`,
     `cache` and `state`, made `0700` afresh at every launch and removed when the process ends;
   - the environment is `PATH` and `LANG` of the daemon's, `HOME` and `XDG_*` of the isolation,
-    the manifest's variable naming the configuration (`OPENCODE_CONFIG`) and the entry's resolved
+    the manifest's variable naming the configuration (`OPENCODE_CONFIG`), the entry's resolved
     `env_refs` — resolved like an MCP server's, the keyring or the env fallback of REQ-SEC-012 —
-    and nothing else. An `env_refs` key the manifest reserves as the agent's own configuration
-    (for OpenCode `OPENCODE_*`: `OPENCODE_CONFIG_CONTENT`, `OPENCODE_PERMISSION`, …) stops the
-    daemon at start, since it would set a permission around the generated file;
+    and, last, the manifest's fixed variables (OpenCode's `OPENCODE_DISABLE_AUTOUPDATE`,
+    `_DEFAULT_PLUGINS`, `_LSP_DOWNLOAD`, `_MODELS_FETCH` and `_SHARE`, each `1`), and nothing
+    else. An `env_refs` key the manifest reserves as the agent's own configuration (for
+    OpenCode `OPENCODE_*`: `OPENCODE_CONFIG_CONTENT`, `OPENCODE_PERMISSION`, …) stops the daemon
+    at start, since it would set a permission around the generated file; so does one naming a
+    fixed variable (delta `2026-10-opencode-fixed-env`);
   - the process leads its own session, and so its own process group, which a kill ends whole,
     and has no controlling terminal. It counts for the agent's-terminal check of §5.3 from its
     launch. On Linux, when it exits, every process left in its session — whatever its
@@ -2282,3 +2285,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.85 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-windows-port` (T-F2-50): §5.3i Windows — paths, the named pipe, ConPTY in Job Objects, the PowerShell bootstrap, the peer check by job membership, every command asking, Credential Manager, what is not on Windows yet and the CI job; §9.3 the executable's icon check |
 | 1.86 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-plugins` (T-F2-60): §3 and §5.2 the `plugins` module; §5.3's destructive list gains `umb_plugin_change`; §5.3j plugins — reading, installing, what reaches the agent, detection and keys; §9.4 `umb plugin` |
 | 1.87 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-pane-graphics` (T-F2-61): §5.3k pane graphics — a client's `graphics`, the filter and placeholder for any other, the relay |
+| 1.88 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-opencode-fixed-env` (T-HRD-11): §5.3f — the manifest's fixed variables, OpenCode's `OPENCODE_DISABLE_*` switches, set last and reserved |
