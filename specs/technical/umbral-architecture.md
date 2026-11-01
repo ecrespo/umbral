@@ -1306,7 +1306,7 @@ and the column that separates it, and do the same for the block list.
     most, the rest `… n more`. The selected thread is marked `>` and listed even when it belongs
     elsewhere; a selected hosted thread adds a line saying Umbral does not record its agent's own
     network traffic or file reads, and that the agent can read the repository's main copy and
-    every other thread's worktree (REQ-ACP-007, delta `2026-10-acp-cancel-traces`, T-HRD-12).
+    every other thread's worktree (REQ-ACP-007, delta `2026-10-acp-cancel-traces`; PRD F2 0.9, T-HRD-12).
   - In agent mode up and down select the previous or next thread; with none selected down takes
     the first. The selected thread is the one viewed (`thread.focus`), shown, sent to and
     stopped. A switch is refused while the panel's thread is being created.
@@ -1477,7 +1477,8 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   does not record a hosted agent's own network traffic or file reads, from the thread's
   `egress_visibility`, and that the agent can read the repository's main copy and every other
   thread's worktree (REQ-ACP-007, PRD F2 0.9, T-HRD-12): the CLI on stderr at creation, the panel in the thread's row
-  and in a line under the list while the thread is selected.
+  and in a line under the list while the thread is selected. The desktop's thread view says the
+  same of a thread whose `egress_visibility` is `unobserved`, though it creates no hosted thread.
 
 ### 5.3g Full terminal use (T-F2-20)
 
