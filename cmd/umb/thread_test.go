@@ -187,7 +187,8 @@ func TestThreadCreateSaysWhenItsWorktreeWasRefused_REQ_WT_008(t *testing.T) {
 // TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007: `umb thread create --agent` asks for
 // a hosted thread; the daemon's answer says `unobserved`, and stderr tells the user — where a
 // script's stdout, the id alone, is not read — that Umbral records neither the agent's own
-// network traffic nor its file reads, and when the agent did not start, why. A thread of
+// network traffic nor its file reads, that the agent can read the repository's main copy and
+// every other thread's worktree, and when the agent did not start, why. A thread of
 // Umbral's own says nothing.
 func TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007(t *testing.T) {
 	t.Parallel()
@@ -213,7 +214,7 @@ func TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007(t *testing.T) {
 		t.Errorf("stdout %q, want the id alone", stdout.String())
 	}
 	errOut := stderr.String()
-	for _, want := range []string{"opencode", "unobserved", "network traffic", "file reads", "launch_failed"} {
+	for _, want := range []string{"opencode", "unobserved", "network traffic", "file reads", "main copy", "every other thread's worktree", "launch_failed"} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("stderr %q lacks %q", errOut, want)
 		}

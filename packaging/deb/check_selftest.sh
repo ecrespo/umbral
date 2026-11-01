@@ -5,7 +5,8 @@
 #
 # A checker that passes everything passes silently, so each case below rebuilds the good
 # package with one defect and asserts check.sh fails on it: a missing icon, an icon that is
-# not the kit's, a .desktop entry naming another icon, and a postinst that refreshes nothing;
+# not the kit's, a .desktop entry naming another icon, a postinst that refreshes nothing, a
+# missing or altered systemd --user unit and a postinst that enables it;
 # and the versions build.sh writes must sort as releases do.
 set -euo pipefail
 
@@ -36,6 +37,9 @@ mutant "the 64 px icon missing" "rm usr/share/icons/hicolor/64x64/apps/$ID.png"
 mutant "a symbolic icon not the kit's" "echo '<svg/>' > usr/share/icons/hicolor/symbolic/apps/$ID-symbolic.svg"
 mutant "a .desktop naming another icon" "sed -i 's/^Icon=.*/Icon=utilities-terminal/' usr/share/applications/$ID.desktop"
 mutant "a postinst that refreshes nothing" "sed -i '/gtk-update-icon-cache/d' DEBIAN/postinst"
+mutant "no systemd --user unit" "rm usr/lib/systemd/user/umbrald.service"
+mutant "a unit running another binary" "sed -i 's|^ExecStart=.*|ExecStart=/usr/bin/umb status|' usr/lib/systemd/user/umbrald.service"
+mutant "a postinst that enables the unit" "echo 'systemctl --global enable umbrald.service' >> DEBIAN/postinst"
 
 # The version scheme: each pair must sort as a release would, the untagged hash that starts
 # with a digit included, or apt would never upgrade from a development build to 0.1.0.

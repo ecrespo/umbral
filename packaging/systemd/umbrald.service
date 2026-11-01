@@ -1,0 +1,25 @@
+# umbrald as a systemd --user service (T-PKG-06). Shipped, not enabled: `umb` autostarts the
+# daemon when this unit is not in use, and a user who wants it at login runs
+#   systemctl --user enable --now umbrald.service
+[Unit]
+Description=Umbral daemon: PTY sessions, blocks and the agent
+Documentation=https://github.com/ecrespo/umbral
+
+[Service]
+Type=simple
+# The user manager sets XDG_RUNTIME_DIR, where the socket goes, as a login does.
+ExecStart=/usr/bin/umbrald
+# A stop sends SIGTERM to the daemon alone, which records its sessions and closes their
+# terminals, so each shell gets the SIGHUP a closed terminal sends; whatever is left after
+# TimeoutStopSec is killed. A live handoff is refused under this unit, since the daemon's exit
+# would end the unit with the adopted shells in it: restart the unit instead.
+KillMode=mixed
+Restart=on-failure
+# Not cured by trying again: 64 a bad flag, 65 a database newer than this binary or a recovery
+# that fails, 75 the database held by a daemon of another runtime directory, 78 a settings or
+# models file that cannot be read. An exit 0 because a daemon `umb` autostarted already serves
+# this installation is not a failure, so the unit just ends.
+RestartPreventExitStatus=64 65 75 78
+
+[Install]
+WantedBy=default.target

@@ -729,7 +729,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 	} else {
 		g := &giver{
 			server: server, runtime: runtime, sessions: sessionService, lock: lock, dbLock: dbLock,
-			dbPath: *dbPath, logger: logger, agentPeer: insideAnAgent, handedOver: stopDaemon,
+			dbPath: *dbPath, logger: logger, agentPeer: insideAnAgent, manager: serviceManager(), handedOver: stopDaemon,
 		}
 		go g.serveHandoff(ctx, handoffListener)
 	}

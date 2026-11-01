@@ -448,7 +448,7 @@ sequenceDiagram
 | Client detaches | keep running | returns | from the live terminal | keeps running |
 | Daemon restart | lost | restored (REQ-TERM-009) | only with `pane_history` (REQ-TERM-010) | history restored, turn `stopped` (REQ-AGT-017) |
 | Daemon update (restart) | lost | restored | as above | as above |
-| Daemon update (`umbrald --takeover`, F2) | keep running | kept | from the live terminal | kept; refused while a turn runs |
+| Daemon update (`umbrald --takeover`, F2; not under a systemd unit, where it is refused and the unit is restarted as in the row above) | keep running | kept | from the live terminal | kept; refused while a turn runs |
 
 Live PTY handoff between daemon versions is F2 (T-F2-40, delta `2026-10-pty-handoff`). A new
 `umbrald --takeover` dials the running daemon's `handoff.sock`, which is 0600 and accepts only
@@ -456,6 +456,11 @@ a peer of the same uid outside any agent's terminal. It speaks length-prefixed J
 (the leaf `internal/handoff`), in named steps: `connect`, `hello`, `quiesce`, `transfer`,
 `adopt`, `start`, `confirm`.
 
+- **Hello.** A daemon systemd runs as its unit (`SYSTEMD_EXEC_PID` equal to its own pid; an
+  inherited value names another process) refuses: its
+  exit would end its unit, and the unit's stop would kill the shells it handed over, which are
+  still the unit's processes. It says to run `systemctl --user restart umbrald` instead
+  (delta `2026-10-service-units`). Under launchd a handoff goes ahead (that delta's decision 4).
 - **Quiesce.** The old daemon refuses while a turn runs, before it pauses anything. Otherwise it stops accepting, closes
   every client and parks each drain between two reads with a deadline on a pollable
   duplicate of the master.
@@ -1305,7 +1310,8 @@ and the column that separates it, and do the same for the block list.
     `queued` when held, worktree id or `no worktree`, pending approvals and title; six rows at
     most, the rest `… n more`. The selected thread is marked `>` and listed even when it belongs
     elsewhere; a selected hosted thread adds a line saying Umbral does not record its agent's own
-    network traffic or file reads (REQ-ACP-007, delta `2026-10-acp-cancel-traces`).
+    network traffic or file reads, and that the agent can read the repository's main copy and
+    every other thread's worktree (REQ-ACP-007, delta `2026-10-acp-cancel-traces`; PRD F2 0.9, T-HRD-12).
   - In agent mode up and down select the previous or next thread; with none selected down takes
     the first. The selected thread is the one viewed (`thread.focus`), shown, sent to and
     stopped. A switch is refused while the panel's thread is being created.
@@ -1474,8 +1480,10 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   or as an error when it is refused before its row is written (REQ-ACP-007).
 - **Disclosure.** `umb thread create --agent` (§9.4) and the agent panel (§5.3e) say that Umbral
   does not record a hosted agent's own network traffic or file reads, from the thread's
-  `egress_visibility` (REQ-ACP-007): the CLI on stderr at creation, the panel in the thread's row
-  and in a line under the list while the thread is selected.
+  `egress_visibility`, and that the agent can read the repository's main copy and every other
+  thread's worktree (REQ-ACP-007, PRD F2 0.9, T-HRD-12): the CLI on stderr at creation, the panel in the thread's row
+  and in a line under the list while the thread is selected. The desktop's thread view says the
+  same of a thread whose `egress_visibility` is `unobserved`, though it creates no hosted thread.
 
 ### 5.3g Full terminal use (T-F2-20)
 
@@ -1970,7 +1978,8 @@ is exit 1 before anything is read or sent. There is no `--json`: the output is t
 
 - `umb thread create [CWD] [--mode M] [--title T] [--model M] [--agent A]` prints the thread id;
   `CWD` defaults to `.` and is made absolute; the flags are sent only when given. With `--agent`,
-  stderr says the agent's own network traffic and file reads are not recorded, and why the agent
+  stderr says the agent's own network traffic and file reads are not recorded and that the agent
+  can read the repository's main copy and every other thread's worktree, and why the agent
   did not start when the answer carries `agent_unavailable` (delta `2026-10-acp-cancel-traces`).
 - `umb thread send THREAD TEXT… [--wait STATES] [--timeout D]` joins the text with spaces and
   prints the turn id, or `<turn id> <final_state>` with `--wait`.
@@ -2165,6 +2174,19 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   `postrm` run `gtk-update-icon-cache` and `update-desktop-database` where they exist. Modes and
   mtimes (`SOURCE_DATE_EPOCH`, the commit's time) are fixed, so one commit builds one package.
   The maintainer is GitHub's no-reply address.
+- **`systemd --user` unit (T-PKG-06, delta `2026-10-service-units`):**
+  `packaging/systemd/umbrald.service` ships at `/usr/lib/systemd/user/umbrald.service`, not
+  enabled: no `.wants` link is packaged and no maintainer script calls `systemctl`, so `umb`
+  keeps autostarting the daemon until a user runs `systemctl --user enable --now
+  umbrald.service`. `ExecStart=/usr/bin/umbrald` with no flags: the user manager sets
+  `XDG_RUNTIME_DIR`, where the socket goes. `KillMode=mixed`: a stop sends SIGTERM to the daemon
+  alone, which closes its terminals so each shell gets SIGHUP, and kills what is left after
+  `TimeoutStopSec`. `Restart=on-failure` with `RestartPreventExitStatus=64 65 75 78` — a bad
+  flag, a database newer than the binary or a failed recovery, a database held elsewhere, a
+  settings or models file that cannot be read — and an exit 0 because an autostarted daemon
+  already serves the installation ends the unit. A daemon under systemd refuses a live handoff
+  (DD-014). Its panes get the user manager's environment, which `~/.config/environment.d`
+  extends, not a terminal's.
 - **tar.gz archives and the `launchd` plist (T-PKG-07, delta `2026-10-service-units`):** `packaging/tar/build.sh` packs one
   directory, `umbral-<version>-<os>-<arch>`, as `umbral-<version>-<os>-<arch>.tar.gz`: `bin/` with
   the three binaries, `LICENSE` and a `README`; the Linux archive adds the kit's `share/`
@@ -2174,8 +2196,8 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   an exit no retry cures would otherwise respawn every 10 s, and `umb` autostarts the daemon
   when it is needed. The archive never loads it. The socket is found from `HOME` on macOS (API
   Spec §2); the panes get launchd's environment, which `launchctl setenv` extends. A live
-  handoff works under launchd: the old daemon's exit is not restarted, and each pane's shell
-  leads its own session, outside the job's process group. Archives carry no owner names, the
+  handoff is expected to work under launchd — the old daemon's exit is not restarted, and each
+  pane's shell leads its own session, outside the job's process group — reasoned, not measured. Archives carry no owner names, the
   commit's mtimes, and on macOS no AppleDouble or extended-attribute entries.
   Each archive is built on its own OS by CI's `archives` job, since the binaries link
   libghostty-vt through cgo, and by `task tar`; macOS archives are unsigned in 0.1.
@@ -2189,8 +2211,13 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   the release 0.1 launcher. The regeneration step is what REQ-PKG-006 needs: checking the checksums alone
   would pass a source edit committed together with its new checksum. The package is verified
   by the `deb` CI job and `task deb`/`task deb:smoke`: `packaging/deb/check.sh` compares what
-  `dpkg -c` lists with the kit, its selftest proves it rejects four broken packages and checks
-  the version ordering, and `smoke.sh` installs and uses it in a clean Ubuntu 26.04 container.
+  `dpkg -c` lists with the kit and the unit with `packaging/systemd`, runs `systemd-analyze
+  verify` and refuses an enabled unit; its selftest proves it rejects seven broken packages and
+  checks the version ordering; `smoke.sh` installs and uses it in a clean Ubuntu 26.04
+  container, and `smoke_systemd.sh` boots one with systemd, where a lingering user's
+  `systemctl --user start umbrald` serves `umb status --no-autostart` and opens a pane whose
+  shell is in the unit's cgroup, `umbrald --takeover` is refused with that cgroup unchanged, and
+  a stop leaves the cgroup empty.
   `task ci` does not run them, because they need `dpkg-deb` and docker. An archive is verified
   by `packaging/tar/check.sh` — one top directory and no `._*` entries, the binaries printing
   the archive's version on their own OS, the Linux `share/` byte for byte the kit's, the macOS plist identical to
@@ -2305,4 +2332,6 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.86 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-plugins` (T-F2-60): §3 and §5.2 the `plugins` module; §5.3's destructive list gains `umb_plugin_change`; §5.3j plugins — reading, installing, what reaches the agent, detection and keys; §9.4 `umb plugin` |
 | 1.87 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-pane-graphics` (T-F2-61): §5.3k pane graphics — a client's `graphics`, the filter and placeholder for any other, the relay |
 | 1.88 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-opencode-fixed-env` (T-HRD-11): §5.3f — the manifest's fixed variables, OpenCode's `OPENCODE_DISABLE_*` switches, set last and reserved |
+| 1.89 | 2026-10-31 | E. Crespo (assisted draft) | T-HRD-12, no delta (PRD F2 0.9 REQ-ACP-007 already says it): §5.3e, §5.3f and §9.4 — the disclosure adds that a hosted agent can read the repository's main copy and every other thread's worktree |
+| 1.90 | 2026-10-31 | E. Crespo (assisted draft) | T-PKG-06, delta `2026-10-service-units`: §9.3 the `systemd --user` unit — shipped, not enabled, `KillMode=mixed`, its restart policy, the manager's environment and its verification; DD-014 a daemon under systemd refuses a live handoff |
 | 1.91 | 2026-10-31 | E. Crespo (assisted draft) | T-PKG-07, delta `2026-10-service-units`: §9.3 the tar.gz archives and the `launchd` agent plist (never restarted by launchd), and their verification |

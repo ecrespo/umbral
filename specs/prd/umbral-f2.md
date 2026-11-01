@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`. Slice F2a implemented and closed on 2026-10-24 (delta `2026-10-f2a-close`); F2b started on 2026-10-26 |
-| **Version** | 0.15 |
+| **Version** | 0.16 |
 | **Date** | 2026-10-31 |
 | **Reviewers** | spec-guardian (Analyze and two verify passes); Tech Lead, ratified 2026-10-22 |
 | **Source** | `docs/ARCHITECTURE.md` §5.4–5.8 and §10 (F2 ADE row); `specs/prd/umbral-mvp.md` §5.2–5.3; Plan 1.14 §4 |
@@ -78,7 +78,7 @@ The two MVP personas, plus:
 | Traces for every agent | Turns, own or ACP, without an OTel trace | 0 | F2a |
 | Interactive programs | US-F2-002: the agent answers a `psql` prompt and a `git rebase -i` editor through `terminal_interact` | ≥ 70 % over 10 runs with `gpt-oss:20b` | F2b |
 | Proactive help stays local | Active AI suggestions produced by a remote model | 0 | F2b |
-| Upgrades keep work alive | Live panes surviving a daemon upgrade with handoff | 100 % on Linux and macOS | F2d |
+| Upgrades keep work alive | Live panes surviving a daemon upgrade with handoff | 100 % on Linux and macOS, for a daemon no systemd unit runs (a unit is restarted instead, delta `2026-10-service-units`) | F2d |
 
 ## 5. Scope
 
@@ -215,7 +215,7 @@ so its verification is a manual QA step.
 
 ### 6.9 Live handoff (HND) — F2d
 
-- **REQ-HND-001** · MUST · event — WHEN a newer `umbrald` is started with `--takeover` against a running daemon of the same protocol major, THE SYSTEM SHALL transfer every live PTY (file descriptors and child processes), the emulator state and the open blocks to the new daemon, and the old daemon SHALL exit only after the new one confirms; clients SHALL reconnect and resume from a snapshot (REQ-API-001).
+- **REQ-HND-001** · MUST · event — WHEN a newer `umbrald` is started with `--takeover` against a running daemon of the same protocol major that no turn is running in and that no service manager runs as its unit, THE SYSTEM SHALL transfer every live PTY (file descriptors and child processes), the emulator state and the open blocks to the new daemon, and the old daemon SHALL exit only after the new one confirms; clients SHALL reconnect and resume from a snapshot (REQ-API-001).
 - **REQ-HND-002** · MUST · unwanted — IF the handoff fails at any step, THEN THE SYSTEM SHALL keep the old daemon serving with every session intact, and the new daemon SHALL exit with a non-zero status naming the step.
 
 ### 6.10 Remote and federation (RMT) — F2d
@@ -361,3 +361,4 @@ Still open, with the draft's default:
 | 0.13 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-usf2-002-live` (T-F2-23): §9's US-F2-002 says what the live run measured — 0 of 10 green, psql 10/10 and the rebase 0/10 on the model's vim — and leaves whether it passes to the Tech Lead |
 | 0.14 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-plugins` (T-F2-60): REQ-PLG-002 gains its reading — decided whenever an agent reaches a plugin's command, not decided when the user runs one |
 | 0.15 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-opencode-fixed-env` (T-HRD-11): REQ-ACP-009's allowlist gains the manifest's fixed variables, OpenCode's `OPENCODE_DISABLE_*` switches, which no env reference overrides |
+| 0.16 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-service-units` (T-PKG-06): REQ-HND-001 names its two exceptions — a running turn, which REQ-HND-002's refusal already had, and a daemon systemd runs as its unit, which is restarted instead — and §8's metric says so |

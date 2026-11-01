@@ -58,15 +58,17 @@ its matrix lists commands.
 - **Done:** `dpkg -c umbral_*.deb` lists the 11 icon files and the `.desktop` file; smoke test in an
   Ubuntu 26.04 container.
 
-### [ ] T-PKG-06 · `umbrald` as a `systemd --user` service
+### [x] 2026-10-31 T-PKG-06 · `umbrald` as a `systemd --user` service
 - **What:** a `systemd --user` unit for `umbrald`, shipped in the `.deb` under
   `/usr/lib/systemd/user/` and not enabled by default; `umb` keeps autostarting the daemon
   when the unit is not in use (Tech §9, delta `2026-10-deb-package`).
-- **REQ:** Tech §9 (0.1 distribution); no REQ
+- **REQ:** Art. 9 — a 0.1 distribution item the Plan and Tech §9 set; REQ-HND-002 for the handoff a unit refuses
 - **Files:** `packaging/deb/**`, `packaging/systemd/`
 - **Depends on:** T-PKG-03
 - **Done:** in the Ubuntu 26.04 smoke container with a user manager, `systemctl --user start
-  umbrald` serves `umb status`, a stop leaves no process, and `dpkg -c` lists the unit.
+  umbrald` serves `umb status`, a stop leaves no process, and `dpkg -c` lists the unit. Written as
+  `packaging/systemd/umbrald.service`, check 5/5 of `packaging/deb/check.sh` with three selftest
+  mutants, and `packaging/deb/smoke_systemd.sh`, run by `task deb:smoke` and CI's `deb` job.
 
 ### [x] 2026-10-31 T-PKG-07 · tar.gz archives and the `launchd` plist
 - **What:** the Linux and macOS tar.gz archives of the three binaries, the Linux one with the
@@ -209,12 +211,12 @@ its matrix lists commands.
 - **Depends on:** —
 - **Done:** a test that the fixed variables reach the agent and a ref cannot override them; the disclosure stays true. Written as `Manifest.FixedEnv` in `internal/acp/domain/manifest.go`, set last by `Environment` and reserved by `ReservesEnv`; `TestTheManifestsFixedVariablesReachTheAgent_REQ_ACP_009`; delta `2026-10-opencode-fixed-env`.
 
-### [ ] T-HRD-12 · The disclosure names the readable worktrees
+### [x] 2026-10-31 T-HRD-12 · The disclosure names the readable worktrees
 - **What:** Q11: what `umb thread create --agent` and the agent panel show for a hosted thread adds that the agent can read the repository's main copy and every other thread's worktree, as PRD F2 0.9 REQ-ACP-007 now says. (delta `2026-10-hrd02-open-questions`).
 - **REQ:** REQ-ACP-007
 - **Files:** `cmd/umb/thread.go`, `internal/tui/**` (the hosted-thread notice)
 - **Depends on:** —
-- **Done:** both texts carry the sentence, checked by their existing disclosure tests.
+- **Done:** both texts carry the sentence, checked by their existing disclosure tests. Written in `cmd/umb/thread.go` and `internal/tui/agent.go` (`threadLines`); `TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007`, `TestAgentPanelSaysAHostedThreadIsUnobserved_REQ_ACP_007`.
 
 ### [x] 2026-10-24 T-HRD-03 · Three defects known when F1 closed
 - **What** (delta `2026-10-f1-close`):
@@ -294,7 +296,7 @@ its matrix lists commands.
 | REQ-SEC-005, REQ-ACP-003 | T-HRD-06, T-HRD-07 | TestDestructiveEvasionsAsk_REQ_SEC_005, TestARunCommandEvasionAsks_REQ_SEC_005, TestAnACPExecuteEvasionAsks_REQ_ACP_003; TestDestructiveAlwaysAsk_REQ_SEC_005 (the new patterns) |
 | REQ-SKL-005 | T-HRD-08, T-HRD-09 | TestSkillLoadRefusesAnEditedStoredCopy_REQ_SKL_005, TestSkillLoadServesACopyInstalledFromATarball_REQ_SKL_005; TestTheCatalogIsADelimitedThirdPartyBlock_REQ_SKL_005 |
 | REQ-AGT-007 (zsh), REQ-AGT-003 | T-HRD-10 | TestAZshThreadKeepsAnUnterminatedLastLine_REQ_AGT_007, TestAZshThreadKeepsPromptSPOffUnderAFramework_REQ_AGT_007 |
-| REQ-ACP-009, REQ-ACP-007 | T-HRD-11, T-HRD-12 | `TestTheManifestsFixedVariablesReachTheAgent_REQ_ACP_009`, `TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009`; the disclosure's worktree sentence |
+| REQ-ACP-009, REQ-ACP-007 | T-HRD-11, T-HRD-12 | `TestTheManifestsFixedVariablesReachTheAgent_REQ_ACP_009`, `TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009`; `TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007`, `TestAgentPanelSaysAHostedThreadIsUnobserved_REQ_ACP_007` |
 | REQ-AGT-018, REQ-API-005, REQ-API-004, REQ-CLI-001 | T-HRD-03 | TestFetchUrlFollowsFiveRedirects_REQ_AGT_018; TestAPlainCutMatchesTheEncoder_REQ_API_005, TestAPlainCutEncodesAFewTimes_REQ_API_005 and the macOS job over repeated runs; `task schema`; TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001 |
 | REQ-API-006 | T-HRD-04 | TestASlowClientHoldsUpNoOtherClient_REQ_API_006, TestASlowClientIsClosedNotTrimmed_REQ_API_006 |
 
@@ -319,4 +321,6 @@ its matrix lists commands.
 | 2026-10-24 | T-HRD-09 | done | Delta `2026-10-catalog-third-party` (Tech 1.72 §5.3b), stacked on T-HRD-08's branch. The `# Skills` section wraps the catalog in a `<skills>` block after a preamble naming the descriptions third-party text, not instructions; `&`, `<` and `>` in each entry are escaped when the prompt is rendered, so a description writing `</skills>` or a `<rules>` tag stays inside. Red first (no block); not escaping reddens it. |
 | 2026-10-24 | T-HRD-10 | done | Delta `2026-10-zsh-prompt-sp` (Tech 1.73 §5.2b), stacked on T-HRD-09's branch. A thread-owned session gets `UMBRAL_AGENT_SESSION=1`; the zsh bootstrap turns `PROMPT_SP` off after the user's rc and again in `__umbral_precmd` and `__umbral_preexec`. `printf x` in a zsh thread came back `" "`, red, and now returns `x`, under a framework that sets the option every prompt too; a user's zsh pane keeps it. Not setting the variable, or dropping the precmd re-apply, reddens the tests. |
 | 2026-10-31 | T-HRD-11 | done | Delta `2026-10-opencode-fixed-env` (PRD F2 0.15 REQ-ACP-009, Tech 1.88 §5.3f). `Manifest.FixedEnv` holds OpenCode's `OPENCODE_DISABLE_AUTOUPDATE`, `_DEFAULT_PLUGINS`, `_LSP_DOWNLOAD`, `_MODELS_FETCH` and `_SHARE`, read from the installed binary; `Environment` sets them after the refs and `ReservesEnv` refuses a ref naming one. Red first (no field); dropping the loop or the reservation reddens the test. The provider package from npm has no switch and stays the agent's own traffic. |
+| 2026-10-31 | T-HRD-12 | done | No delta: PRD F2 0.9 REQ-ACP-007 already carries the sentence (delta `2026-10-hrd02-open-questions`); Tech 1.89 §5.3e, §5.3f and §9.4 follow it. `umb thread create --agent`'s stderr and the agent panel's hosted-thread line add that the agent can read the repository's main copy and every other thread's worktree. Red first in both disclosure tests; the panel's check reads the wrapped notice across lines. Both name the agent rather than "it", which could be read as Umbral; the desktop's thread view, which creates no hosted thread, carries the sentence too. |
+| 2026-10-31 | T-PKG-06 | done | Tech 1.90 §9.3 and DD-014, delta `2026-10-service-units`. Spec-guardian found that a live handoff under the unit would kill the adopted shells when the unit stopped: a daemon systemd runs as its unit (`SYSTEMD_EXEC_PID` equal to its pid, not `INVOCATION_ID`, which a terminal under any unit passes on and which failed every handoff test on the first `task ci`) now refuses at `hello` (`TestAHandoffUnderAServiceManagerIsRefused_REQ_HND_002`, red without the check), the unit stops with `KillMode=mixed` and does not retry exits 64, 65, 75 and 78, and the smoke opens a pane, is refused a takeover and finds the unit's cgroup empty after the stop. Before that: `check.sh` was red first (the unit missing from the package); its selftest rejects a package without the unit, one running another binary and one whose postinst enables it. `smoke_systemd.sh` boots `ubuntu:26.04` with systemd as init in a privileged container sharing the host's cgroups; as a lingering user the unit is `disabled`, `systemctl --user start` serves `umb status --no-autostart`, one `umbrald` runs, and a stop leaves none. A package whose unit runs `sleep` instead fails it (no token). The package is mounted under `/srv`, since systemd mounts a tmpfs over `/tmp`. |
 | 2026-10-31 | T-PKG-07 | done | Tech 1.91 §9.3, delta `2026-10-service-units`. After spec-guardian's review: the plist is never restarted by launchd, so an exit 75 or 78 cannot respawn every 10 s; `check.sh` fails a binary that does not print the archive's version and an archive with `._*` entries, with four more mutants (a failing `umbrald`, a silent `umb`, an `umbral-tui` of another version, an AppleDouble file); bsdtar writes without xattrs or AppleDouble entries, and BSD `touch -t` is given UTC. The `archives` job ran green on `ubuntu-latest` and `macos-latest`, `plutil -lint` included, on the commit before these fixes; the PR's run checks them. Before that: `build.sh` packs `umbral-<version>-<os>-<arch>.tar.gz`; `check.sh` runs each binary's version on its own OS and compares the Linux `share/` with the kit and the macOS plist with `packaging/launchd/`. The selftest builds the other OS's layout from the same binaries and rejects eight broken archives: a binary missing or not executable, an icon missing, a `.desktop` edited, a plist on Linux, none on macOS, a plist running another path, no `LICENSE`. Built and checked locally on Linux. |

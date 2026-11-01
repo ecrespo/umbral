@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/ecrespo/umbral/internal/api"
@@ -106,6 +107,10 @@ type giver struct {
 	// the kernel did not give, is refused every session's master as it is the API's methods
 	// that land or approve the agent's work (REQ-ORC-004).
 	agentPeer func(pid int) bool
+	// manager names the service manager running this daemon, "" when none does. Under one a
+	// handoff is refused: this daemon's exit ends its unit, and a stop kills what is left in
+	// the unit's processes — every shell the new daemon adopted (delta `2026-10-service-units`).
+	manager string
 	// handedOver is called once the new daemon has everything: the old one's serve returns.
 	handedOver func()
 }
@@ -142,6 +147,9 @@ func (g *giver) give(ctx context.Context, c *handoff.Conn) bool {
 		return false
 	}
 
+	if g.manager == "systemd" {
+		return fail(stepHello, errors.New("refused: this daemon runs under systemd, which would end the shells it hands over; run `systemctl --user restart umbrald` instead"))
+	}
 	if pid := c.PeerPID(); g.agentPeer != nil && (pid <= 0 || g.agentPeer(pid)) {
 		return fail(stepHello, errors.New("refused: the peer runs inside an agent's terminal"))
 	}
@@ -391,4 +399,15 @@ func handoffStep(err error) string {
 		return se.step
 	}
 	return stepStart
+}
+
+// serviceManager names the service manager that runs this process as its unit: systemd sets
+// SYSTEMD_EXEC_PID to the pid it executed. Every process a unit or scope starts inherits it,
+// and INVOCATION_ID, so only a pid equal to this one counts: a daemon `umb` autostarted from a
+// terminal under some unit is not the unit's.
+func serviceManager() string {
+	if os.Getenv("SYSTEMD_EXEC_PID") == strconv.Itoa(os.Getpid()) {
+		return "systemd"
+	}
+	return ""
 }

@@ -69,6 +69,8 @@ done
   install -D -m 0644 "$KIT/$file" "$stage/usr/share/$file"
 done
 install -m 0644 "$root/LICENSE" "$stage/usr/share/doc/umbral/copyright"
+# The systemd --user unit, not enabled: nothing in DEBIAN/ calls systemctl (T-PKG-06).
+install -D -m 0644 "$root/packaging/systemd/umbrald.service" "$stage/usr/lib/systemd/user/umbrald.service"
 
 glibc="$(for bin in umbrald umb umbral-tui; do
   objdump -T "$stage/usr/bin/$bin" | grep -o 'GLIBC_[0-9.]*' || true

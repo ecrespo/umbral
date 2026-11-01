@@ -145,8 +145,8 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 	if hosted, ok := result["agent"].(string); ok && hosted != "" {
 		// REQ-ACP-007: what Umbral cannot see is said where the user reads, not where a script
 		// takes the id.
-		stderr.printf("umb thread create: %s is an external agent; Umbral does not record its own network traffic or file reads (egress_visibility %s)\n",
-			printable(hosted), printable(fmt.Sprint(result["egress_visibility"])))
+		stderr.printf("umb thread create: %s is an external agent; Umbral does not record its own network traffic or file reads (egress_visibility %s); %s can read the repository's main copy and every other thread's worktree\n",
+			printable(hosted), printable(fmt.Sprint(result["egress_visibility"])), printable(hosted))
 		if gone, ok := result["agent_unavailable"].(map[string]any); ok {
 			stderr.printf("umb thread create: %s did not start: %s (%v)\n", printable(hosted),
 				printable(fmt.Sprint(gone["message"])), printable(fmt.Sprint(gone["reason"])))
