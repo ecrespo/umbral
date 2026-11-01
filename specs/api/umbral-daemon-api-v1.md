@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.60 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.61 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`; Windows: the named pipe `\\.\pipe\umbral-<16 hex>`, see §2) |
@@ -207,6 +207,11 @@ own terminal back to itself), and every method that starts a process — `sessio
   `block.wait_output` are advertised under `waits`, `pane.report_state` and
   `pane.release_state` under `integrations`, and `notification.show` under `notifications`, which their prefixes would not give them: a
   method may name its own namespace.
+- **`graphics` is not a namespace** (REQ-PLG-003, delta `2026-10-pane-graphics`). A daemon that
+  serves `sessions` advertises it, and a client asks for it by listing it in its own
+  `capabilities` param: then its `session.output` and `session.subscribe` snapshots carry a pane's
+  Kitty graphics escapes as they came. Any other client gets them filtered (§5.11). A client
+  capability the daemon does not know is ignored.
 - **Registered is not the same as served.** Every method of the protocol stays in the table whether
   or not this build has the module behind it, which is what lets an unserved one answer
   `NOT_IMPLEMENTED` instead of `METHOD_NOT_FOUND` (§9). So the list is derived from what the daemon
@@ -545,8 +550,9 @@ method and the ordering that produced it, so one handed to a different method is
 ## 5. Methods
 
 ### 5.1 `system.hello`
-**Params:** `{token, client_kind, client_version, protocol_version}`. See §2 for what each one means
-and for the order they are validated in. REQ-SEC-003.
+**Params:** `{token, client_kind, client_version, protocol_version, capabilities?}`. See §2 for
+what each one means and for the order they are validated in. REQ-SEC-003. `capabilities` is the
+client's own list, optional; today only `graphics` is read (§2, §5.11).
 **Result:** `{daemon_version, protocol_version, capabilities, connection_id, max_message_bytes}`.
 `max_message_bytes` is this connection's frame limit from now on, in both directions (§1).
 
@@ -670,6 +676,21 @@ carried at least one command.
 **Result:** `{snapshot: {format:"vt", data_b64, cursor:{x,y}}, seq}`.
 
 After the response, the daemon emits `session.output` starting at `seq + 1`.
+
+**Graphics (REQ-PLG-003).** For a connection whose hello did not list `graphics`, the snapshot
+and every `session.output` pass through a filter that removes Kitty graphics escapes
+(`ESC _ G … ESC \`). Where one displays an image — `a=T` once its last chunk is in, or `a=p` —
+the text `[image]` takes its place; a transmission, query or deletion leaves nothing, and a
+placement with `U=1` leaves nothing either, since its Unicode placeholder cells are text that
+follows. CAN or SUB cancels an escape as a terminal reads it: nothing takes its place. Every
+other byte passes as it came. The filter keeps its state per subscription, so an escape cut across
+chunks after the snapshot is still recognised; a subscription's filter starts outside any escape,
+so the rest of one the snapshot's last chunk left open reaches the client as text. `[image]`
+takes up its own cells, so the client's cursor may differ from the daemon's emulator until the
+next snapshot. A batch that was only graphics sends no
+notification, and the next one's higher `seq` is all a client checks. A connection that listed
+`graphics` gets the bytes unchanged. Stored block output (§5.17) is not filtered: it is a record,
+not the pane's stream. The relay (§5.44) asks a host for `graphics` exactly when its client did.
 
 **Errors:** `NOT_FOUND`.
 
@@ -1775,7 +1796,8 @@ stateDiagram-v2
 - **Optional capabilities:** `system.hello` returns the namespaces the daemon **serves** at that
   moment (§2). The protocol's namespaces are `sessions`, `blocks`, `threads`, `mcp`, `models`,
   `workspaces`, `layouts`, `waits`, `integrations`, `notifications`, `policy_explain`, `wait_admin`,
-  `rules`, `skills`, `limits`, `config`, `agent_detection`, `worktrees`, `federation` (§5.44) and `plugins` (§5.45); `graphics` is reserved for later. The §2
+  `rules`, `skills`, `limits`, `config`, `agent_detection`, `worktrees`, `federation` (§5.44) and `plugins` (§5.45); `graphics`, which is not a namespace, is
+  advertised by a daemon serving `sessions` and asked for by a client (§2, §5.11). The §2
   example shows the full list and is illustrative: what a given daemon returns is whatever it can
   actually do, which is narrower than what its method table holds whenever a module is absent.
 - **Which error a missing method gets.** A name this build does not know receives
@@ -1876,3 +1898,4 @@ printf '%s\n' \
 | 1.58 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-remote-hosts` (T-F2-41): §5.44 `remote.list`, `add`, `remove` and the relay to remote daemons over ssh; §4 `RemoteHost`; §6 `remote.state_changed` and `session.unsubscribed`'s `remote_disconnected`; §2 `cli` row and an agent's terminal; §9 `federation` served (REQ-RMT-001, REQ-RMT-002, REQ-RMT-003) |
 | 1.59 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-windows-port` (T-F2-50): the Windows transport — the named pipe, its owner-only descriptor and squatting checks — and runtime directory in §2; the agent's-terminal check on Windows reads Job Objects. |
 | 1.60 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-plugins` (T-F2-60): §4 `Plugin`; §5.45 `plugin.inspect`, `install`, `list`, `get`, `remove` and `run`; §6 `plugin.changed`; §2 `plugin.*` for `cli` and `plugin.install`, `remove` and `run` refused to an agent's terminal; §3 the `plg_` prefix; §9 the `plugins` capability |
+| 1.61 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-pane-graphics` (T-F2-61, REQ-PLG-003): §2 and §5.1 a client's own `capabilities`, of which `graphics` is read; §5.11 the Kitty graphics filter for a client without it; §9 `graphics` no longer reserved |
