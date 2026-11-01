@@ -195,10 +195,11 @@ tasks:
       - packaging/deb/check_selftest.sh {{.ROOT_DIR}}/dist/umbral_*.deb
 
   deb:smoke:
-    desc: 'T-PKG-03: install the .deb in a clean Ubuntu 26.04 container and use it (needs docker)'
+    desc: 'T-PKG-03/06: install the .deb in a clean Ubuntu 26.04 container and use it, autostarted and from its systemd --user unit (needs docker)'
     deps: [deb]
     cmds:
       - packaging/deb/smoke.sh {{.ROOT_DIR}}/dist/umbral_*.deb
+      - packaging/deb/smoke_systemd.sh {{.ROOT_DIR}}/dist/umbral_*.deb
 
   roundtrip:
     desc: F0 exit criterion 4 against a real daemon, using only the CLI (T-F0-20)
