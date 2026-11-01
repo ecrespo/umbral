@@ -110,6 +110,10 @@ type helloParams struct {
 	ClientKind      string `json:"client_kind"`
 	ClientVersion   string `json:"client_version"`
 	ProtocolVersion int    `json:"protocol_version"`
+	// Capabilities are the client's own, optional: today only `graphics`, which asks for a
+	// pane's Kitty graphics escapes as they came (API Spec §5.1, REQ-PLG-003). A value the
+	// daemon does not know is ignored, so a newer client meets an older daemon.
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // helloResult is the handshake reply.

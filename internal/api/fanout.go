@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 )
 
 // Fan-out limits from API Spec §8.
@@ -53,6 +55,10 @@ type subscription struct {
 	// could be written first — and a client reading its reply would get a notification.
 	held bool
 
+	// filter takes the Kitty graphics escapes out of the stream for a client that did not ask
+	// for them, nil for one that did (REQ-PLG-003). Only the writer goroutine uses it.
+	filter *sessdomain.GraphicsFilter
+
 	wake   chan struct{}
 	done   chan struct{}
 	closer sync.Once
@@ -80,6 +86,9 @@ func newSubscription(c *conn, sessionID string, startSeq uint64) *subscription {
 		held:      true,
 		wake:      make(chan struct{}, 1),
 		done:      make(chan struct{}),
+	}
+	if !c.graphics {
+		s.filter = &sessdomain.GraphicsFilter{}
 	}
 	go s.run()
 	return s
@@ -211,6 +220,13 @@ func (s *subscription) run() {
 			batch, seq, envelope := s.take()
 			if len(batch) == 0 {
 				break
+			}
+			if s.filter != nil {
+				// A batch that was all graphics sends nothing; the next one carries a higher
+				// seq, which is all a client checks (§5.11).
+				if batch = s.filter.Filter(nil, batch); len(batch) == 0 {
+					continue
+				}
 			}
 			s.conn.notify("session.output", sessionOutputPayload{
 				SessionID: s.sessionID,

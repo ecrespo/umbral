@@ -1707,6 +1707,20 @@ the daemon runs (REQ-PLG-001, delta `2026-10-plugins`). `plugins/adapters/plugin
   pane's prompt without Enter, and only when the emulator says the cursor is at an OSC 133
   prompt — the TUI's `Screen.AtPrompt`, false on the alternate screen.
 
+### 5.3k Pane graphics (T-F2-61)
+
+A pane's Kitty graphics escapes reach a client only when its hello asked for `graphics`
+(REQ-PLG-003, delta `2026-10-pane-graphics`). `api` records the answer per connection; a
+subscription of a connection that did not ask runs its batches through
+`sessions/domain.GraphicsFilter`, and `session.subscribe` filters the snapshot with a fresh one.
+The filter is a byte-level state machine with no payload buffer: it drops `ESC _ G … ESC \` and
+writes `[image]` where an image is displayed (`a=T` on its last chunk, `a=p`, not `U=1`); CAN
+and SUB cancel an escape as they do in the VT parser, and a plain batch passes without a copy.
+A subscription's filter starts outside any escape, so one left open by the snapshot's last chunk
+is not recognised (delta decision 5). The
+relay's hello to a host carries `graphics` when its client's did. Neither the TUI nor the desktop
+asks for it, since neither draws images.
+
 ## 6. Security
 
 ### 6.1 Attack Surface
@@ -2270,4 +2284,5 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.84 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-remote-hosts` (T-F2-41): §3 and §5.2 the `remote` module; §5.1 `[remote]` and the forwarded sockets; the relay lives in `api` (API §5.44); §5.3's destructive list gains `umb_remote_change` |
 | 1.85 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-windows-port` (T-F2-50): §5.3i Windows — paths, the named pipe, ConPTY in Job Objects, the PowerShell bootstrap, the peer check by job membership, every command asking, Credential Manager, what is not on Windows yet and the CI job; §9.3 the executable's icon check |
 | 1.86 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-plugins` (T-F2-60): §3 and §5.2 the `plugins` module; §5.3's destructive list gains `umb_plugin_change`; §5.3j plugins — reading, installing, what reaches the agent, detection and keys; §9.4 `umb plugin` |
+| 1.87 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-pane-graphics` (T-F2-61): §5.3k pane graphics — a client's `graphics`, the filter and placeholder for any other, the relay |
 | 1.88 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-opencode-fixed-env` (T-HRD-11): §5.3f — the manifest's fixed variables, OpenCode's `OPENCODE_DISABLE_*` switches, set last and reserved |

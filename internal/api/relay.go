@@ -158,7 +158,10 @@ func (c *conn) relayTo(ctx context.Context, host string) (*relayLink, error) {
 func (l *relayLink) hello(ctx context.Context, token string, r *bufio.Reader) error {
 	line, err := json.Marshal(map[string]any{
 		"jsonrpc": jsonrpcVersion, "id": 0, "method": methodHello,
-		"params": helloParams{Token: token, ClientKind: string(l.conn.clientKind), ClientVersion: "umbrald-relay", ProtocolVersion: ProtocolVersion},
+		"params": helloParams{
+			Token: token, ClientKind: string(l.conn.clientKind), ClientVersion: "umbrald-relay",
+			ProtocolVersion: ProtocolVersion, Capabilities: l.conn.clientCapabilities(),
+		},
 	})
 	if err != nil {
 		return err
