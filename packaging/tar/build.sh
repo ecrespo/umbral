@@ -50,23 +50,32 @@ else
   install -d "$dir/share/launchd"
   install -m 0644 "$root/packaging/launchd/$LABEL.plist" "$dir/share/launchd/$LABEL.plist"
   cat > "$dir/README" <<TXT
-Umbral: copy bin/* to /usr/local/bin. \`umb\` starts umbrald when it is not running. To run it
-as a launchd agent at login instead (the binaries are unsigned in 0.1):
+Umbral: copy bin/* to /usr/local/bin, which may need creating and sudo. The binaries are
+unsigned in 0.1; a downloaded copy is quarantined until you run
+  xattr -d com.apple.quarantine /usr/local/bin/umbrald /usr/local/bin/umb /usr/local/bin/umbral-tui
+\`umb\` starts umbrald when it is not running. To start it at login instead, as a launchd agent:
 
   cp share/launchd/$LABEL.plist ~/Library/LaunchAgents/
   launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/$LABEL.plist
+
+launchd does not restart it; \`umb\` starts it again if it stops. Its panes get launchd's
+environment (set more with \`launchctl setenv\`), and it finds its socket from HOME, so a shell
+that exports XDG_RUNTIME_DIR sends \`umb\` elsewhere: unset it there.
 TXT
 fi
 chmod 0644 "$dir/README"
 
 # Ownership and mtimes come from here, not from the builder, where the tar in use allows it.
+# BSD touch has no -d @N, and reads -t in local time, so it is given UTC.
 find "$stage" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} + 2>/dev/null ||
-  find "$stage" -exec touch -h -t "$(date -u -r "$SOURCE_DATE_EPOCH" +%Y%m%d%H%M.%S)" {} +
+  TZ=UTC0 find "$stage" -exec touch -h -t "$(date -u -r "$SOURCE_DATE_EPOCH" +%Y%m%d%H%M.%S)" {} +
 mkdir -p "$out_dir"
 out="$(cd "$out_dir" && pwd)/$name.tar.gz"
-if tar --version 2>/dev/null | grep -q GNU; then
+tar_version="$(tar --version 2>/dev/null || true)"
+if [[ "$tar_version" == *GNU* ]]; then
   tar -C "$stage" --sort=name --owner=0 --group=0 --numeric-owner -cf - "$name" | gzip -n > "$out"
 else
-  tar -C "$stage" --uid 0 --gid 0 -cf - "$name" | gzip -n > "$out"
+  # bsdtar on macOS: no AppleDouble (._*) entries and no extended attributes.
+  COPYFILE_DISABLE=1 tar -C "$stage" --uid 0 --gid 0 --no-xattrs --no-mac-metadata -cf - "$name" | gzip -n > "$out"
 fi
 echo "$out"

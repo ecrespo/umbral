@@ -65,6 +65,11 @@ mutant "$linux" "a launchd plist on linux" "mkdir -p share/launchd && cp '$root/
 mutant "$darwin" "no launchd plist" "rm share/launchd/$LABEL.plist"
 mutant "$darwin" "a plist running another path" "sed -i.bak 's|/usr/local/bin/umbrald|/opt/umbrald|' share/launchd/$LABEL.plist && rm share/launchd/$LABEL.plist.bak"
 mutant "$darwin" "no LICENSE" "rm LICENSE"
+# This machine's archive, whose binaries check.sh runs.
+mutant "$archive" "an umbrald that fails" "printf '#!/bin/sh\nexit 1\n' > bin/umbrald"
+mutant "$archive" "an umb that prints nothing" "printf '#!/bin/sh\nexit 0\n' > bin/umb"
+mutant "$archive" "an umbral-tui of another version" "printf '#!/bin/sh\necho 9.9.9\n' > bin/umbral-tui"
+mutant "$archive" "an AppleDouble entry" "printf x > ._LICENSE"
 
 [[ $failed -eq 0 ]] || exit 1
 echo "tar selftest: OK"

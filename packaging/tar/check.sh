@@ -4,8 +4,9 @@
 #   packaging/tar/check.sh umbral-<version>-<os>-<arch>.tar.gz
 #
 # It unpacks the archive and checks
-#   1. one top directory named as the archive, holding bin/ with umbrald, umb and umbral-tui,
-#      each of which prints its version when the archive was built for this machine;
+#   1. one top directory named as the archive and no AppleDouble (`._*`) entries, holding bin/
+#      with umbrald, umb and umbral-tui, each of which prints the archive's version when the
+#      archive was built for this machine;
 #   2. on a linux archive, the kit's share/ tree — the 11 hicolor files of REQ-PKG-001 and the
 #      .desktop file of REQ-PKG-002 — byte for byte the kit's;
 #   3. on a darwin archive, the launchd agent plist, which passes `plutil -lint` where plutil
@@ -25,6 +26,8 @@ top="$(basename "$archive" .tar.gz)"
 re='^umbral-.+-(linux|darwin)-(amd64|arm64)$'
 [[ "$top" =~ $re ]] || { echo "tar: $top is not umbral-<version>-<linux|darwin>-<amd64|arm64>" >&2; exit 1; }
 os="${BASH_REMATCH[1]}" arch="${BASH_REMATCH[2]}"
+version="${top#umbral-}"
+version="${version%-"$os"-"$arch"}"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -34,6 +37,11 @@ failed=0
 fail() { echo "tar: $*" >&2; failed=1; }
 
 echo "tar: 1/3 one top directory and the three binaries"
+# The listing is read whole first: under pipefail, `grep -q` quitting early would fail tar.
+listing="$(tar -tzf "$archive")"
+if grep -qE '(^|/)\._' <<<"$listing"; then
+  fail "the archive carries AppleDouble (._*) entries"
+fi
 tops="$(cd "$work" && ls -A)"
 [[ "$tops" == "$top" ]] || fail "the archive holds ${tops//$'\n'/ } where it should hold $top/ alone"
 root="$work/$top"
@@ -45,11 +53,16 @@ for bin in umbrald umb umbral-tui; do
     continue
   fi
   if [[ "$os" == "$host_os" && "$arch" == "$host_arch" ]]; then
+    out=""
     case "$bin" in
       umb) out="$("$root/bin/$bin" version --no-autostart 2>&1)" || fail "bin/umb version failed: $out" ;;
       *) out="$("$root/bin/$bin" -version 2>&1)" || fail "bin/$bin -version failed: $out" ;;
     esac
-    [[ -n "${out:-}" ]] && echo "tar:   $bin: ${out%%$'\n'*}"
+    if [[ "$out" != *"$version"* ]]; then
+      fail "bin/$bin printed ${out:-nothing} where the archive's version is $version"
+    else
+      echo "tar:   $bin: ${out%%$'\n'*}"
+    fi
   fi
 done
 [[ -f "$root/LICENSE" ]] || fail "LICENSE is missing"
