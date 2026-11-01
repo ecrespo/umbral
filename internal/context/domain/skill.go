@@ -192,25 +192,35 @@ func (b *BundleBuilder) AddFile(name string, r io.Reader) error {
 	return nil
 }
 
-// Finish checks the bundle as a whole and builds its manifest. A tarball whose entries all sit
-// under one top directory holding SKILL.md, as `tar czf x.tar.gz my-skill/` makes, is read as
-// that directory.
-func (b *BundleBuilder) Finish() (Bundle, error) {
+// Files checks the bundle as a whole and returns its files, which must hold root at the
+// bundle's root. A tarball whose entries all sit under one top directory holding root, as
+// `tar czf x.tar.gz my-skill/` makes, is read as that directory. A plugin's bundle is read
+// with its own root file (delta `2026-10-plugins`, decision 1).
+func (b *BundleBuilder) Files(root string) (map[string][]byte, error) {
 	contents := b.contents
-	if _, ok := contents[SkillFileName]; !ok {
-		contents = stripTopDir(contents)
+	if _, ok := contents[root]; !ok {
+		contents = stripTopDir(contents, root)
 	}
 	for p := range contents {
 		for d := path.Dir(p); d != "."; d = path.Dir(d) {
 			if _, isFile := contents[d]; isFile {
-				return Bundle{}, fmt.Errorf("%w: entry %q: under %q, which is a file", ErrSkillValidation, p, d)
+				return nil, fmt.Errorf("%w: entry %q: under %q, which is a file", ErrSkillValidation, p, d)
 			}
 		}
 	}
-	md, ok := contents[SkillFileName]
-	if !ok {
-		return Bundle{}, fmt.Errorf("%w: the bundle has no %s at its root", ErrSkillValidation, SkillFileName)
+	if _, ok := contents[root]; !ok {
+		return nil, fmt.Errorf("%w: the bundle has no %s at its root", ErrSkillValidation, root)
 	}
+	return contents, nil
+}
+
+// Finish checks the bundle as a whole and builds its manifest from its SKILL.md.
+func (b *BundleBuilder) Finish() (Bundle, error) {
+	contents, err := b.Files(SkillFileName)
+	if err != nil {
+		return Bundle{}, err
+	}
+	md := contents[SkillFileName]
 	fm, body, err := ParseFrontMatter(string(md))
 	if err != nil {
 		return Bundle{}, err
@@ -225,7 +235,7 @@ func (b *BundleBuilder) Finish() (Bundle, error) {
 	return Bundle{Manifest: m, Contents: contents, Body: body}, nil
 }
 
-func stripTopDir(contents map[string][]byte) map[string][]byte {
+func stripTopDir(contents map[string][]byte, root string) map[string][]byte {
 	top := ""
 	for p := range contents {
 		first, _, nested := strings.Cut(p, "/")
@@ -234,7 +244,7 @@ func stripTopDir(contents map[string][]byte) map[string][]byte {
 		}
 		top = first
 	}
-	if _, ok := contents[top+"/"+SkillFileName]; top == "" || !ok {
+	if _, ok := contents[top+"/"+root]; top == "" || !ok {
 		return contents
 	}
 	out := make(map[string][]byte, len(contents))

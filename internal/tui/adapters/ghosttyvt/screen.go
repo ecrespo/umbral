@@ -187,6 +187,22 @@ func (s *Screen) Cursor() (x, y uint16, err error) {
 	return x, y, nil
 }
 
+// AtPrompt reports whether the cursor is at a semantic prompt or its input (OSC 133). It is
+// false on the alternate screen and before any marker, so a caller that types only when it is
+// true never types into a program.
+func (s *Screen) AtPrompt() (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.term == nil {
+		return false, fmt.Errorf("ghosttyvt: read a closed screen")
+	}
+	at, err := s.term.CursorAtPrompt()
+	if err != nil {
+		return false, fmt.Errorf("ghosttyvt: cursor at prompt: %w", err)
+	}
+	return at, nil
+}
+
 // Close releases the terminal. Calling it twice is not an error.
 func (s *Screen) Close() error {
 	s.mu.Lock()

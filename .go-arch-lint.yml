@@ -187,6 +187,10 @@ components:
   integrations-ports:    { in: internal/integrations/ports }
   integrations-adapters: { in: internal/integrations/adapters/** }
   notify-domain:         { in: internal/notify/domain }
+  # Declarative plugins installed by digest (T-F2-60).
+  plugins-domain:        { in: internal/plugins/domain }
+  plugins-ports:         { in: internal/plugins/ports }
+  plugins-adapters:      { in: internal/plugins/adapters/** }
   notify-ports:          { in: internal/notify/ports }
 vendors:
   shell-syntax: { in: mvdan.cc/sh/v3/syntax }
@@ -507,6 +511,9 @@ deps:
       - workspaces-ports
       - workspaces-domain
       - mcp-ports
+      # plugin.* (T-F2-60).
+      - plugins-ports
+      - plugins-domain
       - mcp-domain
       # remote.* and the relay (T-F2-41).
       - remote-ports
@@ -684,6 +691,10 @@ deps:
       - waits-ports
       - integrations-ports
       - integrations-adapters
+      # Declarative plugins (T-F2-60).
+      - plugins-adapters
+      - plugins-ports
+      - plugins-domain
       - notify-ports
       - notify-domain
       - tools-ports
@@ -901,6 +912,33 @@ deps:
     anyVendorDeps: false
     mayDependOn:
       - workspaces-domain
+
+  # A plugin's manifest is checked against the skill store's bundle rules and the MCP
+  # module's server rules, both pure (T-F2-60).
+  plugins-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      - context-domain
+      - mcp-domain
+
+  plugins-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - plugins-domain
+      - context-domain
+      - mcp-domain
+      - bus
+
+  # The store over `plugins` and its directory; the servers and skills it adds go through the
+  # other modules' services, which cmd/umbrald hands it as plugins-ports.
+  plugins-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      - plugins-ports
+      - plugins-domain
+      - context-domain
+      - mcp-domain
+      - store
 
   integrations-ports:
     anyVendorDeps: false

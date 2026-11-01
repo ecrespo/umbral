@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.27 |
+| **Version** | 1.28 |
 | **Date** | 2026-10-31 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
@@ -762,6 +762,33 @@ CREATE TABLE remotes (
 );
 ```
 
+### 2.15 `plugins` (migration 0010)
+
+The plugins the user installed by digest (REQ-PLG-001, delta `2026-10-plugins`). The bundle is
+copied to `plugins/<name>/` beside the database; this row is its record, and `manifest_json` the
+parsed manifest, so a list reads no file. The MCP servers and skills a plugin adds are ordinary
+`mcp_servers` and `skills` rows, named by its manifest and removed with it while they are still
+its own. `state` is `installing` from the insert until the last of them is in; only `installed`
+rows are listed.
+
+```sql
+CREATE TABLE plugins (
+  id            TEXT PRIMARY KEY CHECK (id LIKE 'plg\_%' ESCAPE '\'),
+  name          TEXT NOT NULL UNIQUE CHECK (
+                  length(name) BETWEEN 1 AND 32 AND name NOT GLOB '*[^a-z0-9]*'),
+  version       TEXT NOT NULL CHECK (length(version) BETWEEN 1 AND 64),
+  description   TEXT NOT NULL CHECK (length(description) BETWEEN 1 AND 1024),
+  source        TEXT NOT NULL,              -- the path it was installed from, display only
+  sha256        TEXT NOT NULL CHECK (length(sha256) = 64),
+  size_bytes    INTEGER NOT NULL CHECK (size_bytes BETWEEN 1 AND 8388608),
+  manifest_json TEXT NOT NULL CHECK (json_valid(manifest_json)),
+  installed_at  INTEGER NOT NULL,
+  -- 'installing' from the row until its last server and skill are in; a row still so at start
+  -- is an install a crash stopped, which recovery undoes (Data Model §6 step 10).
+  state         TEXT NOT NULL DEFAULT 'installing' CHECK (state IN ('installing', 'installed'))
+);
+```
+
 ## 3. Indexes ↔ queries
 
 | Query (API / Tech Design) | Index |
@@ -846,6 +873,7 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 | `0007_orchestration.sql` | F2 | `worktrees` and its three indexes (§2.4g); `threads.full_auto`, `queued`, `worktree_id`, `workspace_id`, `agent`, `egress_visibility` (§2.5); `tool_calls.via`, `decision` (§2.7); `blocks.via` (§2.2). No table rebuilt (T-F2-01) |
 | `0008_full_auto.sql` | F2 | The triggers `worktrees_leave_full_auto` and `threads_full_auto_needs_worktree` (§2.5): `full_auto` never outlives an active worktree (T-F2-05) |
 | `0009_remotes.sql` | F2 | `remotes` (§2.14): the remote hosts reached over ssh (T-F2-41) |
+| `0010_plugins.sql` | F2 | `plugins` (§2.15): the plugins installed by digest (T-F2-60) |
 
 `threads` belongs to 0001 even though the agent arrives in F1: `sessions.owner_thread_id` and
 `blocks.thread_id` point at it, and with `foreign_keys=ON` SQLite rejects every insert into those
@@ -896,6 +924,12 @@ earlier drafts named.
    copy renamed back. Every other `.old-*` is removed. The directory is `skills/` beside the
    database and carries a `.umbral-skills` marker: a non-empty directory without it is refused at
    start rather than swept (delta `2026-10-skill-store`).
+10. Plugins: a `plugins` row still `installing` is an install a crash stopped before its last
+    server or skill was in; its servers still `untrusted` and its skills still holding its digest
+    are removed, then the row, as `plugin.remove` would. Then every `plugins/.staging-*`
+    directory is removed, and every `plugins/<name>/` directory with no `plugins` row. The directory is `plugins/` beside the database and carries
+    a `.umbral-plugins` marker: a non-empty directory without it is refused at start rather than
+    swept (delta `2026-10-plugins`).
 
 ## Change History
 
@@ -929,3 +963,4 @@ earlier drafts named.
 | 1.25 | 2026-10-23 | delta `2026-10-full-auto` (T-F2-05): migration `0008_full_auto` — §2.5's two triggers that clear `full_auto` when its worktree leaves `active`, and §5's 0008 row |
 | 1.26 | 2026-10-24 | delta `2026-10-acp-mediation` (T-F2-08): §2.2 — an ACP terminal's block lives in a session of its own, owned by the thread; no schema change |
 | 1.27 | 2026-10-31 | delta `2026-10-remote-hosts` (T-F2-41): migration `0009_remotes` — §2.14 `remotes`, §5's 0009 row |
+| 1.28 | 2026-10-31 | delta `2026-10-plugins` (T-F2-60): migration `0010_plugins` — §2.15 `plugins`, §5's 0010 row, §6 step 10 |

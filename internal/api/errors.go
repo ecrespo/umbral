@@ -165,6 +165,7 @@ var moduleErrors = []func(error) (int, string, bool){
 	notifyDomainError,
 	policyDomainError,
 	rulesDomainError,
+	pluginsDomainError,
 	skillsDomainError,
 	worktreesDomainError,
 	remoteDomainError,

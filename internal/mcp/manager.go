@@ -140,18 +140,9 @@ func (m *Manager) List(context.Context) ([]domain.Server, error) {
 // connecting it. Its tools reach the registry once it connects, so a thread offers them from
 // its next turn (REQ-MCP-002).
 func (m *Manager) Add(ctx context.Context, p domain.AddParams) (domain.Server, error) {
-	p, err := p.Validate()
+	p, err := m.check(ctx, p)
 	if err != nil {
 		return domain.Server{}, err
-	}
-	if m.cfg.Redact(p.URL) != p.URL {
-		return domain.Server{}, fmt.Errorf("%w: the url carries what looks like a secret; a server's url is stored in clear (REQ-SEC-004)", domain.ErrConfigInvalid)
-	}
-	for name, raw := range p.EnvRefs {
-		ref, _ := domain.ParseRef(raw)
-		if err := m.cfg.Secrets.Accepts(ctx, ref); err != nil {
-			return domain.Server{}, fmt.Errorf("%w (env_refs.%s)", err, name)
-		}
 	}
 	now := m.now()
 	s := domain.Server{
@@ -176,6 +167,32 @@ func (m *Manager) Add(ctx context.Context, p domain.AddParams) (domain.Server, e
 		return domain.Server{}, errors.New("mcp: the manager closed; the server connects at the next start")
 	}
 	return s, nil
+}
+
+// Check refuses what Add would refuse for the request alone — its fields, a url the redactor
+// would change, a secret reference the backend does not accept — and writes nothing. A name
+// already taken is not checked: that is Add's, at the moment it adds. The plugin store calls
+// it at inspect, so a plugin is refused before it is shown (delta `2026-10-plugins`).
+func (m *Manager) Check(ctx context.Context, p domain.AddParams) error {
+	_, err := m.check(ctx, p)
+	return err
+}
+
+func (m *Manager) check(ctx context.Context, p domain.AddParams) (domain.AddParams, error) {
+	p, err := p.Validate()
+	if err != nil {
+		return domain.AddParams{}, err
+	}
+	if m.cfg.Redact(p.URL) != p.URL {
+		return domain.AddParams{}, fmt.Errorf("%w: the url carries what looks like a secret; a server's url is stored in clear (REQ-SEC-004)", domain.ErrConfigInvalid)
+	}
+	for name, raw := range p.EnvRefs {
+		ref, _ := domain.ParseRef(raw)
+		if err := m.cfg.Secrets.Accepts(ctx, ref); err != nil {
+			return domain.AddParams{}, fmt.Errorf("%w (env_refs.%s)", err, name)
+		}
+	}
+	return p, nil
 }
 
 // Remove is mcp.server.remove: the server is disconnected, its tools leave the registry, and

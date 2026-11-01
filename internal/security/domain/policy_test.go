@@ -265,6 +265,12 @@ func TestDestructiveAlwaysAsk_REQ_SEC_005(t *testing.T) {
 		"umb remote add nas ssh://me@nas",
 		"umb --socket /s remote remove nas",
 		`sh -c "umb remote add evil ssh://evil"`,
+		// Installing, removing or running a plugin: its servers and commands are the user's
+		// (delta `2026-10-plugins`, REQ-PLG-002).
+		"umb plugin install /tmp/acme --yes",
+		"umb --socket /s plugin remove acme",
+		"umb plugin run acme deploy",
+		`sh -c "umb plugin run acme deploy --pane w1:p1"`,
 	}
 	allowEverything := []Rule{allowRule("*", "*")}
 	for _, cmd := range destructive {
@@ -308,6 +314,8 @@ func TestDestructiveAlwaysAsk_REQ_SEC_005(t *testing.T) {
 		"umb mcp list",
 		"umb remote list",
 		"umb remote endpoint",
+		"umb plugin list",
+		"umb plugin inspect /tmp/acme",
 		"echo umb skill install x",
 		"umb rules status",
 		"umb rules key list",

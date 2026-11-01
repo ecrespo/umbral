@@ -16,6 +16,7 @@ import (
 	ctxports "github.com/ecrespo/umbral/internal/context/ports"
 	intports "github.com/ecrespo/umbral/internal/integrations/ports"
 	ntfports "github.com/ecrespo/umbral/internal/notify/ports"
+	plgports "github.com/ecrespo/umbral/internal/plugins/ports"
 	secports "github.com/ecrespo/umbral/internal/security/ports"
 
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
@@ -188,6 +189,9 @@ type Config struct {
 	// Skills is skill.* (REQ-SKL-001, REQ-SKL-002, REQ-SKL-006). A nil value leaves them
 	// answering NOT_IMPLEMENTED.
 	Skills ctxports.Skills
+	// Plugins is plugin.* (REQ-PLG-001, REQ-PLG-002). A nil value leaves them answering
+	// NOT_IMPLEMENTED.
+	Plugins plgports.Plugins
 	// Worktrees and WorktreeThreads are worktree.* (REQ-WT-001…007): the engine, and the agent
 	// runtime that says when a thread's worktree may change. Either nil leaves them answering
 	// NOT_IMPLEMENTED, and thread.create's `worktree` with them.

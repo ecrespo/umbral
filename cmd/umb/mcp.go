@@ -7,12 +7,13 @@ import (
 	"strings"
 )
 
-// The mcp.server.* methods, and the name parameter they and skill.* share.
+// The mcp.server.* methods, and the name and path parameters they, skill.* and plugin.* share.
 const (
 	methodMcpList   = "mcp.server.list"
 	methodMcpAdd    = "mcp.server.add"
 	methodMcpRemove = "mcp.server.remove"
 	paramName       = "name"
+	paramPath       = "path"
 )
 
 type mcpServer struct {

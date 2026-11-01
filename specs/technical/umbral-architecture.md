@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.85 |
+| **Version** | 1.86 |
 | **Date** | 2026-10-31 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -124,6 +124,7 @@ flowchart LR
 | `hunks` | stdlib only | the unified-diff parser, the stable hunk id of REQ-WT-003, a patch of chosen hunks and a content with chosen hunks applied (delta `2026-10-hunks-file-tree`) | WT-003, DSK-002 |
 | `handoff` | stdlib + `golang.org/x/sys` | the channel a newer `umbrald --takeover` takes the running daemon's sessions over: length-prefixed JSON frames with descriptors as `SCM_RIGHTS` on `handoff.sock`, the peer's uid and pid from the kernel (delta `2026-10-pty-handoff`) | HND-001, HND-002 |
 | `remote` | the system's `ssh` + SQLite | remote daemons: one supervisor per host asks `umb remote endpoint` over ssh for the socket and token, forwards the socket with `ssh -N -L`, reconnects with backoff; `api` relays the protocol over it (delta `2026-10-remote-hosts`) | RMT-001, RMT-002, RMT-003 |
+| `plugins` | the skill store's bundle reader + SQLite | declarative plugins: a manifest of commands, MCP servers, skills, detection manifests and key bindings, inspected and installed by digest into `plugins/` beside the database; its servers and skills added through their own modules' services (delta `2026-10-plugins`) | PLG-001, PLG-002 |
 | `acp` | `github.com/coder/acp-go-sdk` over stdio | third-party agents hosted through a manifest: launch in an isolated home, `initialize`, `session/new`, prompt, the silence timer | ACP-* (F2) |
 | `obs` | OpenTelemetry Go, `log/slog` | traces, metrics | OBS-* |
 
@@ -907,6 +908,7 @@ num_ctx = 4096
 | `hunks` | stdlib only: a leaf that `worktrees/domain`, the agents runtime, `tools/adapters` and `api` read diffs through, so a worktree's diff and an approval's give the same id to the same hunk (delta `2026-10-hunks-file-tree`) |
 | `handoff` | stdlib and `golang.org/x/sys` only: a leaf that moves frames and descriptors and knows nothing of what they are. Only `cmd/umbrald` imports it, which owns the steps and every module a handoff touches (delta `2026-10-pty-handoff`) |
 | `remote` | its own `ports` and `domain`, plus `bus`, which its `ports` import to name `remote.state_changed`; its adapters run the `ssh` binary and use `store`. It imports no other module. `api` imports the `ports` and `domain` of `remote`: the relay — routing by `host/` ids, a connection per client and host, ids prefixed back — lives in `api`, the only package that knows the wire format, and `cmd/umbrald` probes a host's daemon through `client` (delta `2026-10-remote-hosts`) |
+| `plugins` | its own `ports` and `domain`, `context/domain` (the bundle builder and digest a plugin shares with a skill) and `mcp/domain` (the server shape `mcp.server.add` checks); `bus` in its ports, to name `plugin.changed`; its adapters parse TOML and use `store`. It imports no other module: `cmd/umbrald` hands it the MCP manager, the skill store, the bundle reader and the detection parser through its outbound ports, and `api` serves its inbound port as `plugin.*` (delta `2026-10-plugins`) |
 | `slots` | stdlib only: the arrival-order semaphore of the runtime's turn slots and the router's per-provider queues (T-F2-04). `agents` and `llmgw` may import it, so neither reaches the other through it |
 | `obs` | stdlib, and OpenTelemetry from T-F1-18; imported only by `cmd/*`. Modules count through a port of their own, which `cmd/umbrald` gives the `obs` implementation (delta `2026-10-tool-call-repair`) |
 | `cmd/*` | everything |
@@ -1062,7 +1064,9 @@ allows it as in `normal`.
   work without the user's review (delta `2026-10-worktree-methods`); `umb rules key add`, `rotate`
   or `remove`, `rollback` or `reset`, and `umb mcp remove`, so it cannot change the rules that
   decide for it or drop a server the user added; `umb remote add` or `remove`, so it cannot change
-  which machines the daemon reaches (delta `2026-10-remote-hosts`). The daemon refuses all of these `umb` methods to
+  which machines the daemon reaches (delta `2026-10-remote-hosts`); `umb plugin install`, `remove`
+  or `run`, so it cannot add tools or instructions through a plugin, or launch a plugin's command
+  as the user (`umb_plugin_change`, delta `2026-10-plugins`). The daemon refuses all of these `umb` methods to
   an agent's terminal whatever the line looks like; the patterns ask for what escapes that check
   (delta `2026-10-rules-mcp-patterns`). A rule bundle replaces it (REQ-SEC-010).
 - **MCP tools are `Network`**, whatever their transport and whatever the server says of them:
@@ -1668,6 +1672,38 @@ var (
 // api translates with errors.Is → JSON-RPC code; every INTERNAL_ERROR includes trace_id.
 ```
 
+### 5.3j Plugins (T-F2-60)
+
+A plugin is declarative: a bundle with `umbral-plugin.toml` that names what it adds, and nothing
+the daemon runs (REQ-PLG-001, delta `2026-10-plugins`). `plugins/adapters/pluginstore` holds it.
+
+- **Reading.** The skill store's bundle reader reads the directory or `.tar.gz` with its limits,
+  and its digest is the skill store's. The manifest is TOML with unknown keys refused, then
+  `plugins/domain.Check` validates every contribution before anything is shown: names, argv
+  words without control characters, each server as `mcp.server.add` would take it, each skill
+  directory as a skill bundle (named from its `SKILL.md`, its digest recorded), each detection
+  file through the detection parser, each key `ctrl+alt+[a-z0-9]` bound to a command of the
+  plugin; each server also through the MCP manager's `Check`, which refuses what `Add` would
+  for the request alone — a URL the redactor changes, a secret reference the backend refuses.
+- **Installing.** The digest is checked against `expected_sha256`; then the name, keys, servers
+  and skills are checked free; the copy is staged and renamed to `plugins/<name>/` inside the
+  row's transaction, the row `installing`; then each server is added untrusted — a `stdio` one
+  starts at once with its references resolved — and each skill installed from the stored copy,
+  through the modules' own services, and the row becomes `installed`. A failure there removes
+  what this install added and nothing else, and fails it whole. Data Model §6 step 10 undoes an
+  `installing` row a crash left.
+- **Removing** takes a declared server only while it is still `untrusted` and a skill only while
+  it holds the digest the plugin installed: one the user made trusted or replaced is the user's.
+- **What reaches the agent.** Servers are always `untrusted` (REQ-PLG-002), so their results taint
+  a turn. Commands are never offered to the model: `plugin.run` splits a pane with the argv as the
+  user's command, `plugin.install`, `remove` and `run` are refused to an agent's terminal, and
+  `umb_plugin_change` makes an agent's `umb plugin …` ask.
+- **Detection and keys.** Detection manifests are read at the daemon's start, after the built-in
+  ones and before `agents/*.toml`, each layer overriding the last by name. The TUI lists plugins
+  at start and on `plugin.changed`; a bound key types the command, POSIX-quoted, at the focused
+  pane's prompt without Enter, and only when the emulator says the cursor is at an OSC 133
+  prompt — the TUI's `Screen.AtPrompt`, false on the alternate screen.
+
 ## 6. Security
 
 ### 6.1 Attack Surface
@@ -1986,6 +2022,20 @@ is exit 1 before anything is read or sent. There is no `--json`: the output is t
   the last error, separated by two spaces and escaped like `umb skill`'s text. `--json` prints
   `{items}`, `add`'s `McpServer` and `remove`'s `{}` verbatim.
 
+**`umb plugin`** (REQ-PLG-001, REQ-PLG-002; delta `2026-10-plugins`). `umb plugin inspect PATH`,
+`install PATH [--yes]`, `list`, `show NAME`, `remove NAME` and `run PLUGIN COMMAND [--pane ID]`,
+each one `plugin.*` method of API Spec §5.45.
+
+- **Install** is `umb skill install`'s flow: the path made absolute, `plugin.inspect`, the
+  manifest printed — every command's argv, every MCP server marked `(untrusted)` with each
+  `env_refs` entry as `NAME <- reference`, since a `stdio` server starts at install, every skill,
+  detection file and key — with the files and the digest, then a `y` on a terminal or `--yes`,
+  then `plugin.install` with that digest as `expected_sha256`. Anything else installs nothing and
+  exits 1. Everything printed from the bundle is escaped, as `umb skill`'s text is.
+- **`run`** splits `--pane`, by default `$UMBRAL_PANE_ID`, with the command and prints the new
+  pane's id; outside a pane with none named it fails before connecting.
+- **`--json`** prints the method's result; install's manifest then goes to stderr.
+
 **The workspace tree** (REQ-CLI-005, REQ-CLI-006; deltas `2026-09-cli-workspace-surface` and
 `2026-09-cli-allowlist`). Every command is one call to the method named `<family>.<subcommand>`
 and prints its result; `--json` prints the daemon's answer verbatim. Identifiers are positional
@@ -2216,3 +2266,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.83 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-client-reconnect` (T-F2-42): §5.3h and DD-014 the TUI and the desktop follow their daemon across a handoff through `client.Redial` and attach every pane again from a fresh snapshot |
 | 1.84 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-remote-hosts` (T-F2-41): §3 and §5.2 the `remote` module; §5.1 `[remote]` and the forwarded sockets; the relay lives in `api` (API §5.44); §5.3's destructive list gains `umb_remote_change` |
 | 1.85 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-windows-port` (T-F2-50): §5.3i Windows — paths, the named pipe, ConPTY in Job Objects, the PowerShell bootstrap, the peer check by job membership, every command asking, Credential Manager, what is not on Windows yet and the CI job; §9.3 the executable's icon check |
+| 1.86 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-plugins` (T-F2-60): §3 and §5.2 the `plugins` module; §5.3's destructive list gains `umb_plugin_change`; §5.3j plugins — reading, installing, what reaches the agent, detection and keys; §9.4 `umb plugin` |

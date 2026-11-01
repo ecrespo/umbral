@@ -20,16 +20,19 @@ func agentsDir(settingsPath string) string {
 }
 
 // startDetection builds third-party agent detection (T-F2-10) over the built-in manifests with
-// the local ones laid over them by name, and scans every live pane in the background. The
+// the installed plugins' and then the local ones laid over them by name, and scans every live pane in the background. The
 // manifests are read once, here; a skipped file is logged by the detector and answered by
 // every agent.explain.
-func startDetection(ctx context.Context, settingsPath string, labels *integrations.AgentLabels,
+func startDetection(ctx context.Context, settingsPath string, pluginFiles []string, labels *integrations.AgentLabels,
 	shells intports.Shells, panes intports.Panes, b *bus.Bus, logger *slog.Logger,
 ) (*integrations.Detector, error) {
+	// Built-in, then installed plugins', then the local files, each overriding the layer before
+	// by name (delta `2026-10-plugins`, decision 7).
+	fromPlugins, skippedPlugins := manifests.LoadFiles(pluginFiles)
 	local, skipped := manifests.Load(agentsDir(settingsPath))
 	detector, err := integrations.NewDetector(integrations.DetectorConfig{
-		Manifests: domain.Overlay(domain.Builtins(), local),
-		Skipped:   skipped,
+		Manifests: domain.Overlay(domain.Overlay(domain.Builtins(), fromPlugins), local),
+		Skipped:   append(skippedPlugins, skipped...),
 		Labels:    labels,
 		Shells:    shells,
 		Processes: proctree.Tree{},

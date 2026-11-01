@@ -327,6 +327,29 @@ func TestAURLCarryingASecretIsRefused_REQ_MCP_001(t *testing.T) {
 	}
 }
 
+// TestCheckRefusesWhatAddWouldAndWritesNothing_REQ_PLG_001: Check answers what Add would for the
+// request alone — a url the redactor changes, a reference the backend refuses — and stores and
+// starts nothing, so a plugin is refused at inspect (delta `2026-10-plugins`, decision 2).
+func TestCheckRefusesWhatAddWouldAndWritesNothing_REQ_PLG_001(t *testing.T) {
+	conn := &fakeConnector{tools: gitTools}
+	r := newRig(t, conn, fakeSecrets{})
+	if err := r.m.Check(t.Context(), domain.AddParams{Name: "web", Transport: domain.TransportHTTP, URL: "https://h/mcp?token=ghp_secret"}); !errors.Is(err, domain.ErrConfigInvalid) {
+		t.Errorf("check of a url carrying a secret = %v, want CONFIG_INVALID", err)
+	}
+	p := stdio("jira")
+	p.EnvRefs = map[string]string{"T": "env:JIRA_TOKEN"}
+	if err := r.m.Check(t.Context(), p); err == nil {
+		t.Error("check accepted an env: reference the backend refuses")
+	}
+	if err := r.m.Check(t.Context(), stdio("gitlab")); err != nil {
+		t.Errorf("check of a valid server = %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if list, _ := r.store.List(t.Context()); len(list) != 0 || conn.count() != 0 {
+		t.Fatalf("check stored %d servers and connected %d", len(list), conn.count())
+	}
+}
+
 // TestAnAddAfterCloseStartsNothing_REQ_MCP_002: a closed manager starts no connection.
 func TestAnAddAfterCloseStartsNothing_REQ_MCP_002(t *testing.T) {
 	conn := &fakeConnector{tools: gitTools}

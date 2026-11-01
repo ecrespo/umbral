@@ -10,6 +10,9 @@ import (
 	ctxports "github.com/ecrespo/umbral/internal/context/ports"
 )
 
+// fieldExpectedSHA256 is the digest a write or an install checks against (§5.25, §5.42, §5.45).
+const fieldExpectedSHA256 = "expected_sha256"
+
 // Skill is API Spec §4's Skill (delta `2026-09-skills-cli`).
 type Skill struct {
 	ID          string  `json:"id"`
@@ -126,7 +129,7 @@ func handleSkillInstall(ctx context.Context, c *conn, raw json.RawMessage) (any,
 	}
 	if p.ExpectedSHA256 == "" {
 		return nil, ValidationError("expected_sha256 is required: install exactly what skill.inspect showed",
-			ErrorField{Field: "expected_sha256", Issue: requiredTag})
+			ErrorField{Field: fieldExpectedSHA256, Issue: requiredTag})
 	}
 	sk, err := svc.Install(ctx, ctxdomain.InstallParams{Path: p.Path, ExpectedSHA256: p.ExpectedSHA256, Replace: p.Replace})
 	if err != nil {

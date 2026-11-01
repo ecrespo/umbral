@@ -330,7 +330,11 @@ func (s *Service) ReadSkill(ctx context.Context, name, file string) ([]byte, err
 	if entry == "" {
 		entry = domain.SkillFileName // `.` is the bundle's root
 	}
-	b, err := readDir(s.path(sk.Name))
+	built, err := readDir(s.path(sk.Name))
+	var b domain.Bundle
+	if err == nil {
+		b, err = built.Finish()
+	}
 	if err != nil {
 		// The detail names paths under the data directory; it goes to the log, not to the model.
 		s.cfg.Logger.WarnContext(ctx, "the stored copy of a skill does not read as a bundle", slog.String("skill", sk.Name), slog.Any("error", err))

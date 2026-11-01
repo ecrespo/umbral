@@ -23,6 +23,7 @@ const (
 	PrefixWait       = "wt"
 	PrefixSkill      = "skl"
 	PrefixWorktree   = "wtr" // not "wt", which is a wait's (REQ-WT-001)
+	PrefixPlugin     = "plg"
 )
 
 // NewID returns a type-prefixed ULID such as "blk_01J9Z3K8T2QH6W4V5X7Y8Z9A0B".
