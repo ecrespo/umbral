@@ -7,6 +7,9 @@
 # one defect and asserts check.sh fails on it. An archive of the other OS is made from the good
 # one's binaries, which check.sh does not run there, so both OS paths are proved on either.
 set -euo pipefail
+# Repacked with bsdtar on macOS, a file's extended attributes would become ._* entries, and every
+# mutant would fail on those rather than on its own defect.
+export COPYFILE_DISABLE=1
 
 archive="${1:?usage: check_selftest.sh ARCHIVE.tar.gz}"
 here="$(cd "$(dirname "$0")" && pwd)"
