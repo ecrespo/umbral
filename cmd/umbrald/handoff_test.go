@@ -559,6 +559,48 @@ func TestAHandoffUnderAServiceManagerIsRefused_REQ_HND_002(t *testing.T) {
 	}
 }
 
+// TestARefusalSentBeforeTheHelloIsStillRead_REQ_HND_002: the old daemon refuses a handoff
+// without reading the new one's hello, and closes. When that close wins the race the new
+// daemon's hello fails with a broken pipe, and the refusal is already waiting to be read: the
+// user must be told why, not that a pipe broke. The systemd smoke failed on exactly this on
+// 2026-11-01 (CI run 41269885667).
+func TestARefusalSentBeforeTheHelloIsStillRead_REQ_HND_002(t *testing.T) {
+	path := filepath.Join(socketDir(t), handoff.SocketName)
+	ln, err := handoff.Listen(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	g := &giver{logger: slog.New(slog.DiscardHandler), manager: "systemd"}
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		g.give(t.Context(), c)
+		_ = c.Close()
+	}()
+
+	c, err := handoff.Dial(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	_ = c.SetDeadline(time.Now().Add(handoffTimeout))
+	// The old daemon has refused and hung up before this side says anything.
+	<-closed
+
+	_, err = greet(c)
+	if err == nil {
+		t.Fatal("a refused handoff was greeted")
+	}
+	if !strings.Contains(err.Error(), "systemctl --user restart umbrald") {
+		t.Fatalf("the new daemon reports %q, want the old daemon's refusal naming the restart", err)
+	}
+}
+
 // TestTheServiceManagerIsReadFromTheEnvironment_REQ_HND_002: systemd sets SYSTEMD_EXEC_PID to the pid it
 // executed for a unit, so only that process is the unit's daemon. A daemon `umb` autostarted
 // from a terminal some unit or scope started inherits the variable, and INVOCATION_ID, with
