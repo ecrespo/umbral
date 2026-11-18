@@ -29,7 +29,7 @@ written.
 |---|---|---|
 | REQ → task coverage, ghost REQs, per-migration DDL | `python3 tools/sdd_check.py` | now |
 | Validate Mermaid diagrams | `npm install --prefix tools && node tools/mermaid_check.mjs` | now |
-| Both spec checkers at once | `task specs` | now |
+| Both spec checkers at once, after the check that the gate's tools and actions are pinned (and its selftest) | `task specs` | now |
 | The protocol in the binary against the API Spec | `task schema` | now |
 | Lint + format + gosec | `task lint` | now |
 | Architecture boundaries | `task arch` | now |

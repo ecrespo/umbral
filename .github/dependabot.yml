@@ -1,0 +1,53 @@
+# Dependabot keeps what the build pulls in current, one pull request per update, against
+# `develop` — where every change lands before it reaches `main`.
+#
+# The Go tools the gate installs (gofumpt, govulncheck, golangci-lint, go-arch-lint) are not
+# in a manifest Dependabot reads: they are pinned in .github/workflows/ci.yml's env block and
+# in Taskfile.yml, and scripts/tool_versions_check.sh keeps the two the same.
+#
+# libghostty's Go bindings and the ghostty commit in scripts/build_libghostty.sh move
+# together, never alone, so Dependabot does not propose the bindings.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: go.mitchellh.com/libghostty
+    groups:
+      opentelemetry:
+        patterns:
+          - go.opentelemetry.io/*
+      golang-x:
+        patterns:
+          - golang.org/x/*
+
+  - package-ecosystem: gomod
+    directory: /cmd/umbral-desktop
+    target-branch: develop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: go.mitchellh.com/libghostty
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: npm
+    directory: /tools
+    target-branch: develop
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: docker
+    directory: /packaging/desktop
+    target-branch: develop
+    schedule:
+      interval: monthly

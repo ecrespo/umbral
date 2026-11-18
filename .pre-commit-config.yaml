@@ -2,8 +2,9 @@
 # Install once with: pre-commit install
 #
 # The Go hooks run the tools from $(go env GOPATH)/bin; install them with
-# `task tools:install`. They are `system` hooks on purpose: the versions must be the
-# same ones CI uses, not a copy pinned twice.
+# `task tools:install`. They are `system` hooks on purpose: a third copy of the versions
+# here could drift. The two that exist, Taskfile.yml's tools:install and ci.yml's env block,
+# are held equal by scripts/tool_versions_check.sh.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
