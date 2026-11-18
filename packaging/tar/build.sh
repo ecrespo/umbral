@@ -44,7 +44,8 @@ if [[ "$os" == linux ]]; then
   done
   cat > "$dir/README" <<'TXT'
 Umbral: copy bin/* to a directory on PATH, such as ~/.local/bin, and share/ to ~/.local/share
-for the launcher and its icon. `umb` starts umbrald when it is not running.
+for the launcher and its icon. `umb` starts umbrald when it is not running. umbrald needs
+libffi.so.8 (Debian and Ubuntu: the libffi8 package) and does not start without it.
 TXT
 else
   install -d "$dir/share/launchd"

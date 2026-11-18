@@ -9,7 +9,10 @@
 # regenerating them — so the package ships exactly what the `icons` job verified.
 #
 # libghostty-vt is linked statically (its -static pkg-config file), so the only shared library
-# the binaries load is libc; Depends names the newest glibc symbol version they reference.
+# the binaries link is libc; Depends names the newest glibc symbol version they reference. It
+# also names libffi8, which no binary links: yzma's purego bindings open libffi.so.8 when
+# umbrald starts, whether or not an embedded provider is configured, and the daemon panics
+# without it (delta `2026-11-deb-libffi`).
 set -euo pipefail
 
 # deb_version maps what `git describe --tags --always --dirty` printed to a Debian version that
@@ -86,7 +89,7 @@ Version: $deb_version
 Architecture: $arch
 Maintainer: Ernesto Crespo <ecrespo@users.noreply.github.com>
 Installed-Size: $installed_kib
-Depends: libc6 (>= $glibc)
+Depends: libc6 (>= $glibc), libffi8
 Recommends: git
 Section: utils
 Priority: optional
