@@ -13,6 +13,13 @@ permissions:
 
 env:
   GO_VERSION: '1.27'
+  # The gate's Go tools, pinned: an unpinned `@latest` runs whatever was published last.
+  # Taskfile.yml's tools:install carries the same versions; scripts/tool_versions_check.sh
+  # fails the specs job when the two differ.
+  GOFUMPT_VERSION: v0.12.0
+  GOVULNCHECK_VERSION: v1.10.0
+  GOLANGCI_LINT_VERSION: v2.15.0
+  GO_ARCH_LINT_VERSION: v1.19.1
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -23,19 +30,21 @@ jobs:
     name: Specs (Art. 9)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.13'
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '22'
       # `umb` links no cgo, so the protocol schema can be generated here without building
       # libghostty. The same comparison also runs inside `go test` as
       # TestSchemaMatchesSpec_REQ_API_004; this job is where it fails with its own name.
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+      - name: The gate's tools are pinned, and to the same versions as the Taskfile
+        run: ./scripts/tool_versions_check.sh
       - name: REQ coverage, matrices and DDL executability
         run: python3 tools/sdd_check.py
       - name: Protocol schema against the API Specification (REQ-API-004)
@@ -49,8 +58,8 @@ jobs:
     name: Branding kit (REQ-PKG-001, 002, 003, 006)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.13'
       - name: Install the kit's render dependencies and the .desktop validator
@@ -66,14 +75,14 @@ jobs:
     name: Debian package (T-PKG-03, REQ-PKG-001, 002, 003)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0 # the package version comes from git describe
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: Zig, which builds libghostty-vt
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
       - name: Build libghostty-vt (cgo dependency of the sessions emulator)
@@ -105,14 +114,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0 # the archive's version comes from git describe
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: Zig, which builds libghostty-vt
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
       - name: Build libghostty-vt (cgo dependency of the sessions emulator)
@@ -137,14 +146,14 @@ jobs:
     name: Desktop client (T-F2-30, REQ-DSK-001)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false # syso.sh --check runs a fetched tool
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: Zig, which builds libghostty-vt
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
       - name: Build libghostty-vt (cgo dependency of the client's emulator)
@@ -165,12 +174,12 @@ jobs:
         run: |
           go vet ./...
           go test -race ./...
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@"$GOVULNCHECK_VERSION"
           govulncheck ./...
       - name: golangci-lint the client's module (with gosec)
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8.0.0
         with:
-          version: v2.15.0
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
           install-mode: goinstall
           working-directory: cmd/umbral-desktop
           args: --config ../../.golangci.yml
@@ -188,14 +197,14 @@ jobs:
     name: Lint (Art. 1)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0 # gitleaks scans the history
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: Zig, which builds libghostty-vt
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
       - name: Build libghostty-vt (cgo dependency of the sessions emulator)
@@ -203,7 +212,7 @@ jobs:
       - run: echo "PKG_CONFIG_PATH=$HOME/.local/ghostty-vt/share/pkgconfig" >> "$GITHUB_ENV"
       - name: gofumpt
         run: |
-          go install mvdan.cc/gofumpt@latest
+          go install mvdan.cc/gofumpt@"$GOFUMPT_VERSION"
           unformatted="$(gofumpt -l .)"
           if [ -n "$unformatted" ]; then
             echo "not gofumpt-formatted:"; echo "$unformatted"; exit 1
@@ -211,18 +220,18 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: golangci-lint (with gosec)
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8.0.0
         with:
           # Built with the job's Go: a prebuilt binary from an older Go cannot read Go 1.27.2's
           # export data ("export data version 5 is greater than maximum supported version 4").
-          version: v2.15.0
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
           install-mode: goinstall
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@"$GOVULNCHECK_VERSION"
           govulncheck ./...
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -230,11 +239,11 @@ jobs:
     name: Architecture boundaries (Art. 3)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: ${{ env.GO_VERSION }}
-      - run: go install github.com/fe3dback/go-arch-lint@latest
+      - run: go install github.com/fe3dback/go-arch-lint@"$GO_ARCH_LINT_VERSION"
       - name: Check the Tech Design §5.2 rules
         run: go-arch-lint check
       - name: Prove the rules actually reject a violation
@@ -249,8 +258,8 @@ jobs:
     steps:
       # Test data is compared byte for byte; a checkout that turns LF into CRLF changes it.
       - run: git config --global core.autocrlf false
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: ${{ env.GO_VERSION }}
       # Every package that does not render a terminal, with the race detector, which needs cgo
@@ -270,7 +279,7 @@ jobs:
       # These steps run whatever the tests above said, so one run reports both.
       - name: Zig, which builds libghostty-vt
         if: success() || failure()
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
       - name: pkg-config, which cgo asks for libghostty-vt's flags
@@ -326,12 +335,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: Zig, which builds libghostty-vt
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
       - name: Build libghostty-vt (cgo dependency of the sessions emulator)

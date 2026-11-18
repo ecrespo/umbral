@@ -32,4 +32,6 @@ Target response times:
 
 ## Supported versions
 
-Pre-alpha: only the `main` branch.
+Pre-alpha, with no release yet. Fixes land on `develop`, which is the branch to test and to
+report against; `main` is updated from it when a phase closes and can be many commits behind.
+From release 0.1 on, the latest tagged release is supported as well.
