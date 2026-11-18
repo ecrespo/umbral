@@ -4,3 +4,9 @@
 # commit, which is already pushed, from failing the history scan.
 72df968b8303ee38810c8f19704e8cc77d528402:cmd/umb/mcp_test.go:generic-api-key:82
 72df968b8303ee38810c8f19704e8cc77d528402:cmd/umb/mcp_test.go:generic-api-key:84
+
+# A public key, not a secret: the project's rule-signing key as `rulesign keygen` prints it,
+# published on purpose beside the trust seed and in the README (T-HRD-01, runbook §4.1). The
+# private half never enters the repository. gitleaks 8.24's generic-api-key rule matches the
+# `public key:` line.
+f204cd4773425438413b96c76326bb3be655782b:internal/security/adapters/rules/trustseed/umbral-rules-2026a.pub:generic-api-key:1
