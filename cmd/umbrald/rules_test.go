@@ -101,7 +101,9 @@ func TestRuleRecoveryEndToEnd_REQ_SEC_016(t *testing.T) {
 	// rules_check on, towards a port nothing listens on: the manager is real, the network is not.
 	settings := config.Settings{RulesCheck: true, RulesURL: "https://127.0.0.1:1/rules.json"}
 	active := loadRules(logger, settingsPath)
-	manager, err := startRules(ctx, logger, db, settings, egress, func(s string) string { return active.Redact(s).Text }, active, events, nil)
+	// An empty seed: this test is about a trust store whose only key is the one the user adds,
+	// and the seed built into the binary carries the project's key since T-HRD-01.
+	manager, err := startRulesWithSeed(ctx, logger, db, settings, egress, func(s string) string { return active.Redact(s).Text }, active, events, nil, secdomain.Seed{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +177,7 @@ func TestRuleRecoveryEndToEnd_REQ_SEC_016(t *testing.T) {
 	cancel()
 	ctx2 := t.Context()
 	active2 := loadRules(logger, settingsPath)
-	again, err := startRules(ctx2, logger, db, settings, egress, func(s string) string { return active2.Redact(s).Text }, active2, events, nil)
+	again, err := startRulesWithSeed(ctx2, logger, db, settings, egress, func(s string) string { return active2.Redact(s).Text }, active2, events, nil, secdomain.Seed{})
 	if err != nil {
 		t.Fatal(err)
 	}

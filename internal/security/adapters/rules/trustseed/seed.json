@@ -1,5 +1,10 @@
 {
-  "keys": [],
+  "keys": [
+    {
+      "id": "key_01M7NYMYDJTK4FGC17YAJ1G6XG",
+      "public_key": "5VgCmAxM6LVzK5x9XACQnhG1DsXagzTUX+UVknms9co="
+    }
+  ],
   "retired": [],
   "revoked": []
 }

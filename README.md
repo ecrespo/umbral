@@ -155,6 +155,16 @@ python3 tools/sdd_check.py     # REQ → task coverage and schema validation
 node tools/mermaid_check.mjs   # validates Mermaid diagrams (run npm install --prefix tools first)
 ```
 
+## Rule-signing key
+
+Rule bundles that arrive over the network are verified against a public key built into the
+binary (Constitution Art. 5, [`docs/runbooks/rule-signing.md`](docs/runbooks/rule-signing.md)).
+The current key, `umbral-rules-2026a`, has the fingerprint:
+
+```
+SHA256:KDVQHGXp79RqucL/1XN2bweYM/CsTnGyLrzNYgDDH9c
+```
+
 ## License
 
 [Apache-2.0](LICENSE) © 2026 Ernesto Crespo

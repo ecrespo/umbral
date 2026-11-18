@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.92 |
-| **Date** | 2026-11-17 |
+| **Version** | 1.93 |
+| **Date** | 2026-11-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
 | **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
@@ -567,8 +567,9 @@ their own and attach every pane from a fresh snapshot (T-F2-42, §5.3h).
     `security-domain` only, so `verify` runs the daemon's own verification.
 - **Trust on a fresh install:**
   - The binary embeds the project's public keys, a `retired` list and a `revoked` list
-    (`internal/security/adapters/rules/trustseed/seed.json`, embedded; it ships empty until the
-    Tech Lead creates the project key offline, runbook §4.1), matched by fingerprint. `retired` only keeps a
+    (`internal/security/adapters/rules/trustseed/seed.json`, embedded; it carries the
+    project's key `umbral-rules-2026a` since T-HRD-01, each key created offline by the Tech Lead,
+    runbook §4.1), matched by fingerprint. `retired` only keeps a
     rotated-out key's `source` as `builtin`.
   - On start the daemon adds each seed key `trust_keys` lacks, and revokes each listed one not
     yet revoked.
@@ -2343,3 +2344,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.90 | 2026-10-31 | E. Crespo (assisted draft) | T-PKG-06, delta `2026-10-service-units`: §9.3 the `systemd --user` unit — shipped, not enabled, `KillMode=mixed`, its restart policy, the manager's environment and its verification; DD-014 a daemon under systemd refuses a live handoff |
 | 1.91 | 2026-10-31 | E. Crespo (assisted draft) | T-PKG-07, delta `2026-10-service-units`: §9.3 the tar.gz archives and the `launchd` agent plist (never restarted by launchd), and their verification |
 | 1.92 | 2026-11-17 | E. Crespo (assisted draft) | T-PKG-08, delta `2026-11-deb-libffi`: §9.3 the Debian package depends on `libffi8`, which `umbrald` opens at start and no binary links; its check, the smoke's first install of the package alone, and the Linux archive's `README` |
+| 1.93 | 2026-11-18 | E. Crespo (assisted draft) | T-HRD-01: DD-016 the embedded trust seed carries the project's key `umbral-rules-2026a` and no longer ships empty |
