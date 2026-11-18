@@ -59,6 +59,13 @@ for bin in umbrald umb umbral-tui; do
   [[ -x "$work/root/usr/bin/$bin" ]] || fail "usr/bin/$bin is missing or not executable"
 done
 
+# What the daemon opens at run time is in no binary's dynamic section: yzma's purego bindings
+# load libffi when umbrald starts, and without it the daemon panics before it listens.
+depends="$(dpkg-deb -f "$deb" Depends)"
+for pkg in libc6 libffi8; do
+  [[ ", $depends," =~ ,\ $pkg(\ \([^\)]*\))?, ]] || fail "Depends ($depends) does not name $pkg"
+done
+
 echo "deb: 3/5 the packaged .desktop file"
 desktop="$work/root/usr/share/applications/$ID.desktop"
 if ! command -v desktop-file-validate >/dev/null; then

@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.91 |
-| **Date** | 2026-10-31 |
+| **Version** | 1.92 |
+| **Date** | 2026-11-17 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
 | **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
@@ -2167,8 +2167,15 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   `packaging/deb/build.sh` with `dpkg-deb` from binaries already built. `umbrald`, `umb` and
   `umbral-tui` go in `/usr/bin`, the kit's eleven `hicolor` files and `.desktop` file in
   `/usr/share` as they are (REQ-PKG-006), and the licence in `/usr/share/doc/umbral/copyright`.
-  `Depends: libc6 (>= N)`, N the newest `GLIBC_` symbol version the binaries reference, since
-  libghostty-vt is static; `Recommends: git`. The version comes from `git describe`: only a
+  `Depends: libc6 (>= N), libffi8`: N is the newest `GLIBC_` symbol version the binaries
+  reference, libc being all they link since libghostty-vt is static; `libffi8` is linked by
+  none of them and opened by `umbrald` when it starts, through the purego bindings of the
+  embedded provider (§5.1), whether or not one is configured, and without it the daemon panics
+  before it listens (delta `2026-11-deb-libffi`). `packaging/deb/check.sh` refuses a package
+  whose `Depends` lacks either, and `smoke.sh` first installs the package alone, without its
+  `Recommends`, and starts the daemon before any other package is added. The Linux tar.gz
+  archive has no dependency metadata, so its `README` names the library. `Recommends: git`.
+  The version comes from `git describe`: only a
   `vMAJOR.MINOR.PATCH` tag is a release, a prerelease maps to `~`, commits after a tag to
   `+N.gHASH`, and an untagged build to `0.0.0+git.HASH`, below every release. `postinst` and
   `postrm` run `gtk-update-icon-cache` and `update-desktop-database` where they exist. Modes and
@@ -2212,7 +2219,7 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   would pass a source edit committed together with its new checksum. The package is verified
   by the `deb` CI job and `task deb`/`task deb:smoke`: `packaging/deb/check.sh` compares what
   `dpkg -c` lists with the kit and the unit with `packaging/systemd`, runs `systemd-analyze
-  verify` and refuses an enabled unit; its selftest proves it rejects seven broken packages and
+  verify` and refuses an enabled unit; its selftest proves it rejects eight broken packages and
   checks the version ordering; `smoke.sh` installs and uses it in a clean Ubuntu 26.04
   container, and `smoke_systemd.sh` boots one with systemd, where a lingering user's
   `systemctl --user start umbrald` serves `umb status --no-autostart` and opens a pane whose
@@ -2335,3 +2342,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.89 | 2026-10-31 | E. Crespo (assisted draft) | T-HRD-12, no delta (PRD F2 0.9 REQ-ACP-007 already says it): §5.3e, §5.3f and §9.4 — the disclosure adds that a hosted agent can read the repository's main copy and every other thread's worktree |
 | 1.90 | 2026-10-31 | E. Crespo (assisted draft) | T-PKG-06, delta `2026-10-service-units`: §9.3 the `systemd --user` unit — shipped, not enabled, `KillMode=mixed`, its restart policy, the manager's environment and its verification; DD-014 a daemon under systemd refuses a live handoff |
 | 1.91 | 2026-10-31 | E. Crespo (assisted draft) | T-PKG-07, delta `2026-10-service-units`: §9.3 the tar.gz archives and the `launchd` agent plist (never restarted by launchd), and their verification |
+| 1.92 | 2026-11-17 | E. Crespo (assisted draft) | T-PKG-08, delta `2026-11-deb-libffi`: §9.3 the Debian package depends on `libffi8`, which `umbrald` opens at start and no binary links; its check, the smoke's first install of the package alone, and the Linux archive's `README` |

@@ -6,7 +6,8 @@
 # A checker that passes everything passes silently, so each case below rebuilds the good
 # package with one defect and asserts check.sh fails on it: a missing icon, an icon that is
 # not the kit's, a .desktop entry naming another icon, a postinst that refreshes nothing, a
-# missing or altered systemd --user unit and a postinst that enables it;
+# missing or altered systemd --user unit, a postinst that enables it and a Depends without
+# libffi8;
 # and the versions build.sh writes must sort as releases do.
 set -euo pipefail
 
@@ -39,6 +40,7 @@ mutant "a .desktop naming another icon" "sed -i 's/^Icon=.*/Icon=utilities-termi
 mutant "a postinst that refreshes nothing" "sed -i '/gtk-update-icon-cache/d' DEBIAN/postinst"
 mutant "no systemd --user unit" "rm usr/lib/systemd/user/umbrald.service"
 mutant "a unit running another binary" "sed -i 's|^ExecStart=.*|ExecStart=/usr/bin/umb status|' usr/lib/systemd/user/umbrald.service"
+mutant "no dependency on libffi8" "sed -i -E 's/^(Depends:.*), libffi8.*/\\1/' DEBIAN/control"
 mutant "a postinst that enables the unit" "echo 'systemctl --global enable umbrald.service' >> DEBIAN/postinst"
 
 # The version scheme: each pair must sort as a release would, the untagged hash that starts
