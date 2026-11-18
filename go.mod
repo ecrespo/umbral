@@ -1,6 +1,6 @@
 module github.com/ecrespo/umbral
 
-go 1.27.3
+go 1.27.4
 
 require (
 	charm.land/bubbletea/v2 v2.0.9
@@ -11,7 +11,7 @@ require (
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/creack/pty v1.1.24
 	github.com/hybridgroup/yzma v1.30.0
-	github.com/klauspost/compress v1.20.0
+	github.com/klauspost/compress v1.20.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/pelletier/go-toml/v2 v2.4.3

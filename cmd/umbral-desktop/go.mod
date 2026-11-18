@@ -1,6 +1,6 @@
 module github.com/ecrespo/umbral/cmd/umbral-desktop
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/ecrespo/umbral v0.0.0
