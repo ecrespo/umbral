@@ -155,9 +155,11 @@ tasks:
 
   # --- specifications ---------------------------------------------------------
   specs:
-    desc: 'Art. 9 gate: REQ coverage, DDL executability and Mermaid diagrams'
+    desc: 'Art. 9 gate: REQ coverage, DDL executability and Mermaid diagrams; and Art. 1: the gate''s tools and actions are pinned'
     cmds:
       - ./scripts/tool_versions_check.sh
+      # The sibling of arch:selftest: a pin check that accepts everything passes silently.
+      - ./scripts/tool_versions_selftest.sh
       - python3 tools/sdd_check.py
       - test -d tools/node_modules || npm install --prefix tools
       - node tools/mermaid_check.mjs

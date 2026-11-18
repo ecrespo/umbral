@@ -15,7 +15,8 @@ env:
   GO_VERSION: '1.27'
   # The gate's Go tools, pinned: an unpinned `@latest` runs whatever was published last.
   # Taskfile.yml's tools:install carries the same versions; scripts/tool_versions_check.sh
-  # fails the specs job when the two differ.
+  # fails the specs job when the two differ, when a step writes a version of its own, or
+  # when an action is not referenced by commit SHA.
   GOFUMPT_VERSION: v0.12.0
   GOVULNCHECK_VERSION: v1.10.0
   GOLANGCI_LINT_VERSION: v2.15.0
@@ -43,8 +44,10 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-      - name: The gate's tools are pinned, and to the same versions as the Taskfile
+      - name: The gate's tools and actions are pinned, the tools to the Taskfile's versions
         run: ./scripts/tool_versions_check.sh
+      - name: Prove that check rejects an unpinned tool or action
+        run: ./scripts/tool_versions_selftest.sh
       - name: REQ coverage, matrices and DDL executability
         run: python3 tools/sdd_check.py
       - name: Protocol schema against the API Specification (REQ-API-004)
