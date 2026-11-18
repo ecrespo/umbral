@@ -1,7 +1,9 @@
 // Package trustseed is the trust store's seed built into the binary (DD-016): the project's
 // current public keys with the ids every install gives them, the fingerprints of retired keys
-// and those of revoked ones. It ships empty until the Tech Lead creates the project key
-// offline and adds it by pull request (docs/runbooks/rule-signing.md §4.1).
+// and those of revoked ones. The Tech Lead creates each project key offline and adds it by
+// pull request (docs/runbooks/rule-signing.md §4.1); umbral-rules-<label>.pub beside this file
+// is what `rulesign keygen` printed for the key of that label. The first, 2026a, was added on
+// 2026-11-17 (T-HRD-01).
 package trustseed
 
 import (

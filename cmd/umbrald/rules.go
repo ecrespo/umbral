@@ -38,11 +38,20 @@ func loadRules(logger *slog.Logger, settingsPath string) *rules.Active {
 func startRules(ctx context.Context, logger *slog.Logger, db *store.Store, settings config.Settings, egress llmports.EgressLog,
 	redact func(string) string, active *rules.Active, events *bus.Bus, metrics security.RuleMetrics,
 ) (*security.Rules, error) {
-	logger = logger.With(slog.String("module", "rules"))
 	seed, err := trustseed.Load()
 	if err != nil {
 		return nil, err
 	}
+	return startRulesWithSeed(ctx, logger, db, settings, egress, redact, active, events, metrics, seed)
+}
+
+// startRulesWithSeed is startRules over a given trust seed. The daemon always passes the one
+// built into the binary; a test of a trust store that starts with no key passes an empty one,
+// since the embedded seed carries the project's key (T-HRD-01).
+func startRulesWithSeed(ctx context.Context, logger *slog.Logger, db *store.Store, settings config.Settings, egress llmports.EgressLog,
+	redact func(string) string, active *rules.Active, events *bus.Bus, metrics security.RuleMetrics, seed secdomain.Seed,
+) (*security.Rules, error) {
+	logger = logger.With(slog.String("module", "rules"))
 	var host string
 	if u, err := url.Parse(settings.RulesURL); err == nil {
 		host = u.Host
