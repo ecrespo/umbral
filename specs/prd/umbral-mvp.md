@@ -6,10 +6,10 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.23 |
+| **Version** | 1.24 |
 | **Date** | 2026-09-11 |
 | **Reviewers** | pending |
-| **Last updated** | 2026-10-23 |
+| **Last updated** | 2026-11-18 |
 | **Source** | `docs/ARCHITECTURE.md` v0.1 |
 
 ---
@@ -302,12 +302,14 @@ Format: **ID** · priority · EARS pattern — criterion. Every MUST has a task 
 
 Folded from `changes/_archive/2026-09-visual-identity/`. REQ-PKG-004, REQ-PKG-005, REQ-PKG-007
 and REQ-PKG-008 depend on the desktop client or on a release channel this MVP does not have, and
-live in `specs/prd/umbral-f2.md` §6.8 (finding A-12); their IDs stay reserved here.
+live in `specs/prd/umbral-f2.md` §6.8 (finding A-12); their IDs stay reserved here. REQ-PKG-009
+is from delta `2026-11-signed-releases`.
 
 - **REQ-PKG-001** · MUST · ubiquitous — THE SYSTEM SHALL install its icon in the `hicolor` theme with the name `io.github.ecrespo.Umbral`, in `scalable/apps` (SVG) and as PNG at 16, 22, 24, 32, 48, 64, 128, 256 and 512 px, plus `symbolic/apps/io.github.ecrespo.Umbral-symbolic.svg`.
 - **REQ-PKG-002** · MUST · ubiquitous — THE SYSTEM SHALL install `io.github.ecrespo.Umbral.desktop` with `Icon=io.github.ecrespo.Umbral` and `StartupWMClass=io.github.ecrespo.Umbral`, and that file SHALL pass `desktop-file-validate` without errors.
 - **REQ-PKG-003** · MUST · optional — WHERE only the TUI is distributed (release 0.1), the `.desktop` file SHALL use `Exec=umbral-tui` with `Terminal=true`.
 - **REQ-PKG-006** · MUST · unwanted — IF a build pipeline tries to regenerate `icon.ico` or `icons.icns` from a single PNG, THEN the build SHALL use the kit's files and fail if their SHA-256 differ from `assets/branding/umbral-icons/CHECKSUMS.sha256`.
+- **REQ-PKG-009** · MUST · event — WHEN a release is tagged, THE SYSTEM's pipeline SHALL publish each package with a SHA-256 checksum, a Sigstore build-provenance attestation bound to the workflow and the tag, and a CycloneDX SBOM of the module graph.
 
 ### 6.15 Observability (OBS)
 
@@ -500,6 +502,7 @@ TUI as text:
 | 1.21 | 2026-10-22 | E. Crespo (assisted draft) | Ratifies delta `2026-10-cli-thread-wait` (T-F1-38): REQ-CLI-009, `umb thread` over `thread.create`, `send`, `wait`, `get` and `cancel` |
 | 1.22 | 2026-10-23 | E. Crespo (assisted draft) | Ratifies delta `2026-10-slow-client-queue` (T-HRD-04): REQ-API-006, a client that stops reading holds up no other and is closed past the queue limit |
 | 1.23 | 2026-10-24 | E. Crespo (assisted draft) | Delta `2026-10-shell-parser` (T-HRD-06): REQ-SEC-005 counts a command line the system cannot read statically as matching the destructive list |
+| 1.24 | 2026-11-18 | E. Crespo (assisted draft) | Ratifies delta `2026-11-signed-releases` (T-REL-03): REQ-PKG-009, a tagged release publishes each package with a checksum, a Sigstore attestation and an SBOM |
 
 ## Approvals
 

@@ -1,8 +1,9 @@
 # Release: what a `v*` tag builds, checks, signs and leaves as a DRAFT GitHub release.
 #
-# Proposed by delta `2026-11-signed-releases` and NOT RUN YET: no tag has been pushed since it
-# was written. The first run is the test; the release it leaves is a draft, so nothing is
-# published until the Tech Lead looks at it and presses the button.
+# Decision 4 of delta `2026-11-signed-releases` (ratified 2026-11-18, REQ-PKG-009). NOT RUN
+# YET: no tag has been pushed since it was written. The first run is the test (T-REL-03); the
+# release it leaves is a draft, so nothing is published until the Tech Lead looks at it and
+# presses the button.
 #
 # What a tag gets:
 #   - the .deb and the Linux and macOS tar.gz, built and checked exactly as the CI workflow's
