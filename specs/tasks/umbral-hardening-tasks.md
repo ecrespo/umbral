@@ -292,9 +292,9 @@ its matrix lists commands.
 - **Done:** `TestASlowClientHoldsUpNoOtherClient_REQ_API_006` red before the change and green
   after, over 20 runs at `-cpu 1,2,4`; removing the close on overflow reddens it; `task ci` green.
 
-### [ ] T-HRD-13 · Five tests that fail on a CI runner and pass on a rerun
-- **What:** five tests failed on the runners on 2026-11-18, on code that did not touch them,
-  and no cause is known for three of them. Each is reproduced before it is changed, and a fix
+### [ ] T-HRD-13 · Tests that fail on a CI runner and pass on a rerun
+- **What:** eight tests failed on the runners on 2026-11-18, on code that did not touch them,
+  and a cause is suspected for two of them only (`REQ_AUT_004`, `REQ_RMT_001`). Each is reproduced before it is changed, and a fix
   that only raises a timeout or adds a retry is not one.
   - `TestAnACPAgentCrashEndsTheTurn_REQ_ACP_006` (`ubuntu-latest`, run 44210237570): after the
     agent's crash the next prompt answers `acp: the agent failed: its process exited` instead
@@ -314,10 +314,19 @@ its matrix lists commands.
     `connected` and the test asks for `connecting` (`manager_test.go:166`). The first sighting.
     The fake tunnel answers at once, so the link can finish before `Add` reads the state;
     whether `Add` may answer `connected` is the question.
-- **REQ:** REQ-ACP-006, REQ-ACP-009, REQ-FTU-003, REQ-AUT-004, REQ-RMT-001; Art. 2 (a test that fails without
+  - `TestADroppedRemoteLinkComesBackAndItsPanesResume_REQ_RMT_002` (`ubuntu-latest`, the rerun
+    of the same job): "no nas disconnected" after 121 s (`remote_test.go:381`). Seen before on
+    T-F2-60's pull request.
+  - `TestACancelKillsTheACPTerminalsFirst_REQ_ACP_008` and
+    `TestATerminalStartedDuringACancelIsKilled_REQ_ACP_008` (`macos-latest`, run 44408940798, on
+    this task's own pull request, which changes this file only): the fake agent's process
+    exits with status 2 (`host_test.go:896`, `:957`), as in `REQ_ACP_009` above. One cause
+    for the three is the first thing to look for.
+- **REQ:** REQ-ACP-006, REQ-ACP-008, REQ-ACP-009, REQ-FTU-003, REQ-AUT-004, REQ-RMT-001,
+  REQ-RMT-002; Art. 2 (a test that fails without
   a defect hides the run that fails with one)
 - **Files:** `internal/acp/adapters/sdk/**`, `internal/sessions/integration/interact_test.go`
-  and what it drives, `internal/waits/**`, `internal/remote/**`
+  and what it drives, `internal/waits/**`, `internal/remote/**`, `cmd/umbrald/remote_test.go`
 - **Depends on:** —
 - **Done:** each failure reproduced, on the runner's OS or by narrowing the schedule locally;
   its cause named in the execution log; the test green over 50 runs at `-cpu 1,2,4` on that OS;
@@ -341,7 +350,7 @@ its matrix lists commands.
 | REQ-ACP-009, REQ-ACP-007 | T-HRD-11, T-HRD-12 | `TestTheManifestsFixedVariablesReachTheAgent_REQ_ACP_009`, `TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009`; `TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007`, `TestAgentPanelSaysAHostedThreadIsUnobserved_REQ_ACP_007` |
 | REQ-AGT-018, REQ-API-005, REQ-API-004, REQ-CLI-001 | T-HRD-03 | TestFetchUrlFollowsFiveRedirects_REQ_AGT_018; TestAPlainCutMatchesTheEncoder_REQ_API_005, TestAPlainCutEncodesAFewTimes_REQ_API_005 and the macOS job over repeated runs; `task schema`; TestAnUnboundedStreamKeepsEveryNotification_REQ_CLI_001 |
 | REQ-API-006 | T-HRD-04 | TestASlowClientHoldsUpNoOtherClient_REQ_API_006, TestASlowClientIsClosedNotTrimmed_REQ_API_006 |
-| REQ-ACP-006, REQ-ACP-009, REQ-FTU-003, REQ-AUT-004, REQ-RMT-001 (the tests' own reliability) | T-HRD-13 | TestAnACPAgentCrashEndsTheTurn_REQ_ACP_006, TestTheUsersGlobalAgentConfigIsNotRead_REQ_ACP_009, TestAProgramsUnenteredInputNeverJoinsTheNextLine_REQ_FTU_003, TestATimeoutCarriesTheLastState_REQ_AUT_004, TestAnAddedHostIsLinkedThroughItsForwardedSocket_REQ_RMT_001, each over 50 runs at `-cpu 1,2,4` on the OS it failed on |
+| REQ-ACP-006, REQ-ACP-008, REQ-ACP-009, REQ-FTU-003, REQ-AUT-004, REQ-RMT-001, REQ-RMT-002 (the tests' own reliability) | T-HRD-13 | TestAnACPAgentCrashEndsTheTurn_REQ_ACP_006, TestTheUsersGlobalAgentConfigIsNotRead_REQ_ACP_009, TestAProgramsUnenteredInputNeverJoinsTheNextLine_REQ_FTU_003, TestATimeoutCarriesTheLastState_REQ_AUT_004, TestAnAddedHostIsLinkedThroughItsForwardedSocket_REQ_RMT_001, TestADroppedRemoteLinkComesBackAndItsPanesResume_REQ_RMT_002, TestACancelKillsTheACPTerminalsFirst_REQ_ACP_008, TestATerminalStartedDuringACancelIsKilled_REQ_ACP_008, each over 50 runs at `-cpu 1,2,4` on the OS it failed on |
 
 ## Execution log
 
@@ -368,4 +377,4 @@ its matrix lists commands.
 | 2026-10-31 | T-PKG-06 | done | Tech 1.90 §9.3 and DD-014, delta `2026-10-service-units`. Spec-guardian found that a live handoff under the unit would kill the adopted shells when the unit stopped: a daemon systemd runs as its unit (`SYSTEMD_EXEC_PID` equal to its pid, not `INVOCATION_ID`, which a terminal under any unit passes on and which failed every handoff test on the first `task ci`) now refuses at `hello` (`TestAHandoffUnderAServiceManagerIsRefused_REQ_HND_002`, red without the check), the unit stops with `KillMode=mixed` and does not retry exits 64, 65, 75 and 78, and the smoke opens a pane, is refused a takeover and finds the unit's cgroup empty after the stop. Before that: `check.sh` was red first (the unit missing from the package); its selftest rejects a package without the unit, one running another binary and one whose postinst enables it. `smoke_systemd.sh` boots `ubuntu:26.04` with systemd as init in a privileged container sharing the host's cgroups; as a lingering user the unit is `disabled`, `systemctl --user start` serves `umb status --no-autostart`, one `umbrald` runs, and a stop leaves none. A package whose unit runs `sleep` instead fails it (no token). The package is mounted under `/srv`, since systemd mounts a tmpfs over `/tmp`. |
 | 2026-10-31 | T-PKG-07 | done | Tech 1.91 §9.3, delta `2026-10-service-units`. After spec-guardian's review: the plist is never restarted by launchd, so an exit 75 or 78 cannot respawn every 10 s; `check.sh` fails a binary that does not print the archive's version and an archive with `._*` entries, with four more mutants (a failing `umbrald`, a silent `umb`, an `umbral-tui` of another version, an AppleDouble file); bsdtar writes without xattrs or AppleDouble entries, and BSD `touch -t` is given UTC. The `archives` job ran green on `ubuntu-latest` and `macos-latest`, `plutil -lint` included, on the commit before these fixes; the PR's run checks them. Before that: `build.sh` packs `umbral-<version>-<os>-<arch>.tar.gz`; `check.sh` runs each binary's version on its own OS and compares the Linux `share/` with the kit and the macOS plist with `packaging/launchd/`. The selftest builds the other OS's layout from the same binaries and rejects eight broken archives: a binary missing or not executable, an icon missing, a `.desktop` edited, a plist on Linux, none on macOS, a plist running another path, no `LICENSE`. Built and checked locally on Linux. |
 | 2026-11-18 | T-PKG-08 | done | Tech 1.92 §9.3, delta `2026-11-deb-libffi`. CI's `deb` job failed on pull requests #78, #79 and #80: `umbrald` panicked at start with `libffi.so.8: cannot open shared object file`, because yzma's purego bindings open the library and no binary links it, so `Depends` derived from the binaries never named it and `smoke.sh` installed the package beside others that brought it in. `Depends` now names `libffi8`; `check.sh` refuses a package without it, with a mutant in its selftest; `smoke.sh` installs the package alone first, which rejected the old `.deb`; the Linux archive's `README` names the library. `task deb:smoke` (both container smokes) and `task tar` pass on the rebuilt package. |
-| 2026-11-18 | T-HRD-13 | added | Five tests failed on the runners while pull requests #79, #80 and #81 were checked, none on code those requests changed: `REQ_RMT_001` on Linux on #81, `REQ_ACP_006` on Linux, `REQ_ACP_009` and `REQ_FTU_003` on macOS (run 44210237570) and `REQ_AUT_004` on Windows (run 44213787204). Three had been seen once before and passed on a rerun, which is how they stayed open. No cause is known yet; the task asks for one before any change. |
+| 2026-11-18 | T-HRD-13 | added | Eight tests failed on the runners while pull requests #79 to #82 were checked, none on code those requests changed: `REQ_RMT_001` and, on its rerun, `REQ_RMT_002` on Linux on #81, two `REQ_ACP_008` tests on macOS on #82, `REQ_ACP_006` on Linux, `REQ_ACP_009` and `REQ_FTU_003` on macOS (run 44210237570) and `REQ_AUT_004` on Windows (run 44213787204). Three had been seen once before and passed on a rerun, which is how they stayed open. No cause is known yet; the task asks for one before any change. |
