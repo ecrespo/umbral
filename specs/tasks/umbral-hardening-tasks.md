@@ -114,6 +114,26 @@ its matrix lists commands.
 - **Done:** every step of `docs/qa/f1-tui.md` walked on a real daemon with no step failing, and
   the walk recorded in the file. Release 0.1 does not ship without it.
 
+### [ ] T-REL-03 · The release workflow's first run
+- **What:** `.github/workflows/release.yml` has never run (delta `2026-11-signed-releases`,
+  decision 4). Push a pre-release tag, `v0.1.0-rc.1`, from `develop`; read the draft release
+  it leaves; check one download. What the run breaks is fixed here. The workflow publishes
+  and never checks what it made, so this task also adds a step, before the release is
+  created, that runs `sha256sum -c SHA256SUMS` and verifies each package's two attestations;
+  without it nothing reddens if an attestation step is removed later.
+  Whether this task gates release 0.1, as T-REL-01 and T-REL-02 do, the delta does not say:
+  it is the Tech Lead's to decide.
+- **REQ:** REQ-PKG-009
+- **Files:** `.github/workflows/release.yml`
+- **Depends on:** T-PKG-03, T-PKG-07, T-PKG-08. The delta's Q2: attestations on a private
+  repository need a paid plan.
+- **Done:** the draft release of `v0.1.0-rc.1` holds the `.deb`, both tar.gz archives,
+  `SHA256SUMS` and the SBOM; `sha256sum -c SHA256SUMS` passes on a download;
+  `gh attestation verify <file> --repo ecrespo/umbral` accepts its build provenance, bound to
+  the workflow and the tag, and its SBOM attestation; the workflow's own verification step
+  fails a run whose attestation step was removed; a tag on a commit that is on neither
+  `develop` nor `main` is refused. The tag is pushed by the Tech Lead.
+
 ### [~] T-HRD-01 · The project's rule-signing key
 - **What:** the Tech Lead creates the project's signing key under
   `docs/runbooks/rule-signing.md` §4.1, and its fingerprint becomes the trust seed T-F1-30
@@ -332,6 +352,60 @@ its matrix lists commands.
   its cause named in the execution log; the test green over 50 runs at `-cpu 1,2,4` on that OS;
   and for each, whether the defect was in the product or in the test.
 
+### [ ] T-HRD-14 · Spike: OpenCode and a `full-auto` shell under Landlock
+- **What:** measure what the profile of delta `2026-11-agent-sandbox` decision 5 breaks, on
+  Ubuntu 26.04: the agent's start, `go build`, `npm install`, a `git commit` in the worktree,
+  and the user's shell with bash, zsh and fish under oh-my-zsh and starship. No product code.
+- **REQ:** Art. 5 (`full-auto` "SHALL only run inside a sandbox or a disposable worktree")
+- **Files:** `docs/spikes/2026-11-landlock.md`
+- **Depends on:** —
+- **Done:** the spike's report says what each profile entry broke and what it took to run,
+  and gives the measurements the delta's Q1 (the network profile) and Q3 (the user's shell)
+  need. The answers are the Tech Lead's.
+
+### [ ] T-HRD-15 · The `sandbox` port and the Linux adapter; hosted agents confined
+- **What:** the delta's decisions 1, 2, 5 and 7: a `sandbox` port wired in `cmd/umbrald`, a
+  Landlock adapter applied by a re-exec helper, every hosted ACP agent confined, and a
+  degraded mode reported in `system.status` where Landlock is unavailable. It starts with a
+  delta of its own, approved before any code: the `SBX` requirements, the amendments to
+  REQ-ACP-007 and REQ-ACP-009, `system.status`'s degraded mode and `[sandbox] write`.
+- **REQ:** Art. 5, Art. 3 (the module's `.go-arch-lint.yml` rules before its code); the `SBX`
+  requirements this task writes
+- **Files:** a new `internal/sandbox/**`, `.go-arch-lint.yml`, `internal/acp/**`,
+  `internal/api/**`, `internal/config/**`, `cmd/umbrald/**`, `specs/prd/umbral-f2.md`,
+  `specs/api/umbral-daemon-api-v1.md`, `specs/technical/umbral-architecture.md`
+- **Depends on:** T-HRD-14; the Tech Lead's answers to the delta's Q1 and Q3, and to Q4 (an
+  opt-out) as far as hosted agents go
+- **Done:** a hosted agent that writes outside its profile, or reads another thread's
+  worktree or Umbral's data directory, is refused by the kernel, with a test per rule that
+  reddens when the rule is removed; without Landlock the daemon says so and the thread's
+  disclosure says the agent is unconfined.
+
+### [ ] T-HRD-16 · The macOS sandbox adapter
+- **What:** the delta's decision 3: `sandbox-exec` with a generated profile behind the same
+  port.
+- **REQ:** Art. 5; the `SBX` requirements T-HRD-15 writes
+- **Files:** `internal/sandbox/**`
+- **Depends on:** T-HRD-15
+- **Done:** T-HRD-15's tests pass on `macos-latest` through this adapter.
+
+### [ ] T-HRD-17 · `full-auto` shells confined; `egress_visibility = confined`; the disclosures
+- **What:** the delta's decisions 6 and 8: an Umbral thread's own shell is confined while the
+  thread is in `full-auto`, a hosted thread whose network profile the kernel enforces reports
+  `confined`, and the disclosures say which threads are confined. The amendment to
+  REQ-ORC-004 and the new `egress_visibility` value go through a delta before any code, T-HRD-15's
+  or one of its own; the value needs a forward-only migration, since migration 0007's `CHECK`
+  names `observed` and `unobserved` only (Art. 6).
+- **REQ:** Art. 5, Art. 4; the `SBX` requirements T-HRD-15 writes; REQ-ORC-004
+- **Files:** `internal/sessions/**`, `internal/agents/**`, `internal/acp/**`,
+  `internal/api/**`, `internal/store/migrations/**`, `cmd/umb/**`, `specs/prd/umbral-f2.md`,
+  `specs/api/umbral-daemon-api-v1.md`, `specs/data-model/umbral-schema.md`
+- **Depends on:** T-HRD-15; the delta's Q2 (`full-auto` without a sandbox) and Q4 (an
+  opt-out) are answered by the Tech Lead before it starts.
+- **Done:** a `full-auto` command that writes outside its worktree is refused by the kernel
+  and not by the policy's reading of the line; a thread in `ask`, `normal` or `auto-edit` is
+  not confined.
+
 ## Traceability matrix (hardening)
 
 | REQ | Tasks | Verification |
@@ -340,6 +414,7 @@ its matrix lists commands.
 | REQ-PKG-002 | T-PKG-02, T-PKG-03, T-PKG-07 | `desktop-file-validate`, on the kit's file and on the packaged one; the Linux archive's `.desktop` compared byte for byte with the kit's by `packaging/tar/check.sh` |
 | REQ-PKG-003 | T-PKG-02, T-PKG-03 | `.desktop` review in CI; `packaging/deb/check.sh` step 3 on the packaged file |
 | REQ-PKG-006 | T-PKG-01 | the `icons` job regenerates the kit with `build.py` and compares byte for byte, rendered images pixel for pixel within two levels (delta `2026-10-icons-render-tolerance`); checksums alone would pass a source edit committed with its new checksum |
+| REQ-PKG-009 | T-REL-03 | the release workflow's own verification step (`sha256sum -c SHA256SUMS`, both attestations of each package), added by T-REL-03; and its first tagged run, checked by hand on a download |
 | REQ-TUI-001, 002, 003, 004 | T-REL-02 (walk) | `docs/qa/f1-tui.md`; the harness tests are F1's |
 | REQ-SEC-011, REQ-SEC-013 | T-HRD-01 (the key) | TestTheEmbeddedSeedCarriesTheProjectKey_REQ_SEC_011 (the seed, its `.pub` file and the README agree); at the close, a bundle signed with the project key accepted, any other refused |
 | REQ-SEC-005, REQ-SKL-005, REQ-CLI-008 | T-HRD-02 (decisions) | per decision |
@@ -379,3 +454,4 @@ its matrix lists commands.
 | 2026-11-17 | T-HRD-01 | `[~]` seeded, Done check pending | The Tech Lead created key `umbral-rules-2026a` offline under `docs/runbooks/rule-signing.md` §4.1 and restored it once from each drive (sign and `rulesign verify` of a scratch bundle). `trustseed/seed.json` carries it as `key_01M7NYMYDJTK4FGC17YAJ1G6XG`, fingerprint `SHA256:KDVQHGXp79RqucL/1XN2bweYM/CsTnGyLrzNYgDDH9c`, also in the README; the fingerprint was recomputed from the public key's 32 bytes. `TestTheEmbeddedSeedCarriesTheProjectKey_REQ_SEC_011` holds the seed, the `.pub` file beside it and the README together: an emptied seed, another key or another fingerprint reddens it. `TestRuleRecoveryEndToEnd_REQ_SEC_016` asks for a trust store that starts with no key, so `startRulesWithSeed` takes the seed and that test passes an empty one. Tech 1.93 DD-016 no longer says the seed ships empty. `task ci` green on the seeded tree on 2026-11-18. Not done yet: the task's Done line — a bundle signed with the key and served locally accepted by a daemon built with the seed, one signed with another key refused and recorded in `egress_log`. |
 | 2026-11-18 | T-PKG-08 | done | Tech 1.92 §9.3, delta `2026-11-deb-libffi`. CI's `deb` job failed on pull requests #78, #79 and #80: `umbrald` panicked at start with `libffi.so.8: cannot open shared object file`, because yzma's purego bindings open the library and no binary links it, so `Depends` derived from the binaries never named it and `smoke.sh` installed the package beside others that brought it in. `Depends` now names `libffi8`; `check.sh` refuses a package without it, with a mutant in its selftest; `smoke.sh` installs the package alone first, which rejected the old `.deb`; the Linux archive's `README` names the library. `task deb:smoke` (both container smokes) and `task tar` pass on the rebuilt package. |
 | 2026-11-18 | T-HRD-13 | added | Eight tests failed on the runners while pull requests #79 to #82 were checked, none on code those requests changed: `REQ_RMT_001` and, on its rerun, `REQ_RMT_002` on Linux on #81, two `REQ_ACP_008` tests on macOS on #82, `REQ_ACP_006` on Linux, `REQ_ACP_009` and `REQ_FTU_003` on macOS (run 44210237570) and `REQ_AUT_004` on Windows (run 44213787204). Three had been seen once before and passed on a rerun, which is how they stayed open. No cause is known yet; the task asks for one before any change. |
+| 2026-11-18 | T-REL-03, T-HRD-14, T-HRD-15, T-HRD-16, T-HRD-17 | added | The Tech Lead ratified deltas `2026-11-signed-releases` and `2026-11-agent-sandbox` as written. The first adds REQ-PKG-009 (PRD 1.24, Tech 1.94 §9.3) and T-REL-03, the release workflow's first run, which has not happened. The second adds the sandbox's four tasks; its `SBX` requirements are not written yet, because the profile depends on what the spike (T-HRD-14) measures, and T-HRD-15 writes them before its code. Both deltas' open questions stay open with their recommendations, and one more is open for the Tech Lead: neither delta says whether T-REL-03 or the sandbox tasks gate release 0.1, and the plan's hardening section has not been updated for them. |

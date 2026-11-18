@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED 2026-11-17`, from the repository review of that date (`docs/checkpoints/2026-11-17-repo-review.md`, findings 4 and 9); **not approved** — a proposal for the Tech Lead to ratify, amend or refuse. Nothing here is implemented |
+| **Status** | `RATIFIED 2026-11-18 by the Tech Lead ("Si, ratifico el PR 85, ratifico el 84." — PR #84 carried this delta — and, asked whether that covered the deltas themselves, "Si, cubre también los deltas.")`, as written, and archived. Nothing is implemented. Q1 to Q4 stay open with their recommendations; the spike (T-HRD-14) measures what Q1 and Q3 need, and the Tech Lead answers them before any product code |
 | **Date** | 2026-11-17 |
-| **Tasks** | proposed: T-HRD-14 (spike), T-HRD-15, T-HRD-16, T-HRD-17, renumbered on 2026-11-18: T-HRD-13 was taken that day by the tests that fail on a runner |
-| **REQ** | would amend REQ-ACP-007, REQ-ACP-009 and REQ-ORC-004 and add requirements under a new `SBX` prefix; none is written in the `**REQ-…** · MUST` form here, so `tools/sdd_check.py` counts nothing before ratification |
-| **Folded into** | nothing yet |
+| **Tasks** | T-HRD-14 (spike), T-HRD-15, T-HRD-16, T-HRD-17 (renumbered on 2026-11-18: T-HRD-13 was taken that day by the tests that fail on a runner) |
+| **REQ** | will amend REQ-ACP-007, REQ-ACP-009 and REQ-ORC-004 and add requirements under a new `SBX` prefix. None is written yet: the profile they state depends on what the spike measures, so T-HRD-15 writes them in the `**REQ-…** · MUST` form before its code (in a delta of its own: a step added when this one was archived) |
+| **Folded into** | `specs/tasks/umbral-hardening-tasks.md` (T-HRD-14 … 17); no PRD, API or Tech Design text yet |
 
 ## Evidence
 

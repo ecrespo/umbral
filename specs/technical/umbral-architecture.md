@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.93 |
+| **Version** | 1.94 |
 | **Date** | 2026-11-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -991,7 +991,9 @@ allows it as in `normal`.
   matching the thread's. The thread's PTY keeps its shell between commands, so a line that ran
   `cd` elsewhere leaves the next one starting there; and any line can `cd` out or write outside
   through a path of its own. The policy cannot see either: the worktree is Art. 5's disposable
-  boundary for what `full-auto` allows, not a sandbox.
+  boundary for what `full-auto` allows, not a sandbox. A sandbox around hosted agents and
+  `full-auto` shells is ratified as a design (delta `2026-11-agent-sandbox`, T-HRD-14 … 17) and
+  not built: its requirements are written by T-HRD-15, after the spike.
 - **An agent's terminal cannot land its own work.** The destructive pattern `umb_worktree_change`
   is a textual barrier: a renamed binary, or a launcher the normaliser does not know, escapes it. So `internal/api` reads the connecting
   process from the kernel (`SO_PEERCRED`, `LOCAL_PEERPID`) and refuses a client inside an agent's
@@ -2232,6 +2234,13 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   `packaging/launchd/`'s and passing `plutil -lint` — and its selftest, which builds the other
   OS's layout from the same binaries and proves twelve broken archives are rejected; CI's
   `archives` job runs both on `ubuntu-latest` and `macos-latest` and lints the plist.
+  A `v*` tag starts `.github/workflows/release.yml` (REQ-PKG-009, delta `2026-11-signed-releases`):
+  it refuses a tag on neither `develop` nor `main`, builds and checks the `.deb` and both
+  archives as those jobs do, writes `SHA256SUMS` and a CycloneDX SBOM of the module graph,
+  attests build provenance and the SBOM through Sigstore under the workflow's own identity —
+  there is no release-signing key to keep — and leaves a draft release a person publishes. The
+  macOS archive is attested and not notarised. The workflow has not run yet; its first run is
+  T-REL-03.
 
 ## 10. Open Questions
 
@@ -2345,3 +2354,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.91 | 2026-10-31 | E. Crespo (assisted draft) | T-PKG-07, delta `2026-10-service-units`: §9.3 the tar.gz archives and the `launchd` agent plist (never restarted by launchd), and their verification |
 | 1.92 | 2026-11-17 | E. Crespo (assisted draft) | T-PKG-08, delta `2026-11-deb-libffi`: §9.3 the Debian package depends on `libffi8`, which `umbrald` opens at start and no binary links; its check, the smoke's first install of the package alone, and the Linux archive's `README` |
 | 1.93 | 2026-11-18 | E. Crespo (assisted draft) | T-HRD-01: DD-016 the embedded trust seed carries the project's key `umbral-rules-2026a` and no longer ships empty |
+| 1.94 | 2026-11-18 | E. Crespo (assisted draft) | Ratifies delta `2026-11-signed-releases` (T-REL-03): §9.3 what a `v*` tag builds, attests and leaves as a draft release; §5.3 points at the ratified, unbuilt sandbox of delta `2026-11-agent-sandbox` |
