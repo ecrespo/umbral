@@ -121,12 +121,12 @@ its matrix lists commands.
   and never checks what it made, so this task also adds a step, before the release is
   created, that runs `sha256sum -c SHA256SUMS` and verifies each package's two attestations;
   without it nothing reddens if an attestation step is removed later.
-  Whether this task gates release 0.1, as T-REL-01 and T-REL-02 do, the delta does not say:
-  it is the Tech Lead's to decide.
+  Whether this task gates release 0.1, as T-REL-01 and T-REL-02 do, is the Tech Lead's to
+  decide; delta `2026-11-open-questions` proposes that it does.
 - **REQ:** REQ-PKG-009
 - **Files:** `.github/workflows/release.yml`
-- **Depends on:** T-PKG-03, T-PKG-07, T-PKG-08. The delta's Q2: attestations on a private
-  repository need a paid plan.
+- **Depends on:** T-PKG-03, T-PKG-07, T-PKG-08. The repository is public, which the
+  attestations need (R2).
 - **Done:** the draft release of `v0.1.0-rc.1` holds the `.deb`, both tar.gz archives,
   `SHA256SUMS` and the SBOM; `sha256sum -c SHA256SUMS` passes on a download;
   `gh attestation verify <file> --repo ecrespo/umbral` accepts its build provenance, bound to
@@ -360,8 +360,8 @@ its matrix lists commands.
 - **Files:** `docs/spikes/2026-11-landlock.md`
 - **Depends on:** —
 - **Done:** the spike's report says what each profile entry broke and what it took to run,
-  and gives the measurements the delta's Q1 (the network profile) and Q3 (the user's shell)
-  need. The answers are the Tech Lead's.
+  and gives the measurements that fix the profile's write list (delta
+  `2026-11-open-questions`, S3) and size the model relay of T-HRD-20 (S1).
 
 ### [ ] T-HRD-15 · The `sandbox` port and the Linux adapter; hosted agents confined
 - **What:** the delta's decisions 1, 2, 5 and 7: a `sandbox` port wired in `cmd/umbrald`, a
@@ -374,8 +374,10 @@ its matrix lists commands.
 - **Files:** a new `internal/sandbox/**`, `.go-arch-lint.yml`, `internal/acp/**`,
   `internal/api/**`, `internal/config/**`, `cmd/umbrald/**`, `specs/prd/umbral-f2.md`,
   `specs/api/umbral-daemon-api-v1.md`, `specs/technical/umbral-architecture.md`
-- **Depends on:** T-HRD-14; the Tech Lead's answers to the delta's Q1 and Q3, and to Q4 (an
-  opt-out) as far as hosted agents go
+- **Depends on:** T-HRD-14. Delta `2026-11-open-questions` answers the questions: files
+  only, the network left open and disclosed (S1); the write list fixed from the spike (S3);
+  `[sandbox] mode = "off"` as a disclosed opt-out (S4). The profile leaves the libffi cache
+  directory of T-HRD-18 out of every write list.
 - **Done:** a hosted agent that writes outside its profile, or reads another thread's
   worktree or Umbral's data directory, is refused by the kernel, with a test per rule that
   reddens when the rule is removed; without Landlock the daemon says so and the thread's
@@ -400,11 +402,52 @@ its matrix lists commands.
 - **Files:** `internal/sessions/**`, `internal/agents/**`, `internal/acp/**`,
   `internal/api/**`, `internal/store/migrations/**`, `cmd/umb/**`, `specs/prd/umbral-f2.md`,
   `specs/api/umbral-daemon-api-v1.md`, `specs/data-model/umbral-schema.md`
-- **Depends on:** T-HRD-15; the delta's Q2 (`full-auto` without a sandbox) and Q4 (an
-  opt-out) are answered by the Tech Lead before it starts.
+- **Depends on:** T-HRD-15. Delta `2026-11-open-questions`: `full-auto` without a sandbox is
+  allowed, degraded and disclosed (S2), and the opt-out covers `full-auto` shells too (S4).
 - **Done:** a `full-auto` command that writes outside its worktree is refused by the kernel
   and not by the policy's reading of the line; a thread in `ask`, `normal` or `auto-edit` is
   not confined.
+
+### [ ] T-HRD-18 · The daemon loads libffi from a path its user can write (macOS, Windows)
+- **What:** on macOS and Windows x86_64, `github.com/jupiterrider/ffi`'s `init` writes its
+  embedded libffi to the user's cache directory and loads it from there; a file already at
+  that path is loaded as it is. A process of the same user that writes it runs code inside
+  `umbrald` at its next start, and a `full-auto` command or a hosted agent is such a process
+  (delta `2026-11-open-questions`, L2 and L3). Linux loads the system's `libffi.so.8`.
+- **REQ:** Art. 5 (`full-auto` "SHALL only run inside a sandbox or a disposable worktree":
+  this is a way out of the worktree that lasts past the thread)
+- **Files:** `cmd/umbrald/**`, `internal/llmgw/adapters/yzma/**`, `Taskfile.yml`,
+  `packaging/tar/build.sh`, `.github/workflows/*.yml`
+- **Depends on:** —
+- **Done:** on both systems the daemon loads a libffi whose bytes it has checked, or one from
+  a path only an administrator can write; a test plants another file, a symbolic link and a
+  truncated file at the cache path and the daemon loads none of them; and it never loads the
+  library by its bare name, with the cache directory unwritable or `FFI_NO_EMBED=1` set.
+  Whether this task gates release 0.1 is the Tech Lead's to decide.
+
+### [ ] T-HRD-19 · go-arch-lint v1.19.2's notice on `cmd/umbrald/activeai.go`
+- **What:** v1.19.2 reports `cmd` handing its own `localSuggester` and `blockOutput` to
+  `activeai.New`, which v1.19.1, the pinned version, does not (delta `2026-11-signed-releases`
+  Q5). Read the release's notes; either move the two types into an adapters package or record
+  why the notice is wrong; then move the pin.
+- **REQ:** Art. 3
+- **Files:** `cmd/umbrald/activeai.go`, `internal/activeai/**`, `.go-arch-lint.yml`,
+  `.github/workflows/ci.yml`, `Taskfile.yml`
+- **Depends on:** —
+- **Done:** `task arch` and `task arch:selftest` pass on the newest go-arch-lint, pinned.
+
+### [ ] T-HRD-20 · A hosted agent's model traffic through a daemon-side relay
+- **What:** option (b) of delta `2026-11-agent-sandbox` Q1: a confined agent has no network,
+  and reaches its model endpoint through a relay the daemon serves on a Unix socket, so the
+  agent's model calls are Umbral's own and are recorded in `egress_log`. Sized from what the
+  spike measured; it starts with a delta of its own.
+- **REQ:** Art. 4; the `SBX` requirements T-HRD-15 writes
+- **Files:** `internal/sandbox/**`, `internal/acp/**`, `internal/llmgw/**`
+- **Depends on:** T-HRD-15
+- **Done:** a hosted agent whose profile allows no network completes a turn through the
+  relay; its requests to a non-loopback endpoint are `egress_log` rows and those to a loopback
+  model are none, as Tech Design §4 has it for Umbral's own calls, unless the task's delta
+  decides the relay records more.
 
 ## Traceability matrix (hardening)
 
@@ -455,3 +498,4 @@ its matrix lists commands.
 | 2026-11-18 | T-PKG-08 | done | Tech 1.92 §9.3, delta `2026-11-deb-libffi`. CI's `deb` job failed on pull requests #78, #79 and #80: `umbrald` panicked at start with `libffi.so.8: cannot open shared object file`, because yzma's purego bindings open the library and no binary links it, so `Depends` derived from the binaries never named it and `smoke.sh` installed the package beside others that brought it in. `Depends` now names `libffi8`; `check.sh` refuses a package without it, with a mutant in its selftest; `smoke.sh` installs the package alone first, which rejected the old `.deb`; the Linux archive's `README` names the library. `task deb:smoke` (both container smokes) and `task tar` pass on the rebuilt package. |
 | 2026-11-18 | T-HRD-13 | added | Eight tests failed on the runners while pull requests #79 to #82 were checked, none on code those requests changed: `REQ_RMT_001` and, on its rerun, `REQ_RMT_002` on Linux on #81, two `REQ_ACP_008` tests on macOS on #82, `REQ_ACP_006` on Linux, `REQ_ACP_009` and `REQ_FTU_003` on macOS (run 44210237570) and `REQ_AUT_004` on Windows (run 44213787204). Three had been seen once before and passed on a rerun, which is how they stayed open. No cause is known yet; the task asks for one before any change. |
 | 2026-11-18 | T-REL-03, T-HRD-14, T-HRD-15, T-HRD-16, T-HRD-17 | added | The Tech Lead ratified deltas `2026-11-signed-releases` and `2026-11-agent-sandbox` as written. The first adds REQ-PKG-009 (PRD 1.24, Tech 1.94 §9.3) and T-REL-03, the release workflow's first run, which has not happened. The second adds the sandbox's four tasks; its `SBX` requirements are not written yet, because the profile depends on what the spike (T-HRD-14) measures, and T-HRD-15 writes them before its code. Both deltas' open questions stay open with their recommendations, and one more is open for the Tech Lead: neither delta says whether T-REL-03 or the sandbox tasks gate release 0.1, and the plan's hardening section has not been updated for them. |
+| 2026-11-18 | T-REL-03, T-HRD-14, T-HRD-15, T-HRD-17, T-HRD-18, T-HRD-19, T-HRD-20 | answered, added | Delta `2026-11-open-questions`, approved in advance by the Tech Lead: an answer for each of the twelve questions deltas `2026-11-signed-releases`, `2026-11-agent-sandbox` and `2026-11-deb-libffi` left open. What gates release 0.1 was not among them and stays the Tech Lead's: the delta proposes that T-REL-03 does and the sandbox does not, and leaves T-HRD-18 open. The sandbox's first slice confines files only; `full-auto` without a sandbox is allowed and disclosed; `[sandbox] mode = "off"` is an opt-out. Branch protection waits for T-HRD-13. Reading the libffi binding for the Windows and macOS questions found that both systems load the library from the user's cache directory without checking it: T-HRD-18. T-HRD-19 is the go-arch-lint notice, T-HRD-20 the model relay. |

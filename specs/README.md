@@ -3,17 +3,16 @@
 This folder holds the Spec-Driven Development artifacts the code is written from.
 
 **Status on 2026-11-18:** constitution 1.6, PRD 1.24, F2 PRD 0.16, API 1.61, Technical Design
-1.94, Data Model 1.28, Plan 1.15. `python3 tools/sdd_check.py` passes with no CRITICAL and no
+1.95, Data Model 1.28, Plan 1.15. `python3 tools/sdd_check.py` passes with no CRITICAL and no
 HIGH finding: 179 of 179 MUST requirements have a task.
 
 - **Phases:** F0 closed on 2026-09-26, F1 on 2026-10-22 and slice F2a on 2026-10-24. The tasks
   of F2b … F2f are done; closing those slices is the Tech Lead's. The Hardening phase is open.
-- **Deltas:** 89 are archived under `../changes/_archive/`. 17 are open in `../changes/`: 16
+- **Deltas:** 91 are archived under `../changes/_archive/`. 16 are open in `../changes/`, all
   from F2, approved by the implementing agent and waiting for the Tech Lead's review
-  (`../docs/checkpoints/2026-11-17-delta-review-guide.md` is a reading order), and
-  `2026-11-deb-libffi`, approved by the Tech Lead and not archived yet.
+  (`../docs/checkpoints/2026-11-17-delta-review-guide.md` is a reading order).
 - **Open tasks:** T-PKG-05 in the F2 file; T-REL-01, T-REL-02, T-REL-03, T-HRD-01 (in
-  progress) and T-HRD-13 … T-HRD-17 in the hardening file.
+  progress) and T-HRD-13 … T-HRD-20 in the hardening file.
 
 `../AGENTS.md`, under "Known status", is the running record; when this summary and that file
 disagree, that file is the newer one.
