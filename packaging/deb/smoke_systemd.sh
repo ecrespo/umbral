@@ -45,6 +45,17 @@ docker exec -e DEB="/srv/$name" "$box" bash -euo pipefail -c '
   done
   as_smoke() { runuser -u smoke -- env XDG_RUNTIME_DIR=/run/user/$(id -u smoke) "$@"; }
 
+  # A failure says what the unit and the daemon logged: without it a daemon that never
+  # listened and one that exited look the same from here.
+  diagnose() {
+    rc=$?
+    [ "$rc" -eq 0 ] && return
+    echo "smoke: failed with exit $rc; the unit and what it logged:" >&2
+    as_smoke systemctl --user status umbrald.service --no-pager >&2 || true
+    journalctl --no-pager -n 100 "_UID=$(id -u smoke)" >&2 || true
+  }
+  trap diagnose EXIT
+
   # Installed, not enabled: the user decides.
   test "$(as_smoke systemctl --user is-enabled umbrald.service || true)" = disabled
 

@@ -246,6 +246,23 @@ func orUnexpected(err error, got handoffFrame) error {
 
 // ---- the new daemon ---------------------------------------------------------------------
 
+// greet sends the new daemon's hello and reads the old one's. The old daemon refuses some
+// peers without reading anything and hangs up, so the hello can fail with a broken pipe while
+// the refusal waits to be read: a failed send is reported only when no refusal follows it, or
+// the user is told a pipe broke instead of why the handoff was refused.
+func greet(c *handoff.Conn) (handoffFrame, error) {
+	sendErr := c.Send(handoffFrame{Op: opHello, Version: buildVersion(), Protocol: api.ProtocolVersion})
+	var hello handoffFrame
+	_, err := c.Recv(&hello)
+	if sendErr != nil && (err != nil || hello.Op != opError) {
+		return hello, sendErr
+	}
+	if err != nil || hello.Op != opHello {
+		return hello, orUnexpected(err, hello)
+	}
+	return hello, nil
+}
+
 // taken is what the new daemon received: everything it needs to serve the old one's sessions.
 type taken struct {
 	conn     *handoff.Conn
@@ -278,12 +295,9 @@ func takeOver(ctx context.Context, socketDir string, logger *slog.Logger) (*take
 	}
 	_ = c.SetDeadline(time.Now().Add(handoffTimeout))
 
-	if err := c.Send(handoffFrame{Op: opHello, Version: buildVersion(), Protocol: api.ProtocolVersion}); err != nil {
+	hello, err := greet(c)
+	if err != nil {
 		return fail(stepHello, err)
-	}
-	var hello handoffFrame
-	if _, err := c.Recv(&hello); err != nil || hello.Op != opHello {
-		return fail(stepHello, orUnexpected(err, hello))
 	}
 	if hello.Protocol != api.ProtocolVersion {
 		return fail(stepHello, fmt.Errorf("protocol %d cannot take over protocol %d", api.ProtocolVersion, hello.Protocol))
