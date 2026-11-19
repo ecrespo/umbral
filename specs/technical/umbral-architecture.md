@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.94 |
+| **Version** | 1.95 |
 | **Date** | 2026-11-18 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -2174,7 +2174,11 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   reference, libc being all they link since libghostty-vt is static; `libffi8` is linked by
   none of them and opened by `umbrald` when it starts, through the purego bindings of the
   embedded provider (§5.1), whether or not one is configured, and without it the daemon panics
-  before it listens (delta `2026-11-deb-libffi`). `packaging/deb/check.sh` refuses a package
+  before it listens (delta `2026-11-deb-libffi`). On macOS and on Windows x86_64 no system
+  library is needed: the binding embeds libffi and, at start, writes it to the user's cache
+  directory and loads it from there, taking a file already there as it is — a path the user's
+  own processes can write, which T-HRD-18 is to close (delta `2026-11-open-questions`).
+  `packaging/deb/check.sh` refuses a package
   whose `Depends` lacks either, and `smoke.sh` first installs the package alone, without its
   `Recommends`, and starts the daemon before any other package is added. The Linux tar.gz
   archive has no dependency metadata, so its `README` names the library. `Recommends: git`.
@@ -2355,3 +2359,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.92 | 2026-11-17 | E. Crespo (assisted draft) | T-PKG-08, delta `2026-11-deb-libffi`: §9.3 the Debian package depends on `libffi8`, which `umbrald` opens at start and no binary links; its check, the smoke's first install of the package alone, and the Linux archive's `README` |
 | 1.93 | 2026-11-18 | E. Crespo (assisted draft) | T-HRD-01: DD-016 the embedded trust seed carries the project's key `umbral-rules-2026a` and no longer ships empty |
 | 1.94 | 2026-11-18 | E. Crespo (assisted draft) | Ratifies delta `2026-11-signed-releases` (T-REL-03): §9.3 what a `v*` tag builds, attests and leaves as a draft release; §5.3 points at the ratified, unbuilt sandbox of delta `2026-11-agent-sandbox` |
+| 1.95 | 2026-11-18 | E. Crespo (assisted draft) | Delta `2026-11-open-questions`: §9.3 where each OS's libffi comes from, and the user-writable path macOS and Windows load it from (T-HRD-18) |

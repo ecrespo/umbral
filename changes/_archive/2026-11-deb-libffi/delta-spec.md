@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-11-17` by the Tech Lead, who chose to approve and implement it when asked in the session that found the defect; the text is pending his review |
+| **Status** | `RATIFIED 2026-11-18 by the Tech Lead ("Apruebo y resuelve el 2026-11-deb-libffi con sus Q1-Q3")`, as written, after his approval of 2026-11-17; folded into Tech 1.92 §9.3 and archived. Q1 to Q3 are answered by delta `2026-11-open-questions` (L1 to L3) |
 | **Date** | 2026-11-17 |
 | **Tasks** | T-PKG-08 (the dependency, its check and the smoke that hid it) |
 | **REQ** | none changed |

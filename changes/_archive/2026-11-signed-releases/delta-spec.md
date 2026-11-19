@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `RATIFIED 2026-11-18 by the Tech Lead ("Si, ratifico el PR 85, ratifico el 84." — PR #85 carried decision 4's workflow — and, asked whether that covered the deltas themselves, "Si, cubre también los deltas.")`, as written; folded into PRD 1.24 (REQ-PKG-009), Tech 1.94 §9.3 and the hardening tasks (T-REL-03), and archived. Q1 to Q5 stay open with their recommendations |
+| **Status** | `RATIFIED 2026-11-18 by the Tech Lead ("Si, ratifico el PR 85, ratifico el 84." — PR #85 carried decision 4's workflow — and, asked whether that covered the deltas themselves, "Si, cubre también los deltas.")`, as written; folded into PRD 1.24 (REQ-PKG-009), Tech 1.94 §9.3 and the hardening tasks (T-REL-03), and archived. Q1 to Q5 stay open with their recommendations. Answered since by delta `2026-11-open-questions` |
 | **Date** | 2026-11-17 |
 | **Tasks** | T-REL-03 (the release workflow's first run); decisions 1 to 3 are infrastructure under Art. 1 and need no task |
 | **REQ** | REQ-PKG-009, added by decision 4 |
