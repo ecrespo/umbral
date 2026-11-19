@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED`. The Tech Lead asked for the fix on 2026-11-19 knowing it changes Tech §5.3b; the text of this delta has not been reviewed. Written into Tech 1.96 §5.3b and API 1.62 §5.44 as proposed, awaiting ratification |
+| **Status** | `RATIFIED 2026-11-19 by the Tech Lead ("ratifico su delta")`, decision 6 and both open questions' recommendations included; folded into Tech 1.96 §5.3b and API 1.62 §5.44, and archived |
 | **Date** | 2026-11-19 |
 | **Task** | T-HRD-13 |
 | **REQ** | REQ-FTU-003, REQ-AGT-003, REQ-RMT-002 (no change to their text). REQ-FTU-003 is the trace of the new test because the refusal it removes is that requirement's check — keys are written only into the terminal they were decided on — and the test that failed carries it; what moves is `run_command`'s return, REQ-AGT-003 |

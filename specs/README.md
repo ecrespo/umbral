@@ -8,7 +8,7 @@ HIGH finding: 179 of 179 MUST requirements have a task.
 
 - **Phases:** F0 closed on 2026-09-26, F1 on 2026-10-22 and slice F2a on 2026-10-24. The tasks
   of F2b … F2f are done; closing those slices is the Tech Lead's. The Hardening phase is open.
-- **Deltas:** 91 are archived under `../changes/_archive/`. 16 are open in `../changes/`, all
+- **Deltas:** 92 are archived under `../changes/_archive/`. 16 are open in `../changes/`, all
   from F2, approved by the implementing agent and waiting for the Tech Lead's review
   (`../docs/checkpoints/2026-11-17-delta-review-guide.md` is a reading order).
 - **Open tasks:** T-PKG-05 in the F2 file; T-REL-01, T-REL-02, T-REL-03, T-HRD-01 (in
