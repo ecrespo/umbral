@@ -199,6 +199,9 @@ const StderrSecret = "acptest-stderr-credential-marker" //nolint:gosec // a mark
 //	garbage         a line that is not JSON-RPC, then nothing
 //	ask             a permission request; answers allowed, rejected or cancelled
 //	read PATH       fs/read_text_file; answers the content or the error
+//	cat PATH        reads PATH itself, without asking Umbral; answers the content or the error
+//	touch PATH      writes PATH itself, without asking Umbral; answers `written` or the error
+//	put PATH TEXT   replaces PATH with TEXT and a newline, itself; answers `written` or the error
 //	time N PATH     N fs/read_text_file of PATH, one after another; answers how long Umbral
 //	                took to answer them, `p50=…us p95=…us max=…us`, or the first error
 //	slow MS N       N text chunks, MS milliseconds apart
@@ -368,6 +371,30 @@ func (a *agent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResp
 		} else {
 			a.say(ctx, sid, acp.UpdateAgentMessageText(resp.Content))
 		}
+	case "cat", "touch", "put":
+		// What an agent that does not ask does: the file system directly. Only the sandbox
+		// stands between it and the file (REQ-SBX-001, REQ-SBX-002).
+		path := ""
+		if len(fields) > 1 {
+			path = fields[1]
+		}
+		answer := "written"
+		var err error
+		if fields[0] == "cat" {
+			var b []byte
+			b, err = os.ReadFile(path) // #nosec G304 G703 -- a test agent reading the path its test names
+			answer = string(b)
+		} else {
+			text := "planted by the agent"
+			if fields[0] == "put" && len(fields) > 2 {
+				text = strings.Join(fields[2:], " ")
+			}
+			err = os.WriteFile(path, []byte(text+"\n"), 0o600) // #nosec G703 -- a test agent writing the path its test names
+		}
+		if err != nil {
+			answer = "error: " + err.Error()
+		}
+		a.say(ctx, sid, acp.UpdateAgentMessageText(answer))
 	case "orphan":
 		// Leaves a child behind that holds the agent's stderr, answers its pid, ends the turn,
 		// and exits between turns, when no request of Umbral's is waiting on it.

@@ -156,7 +156,7 @@ func localSnapshot(ctx context.Context, c *conn) (snapshotResult, error) {
 			return snapshotResult{}, err
 		}
 		for _, t := range list {
-			threadList = append(threadList, toWireThread(t))
+			threadList = append(threadList, c.server.wireThread(t))
 		}
 		focus.ThreadID = emptyAsNull(svc.Focused())
 	}

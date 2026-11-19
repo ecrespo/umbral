@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.62 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.63 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`; Windows: the named pipe `\\.\pipe\umbral-<16 hex>`, see §2) |
@@ -437,6 +437,7 @@ method and the ordering that produced it, so one handed to a different method is
 - `worktree_id`: the thread's latest worktree, whatever its state, `null` for none. While that worktree is `active` the thread's turns run in it: the worktree is their write root and their cwd is the worktree's directory matching `cwd`, or the worktree's top when it has none; `cwd` itself does not change (REQ-WT-002)
 - `agent`: the `[[acp.agents]]` entry hosting the thread, `null` for Umbral's own agent (REQ-ACP-001). A hosted thread's turns are its agent's: it runs where Umbral's turns would — the active worktree's directory, or `cwd` without one, which is then its write root — and its `model` and `model_class` are not Umbral's to choose
 - `egress_visibility`: `observed` | `unobserved` (REQ-ACP-007). `unobserved` for a hosted thread: Umbral does not see the agent's own network traffic — its model calls and anything else its process sends — nor its file reads, so `egress_log` and `usage` hold none of them
+- `sandbox`: `confined` | `unconfined` for a hosted thread, `null` for Umbral's own agent (REQ-SBX-003). `confined`: the kernel refuses the agent's process a write outside its thread's directory and a read of Umbral's data or another thread's worktree. A thread whose directory cannot be confined is not launched: `thread.create` keeps it and answers `agent_unavailable`. It follows `system.status`'s `sandbox.state` now, not the state when the agent was launched.
 
 ### Worktree
 ```json
@@ -557,7 +558,7 @@ client's own list, optional; today only `graphics` is read (§2, §5.11).
 `max_message_bytes` is this connection's frame limit from now on, in both directions (§1).
 
 ### 5.2 `system.status`
-**Params:** `{}`. Returns `{daemon_version, uptime_ms, sessions_alive, threads_running, providers:[{id, health, reason?}], mcp:[{name, state}], frames}`.
+**Params:** `{}`. Returns `{daemon_version, uptime_ms, sessions_alive, threads_running, providers:[{id, health, reason?}], mcp:[{name, state}], frames, sandbox}`.
 A provider's `reason` says why it is `down` or `degraded` — `keyring_unavailable`
 (REQ-SEC-008), `env_secret` (REQ-SEC-012) and the others of §5.28 — and is absent otherwise.
 Used by `umb status` (REQ-CLI-003).
@@ -581,6 +582,17 @@ THE SYSTEM SHALL log every refusal, and the run's first frame above 75 %, at `wa
 and the size and never the content (Art. 7). An inbound refusal is the exception that proves the
 rule: the line was never parsed, so it has no method to name, and its size is logged as
 `size_bytes_at_least`, one byte past the limit, because reading stopped there.
+
+`sandbox` is the sandbox around hosted agents on this system (REQ-SBX-003, delta
+`2026-11-sandbox-linux`): `{state, mechanism?, reason?}`.
+
+- `state`: `enforcing` | `unavailable` | `off`. `unavailable` is a degraded mode: this system
+  cannot confine a process and hosted agents run unconfined. `off` is `[sandbox] mode = "off"`.
+- `mechanism`: what enforces it, `landlock`; absent unless `enforcing`.
+- `reason`: why it is not enforcing, absent when it is: `landlock_unavailable`,
+  `landlock_too_old` (a kernel before 6.2, whose Landlock does not mediate truncate),
+  `unsupported_arch`, `unsupported_os`, `no_helper` and `not_configured` (a daemon built
+  without one), or `config` for `off`.
 
 ### 5.3 `session.snapshot` — REQ-API-001, REQ-API-002
 **Params:** `{}`.
@@ -1901,3 +1913,4 @@ printf '%s\n' \
 | 1.60 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-plugins` (T-F2-60): §4 `Plugin`; §5.45 `plugin.inspect`, `install`, `list`, `get`, `remove` and `run`; §6 `plugin.changed`; §2 `plugin.*` for `cli` and `plugin.install`, `remove` and `run` refused to an agent's terminal; §3 the `plg_` prefix; §9 the `plugins` capability |
 | 1.61 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-pane-graphics` (T-F2-61, REQ-PLG-003): §2 and §5.1 a client's own `capabilities`, of which `graphics` is read; §5.11 the Kitty graphics filter for a client without it; §9 `graphics` no longer reserved |
 | 1.62 | 2026-11-19 | No change to the wire. Delta `2026-11-run-command-prompt` (T-HRD-13, ratified 2026-11-19): §5.44 says a dropped link's `session.unsubscribed` and `remote.state_changed` `disconnected` come in no fixed order (REQ-RMT-002) |
+| 1.63 | 2026-11-19 | Additive within `protocol_version = 1`. Delta `2026-11-sandbox-linux` (T-HRD-15, proposed): §5.2 `system.status` gains `sandbox`; §4 `Thread` gains `sandbox` (REQ-SBX-003) |

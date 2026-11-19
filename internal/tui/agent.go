@@ -641,7 +641,7 @@ func (m *Model) threadLines(width int) []string {
 	}
 	for _, t := range shown {
 		if t.ID == m.agent.threadID && t.Agent != "" {
-			for _, line := range wrap(oneLine(t.Agent)+" runs this thread: Umbral does not record its own network traffic or file reads; "+oneLine(t.Agent)+" can read the repository's main copy and every other thread's worktree", width-2) {
+			for _, line := range wrap(hostedNotice(oneLine(t.Agent), t.Sandbox), width-2) {
 				rows = append(rows, "  "+line)
 			}
 		}
@@ -1109,4 +1109,22 @@ func truncate(s string, width int) string {
 		return s
 	}
 	return string(r[:width-1]) + "…"
+}
+
+// The values of a hosted thread's `sandbox` (API §4 Thread).
+const sandboxConfined, sandboxUnconfined = "confined", "unconfined"
+
+// hostedNotice is what the panel says of a thread an external agent runs (REQ-ACP-007), and
+// whether the kernel confines that agent (REQ-SBX-003). A daemon that does not say is read as
+// before the sandbox existed.
+func hostedNotice(agent, sandbox string) string {
+	head := agent + " runs this thread: Umbral does not record its own network traffic or file reads; "
+	switch sandbox {
+	case sandboxConfined:
+		return head + "the kernel confines " + agent + ": it can write this thread's directory only and cannot read Umbral's data or any other thread's worktree; it can still read the repository's main copy and reach the network"
+	case sandboxUnconfined:
+		return head + agent + " can read the repository's main copy and every other thread's worktree, and runs unconfined: nothing but its own asking keeps it from other files"
+	default:
+		return head + agent + " can read the repository's main copy and every other thread's worktree"
+	}
 }

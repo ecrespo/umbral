@@ -46,6 +46,30 @@ type Thread struct {
 	// traffic Umbral does not see (REQ-ACP-007).
 	Agent            *string `json:"agent"`
 	EgressVisibility string  `json:"egress_visibility"`
+	// Sandbox says whether the kernel confines the hosted agent's process: `confined` or
+	// `unconfined`. Null for Umbral's own agent, which the sandbox does not cover
+	// (REQ-SBX-003).
+	Sandbox *string `json:"sandbox"`
+}
+
+// The values of a Thread's `sandbox`.
+const (
+	threadConfined   = "confined"
+	threadUnconfined = "unconfined"
+)
+
+// wireThread is toWireThread with what the daemon, not the thread's row, knows: whether a
+// hosted agent launched now would be confined.
+func (s *Server) wireThread(t agentsdomain.Thread) Thread {
+	out := toWireThread(t)
+	if t.Agent != "" {
+		state := threadUnconfined
+		if s.cfg.Sandbox.State == SandboxEnforcing {
+			state = threadConfined
+		}
+		out.Sandbox = &state
+	}
+	return out
 }
 
 func toWireThread(t agentsdomain.Thread) Thread {
@@ -304,7 +328,7 @@ func handleThreadCreate(ctx context.Context, c *conn, raw json.RawMessage) (any,
 	if err != nil {
 		return nil, err
 	}
-	result := createThreadResult{Thread: toWireThread(t)}
+	result := createThreadResult{Thread: c.server.wireThread(t)}
 	if t.WorktreeRefusal != nil {
 		var data errorData
 		worktreeErrorData(t.WorktreeRefusal, &data)
@@ -548,7 +572,7 @@ func handleThreadGet(ctx context.Context, c *conn, raw json.RawMessage) (any, er
 	if err != nil {
 		return nil, err
 	}
-	out := threadResult{Thread: toWireThread(t)}
+	out := threadResult{Thread: c.server.wireThread(t)}
 	if !p.IncludeMessages {
 		return out, nil
 	}
@@ -601,7 +625,7 @@ func handleThreadList(ctx context.Context, c *conn, _ json.RawMessage) (any, err
 	}
 	out := threadListResult{Items: make([]Thread, 0, len(list))}
 	for _, t := range list {
-		out.Items = append(out.Items, toWireThread(t))
+		out.Items = append(out.Items, c.server.wireThread(t))
 	}
 	return out, nil
 }
@@ -634,7 +658,7 @@ func handleThreadUpdate(ctx context.Context, c *conn, raw json.RawMessage) (any,
 	if err != nil {
 		return nil, err
 	}
-	return toWireThread(t), nil
+	return c.server.wireThread(t), nil
 }
 
 // focusThreadParams is the schema's view of thread.focus: a pointer for its null, and

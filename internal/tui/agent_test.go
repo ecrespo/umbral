@@ -1197,6 +1197,42 @@ func TestAgentPanelSaysAHostedThreadIsUnobserved_REQ_ACP_007(t *testing.T) {
 	}
 }
 
+// TestAgentPanelSaysWhetherAHostedThreadIsConfined_REQ_SBX_003: the hosted thread's notice
+// says whether the kernel confines its agent — what the sandbox keeps from it and what it
+// leaves open, or that it runs unconfined.
+func TestAgentPanelSaysWhetherAHostedThreadIsConfined_REQ_SBX_003(t *testing.T) {
+	t.Parallel()
+	for state, c := range map[string]struct{ want, never []string }{
+		"confined": {
+			want:  []string{"network traffic", "file reads", "confines", "cannot read", "any other thread's worktree", "main copy"},
+			never: []string{"unconfined", "every other thread's worktree"},
+		},
+		"unconfined": {
+			want:  []string{"network traffic", "file reads", "main copy", "every other thread's worktree", "unconfined"},
+			never: []string{"confines"},
+		},
+	} {
+		h := newHarness(t)
+		h.daemon.setThreads(ports.ThreadList{WorkspaceID: "w1", Threads: []ports.Thread{
+			{ID: "thr_h", WorkspaceID: "w1", Attention: "idle", State: "idle", Agent: "opencode", EgressVisibility: "unobserved", Sandbox: state},
+		}})
+		h.openSession()
+		h.step(ctrlSpace())
+		h.step(keyPress(t, "down"))
+		words := strings.Join(strings.Fields(h.m.View().Content), " ")
+		for _, want := range c.want {
+			if !strings.Contains(words, want) {
+				t.Errorf("%s: the notice does not say %q:\n%s", state, want, words)
+			}
+		}
+		for _, never := range c.never {
+			if strings.Contains(words, never) {
+				t.Errorf("%s: the notice says %q:\n%s", state, never, words)
+			}
+		}
+	}
+}
+
 func (f *fakeDaemon) TakeOver(_ context.Context, threadID string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

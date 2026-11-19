@@ -154,6 +154,9 @@ type Thread struct {
 	Queued           bool
 	Agent            string
 	EgressVisibility string
+	// Sandbox is `confined` or `unconfined` for a hosted thread, "" for Umbral's own and for
+	// a daemon that does not say (REQ-SBX-003).
+	Sandbox string
 }
 
 // McpServer is an MCP server as the panel shows it (API §4's McpServer): LastError is ""

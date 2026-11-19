@@ -70,6 +70,11 @@ const (
 )
 
 func main() {
+	// The sandbox's helper is this binary (REQ-SBX-001): it confines itself and becomes the
+	// command, before anything of the daemon starts.
+	if code, isHelper := sandboxHelper(os.Args[1:], os.Stderr); isHelper {
+		os.Exit(code)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -509,7 +514,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 	// The host of `[[acp.agents]]` (T-F2-07). It is closed after the runtime, which cancels
 	// every turn first, so a hosted agent's turn ends `cancelled` rather than killed.
 	var runtimeRef atomic.Pointer[agents.Runtime]
-	acpHost, err := newACP(settings.ACP, filepath.Dir(socket), providers, sessionService, func(threadID string) bool {
+	// The sandbox around hosted agents (T-HRD-15). A `[sandbox] write` entry that reaches a
+	// directory the daemon protects stops it, as a settings file it cannot read does.
+	sandbox, confiner, err := newSandbox(settings.Sandbox, filepath.Dir(db.Path()), filepath.Dir(socket), logger)
+	if err != nil {
+		logger.Error("the [sandbox] settings cannot be honoured", slog.Any("error", err))
+		return exitConfig
+	}
+	acpHost, err := newACP(settings.ACP, filepath.Dir(socket), confiner, providers, sessionService, func(threadID string) bool {
 		rt := runtimeRef.Load()
 		return rt != nil && rt.AwaitingApproval(threadID)
 	}, logger)
@@ -653,6 +665,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 		TokenPath:     tokenPath,
 		DaemonVersion: buildVersion(),
 		Status:        withMCP(withProviders(statusFromStore(db), providers), mcpClient),
+		Sandbox:       sandboxStatus(sandbox),
 		Configuration: providers,
 		Models:        models,
 		ModelRoutes:   models,

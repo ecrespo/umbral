@@ -295,5 +295,17 @@ func handleStatus(ctx context.Context, c *conn, _ json.RawMessage) (any, error) 
 		status = reported
 	}
 	status.Frames = c.server.framesNow()
+	status.Sandbox = c.server.sandboxStatus()
 	return status, nil
 }
+
+// sandboxStatus is the configured sandbox state; one never configured cannot confine.
+func (s *Server) sandboxStatus() SandboxStatus {
+	if s.cfg.Sandbox.State == "" {
+		return SandboxStatus{State: SandboxUnavailable, Reason: sandboxNotConfigured}
+	}
+	return s.cfg.Sandbox
+}
+
+// sandboxNotConfigured is the reason of a daemon built with no sandbox wired in.
+const sandboxNotConfigured = "not_configured"

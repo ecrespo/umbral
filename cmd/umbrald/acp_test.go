@@ -27,6 +27,12 @@ func acpDaemon(t *testing.T, extraEnv ...string) (*client.Stream, context.Contex
 // acpDaemonArgs is acpDaemon with the fake agent's arguments.
 func acpDaemonArgs(t *testing.T, args []string, extraEnv ...string) (*client.Stream, context.Context) {
 	t.Helper()
+	return acpDaemonSettings(t, args, "", extraEnv...)
+}
+
+// acpDaemonSettings is acpDaemonArgs with more of config.toml, written before `[acp]`.
+func acpDaemonSettings(t *testing.T, args []string, settings string, extraEnv ...string) (*client.Stream, context.Context) {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +42,7 @@ func acpDaemonArgs(t *testing.T, args []string, extraEnv ...string) (*client.Str
 		quoted[i] = fmt.Sprintf("%q", a)
 	}
 	srv := (&scriptedOllama{}).server(t)
-	stream, ctx, _ := startAgentDaemon(t, srv.URL, daemonOpts{extraEnv: extraEnv, settings: fmt.Sprintf(`
+	stream, ctx, _ := startAgentDaemon(t, srv.URL, daemonOpts{extraEnv: extraEnv, settings: settings + fmt.Sprintf(`
 [acp]
 silence_timeout = 30
 
@@ -54,6 +60,7 @@ type acpThread struct {
 	ID               string  `json:"id"`
 	Agent            *string `json:"agent"`
 	EgressVisibility string  `json:"egress_visibility"`
+	Sandbox          *string `json:"sandbox"`
 	WorktreeID       string  `json:"worktree_id"`
 	AgentUnavailable *struct {
 		Reason, Message string
@@ -263,10 +270,13 @@ func TestAnACPAgentErrorEndsTheTurnAndKeepsTheThread_REQ_ACP_006(t *testing.T) {
 // handshake leaves the thread created, with `agent_unavailable` saying so, and the next
 // thread.send launches it again.
 func TestAnACPAgentThatDoesNotStartKeepsItsThread_REQ_ACP_001(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "launched")
+	// The marker is in the thread's own directory: a confined agent writes nowhere else, and
+	// its isolation root is cleared at every launch (REQ-SBX-001).
+	cwd := t.TempDir()
+	marker := filepath.Join(cwd, "launched")
 	stream, ctx := acpDaemonArgs(t, []string{acptest.Arg, acptest.FailOnce, marker})
 	var thread acpThread
-	if err := stream.Call(ctx, "thread.create", map[string]any{"cwd": t.TempDir(), "agent": "fake"}, &thread); err != nil {
+	if err := stream.Call(ctx, "thread.create", map[string]any{"cwd": cwd, "agent": "fake"}, &thread); err != nil {
 		t.Fatalf("thread.create over an agent that does not start: %v, want the thread", err)
 	}
 	if thread.ID == "" || thread.AgentUnavailable == nil || thread.AgentUnavailable.Reason != "launch_failed" ||
@@ -505,8 +515,12 @@ func TestAnACPThreadIsMarkedUnobserved_REQ_ACP_007(t *testing.T) {
 // so it can find and dial the daemon; when it calls a method only the user may call — here
 // `skill.install` — it is refused like a client inside an agent's terminal, and the user's own
 // client is not (delta `2026-10-hosted-agent-peer`, from Q12 of `2026-10-hrd02-open-questions`).
+//
+// The sandbox is off here. Confined, the agent cannot read the token at all
+// (TestAHostedAgentCannotReadUmbralsData_REQ_SBX_002); this check is what stands where there is
+// no sandbox, and it has to hold on its own.
 func TestAHostedAgentIsRefusedTheUsersMethods_REQ_ORC_004(t *testing.T) {
-	stream, ctx := acpDaemon(t)
+	stream, ctx := acpDaemonSettings(t, []string{acptest.Arg}, "\n[sandbox]\nmode = \"off\"\n")
 	var hosted acpThread
 	if err := stream.Call(ctx, "thread.create", map[string]any{"cwd": t.TempDir(), "agent": "fake"}, &hosted); err != nil {
 		t.Fatal(err)

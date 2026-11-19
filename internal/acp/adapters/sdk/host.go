@@ -37,6 +37,8 @@ type Config struct {
 	Files ports.Files
 	// Terminals runs the terminals a turn allowed; nil refuses them.
 	Terminals ports.Terminals
+	// Confiner puts each agent's process in the sandbox; nil launches it unconfined.
+	Confiner ports.Confiner
 	// MaxTerminals is `[acp] max_terminals`; zero is domain.DefaultMaxTerminals.
 	MaxTerminals int
 	// Pending reports whether an approval of the thread is pending, which pauses the silence
@@ -346,8 +348,18 @@ func (h *Host) launch(ctx context.Context, req Request) (*process, error) {
 		return nil, fmt.Errorf("acp: write the agent's config: %w", err)
 	}
 
+	argv := append([]string{entry.Command}, entry.Args...)
+	if h.cfg.Confiner != nil {
+		// A sandbox that cannot be set up launches nothing: the agent is never run unconfined
+		// because confining it failed (REQ-SBX-001).
+		argv, err = h.cfg.Confiner.Confine(domain.Confinement{ThreadID: req.ThreadID, Dir: req.Dir, Root: iso.Root}, argv)
+		if err != nil || len(argv) == 0 {
+			_ = os.RemoveAll(iso.Root)
+			return nil, fmt.Errorf("%w: confine %s: %w", domain.ErrAgent, entry.Name, errors.Join(err, errNoCommand(argv)))
+		}
+	}
 	// Not CommandContext: the process outlives the request that launched it, and ends by kill.
-	cmd := exec.Command(entry.Command, entry.Args...) //nolint:noctx,gosec // outlives the request; the user's own [[acp.agents]] entry
+	cmd := exec.Command(argv[0], argv[1:]...) //nolint:noctx,gosec // outlives the request; the user's own [[acp.agents]] entry, behind the sandbox's helper
 	cmd.Dir = req.Dir
 	cmd.Env = domain.Environment(h.cfg.Environ(), iso, m, refs)
 	// Its own session, and so its own process group: the shells and servers it starts end with
@@ -470,4 +482,12 @@ func (h *Host) trackPID(pid int, live bool) {
 	if h.pids[pid]--; h.pids[pid] <= 0 {
 		delete(h.pids, pid)
 	}
+}
+
+// errNoCommand is a Confiner that returned no command to run.
+func errNoCommand(argv []string) error {
+	if len(argv) == 0 {
+		return errors.New("the sandbox returned no command")
+	}
+	return nil
 }

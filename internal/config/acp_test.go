@@ -92,3 +92,49 @@ func TestABadACPEntryStopsTheDaemon_REQ_ACP_009(t *testing.T) {
 		}
 	}
 }
+
+// TestTheSandboxSectionIsRead_REQ_SBX_004: `[sandbox]` is enforce with no extra write by
+// default; `mode = "off"` is the opt-out and `write` a list of clean absolute paths. Anything
+// else stops the daemon, as the rest of config.toml does.
+func TestTheSandboxSectionIsRead_REQ_SBX_004(t *testing.T) {
+	t.Parallel()
+
+	settings, err := LoadSettings(nil, write(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Sandbox.Off || len(settings.Sandbox.Write) != 0 {
+		t.Fatalf("default [sandbox] = %+v, want enforce and no extra write", settings.Sandbox)
+	}
+
+	settings, err = LoadSettings(nil, write(t, `
+[sandbox]
+mode = "off"
+write = ["/home/u/.cache/go-build", "/home/u/go/pkg/mod"]
+
+[agents]
+max_concurrent_turns = 5
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !settings.Sandbox.Off || !reflect.DeepEqual(settings.Sandbox.Write, []string{"/home/u/.cache/go-build", "/home/u/go/pkg/mod"}) {
+		t.Fatalf("[sandbox] = %+v", settings.Sandbox)
+	}
+	if settings.MaxConcurrentTurns != 5 {
+		t.Errorf("the section after [sandbox] was not read: %d", settings.MaxConcurrentTurns)
+	}
+
+	for name, text := range map[string]string{
+		"an unknown mode":  "[sandbox]\nmode = \"permissive\"\n",
+		"a relative path":  "[sandbox]\nwrite = [\"cache\"]\n",
+		"a home shorthand": "[sandbox]\nwrite = [\"~/.cache\"]\n",
+		"a path not clean": "[sandbox]\nwrite = [\"/home/u/../v\"]\n",
+		"an unknown key":   "[sandbox]\nnetwork = \"off\"\n",
+		"write not a list": "[sandbox]\nwrite = \"/tmp\"\n",
+	} {
+		if _, err := LoadSettings(nil, write(t, text)); !errors.Is(err, ErrSettingsInvalid) {
+			t.Errorf("%s: %v, want ErrSettingsInvalid", name, err)
+		}
+	}
+}

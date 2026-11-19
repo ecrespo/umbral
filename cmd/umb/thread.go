@@ -145,8 +145,17 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 	if hosted, ok := result["agent"].(string); ok && hosted != "" {
 		// REQ-ACP-007: what Umbral cannot see is said where the user reads, not where a script
 		// takes the id.
-		stderr.printf("umb thread create: %s is an external agent; Umbral does not record its own network traffic or file reads (egress_visibility %s); %s can read the repository's main copy and every other thread's worktree\n",
-			printable(hosted), printable(fmt.Sprint(result["egress_visibility"])), printable(hosted))
+		// REQ-SBX-003: and whether the kernel confines the agent. A daemon that does not say is
+		// read as before the sandbox existed.
+		reach := "%[1]s can read the repository's main copy and every other thread's worktree"
+		switch result["sandbox"] {
+		case "confined":
+			reach = "the kernel confines %[1]s: it can write this thread's directory only and cannot read Umbral's data or any other thread's worktree; it can still read the repository's main copy and reach the network"
+		case "unconfined":
+			reach += ", and runs unconfined: nothing but its own asking keeps it from other files"
+		}
+		stderr.printf("umb thread create: %[1]s is an external agent; Umbral does not record its own network traffic or file reads (egress_visibility %[2]s); "+reach+"\n",
+			printable(hosted), printable(fmt.Sprint(result["egress_visibility"])))
 		if gone, ok := result["agent_unavailable"].(map[string]any); ok {
 			stderr.printf("umb thread create: %s did not start: %s (%v)\n", printable(hosted),
 				printable(fmt.Sprint(gone["message"])), printable(fmt.Sprint(gone["reason"])))

@@ -146,6 +146,25 @@ Landlock's network rules cover TCP `bind` and `connect`, by port. UDP is not cov
   in giving the agent the relay's URL instead of the provider's, and in the first start's
   package download, which a no-TCP profile refuses.
 
+## Added after T-HRD-15's review: local sockets
+
+Measured on the same machine, with the base profile and `/dev/null`:
+
+- `busctl --user list` listed the user's bus from inside the sandbox. Landlock's file rules do
+  not mediate a connection to a Unix-domain socket.
+- `systemd-run --user --quiet --wait --pipe touch <a path outside the profile>` created the
+  file. A process confined by Landlock alone runs anything it likes through the user's
+  service manager.
+- With a seccomp filter that fails `socket(AF_UNIX)` with `EACCES` and `io_uring_setup` with
+  `ENOSYS`, both commands failed ("Failed to connect to user scope bus"), no file was made,
+  `getent hosts localhost` and `git status` still worked, and OpenCode completed a turn
+  (`end_turn`, 6343 input tokens) with TCP limited to its own port and the model's.
+
+So the write list of the first section is not what confines a hosted agent on its own; the
+filter is part of the sandbox (delta `2026-11-sandbox-linux`, decision 13). `/dev/ptmx` and
+`/dev/pts` left the default write list for the same review: OpenCode, a commit and a build ran
+without them.
+
 ## Not measured
 
 - A first OpenCode start with an empty home and TCP denied.

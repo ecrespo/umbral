@@ -24,13 +24,14 @@ import (
 // outlives the machine's session. awaiting is the runtime's word on a pending approval, which
 // is built after the host and so is reached through a function. The files and terminals a turn
 // allows are performed by the file tools' own code and in sessions the thread owns (T-F2-08).
-func newACP(settings config.ACP, runtimeDir string, providers *providerConfig, sessions *sessions.Service, awaiting func(string) bool, logger *slog.Logger) (*acpsdk.Host, error) {
+func newACP(settings config.ACP, runtimeDir string, confiner acpports.Confiner, providers *providerConfig, sessions *sessions.Service, awaiting func(string) bool, logger *slog.Logger) (*acpsdk.Host, error) {
 	return acpsdk.New(acpsdk.Config{
 		Entries:        settings.Agents,
 		Dir:            filepath.Join(runtimeDir, "acp"),
 		Secrets:        acpSecrets{providers: providers},
 		Files:          acpFiles{},
 		Terminals:      acpTerminals{sessions: sessions},
+		Confiner:       confiner,
 		MaxTerminals:   settings.MaxTerminals,
 		Pending:        awaiting,
 		SilenceTimeout: time.Duration(settings.SilenceTimeoutS) * time.Second,
