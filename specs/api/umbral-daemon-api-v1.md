@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.61 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.62 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`; Windows: the named pipe `\\.\pipe\umbral-<16 hex>`, see §2) |
@@ -1587,7 +1587,8 @@ agent's terminal (§2).
 - **A dropped link.** Every session subscribed through it receives `session.unsubscribed` with
   `reason: "remote_disconnected"` and every call waiting on it `PROVIDER_UNAVAILABLE`; the
   sessions live on on the host. When the ssh link dropped, `remote.state_changed` announces
-  `disconnected` and later `connected` to every client. When only the relayed connection ended —
+  `disconnected` and later `connected` to every client; the unsubscription and `disconnected`
+  come in no fixed order. When only the relayed connection ended —
   the host's daemon restarted, handed its panes over or closed it — the ssh link is still up, and
   the connection that lost it alone receives `remote.state_changed` `connected` once a new
   connection to the host holds. Either way the client subscribes again on `connected` and gets a
@@ -1899,3 +1900,4 @@ printf '%s\n' \
 | 1.59 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-windows-port` (T-F2-50): the Windows transport — the named pipe, its owner-only descriptor and squatting checks — and runtime directory in §2; the agent's-terminal check on Windows reads Job Objects. |
 | 1.60 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-plugins` (T-F2-60): §4 `Plugin`; §5.45 `plugin.inspect`, `install`, `list`, `get`, `remove` and `run`; §6 `plugin.changed`; §2 `plugin.*` for `cli` and `plugin.install`, `remove` and `run` refused to an agent's terminal; §3 the `plg_` prefix; §9 the `plugins` capability |
 | 1.61 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-pane-graphics` (T-F2-61, REQ-PLG-003): §2 and §5.1 a client's own `capabilities`, of which `graphics` is read; §5.11 the Kitty graphics filter for a client without it; §9 `graphics` no longer reserved |
+| 1.62 | 2026-11-19 | No change to the wire. Delta `2026-11-run-command-prompt` (T-HRD-13, proposed): §5.44 says a dropped link's `session.unsubscribed` and `remote.state_changed` `disconnected` come in no fixed order (REQ-RMT-002) |

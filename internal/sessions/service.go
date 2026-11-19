@@ -58,6 +58,10 @@ type Config struct {
 	// while it holds the PTY in silence (stopAgent). Zero is agentInterruptEvery; tests shorten
 	// it to make the race between a late interrupt and the next command frequent.
 	AgentInterruptEvery time.Duration
+	// PromptSettle bounds each wait for the shell's next prompt: after an agent's command, and
+	// after the empty line typed for a pending interrupt. Zero means settleWait; a test whose
+	// prompt is slow on purpose gives a bound no loaded machine reaches.
+	PromptSettle time.Duration
 	// AdoptPTY and ResumeScanner rebuild the sessions a handoff carries (REQ-HND-001); a
 	// daemon without them cannot take sessions over.
 	AdoptPTY      ports.PTYAdopter
@@ -251,6 +255,9 @@ func New(cfg Config) (*Service, error) {
 	}
 	if cfg.AgentInterruptEvery <= 0 {
 		cfg.AgentInterruptEvery = agentInterruptEvery
+	}
+	if cfg.PromptSettle <= 0 {
+		cfg.PromptSettle = settleWait
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)

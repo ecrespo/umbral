@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.95 |
-| **Date** | 2026-11-18 |
+| **Version** | 1.96 |
+| **Date** | 2026-11-19 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
 | **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
@@ -1152,7 +1152,11 @@ with `run_command` from T-F1-10. Delta `2026-09-builtin-tools`:
   back out once the worktree was merged or discarded (REQ-WT-002) — has that shell closed and a
   new one started in the new cwd at its next command. The command — one line, with no control character, which the shell's line editor would act on even inside quotes — is typed as the agent; the block
   it opens is marked origin `agent` with the thread, and the call returns when that block
-  closes, with the exit code and the last 64 KiB of output, marked not persisted when the
+  has closed and the shell has drawn its next prompt, or 500 ms after the close for a shell
+  slower than that — so a `terminal_interact` call decided right after it is decided on the
+  prompt its keys will find; a cancel, the command's time bound or the shell's exit ends that
+  wait, which never extends the bound, and an ACP terminal's command is not waited for (delta
+  `2026-11-run-command-prompt`, proposed) — with the exit code and the last 64 KiB of output, marked not persisted when the
   block's row could not be written. 120 s by default, 600 at most. Cancelling sends SIGTERM to
   the process group of every child of the shell and SIGINT to the shell, then SIGKILL 300 ms
   later, returning within 500 ms with the shell alive (REQ-AGT-007). While the cancelled command
@@ -2360,3 +2364,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.93 | 2026-11-18 | E. Crespo (assisted draft) | T-HRD-01: DD-016 the embedded trust seed carries the project's key `umbral-rules-2026a` and no longer ships empty |
 | 1.94 | 2026-11-18 | E. Crespo (assisted draft) | Ratifies delta `2026-11-signed-releases` (T-REL-03): §9.3 what a `v*` tag builds, attests and leaves as a draft release; §5.3 points at the ratified, unbuilt sandbox of delta `2026-11-agent-sandbox` |
 | 1.95 | 2026-11-18 | E. Crespo (assisted draft) | Delta `2026-11-open-questions`: §9.3 where each OS's libffi comes from, and the user-writable path macOS and Windows load it from (T-HRD-18) |
+| 1.96 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-run-command-prompt` (T-HRD-13): §5.3b `run_command` returns once the shell has drawn its next prompt, at most 500 ms after its block closes. Proposed, awaiting ratification |

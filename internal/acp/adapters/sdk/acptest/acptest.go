@@ -62,10 +62,27 @@ func Serve() {
 	}
 	out := &lockedWriter{w: os.Stdout}
 	a := &agent{out: out, prompts: map[string]context.CancelFunc{}}
-	conn := acp.NewAgentSideConnection(a, out, os.Stdin)
+	// The connection starts reading as it is made, before this function or the SDK's own
+	// constructor has stored it: a request handled in that window found a nil connection and
+	// the agent panicked, which a test saw as "its process exited: exit status 2" (T-HRD-13).
+	// Nothing is read until both are stored.
+	in := &gatedReader{r: os.Stdin, open: make(chan struct{})}
+	conn := acp.NewAgentSideConnection(a, out, in)
 	a.conn = conn
+	close(in.open)
 	<-conn.Done()
 	os.Exit(0)
+}
+
+// gatedReader reads nothing until open is closed.
+type gatedReader struct {
+	r    io.Reader
+	open chan struct{}
+}
+
+func (g *gatedReader) Read(p []byte) (int, error) {
+	<-g.open
+	return g.r.Read(p)
 }
 
 type lockedWriter struct {

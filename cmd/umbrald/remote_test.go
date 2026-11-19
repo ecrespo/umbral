@@ -368,19 +368,27 @@ func TestADroppedRemoteLinkComesBackAndItsPanesResume_REQ_RMT_002(t *testing.T) 
 	}
 	_ = os.Remove(pids[0])
 
-	awaitRelayed(ctx, t, local, "nas's unsubscription", func(n client.Notification) bool {
-		var p struct {
-			SessionID string `json:"session_id"`
-			Reason    string `json:"reason"`
+	// The two come from two observers of the drop — the relay's connection to the forwarded
+	// socket and the remote module's watch on the forward — and API §5.44 gives them no order,
+	// so they are awaited together: awaiting one, then the other, dropped the state change when
+	// it arrived first and waited for a second `disconnected` that never comes (T-HRD-13).
+	unsubscribed, disconnected := false, false
+	awaitRelayed(ctx, t, local, "nas's unsubscription and nas disconnected", func(n client.Notification) bool {
+		switch n.Method {
+		case "session.unsubscribed":
+			var p struct {
+				SessionID string `json:"session_id"`
+				Reason    string `json:"reason"`
+			}
+			if json.Unmarshal(n.Params, &p) == nil && p.SessionID == remoteNas && p.Reason == "remote_disconnected" {
+				unsubscribed = true
+			}
+		case "remote.state_changed":
+			if strings.Contains(string(n.Params), `"name":"nas"`) && strings.Contains(string(n.Params), `"state":"disconnected"`) {
+				disconnected = true
+			}
 		}
-		if n.Method != "session.unsubscribed" || json.Unmarshal(n.Params, &p) != nil {
-			return false
-		}
-		return p.SessionID == remoteNas && p.Reason == "remote_disconnected"
-	})
-	awaitRelayed(ctx, t, local, "nas disconnected", func(n client.Notification) bool {
-		return n.Method == "remote.state_changed" && strings.Contains(string(n.Params), `"name":"nas"`) &&
-			strings.Contains(string(n.Params), `"state":"disconnected"`)
+		return unsubscribed && disconnected
 	})
 
 	// box is not nas: its pane still answers through the relay.
