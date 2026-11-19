@@ -3,7 +3,8 @@
 # Decision 4 of delta `2026-11-signed-releases` (ratified 2026-11-18, REQ-PKG-009). NOT RUN
 # YET: no tag has been pushed since it was written. The first run is the test (T-REL-03); the
 # release it leaves is a draft, so nothing is published until the Tech Lead looks at it and
-# presses the button.
+# presses the button. Before the draft is created the run verifies its own checksums and
+# attestations, so a release never exists without them.
 #
 # What a tag gets:
 #   - the .deb and the Linux and macOS tar.gz, built and checked exactly as the CI workflow's
@@ -127,6 +128,30 @@ jobs:
             dist/umbral_*.deb
             dist/umbral-*.tar.gz
           sbom-path: ${{ env.SBOM }}
+      # Nothing above checks what it made: without this step a run whose attestation step was
+      # removed, or whose SHA256SUMS missed a package, would still leave a release (T-REL-03).
+      # Each package must be listed and match its checksum, and carry a build provenance and
+      # an SBOM attestation signed by this workflow at this tag.
+      - name: What was made verifies, before anything is released
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum -c --strict SHA256SUMS
+          packages=(umbral_*.deb umbral-*.tar.gz)
+          if [ "${#packages[@]}" -ne 3 ] || [ "$(wc -l < SHA256SUMS)" -ne 3 ]; then
+            echo "release: want the .deb and two tar.gz archives, each in SHA256SUMS; have ${packages[*]}" >&2
+            exit 1
+          fi
+          signer="$GITHUB_REPOSITORY/.github/workflows/release.yml"
+          for package in "${packages[@]}"; do
+            grep -q " $package\$" SHA256SUMS || { echo "release: $package is not in SHA256SUMS" >&2; exit 1; }
+            for predicate in https://slsa.dev/provenance/v1 https://cyclonedx.org/bom; do
+              gh attestation verify "$package" --repo "$GITHUB_REPOSITORY" \
+                --predicate-type "$predicate" --signer-workflow "$signer" \
+                --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
+            done
+          done
       - name: The draft release
         env:
           GH_TOKEN: ${{ github.token }}
