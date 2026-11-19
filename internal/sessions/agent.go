@@ -100,6 +100,9 @@ func (s *Service) runAgent(ctx context.Context, live *liveSession, run *agentRun
 	if takeDiscard(live) {
 		line = append(append([]byte(nil), discardKeys...), line...)
 	}
+	live.mu.RLock()
+	prompts := live.prompts
+	live.mu.RUnlock()
 	if err := s.Input(ctx, sessionID, line, domain.InputOwnerAgent); err != nil {
 		release()
 		typed(err)
@@ -109,6 +112,16 @@ func (s *Service) runAgent(ctx context.Context, live *liveSession, run *agentRun
 
 	select {
 	case result := <-run.done:
+		// The block closed at OSC 133;D and the shell's prompt is ready at 133;B, after its
+		// prompt hooks and PS1. A terminal_interact call decided in between reads "not at the
+		// prompt" and is refused once SendKeys has waited for it (REQ-FTU-003), so the run
+		// returns when the prompt is drawn, or settleWait later for a shell slower than that.
+		// The command has ended either way: a cancel, the command's deadline or the shell's
+		// exit ends the wait and changes nothing it returns. An ACP terminal runs one command
+		// and is never typed into again, so its exit is not held for a prompt.
+		if run.via == domain.ViaShell {
+			_, _ = s.awaitPrompt(ctx, live, prompts)
+		}
 		return result, nil
 	case <-live.done:
 		release()

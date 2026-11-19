@@ -3,6 +3,9 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -391,6 +394,47 @@ func TestTheDecisionHoldsForTheTerminalItSaw_REQ_FTU_003(t *testing.T) {
 	}
 	if _, err := h.SendKeys(ctx, threadID, cwd, []domain.Key{{Name: "tab"}}, h.InteractState(threadID, cwd)); !errors.Is(err, domain.ErrValidation) {
 		t.Errorf("an editing key at the prompt: %v", err)
+	}
+}
+
+// TestRunCommandReturnsWithTheShellAtItsPrompt_REQ_FTU_003: run_command comes back once the
+// shell has drawn its next prompt, so a terminal_interact call decided right after it is
+// decided on the prompt the keys will find. The block closes at OSC 133;D and the prompt is
+// ready at 133;B; a call decided in between read "not at the prompt", waited for the prompt in
+// SendKeys and was then refused as decided on another terminal (T-HRD-13). The prompt here
+// takes 300 ms to draw, which holds that window open, and the wait's bound is raised from its
+// 500 ms so a loaded machine drawing it slower still fails nothing.
+//
+// Not parallel: it gives the package's shells bash and a home whose ~/.bashrc sets the prompt.
+func TestRunCommandReturnsWithTheShellAtItsPrompt_REQ_FTU_003(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("bash is not installed: %v", err)
+	}
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte("PS1='$(sleep 0.3)$ '\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", bash)
+	h := newHarnessForShell(t, "bash", func(cfg *sessions.Config) { cfg.PromptSettle = 30 * time.Second })
+	cwd := t.TempDir()
+	threadID := thread(t, h, cwd)
+	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
+	defer cancel()
+
+	for round := range 3 {
+		if _, err := h.RunForThread(ctx, threadID, cwd, "true"); err != nil {
+			t.Fatal(err)
+		}
+		state := h.InteractState(threadID, cwd)
+		if !state.AtPrompt {
+			t.Fatalf("round %d: run_command returned before the prompt: %+v", round, state)
+		}
+		if _, err := h.SendKeys(ctx, threadID, cwd, []domain.Key{keyText("true"), keyEnter}, state); err != nil {
+			t.Fatalf("round %d: keys decided right after run_command: %v", round, err)
+		}
+		waitKeys(t, h, ctx, threadID, cwd, domain.WaitCondition{Exit: true})
 	}
 }
 

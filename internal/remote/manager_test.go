@@ -3,6 +3,7 @@ package remote
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -185,6 +186,24 @@ func TestAnAddedHostIsLinkedThroughItsForwardedSocket_REQ_RMT_001(t *testing.T) 
 	}
 	if _, err := m.Add(t.Context(), "nas", "ssh://nas"); !errors.Is(err, domain.ErrConflict) {
 		t.Errorf("a second nas = %v, want ErrConflict", err)
+	}
+}
+
+// TestAddAnswersConnectingHoweverFastTheLinkIs_REQ_RMT_001: API §5.44 says `remote.add`
+// answers the host `connecting`. The link runs in its own goroutine and, against a tunnel that
+// answers at once, could be connected before Add read the state back (T-HRD-13).
+func TestAddAnswersConnectingHoweverFastTheLinkIs_REQ_RMT_001(t *testing.T) {
+	tun := &fakeTunnels{forwards: make(chan *fakeForward, 512)}
+	m, _, _ := newManager(t, tun)
+	for i := range 300 {
+		name := fmt.Sprintf("h%d", i)
+		got, err := m.Add(t.Context(), name, "ssh://me@"+name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State != domain.StateConnecting || got.LastError != "" {
+			t.Fatalf("Add(%s) = %+v, want connecting", name, got)
+		}
 	}
 }
 

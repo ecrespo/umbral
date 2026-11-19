@@ -249,12 +249,15 @@ func TestATimeoutCarriesTheLastState_REQ_AUT_004(t *testing.T) {
 	threads := &fakeThreads{}
 	threads.set("running", "working", "trn_a")
 	s, _ := newService(t, threads, nil)
+	// The timeout runs from the wait's registration, so the test's clock starts before it: read
+	// after Pin, it started later than the wait's and measured 999.7 ms on a Windows runner
+	// (T-HRD-13).
+	start := time.Now()
 	w, err := s.Thread(t.Context(), testConn, "thr_1", []string{"done"}, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	w.Pin("trn_a")
-	start := time.Now()
 	_, err = w.Wait(t.Context())
 	var te *domain.TimeoutError
 	if !errors.As(err, &te) || !errors.Is(err, domain.ErrTimeout) || te.LastState != "working" {

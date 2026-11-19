@@ -252,10 +252,10 @@ func (s *Service) awaitAnswer(ctx context.Context, live *liveSession, before uin
 	return nil
 }
 
-// awaitPrompt waits up to settleWait for a prompt drawn after the before'th, and reports
-// whether one was.
+// awaitPrompt waits up to the configured PromptSettle, settleWait by default, for a prompt
+// drawn after the before'th, and reports whether one was.
 func (s *Service) awaitPrompt(ctx context.Context, live *liveSession, before uint64) (bool, error) {
-	deadline := time.Now().Add(settleWait)
+	deadline := time.Now().Add(s.cfg.PromptSettle)
 	for time.Now().Before(deadline) {
 		live.mu.RLock()
 		drawn := live.prompts > before && live.promptReady

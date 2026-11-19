@@ -164,8 +164,10 @@ func (m *Manager) Add(ctx context.Context, name, url string) (ports.Status, erro
 	if err := m.opts.Store.Insert(ctx, h); err != nil {
 		return ports.Status{}, err
 	}
-	s := m.startLocked(h, target) //nolint:contextcheck // a link lives as long as the manager's context, not the request's
-	return s.status(), nil
+	// The answer is the host as it was added, connecting (API §5.44): the link runs in its own
+	// goroutine and may be connected before this returns, which the host's notification says.
+	m.startLocked(h, target) //nolint:contextcheck // a link lives as long as the manager's context, not the request's
+	return ports.Status{Host: h, State: domain.StateConnecting}, nil
 }
 
 // Remove implements ports.Hosts.
