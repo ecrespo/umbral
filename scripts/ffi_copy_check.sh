@@ -31,6 +31,14 @@ while IFS= read -r f; do
   [ -f "$copy/$f" ] || { echo "ffi_copy_check: upstream's $f is missing from $copy" >&2; fail=1; }
 done < <(cd "$upstream" && find . -type f | sed 's#^\./##' | sort)
 
+# What the comparison saw on disk must also be what is committed: an ignore rule kept the four
+# libraries out of the first commit of this copy, and only a fresh checkout showed it.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  while IFS= read -r f; do
+    git ls-files --error-unmatch "$copy/$f" >/dev/null 2>&1 || { echo "ffi_copy_check: $copy/$f is not tracked by git" >&2; fail=1; }
+  done < <(cd "$copy" && find . -type f | sed 's#^\./##' | sort)
+fi
+
 for f in $ours $changed; do
   [ -f "$copy/$f" ] || { echo "ffi_copy_check: $copy/$f, listed as changed, is missing" >&2; fail=1; }
 done
