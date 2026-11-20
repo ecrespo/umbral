@@ -440,21 +440,32 @@ its matrix lists commands.
 
 ### [ ] T-HRD-20 · A hosted agent's model traffic through a daemon-side relay
 - **What:** option (b) of delta `2026-11-agent-sandbox` Q1: a confined agent has no network,
-  and reaches its model endpoint through a relay the daemon serves on a Unix socket, so the
-  agent's model calls are Umbral's own and are recorded in `egress_log`. Sized from what the
-  spike measured; it starts with a delta of its own. With the network profile comes decision
-  8 of that delta, moved here from T-HRD-17: a hosted thread whose network profile the kernel
-  enforces reports `egress_visibility = confined`. The value needs a forward-only migration,
-  since migration 0007's `CHECK` names `observed` and `unobserved` only (Art. 6).
-- **REQ:** Art. 4; the `SBX` requirements T-HRD-15 writes
-- **Files:** `internal/sandbox/**`, `internal/acp/**`, `internal/llmgw/**`,
+  and reaches its model endpoint through a relay the daemon serves, so the agent's model
+  calls are recorded in `egress_log`. Its delta, `2026-11-model-relay`, was approved by the
+  Tech Lead on 2026-11-20 with its five questions answered as recommended: the relay is an
+  HTTP listener on a loopback port, since the sandbox refuses Unix sockets and the agent
+  takes a base URL; the port rule's reach on Linux, every host, is accepted and disclosed;
+  the relay records and does not redact; the provider's key stays with the daemon; a hosted
+  thread whose network profile the kernel enforces reads `egress_visibility = confined`,
+  computed from a new `network_profile` column rather than a rebuilt `threads` (Art. 6); and
+  the task does not gate release 0.1. Three pieces, each mergeable on its own:
+  - **a · the network profile:** `Profile.Net` (ports), Landlock's port rules, the datagram
+    filter, the macOS rules, kernel tests for each, no caller yet;
+  - **b · the relay:** a port in `internal/acp` and an adapter in `cmd/umbrald` over
+    `llmgw`'s provider configuration — the listener, the thread's token, the streaming
+    forwarder, the `egress_log` row;
+  - **c · wiring and disclosure:** the manifest's base URL and port flag, two ports per
+    thread, the profile's use, the migration, `egress_visibility`, the clients' text, Art.
+    4's amendment, and the Done line against a real OpenCode.
+- **REQ:** Art. 4; two new `SBX` requirements, written into the PRD by the pieces that make
+  them true; REQ-ACP-007 and REQ-ACP-009, amended
+- **Files:** `internal/sandbox/**`, `internal/acp/**`, `internal/llmgw/**`, `cmd/umbrald/**`,
   `internal/store/migrations/**`, `internal/api/**`, `specs/data-model/umbral-schema.md`,
   `specs/api/umbral-daemon-api-v1.md`
 - **Depends on:** T-HRD-15
 - **Done:** a hosted agent whose profile allows no network completes a turn through the
   relay; its requests to a non-loopback endpoint are `egress_log` rows and those to a loopback
-  model are none, as Tech Design §4 has it for Umbral's own calls, unless the task's delta
-  decides the relay records more.
+  model are none, as Tech Design §4 has it for Umbral's own calls.
 
 ### [x] 2026-11-20 T-HRD-21 · A hosted thread in `full-auto`: its terminals are confined
 - **What:** the open question of delta `2026-11-full-auto-sandbox`. A hosted thread can be in
@@ -562,3 +573,4 @@ its matrix lists commands.
 | 2026-11-20 | T-HRD-15, T-HRD-16, T-HRD-17, T-HRD-18 | ratified | The Tech Lead ratified deltas `2026-11-sandbox-linux`, `2026-11-sandbox-macos`, `2026-11-libffi-load` and `2026-11-full-auto-sandbox` as written, the recommendations of their open questions included, and they are archived. Two things the ratification does not settle: whether a hosted agent's process survives a live handoff with its sandbox, which `2026-11-sandbox-linux` lists as not checked, and a hosted thread in `full-auto`, which is T-HRD-21. Pull requests #89 to #97 were merged the same day. |
 | 2026-11-20 | T-HRD-21 | done; its delta awaits review | The Tech Lead chose option A of the three the question offered. Delta `2026-11-hosted-terminal-sandbox` (PRD F2 0.20 REQ-SBX-007, Tech 1.102), written with the code. Tests first: a real daemon and the test agent against Landlock — in `full-auto` a terminal that writes outside the worktree runs unasked and is refused by the kernel, its write inside lands, and in `normal` the same line asks and, approved, writes. The launcher needed no change: a terminal is a shell the command is typed into, so the session is created confined as the thread's own shell is. A hosted agent holds several terminals, so each gets a directory of its own instead of the thread's being emptied. spec-guardian's review found no escape and two gaps, both closed before the commit: the mark's passage through the ACP host had no test, and a terminal's directory was never removed — the confiner's port now hands back a cleanup. Ten mutations, each killed by a test. Not done: the kernel's refusal between two live terminals is not measured, and a killed daemon leaves its live terminals' directories. The review also read a race in the daemon's own file writes, which is T-HRD-22. |
 | 2026-11-20 | T-HRD-22 | added | Read, not reproduced, by spec-guardian's review of T-HRD-21: the daemon's own file writes, performed unconfined on a path decided a moment earlier, follow a link a confined process puts in the worktree between the decision and the write. Older than the sandbox and outside T-HRD-21's diff; it goes around what REQ-SBX-001, 006 and 007 bound. |
+| 2026-11-20 | T-HRD-20 | its delta approved | The Tech Lead answered the five questions of delta `2026-11-model-relay` as recommended ("Como recomiendas"): the port rule's reach accepted and disclosed, no redaction in the relay, a new column instead of a rebuilt `threads`, the key kept by the daemon, and no gate on release 0.1. The task is three pieces, a, b and c, and nothing of it is implemented. The delta stays in `changes/` until its last piece folds it into the specs. |
