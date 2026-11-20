@@ -1156,7 +1156,7 @@ with `run_command` from T-F1-10. Delta `2026-09-builtin-tools`:
   slower than that — so a `terminal_interact` call decided right after it is decided on the
   prompt its keys will find; a cancel, the command's time bound or the shell's exit ends that
   wait, which never extends the bound, and an ACP terminal's command is not waited for (delta
-  `2026-11-run-command-prompt`, proposed) — with the exit code and the last 64 KiB of output, marked not persisted when the
+  `2026-11-run-command-prompt`) — with the exit code and the last 64 KiB of output, marked not persisted when the
   block's row could not be written. 120 s by default, 600 at most. Cancelling sends SIGTERM to
   the process group of every child of the shell and SIGINT to the shell, then SIGKILL 300 ms
   later, returning within 500 ms with the shell alive (REQ-AGT-007). While the cancelled command
@@ -2364,4 +2364,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.93 | 2026-11-18 | E. Crespo (assisted draft) | T-HRD-01: DD-016 the embedded trust seed carries the project's key `umbral-rules-2026a` and no longer ships empty |
 | 1.94 | 2026-11-18 | E. Crespo (assisted draft) | Ratifies delta `2026-11-signed-releases` (T-REL-03): §9.3 what a `v*` tag builds, attests and leaves as a draft release; §5.3 points at the ratified, unbuilt sandbox of delta `2026-11-agent-sandbox` |
 | 1.95 | 2026-11-18 | E. Crespo (assisted draft) | Delta `2026-11-open-questions`: §9.3 where each OS's libffi comes from, and the user-writable path macOS and Windows load it from (T-HRD-18) |
-| 1.96 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-run-command-prompt` (T-HRD-13): §5.3b `run_command` returns once the shell has drawn its next prompt, at most 500 ms after its block closes. Proposed, awaiting ratification |
+| 1.96 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-run-command-prompt` (T-HRD-13): §5.3b `run_command` returns once the shell has drawn its next prompt, at most 500 ms after its block closes. Ratified by the Tech Lead on 2026-11-19 |
