@@ -120,7 +120,9 @@ func (c *CLI) environ(extra []string) []string {
 			env = append(env, kv)
 		}
 	}
-	env = append(env, "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "LC_ALL=C", "GIT_EDITOR=false")
+	// No replacement is read: a `refs/replace/<id>` would make every command read another
+	// object for the one named, and what lands must be the object that was reviewed.
+	env = append(env, "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "LC_ALL=C", "GIT_EDITOR=false", "GIT_NO_REPLACE_OBJECTS=1")
 	env = append(env, c.env...)
 	return append(env, extra...)
 }
@@ -302,7 +304,14 @@ func (c *CLI) Dirty(ctx context.Context, dir string) (bool, error) {
 // worktree, so that file could name a git directory of its choosing — and with it a
 // configuration whose filter drivers, fsmonitor or hooks the snapshot would run outside the
 // policy engine (Art. 5). The record, `<common dir>/worktrees/<name>/gitdir`, sits in the main
-// repository's git directory, which the agent cannot write.
+// repository's git directory.
+//
+// A confined hosted agent can write that record's own directory, because a commit in the
+// worktree does (REQ-SBX-001). Two files there would move the pin, so neither is believed:
+// `commondir`, which names where the configuration and the hooks are read from — the common
+// directory is named in the environment instead, which git takes over the file — and `gitdir`
+// in another worktree's record, rewritten to claim this one: only the record git names after
+// this worktree's own directory is read.
 func (c *CLI) pinned(ctx context.Context, repoRoot, worktree string) (admin string, env []string, err error) {
 	r := c.run(ctx, call{dir: repoRoot, args: []string{revParse, "--path-format=absolute", "--git-common-dir"}})
 	if r.err != nil {
@@ -313,7 +322,10 @@ func (c *CLI) pinned(ctx context.Context, repoRoot, worktree string) (admin stri
 	if err != nil {
 		return "", nil, err
 	}
-	admins, err := filepath.Glob(filepath.Join(common, "worktrees", "*", "gitdir"))
+	// git names a worktree's record after the worktree's directory, with a numeric suffix when
+	// the name is taken, and the exact name sorts first. A record under any other name is
+	// another worktree's, whatever its `gitdir` file — its own agent's to write — claims.
+	admins, err := filepath.Glob(filepath.Join(common, "worktrees", filepath.Base(want)+"*", "gitdir"))
 	if err != nil {
 		return "", nil, err
 	}
@@ -327,7 +339,7 @@ func (c *CLI) pinned(ctx context.Context, repoRoot, worktree string) (admin stri
 			continue
 		}
 		admin = filepath.Dir(record)
-		return admin, []string{"GIT_DIR=" + admin, "GIT_WORK_TREE=" + want}, nil
+		return admin, []string{"GIT_DIR=" + admin, "GIT_COMMON_DIR=" + common, "GIT_WORK_TREE=" + want}, nil
 	}
 	return "", nil, fmt.Errorf("git: %s is not a worktree of %s", worktree, repoRoot)
 }
@@ -555,7 +567,11 @@ func (c *CLI) filtered(ctx context.Context, repoRoot, worktree, revision, tree s
 	// worktree's index is the agent's to write: an index that does not exist leaves nothing to
 	// fall back to. It is inside attrs, under `.git/`, which no path of a tree can name, so
 	// placeAttributes never creates it and nobody else can.
-	env := []string{"GIT_DIR=" + admin, "GIT_WORK_TREE=" + attrs, "GIT_INDEX_FILE=" + filepath.Join(attrs, ".git", "index")}
+	// The common directory is named, as in pinned: the record's own `commondir` is not believed.
+	env := []string{
+		"GIT_DIR=" + admin, "GIT_COMMON_DIR=" + filepath.Dir(filepath.Dir(admin)),
+		"GIT_WORK_TREE=" + attrs, "GIT_INDEX_FILE=" + filepath.Join(attrs, ".git", "index"),
+	}
 	placed := map[string]bool{}
 	for i := 0; i < len(fields); i += 2 {
 		meta, path := strings.Fields(strings.TrimPrefix(fields[i], ":")), fields[i+1]

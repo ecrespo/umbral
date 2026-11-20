@@ -200,3 +200,38 @@ func TestStatusShowsWhyAProviderIsDown_REQ_SEC_008(t *testing.T) {
 		t.Errorf("stdout =\n%s\nwant a line\n%s", stdout.String(), want)
 	}
 }
+
+// TestStatusSaysWhetherTheSandboxEnforces_REQ_SBX_003: `umb status` prints the sandbox's state
+// — the mechanism while it enforces, and otherwise why hosted agents run unconfined. A daemon
+// that does not report one prints no line.
+func TestStatusSaysWhetherTheSandboxEnforces_REQ_SBX_003(t *testing.T) {
+	t.Parallel()
+	for name, c := range map[string]struct {
+		sandbox any
+		want    string
+	}{
+		"enforcing":       {map[string]any{"state": "enforcing", "mechanism": "landlock"}, "sandbox: enforcing (landlock)\n"},
+		"unavailable":     {map[string]any{"state": "unavailable", "reason": "landlock_unavailable"}, "sandbox: unavailable (landlock_unavailable); hosted agents run unconfined\n"},
+		"off":             {map[string]any{"state": "off", "reason": "config\x1b[2J"}, "sandbox: off (config\\x1b[2J); hosted agents run unconfined\n"},
+		"an older daemon": {nil, ""},
+	} {
+		status := map[string]any{
+			"daemon_version": "0.1.0", "uptime_ms": 1000, "sessions_alive": 0, "threads_running": 0,
+			"providers": []any{}, "mcp": []any{},
+		}
+		if c.sandbox != nil {
+			status["sandbox"] = c.sandbox
+		}
+		socket := serveFakeDaemon(t, map[string]any{"system.status": status})
+		var stdout, stderr bytes.Buffer
+		if code := run([]string{"status", "--socket", socket, "--no-autostart"}, &stdout, &stderr); code != exitOK {
+			t.Fatalf("%s: exit = %d, stderr = %q", name, code, stderr.String())
+		}
+		switch {
+		case c.want == "" && strings.Contains(stdout.String(), "sandbox"):
+			t.Errorf("%s: stdout speaks of a sandbox:\n%s", name, stdout.String())
+		case !strings.Contains(stdout.String(), c.want):
+			t.Errorf("%s: stdout =\n%s\nwant a line\n%s", name, stdout.String(), c.want)
+		}
+	}
+}

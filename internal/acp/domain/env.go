@@ -28,9 +28,22 @@ func (i Isolation) Cache() string { return filepath.Join(i.Root, "cache") }
 // State is its XDG_STATE_HOME.
 func (i Isolation) State() string { return filepath.Join(i.Root, "state") }
 
+// Tmp is its TMPDIR: a temporary directory of its own, since a confined agent cannot write
+// the system's (REQ-SBX-001).
+func (i Isolation) Tmp() string { return filepath.Join(i.Root, "tmp") }
+
 // Dirs are the directories to create, in order.
 func (i Isolation) Dirs() []string {
-	return []string{i.Root, i.Home(), i.Config(), i.Data(), i.Cache(), i.State()}
+	return []string{i.Root, i.Home(), i.Config(), i.Data(), i.Cache(), i.State(), i.Tmp()}
+}
+
+// Confinement is what the sandbox is told of an agent about to be launched: its thread, the
+// directory it works in — the thread's worktree, or its directory without one — and its
+// isolation root.
+type Confinement struct {
+	ThreadID string
+	Dir      string
+	Root     string
 }
 
 // Inherited are the daemon's variables an agent gets: what finds its programs and its locale.
@@ -59,6 +72,7 @@ func Environment(daemon []string, iso Isolation, m Manifest, refs map[string]str
 	env["XDG_DATA_HOME"] = iso.Data()
 	env["XDG_CACHE_HOME"] = iso.Cache()
 	env["XDG_STATE_HOME"] = iso.State()
+	env["TMPDIR"] = iso.Tmp()
 	if m.ConfigEnv != "" {
 		env[m.ConfigEnv] = filepath.Join(iso.Config(), m.ConfigPath)
 	}

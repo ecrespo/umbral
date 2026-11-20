@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.97 |
+| **Version** | 1.98 |
 | **Date** | 2026-11-19 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -126,6 +126,7 @@ flowchart LR
 | `remote` | the system's `ssh` + SQLite | remote daemons: one supervisor per host asks `umb remote endpoint` over ssh for the socket and token, forwards the socket with `ssh -N -L`, reconnects with backoff; `api` relays the protocol over it (delta `2026-10-remote-hosts`) | RMT-001, RMT-002, RMT-003 |
 | `plugins` | the skill store's bundle reader + SQLite | declarative plugins: a manifest of commands, MCP servers, skills, detection manifests and key bindings, inspected and installed by digest into `plugins/` beside the database; its servers and skills added through their own modules' services (delta `2026-10-plugins`) | PLG-001, PLG-002 |
 | `acp` | `github.com/coder/acp-go-sdk` over stdio | third-party agents hosted through a manifest: launch in an isolated home, `initialize`, `session/new`, prompt, the silence timer | ACP-* (F2) |
+| `sandbox` | Landlock through `golang.org/x/sys/unix` (Linux) | confines a process to a profile — what it may write, what it may not read — through a helper that restricts itself and then becomes the command (delta `2026-11-sandbox-linux`) | SBX-* (Hardening) |
 | `obs` | OpenTelemetry Go, `log/slog` | traces, metrics | OBS-* |
 
 ### 3.3 Main flow: US-003 scenario ("fix it")
@@ -697,6 +698,12 @@ not have (REQ-SEC-012).
 range stops the daemon naming the key. Not live: a change needs a restart (delta
 `2026-10-retention`).
 
+`[sandbox]` configures the sandbox around hosted agents (REQ-SBX-003, REQ-SBX-004, §5.3f):
+`mode`, `enforce` (the default) or `off`, and `write`, a list of clean absolute paths a confined
+process may also write — build caches such as `~/.cache/go-build`, written out in full. An
+unknown mode, a path that is not clean and absolute, or one that reaches the data directory, the
+runtime directory or the libffi cache stops the daemon. Not live (delta `2026-11-sandbox-linux`).
+
 `[waits]` sets REQ-AUT-008's stall windows in whole seconds, 5 to 3600: `stall_local_s` (120)
 for a turn whose model or class has a local candidate, `stall_remote_s` (30) for every other.
 A value out of range stops the daemon naming the key. Not live: a change needs a restart
@@ -906,6 +913,7 @@ num_ctx = 4096
 | `integrations` | `ports` of `workspaces` and `store`, plus `bus`; never `agents` or `api`. The tree resolves a pane's state in DD-012's order (`workspaces/domain.ResolveAttention`); `integrations` writes the external reports and announces every change. It hears the changes it did not make — blocks, integration verdicts, exits, thread attention — through events `cmd/umbrald` subscribes it to, and re-reads the whole tree on each (delta `2026-10-integration-surface`). Display metadata is written by `integrations` and read by the tree into a `Pane`'s `metadata`, never on the state path: `ResolveAttention`, the rollup, waits and notifications do not read it, and a written report is announced as `pane.updated` only (delta `2026-10-display-metadata`). Third-party agent detection lives here too (delta `2026-10-agent-detection`): `integrations/adapters/manifests` reads the local manifests and `integrations/adapters/proctree` the process table, without running a command; the detector reaches a pane's shell pid through `integrations/ports.Shells`, which `cmd/umbrald` satisfies with the sessions service, and keeps its labels in memory, keyed by session, for the tree to read through `workspaces/ports.AgentLabels` — never on the state path |
 | `notify` | `bus` and stdlib only; it is a sink and imports no other module. `api` implements its `Deliverer` port — the foreground client of API §5.35 — and is handed to it by `cmd/umbrald` once the server exists; `cmd/umbrald` adapts `integrations`' `Notifier` port to it for an external `blocked`. Both modules deliver outside their locks, and `api` through a per-connection queue, so a client that stops reading stalls no source (delta `2026-10-notifications`) |
 | `acp` | its own `ports` and `domain`, and `security/domain` for a kind's risk; its adapters use `acp-go-sdk`. It imports no other module. The agents runtime reaches it through a port of its own, `agents/ports.ExternalAgents`, which `cmd/umbrald` adapts, as it does `Worktrees`; `config` reads its entries into `acp/domain.Entry` (delta `2026-10-acp-client`) |
+| `sandbox` | its own `ports` and `domain`; its adapters use `golang.org/x/sys/unix`. It imports no other module, and none imports it: `acp` declares a port of its own, `Confiner`, which `cmd/umbrald` adapts to the sandbox, building each agent's profile from the data and runtime directories only it knows (T-HRD-15) |
 | `worktrees` | its own `ports` and `domain`, and the `hunks` leaf; its adapters run the `git` binary and use `store`. It imports no other module. Its `ports` publish `Worktrees`, the inbound port `api` serves as `worktree.*`; the agents runtime reaches a thread's worktree through a port of its own, `agents/ports.Worktrees`, which `cmd/umbrald` adapts, and decides through `agents/ports.WorktreeThreads` when one may change: never while the thread's turn runs (T-F2-03). Reading a worktree to show it runs with fsmonitor, filter drivers, external diff and textconv off. Landing it runs as the user's `git commit` would — hooks and signing included — in a session with no terminal, killed whole at `[worktrees] commit_timeout` (delta `2026-10-worktree-engine`) |
 | `security` | stdlib, `go-keyring` in its adapter, `bus` in its ports (to name `rules.update_rejected`) and the root `llmgw/domain` (for the egress record a rejection writes). Its root holds policy.explain, which reads a thread's mode, directory and rules through its own `ExplainSource` port and asks the same pure `Decide` a turn uses; `cmd/umbrald` adapts the agent thread store to that port and hands both the runtime and the explainer one `isRepo`, so an explanation and a turn agree about the write root (delta `2026-10-policy-explain`). Its root also holds the `Rules` manager of signed bundles (DD-016), which reaches storage through its own `RuleStore` port and replaces the active set's base through `RuleBase`. `tools/rulesign` depends on `security/domain` only (delta `2026-10-signed-rule-bundles`) |
 | `context` | its own `ports` and `domain`, `store` and `bus` in its adapters, and `bus` in its ports, to name `skill.changed` (delta `2026-10-skill-store`) |
@@ -1491,6 +1499,47 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   thread's worktree (REQ-ACP-007, PRD F2 0.9, T-HRD-12): the CLI on stderr at creation, the panel in the thread's row
   and in a line under the list while the thread is selected. The desktop's thread view says the
   same of a thread whose `egress_visibility` is `unobserved`, though it creates no hosted thread.
+
+- **The sandbox** (REQ-SBX-001 … 005, delta `2026-11-sandbox-linux`, proposed; measured in
+  `docs/spikes/2026-11-landlock.md`). On Linux with Landlock every hosted agent is launched as
+  `umbrald --sandbox-exec <profile> -- <command>`: the daemon's own binary restricts itself and
+  then becomes the agent, so no code of the agent's runs unconfined, and a profile that cannot
+  be applied runs nothing.
+  - *Write:* the thread's directory; the agent's isolation root, which now also holds its
+    `TMPDIR`; the device files `/dev/null`, `/dev/zero`, `/dev/full` and `/dev/tty`, not the
+    pseudo-terminals; and `[sandbox] write`. Nothing of the repository's `.git`, a worktree's
+    own record there included: the daemon's git reads the record, the objects and the refs
+    when it lands the thread's work, so an agent that wrote them could change what lands
+    after the review or what that git runs. A confined agent therefore cannot commit; what
+    lands is its worktree's files, which Umbral snapshots itself.
+  - *Read:* everything the user can read except Umbral's data directory and its runtime
+    directory, which hold the database, the trust store, the token, the other threads'
+    worktrees and the other agents' homes. Landlock has no deny rule, so the list is generated
+    at each launch: every entry beside each denied directory and beside each of its ancestors.
+    A file created later directly in such an ancestor is not readable by the agent, and the
+    ancestors are not listable by it.
+  - *Nothing the agent can write is believed.* No launch reads the worktree's `.git` file;
+    every path is resolved first and no rule is placed through a symbolic link. For an agent
+    that is not confined, the worktree engine names the common directory itself
+    (`GIT_COMMON_DIR`) on every call through a worktree's record, reads only the record named
+    after the worktree and reads no replacement object (`GIT_NO_REPLACE_OBJECTS`). A thread whose directory holds the data or runtime directory, or
+    lies inside one without being its own worktree, is not launched, and neither is one that
+    could write the daemon's executable: `agent_unavailable` says it cannot be confined.
+  - *Local sockets:* Landlock does not mediate a connection to a Unix-domain socket, and
+    through the user's D-Bus a process confined by it alone ran a command outside the sandbox.
+    A seccomp filter refuses `socket(AF_UNIX)` and `io_uring_setup`; on Landlock 6 and later
+    signals and abstract sockets are scoped to the sandbox too.
+  - *Network:* not confined (delta `2026-11-open-questions`, S1); T-HRD-20 is the relay.
+  - *Floor:* `enforcing` needs Landlock 3 (kernel 6.2), which mediates truncate, on amd64 or
+    arm64; below it the sandbox is `unavailable`.
+  - *Degraded:* without Landlock, on another system, or with `[sandbox] mode = "off"`, the
+    agent runs unconfined and it is said: `system.status`'s `sandbox`, a hosted `Thread`'s
+    `sandbox`, `umb status`, and the disclosure above, which then adds that the agent runs
+    unconfined. Confined, the disclosure names what the sandbox keeps from the agent and what
+    it leaves open instead of the sibling worktrees.
+  - *`[sandbox]`* (§5.1): `mode`, `enforce` or `off`; `write`, clean absolute paths. An entry
+    that reaches the data directory, the runtime directory or the cache the daemon loads libffi
+    from (T-HRD-18) stops the daemon at start.
 
 ### 5.3g Full terminal use (T-F2-20)
 
@@ -2369,3 +2418,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.95 | 2026-11-18 | E. Crespo (assisted draft) | Delta `2026-11-open-questions`: §9.3 where each OS's libffi comes from, and the user-writable path macOS and Windows load it from (T-HRD-18) |
 | 1.96 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-run-command-prompt` (T-HRD-13): §5.3b `run_command` returns once the shell has drawn its next prompt, at most 500 ms after its block closes. Ratified by the Tech Lead on 2026-11-19 |
 | 1.97 | 2026-11-19 | E. Crespo (assisted draft) | T-REL-03: §9.3 the release workflow verifies its checksums and both attestations of every package before it creates the draft release |
+| 1.98 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-linux` (T-HRD-15, proposed): §3.2 and §5.2 the `sandbox` module; §5.3f a hosted agent's profile — nothing of the repository's `.git` — the helper, the degraded mode and `[sandbox]`; the worktree engine names the common directory and reads no replacement object |

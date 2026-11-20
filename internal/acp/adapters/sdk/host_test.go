@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -188,6 +189,62 @@ func report(t *testing.T, h *Host, dir string) acptest.Report {
 		t.Fatalf("report %q: %v", s.Text0(), err)
 	}
 	return r
+}
+
+// confiner records what the host asked to confine and runs the agent through `env`, which
+// leaves a mark in its environment: proof that the command the sandbox returned is the one run.
+type confiner struct {
+	got  []domain.Confinement
+	fail error
+}
+
+func (c *confiner) Confine(req domain.Confinement, argv []string) ([]string, error) {
+	c.got = append(c.got, req)
+	if c.fail != nil {
+		return nil, c.fail
+	}
+	return append([]string{"env", "UMBRAL_TEST_CONFINED=1"}, argv...), nil
+}
+
+// TestAHostedAgentIsLaunchedThroughTheSandbox_REQ_SBX_001: the host hands the sandbox the
+// thread, its directory and the agent's isolation root, runs the command the sandbox returns
+// and nothing else, and gives the agent a temporary directory of its own inside that root. A
+// sandbox that fails launches no agent.
+func TestAHostedAgentIsLaunchedThroughTheSandbox_REQ_SBX_001(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("env"); err != nil {
+		t.Skipf("no env to stand for the sandbox's helper: %v", err)
+	}
+	c := &confiner{}
+	h := newHost(t, func(cfg *Config) { cfg.Confiner = c })
+	dir := workDir(t)
+	r := report(t, h, dir)
+	if len(c.got) != 1 || c.got[0].Dir != dir || c.got[0].ThreadID == "" ||
+		c.got[0].Root != filepath.Join(h.cfg.Dir, c.got[0].ThreadID) {
+		t.Fatalf("the sandbox was asked %+v, want the thread, %s and its root under %s", c.got, dir, h.cfg.Dir)
+	}
+	env := map[string]string{}
+	for _, kv := range r.Env {
+		name, value, _ := strings.Cut(kv, "=")
+		env[name] = value
+	}
+	if env["UMBRAL_TEST_CONFINED"] != "1" {
+		t.Error("the agent was not run by the command the sandbox returned")
+	}
+	if want := filepath.Join(c.got[0].Root, "tmp"); env["TMPDIR"] != want {
+		t.Errorf("TMPDIR = %q, want %q", env["TMPDIR"], want)
+	} else if st, err := os.Stat(want); err != nil || !st.IsDir() {
+		t.Errorf("the agent's temporary directory was not made: %v", err)
+	}
+
+	failing := &confiner{fail: errors.New("no profile")}
+	h = newHost(t, func(cfg *Config) { cfg.Confiner = failing })
+	if _, _, err := prompt(t, h, workDir(t), "report"); !errors.Is(err, domain.ErrAgent) || !strings.Contains(err.Error(), "no profile") {
+		t.Fatalf("a sandbox that fails: %v, want the agent's error naming it", err)
+	}
+	if len(failing.got) == 0 {
+		t.Fatal("the failing sandbox was never asked")
+	}
 }
 
 // TestAnACPAgentCrashEndsTheTurn_REQ_ACP_006: the agent exits part way through a turn. The
@@ -379,6 +436,8 @@ func TestTheACPEnvironmentHoldsNoSecrets_REQ_ACP_009(t *testing.T) {
 	}
 	want := []string{
 		"PATH", "LANG", "HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "OPENCODE_CONFIG", "MODEL_TOKEN",
+		// Its own temporary directory, inside its isolation root (delta `2026-11-sandbox-linux`).
+		"TMPDIR",
 		// The manifest's fixed switches (T-HRD-11).
 		"OPENCODE_DISABLE_AUTOUPDATE", "OPENCODE_DISABLE_DEFAULT_PLUGINS", "OPENCODE_DISABLE_LSP_DOWNLOAD",
 		"OPENCODE_DISABLE_MODELS_FETCH", "OPENCODE_DISABLE_SHARE",

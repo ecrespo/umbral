@@ -41,6 +41,13 @@ type Terminal interface {
 	Release(ctx context.Context) error
 }
 
+// Confiner puts an agent's process in the sandbox (REQ-SBX-001): it returns the command to
+// run instead of argv, so the process is confined before any of the agent's code runs. Where
+// the sandbox does not enforce it returns argv, and an error launches nothing.
+type Confiner interface {
+	Confine(c domain.Confinement, argv []string) ([]string, error)
+}
+
 // Sink is where one turn's reports go: the agent runtime, which persists each before it
 // publishes it (DD-007). An error from Text or ToolCall is a write that failed; it ends the
 // turn.

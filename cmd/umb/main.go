@@ -251,6 +251,12 @@ type statusResult struct {
 		State string `json:"state"`
 	} `json:"mcp"`
 	Frames *framesResult `json:"frames,omitempty"`
+	// Sandbox is absent from a daemon older than the sandbox (REQ-SBX-003).
+	Sandbox *struct {
+		State     string `json:"state"`
+		Mechanism string `json:"mechanism,omitempty"`
+		Reason    string `json:"reason,omitempty"`
+	} `json:"sandbox,omitempty"`
 }
 
 func cmdStatus(ctx context.Context, args []string, stdout, stderr *printer) int {
@@ -284,6 +290,14 @@ func cmdStatus(ctx context.Context, args []string, stdout, stderr *printer) int 
 		(time.Duration(result.UptimeMS) * time.Millisecond).Round(time.Second))
 	stdout.printf("sessions alive: %d\nthreads running: %d\n",
 		result.SessionsAlive, result.ThreadsRunning)
+	if sb := result.Sandbox; sb != nil {
+		// Degraded is said where the user looks (Art. 5): unconfined is never silent.
+		if sb.State == "enforcing" {
+			stdout.printf("sandbox: enforcing (%s)\n", printable(sb.Mechanism))
+		} else {
+			stdout.printf("sandbox: %s (%s); hosted agents run unconfined\n", printable(sb.State), printable(sb.Reason))
+		}
+	}
 	if len(result.Providers) > 0 {
 		names := make([]string, 0, len(result.Providers))
 		for _, p := range result.Providers {

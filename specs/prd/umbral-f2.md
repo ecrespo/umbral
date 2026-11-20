@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`. Slice F2a implemented and closed on 2026-10-24 (delta `2026-10-f2a-close`); F2b started on 2026-10-26 |
-| **Version** | 0.16 |
-| **Date** | 2026-10-31 |
+| **Version** | 0.17 |
+| **Date** | 2026-11-19 |
 | **Reviewers** | spec-guardian (Analyze and two verify passes); Tech Lead, ratified 2026-10-22 |
 | **Source** | `docs/ARCHITECTURE.md` §5.4–5.8 and §10 (F2 ADE row); `specs/prd/umbral-mvp.md` §5.2–5.3; Plan 1.14 §4 |
 | **Builds on** | PRD MVP 1.21, API 1.41, Tech 1.55, Data Model 1.23, constitution 1.3 |
@@ -115,8 +115,8 @@ The two MVP personas, plus:
 Format as in the MVP PRD: **ID** · priority · EARS pattern — criterion. New prefixes: `WT`
 (worktrees), `ORC` (parallel threads), `ACP`, `XAG` (third-party agents), `RTR` (router), `FTU`
 (Full Terminal Use), `AAI` (Active AI), `DSK` (desktop), `HND` (handoff), `RMT` (remote and
-federation), `WIN` (Windows), `PLG` (plugins and graphics). Existing prefixes continue their
-numbering.
+federation), `WIN` (Windows), `PLG` (plugins and graphics), `SBX` (the sandbox, added by delta
+`2026-11-sandbox-linux`). Existing prefixes continue their numbering.
 
 ### 6.1 Worktrees (WT) — F2a
 
@@ -163,14 +163,14 @@ makes it ask (spike T-F2-00). So Umbral:
   - record every ACP turn as an OTel trace, with one span per agent tool call and one per mediated request;
   - record each tool call the agent reports in `tool_calls`, with `via = acp`, the risk REQ-ACP-003 maps its kind to, and its `decision`: `allow`, `deny` or `ask` with its approval when Umbral decided it, `unmediated` when the agent ran it without asking (reads, searches);
   - set the thread's `egress_visibility = unobserved`;
-  - show the user, when the thread is created, that Umbral does not record the agent's own network traffic (its model calls and anything else its process sends) or its file reads, and that the agent can read the repository's main copy and every other thread's worktree.
+  - show the user, when the thread is created, that Umbral does not record the agent's own network traffic (its model calls and anything else its process sends) or its file reads, and that the agent can read the repository's main copy and every other thread's worktree — or, when the thread is confined, what the sandbox keeps from the agent and what it leaves open (REQ-SBX-003, REQ-SBX-005; delta `2026-11-sandbox-linux`, proposed).
 - **REQ-ACP-008** · MUST · event — WHEN the user invokes `thread.cancel` on an ACP thread, THE SYSTEM SHALL send `session/cancel`, terminate the thread's ACP terminals within 500 ms, and terminate the agent process if it has not ended the turn within 5 s.
 - **REQ-ACP-009** · MUST · ubiquitous — THE SYSTEM SHALL launch an ACP agent only through a manifest that declares how to make the agent ask before every side effect, and SHALL refuse with `VALIDATION_ERROR` an `[[acp.agents]]` entry whose agent has no such manifest. The manifest:
   - generates a configuration that sets **every** permission the agent has to `ask` — a wildcard where the agent supports one, otherwise the full list. For OpenCode that covers at least `edit`, `bash`, `webfetch`, `websearch`, `external_directory`, `task` and every MCP tool, and the generated configuration declares no MCP servers and no plugins of its own;
   - isolates the agent from configuration Umbral did not write: the process gets its own `HOME` and XDG directories under the daemon's runtime directory, so the user's global agent configuration is not read;
   - names the files through which a repository configures the agent (for OpenCode, `opencode.json`, `opencode.jsonc` and `.opencode/`). IF the launch directory or a directory above it up to the repository's top holds one, THEN THE SYSTEM SHALL refuse to launch, unless the manifest declares a mechanism that overrides it and a test proves that a repository's file setting a permission to `allow` is still asked. Found in the thread's directory before anything is written, the refusal is `thread.create`'s `VALIDATION_ERROR` with `data.reason = project_config`; found only in the worktree just made, the thread and its worktree are kept and `thread.create` answers `agent_unavailable` with `reason = project_config`; found at a later launch, the turn ends `agent_error`.
 
-  The process's environment is an allowlist like an MCP stdio server's (Tech §6.1): `PATH`, `LANG` and the isolated `HOME` and XDG variables, the entry's resolved env references, the generated configuration's location, and the manifest's fixed variables — switches that keep the agent from reaching the network on its own initiative (for OpenCode, `OPENCODE_DISABLE_AUTOUPDATE`, `_DEFAULT_PLUGINS`, `_LSP_DOWNLOAD`, `_MODELS_FETCH` and `_SHARE`), which no env reference names or overrides; no other inherited variable, no secret and no `UMBRAL_*`. An env reference may not name a variable the manifest reserves as the agent's own configuration (for OpenCode, `OPENCODE_*`), which would set a permission around the generated file; such an entry stops the daemon at start. The agent's stderr is discarded, since it can print the credentials its env references carry.
+  The process's environment is an allowlist like an MCP stdio server's (Tech §6.1): `PATH`, `LANG` and the isolated `HOME` and XDG variables, a `TMPDIR` of the agent's own under the same root (delta `2026-11-sandbox-linux`, proposed), the entry's resolved env references, the generated configuration's location, and the manifest's fixed variables — switches that keep the agent from reaching the network on its own initiative (for OpenCode, `OPENCODE_DISABLE_AUTOUPDATE`, `_DEFAULT_PLUGINS`, `_LSP_DOWNLOAD`, `_MODELS_FETCH` and `_SHARE`), which no env reference names or overrides; no other inherited variable, no secret and no `UMBRAL_*`. An env reference may not name a variable the manifest reserves as the agent's own configuration (for OpenCode, `OPENCODE_*`), which would set a permission around the generated file; such an entry stops the daemon at start. The agent's stderr is discarded, since it can print the credentials its env references carry.
 
 ### 6.4 Third-party agents (XAG) — F2a
 
@@ -236,6 +236,17 @@ so its verification is a manual QA step.
 - **REQ-PLG-002** · MUST · ubiquitous — THE SYSTEM SHALL treat an MCP server a plugin declares as `trust = untrusted` until the user changes it, and a plugin's commands as user commands subject to the policy engine.
   *Reading (delta `2026-10-plugins`, decision 6):* the policy engine decides every way an agent reaches a plugin's command — commands are not offered to the model, `plugin.install|remove|run` are refused to an agent's terminal, `umb plugin install|remove|run` are destructive patterns, and a line the agent types is decided as any other — and, like any command the user launches, one the user runs is not decided.
 - **REQ-PLG-003** · SHOULD · optional — WHERE a client advertises the `graphics` capability, THE SYSTEM SHOULD pass Kitty graphics protocol images from a pane to that client, and SHOULD replace them with a placeholder for clients that do not.
+
+### 6.13 The sandbox (SBX) — Hardening
+
+Delta `2026-11-sandbox-linux` (T-HRD-15), proposed. Linux first; macOS is T-HRD-16, `full-auto`
+shells T-HRD-17.
+
+- **REQ-SBX-001** · MUST · state — WHILE the sandbox enforces, THE SYSTEM SHALL launch every hosted ACP agent confined before any of the agent's code runs, so that the kernel refuses it a write outside its thread's directory, its isolation root, the device files a shell needs and `[sandbox] write` — nothing of the repository's `.git`, its worktree's own record there included — and refuses it a Unix-domain socket. IF the agent cannot be confined — its directory holds Umbral's data or runtime directory, or lies inside one and is not its own worktree — THEN THE SYSTEM SHALL not launch it.
+- **REQ-SBX-002** · MUST · state — WHILE the sandbox enforces, THE SYSTEM SHALL have the kernel refuse a hosted ACP agent reading or listing Umbral's data directory and runtime directory — the database, the token, the trust store, every other thread's worktree and every other agent's home — and SHALL leave it able to read the repository's main copy.
+- **REQ-SBX-003** · MUST · unwanted — IF the system cannot confine a process or `[sandbox] mode = "off"`, THEN THE SYSTEM SHALL launch hosted agents unconfined, report the sandbox's state and the reason in `system.status`, and say on each hosted thread that its agent is unconfined.
+- **REQ-SBX-004** · MUST · unwanted — IF a `[sandbox] write` entry is not a clean absolute path, or is, holds or lies inside Umbral's data directory, its runtime directory or a directory the daemon loads code from, THEN THE SYSTEM SHALL refuse to start.
+- **REQ-SBX-005** · SHOULD · ubiquitous — THE SYSTEM SHOULD say on each confined thread what the sandbox leaves open: the repository's main copy to read, and the network; and that the agent cannot commit.
 
 ## 7. Non-functional requirements
 
@@ -362,3 +373,4 @@ Still open, with the draft's default:
 | 0.14 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-plugins` (T-F2-60): REQ-PLG-002 gains its reading — decided whenever an agent reaches a plugin's command, not decided when the user runs one |
 | 0.15 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-opencode-fixed-env` (T-HRD-11): REQ-ACP-009's allowlist gains the manifest's fixed variables, OpenCode's `OPENCODE_DISABLE_*` switches, which no env reference overrides |
 | 0.16 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-service-units` (T-PKG-06): REQ-HND-001 names its two exceptions — a running turn, which REQ-HND-002's refusal already had, and a daemon systemd runs as its unit, which is restarted instead — and §8's metric says so |
+| 0.17 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-linux` (T-HRD-15), proposed: a new §6.13 with REQ-SBX-001 … 005, the sandbox around hosted agents; REQ-ACP-007's disclosure says whether the thread is confined; REQ-ACP-009's environment gains `TMPDIR` |

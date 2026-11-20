@@ -68,6 +68,9 @@ type Settings struct {
 	// Remote is `[remote]`: how remote daemons are reached over ssh (REQ-RMT-001). Read at
 	// start.
 	Remote Remote
+	// Sandbox is `[sandbox]`: the opt-out and the extra write list of the sandbox around
+	// hosted agents (REQ-SBX-003, REQ-SBX-004). Read at start.
+	Sandbox Sandbox
 }
 
 // Remote is `[remote]` (delta `2026-10-remote-hosts`).
@@ -211,7 +214,7 @@ func LoadSettings(logger *slog.Logger, path string) (Settings, error) {
 	}
 
 	rest, acpText := splitACP(string(raw))
-	if settings.ACP, err = parseACP(acpText); err != nil {
+	if settings.ACP, settings.Sandbox, err = parseACP(acpText); err != nil {
 		return Settings{}, fmt.Errorf("%w: %s: %w", ErrSettingsInvalid, path, err)
 	}
 	values, err := parseTOMLSubset(rest)

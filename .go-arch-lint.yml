@@ -176,6 +176,10 @@ components:
   worktrees-domain:   { in: internal/worktrees/domain }
   worktrees-ports:    { in: internal/worktrees/ports }
   worktrees-adapters: { in: internal/worktrees/adapters/** }
+  # The sandbox around hosted agents (T-HRD-15, delta `2026-11-sandbox-linux`).
+  sandbox-domain:   { in: internal/sandbox/domain }
+  sandbox-ports:    { in: internal/sandbox/ports }
+  sandbox-adapters: { in: internal/sandbox/adapters/** }
   acp-domain:   { in: internal/acp/domain }
   acp-ports:    { in: internal/acp/ports }
   acp-adapters: { in: internal/acp/adapters/** }
@@ -269,6 +273,13 @@ deps:
     mayDependOn:
       - llmgw-domain
 
+  # The sandbox domain imports nothing but the standard library (T-HRD-15).
+  sandbox-domain:
+    anyVendorDeps: false
+    mayDependOn:
+      # Its own external test package.
+      - sandbox-domain
+
   # --- ports: domain types only; no infrastructure, no external libraries -----
   sessions-ports:
     anyVendorDeps: false
@@ -343,6 +354,11 @@ deps:
     mayDependOn:
       - bus
       - remote-domain
+
+  sandbox-ports:
+    anyVendorDeps: false
+    mayDependOn:
+      - sandbox-domain
 
   # --- adapters: its own ports, infrastructure and external libraries ---------
   # sessions and llmgw never reach the agent runtime (Tech Design §5.2).
@@ -616,6 +632,15 @@ deps:
       - remote-domain
       - bus
 
+  # The kernel mechanisms behind the sandbox port: Landlock through golang.org/x/sys/unix.
+  sandbox-adapters:
+    anyVendorDeps: true
+    mayDependOn:
+      # Its own external test package, which is also the helper its tests run.
+      - sandbox-adapters
+      - sandbox-ports
+      - sandbox-domain
+
   # The store over `remotes`, and the ssh tunnels with the fake ssh their tests build.
   remote-adapters:
     anyVendorDeps: true
@@ -724,6 +749,10 @@ deps:
       - acp-adapters
       - acp-ports
       - acp-domain
+      # The sandbox, handed to the ACP host through acp's own port (T-HRD-15).
+      - sandbox-adapters
+      - sandbox-ports
+      - sandbox-domain
       # The live handoff of a running daemon's sessions (T-F2-40).
       - handoff
       # Remote daemons over ssh (T-F2-41).

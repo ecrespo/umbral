@@ -138,7 +138,30 @@ type StatusResult struct {
 	// Frames is how close traffic has come to the frame limit this run (REQ-OBS-005). The
 	// daemon fills it; a StatusFunc leaves it alone.
 	Frames Frames `json:"frames"`
+	// Sandbox is the sandbox around hosted agents on this system (REQ-SBX-003). The daemon
+	// fills it from its configuration; a StatusFunc leaves it alone.
+	Sandbox SandboxStatus `json:"sandbox"`
 }
+
+// SandboxStatus is `sandbox` of system.status.
+type SandboxStatus struct {
+	// State is `enforcing`, `unavailable` — this system cannot confine, a degraded mode — or
+	// `off`, the user's `[sandbox] mode = "off"`.
+	State string `json:"state"`
+	// Mechanism names what enforces it, `landlock`; absent unless enforcing.
+	Mechanism string `json:"mechanism,omitempty"`
+	// Reason says why it is not enforcing — `landlock_unavailable`, `landlock_too_old`,
+	// `unsupported_arch`, `unsupported_os`, `no_helper`, `not_configured`, `config` — and is
+	// absent when it is.
+	Reason string `json:"reason,omitempty"`
+}
+
+// The values of SandboxStatus.State.
+const (
+	SandboxEnforcing   = "enforcing"
+	SandboxUnavailable = "unavailable"
+	SandboxOff         = "off"
+)
 
 // ProviderStatus is one model provider's health in system.status.
 type ProviderStatus struct {

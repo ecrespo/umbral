@@ -230,3 +230,40 @@ func TestAnACPThreadDisclosesItsTrafficAtCreation_REQ_ACP_007(t *testing.T) {
 		t.Errorf("Umbral's own thread printed %q and said %q", stdout.String(), stderr.String())
 	}
 }
+
+// TestAHostedThreadSaysWhetherItIsConfined_REQ_SBX_003: `umb thread create --agent` says on
+// stderr whether the kernel confines the agent. Confined, it names what the sandbox keeps from
+// it and what it leaves open; unconfined, it says so and keeps the whole of REQ-ACP-007's
+// disclosure.
+func TestAHostedThreadSaysWhetherItIsConfined_REQ_SBX_003(t *testing.T) {
+	t.Parallel()
+	for state, c := range map[string]struct{ want, never []string }{
+		"confined": {
+			want:  []string{"opencode", "network traffic", "file reads", "confines", "cannot commit", "cannot read", "any other thread's worktree", "main copy", "network"},
+			never: []string{"unconfined", "every other thread's worktree"},
+		},
+		"unconfined": {
+			want:  []string{"opencode", "network traffic", "file reads", "main copy", "every other thread's worktree", "unconfined"},
+			never: []string{"confines"},
+		},
+	} {
+		d := serveRecordingDaemon(t, map[string]fakeReply{
+			"thread.create": func(map[string]any) (any, string) {
+				return map[string]any{"id": "thr_1", "agent": "opencode", "egress_visibility": "unobserved", "sandbox": state}, ""
+			},
+		})
+		var stdout, stderr bytes.Buffer
+		requireExit(t, run([]string{"thread", "create", "/work", "--agent", "opencode", "--socket", d.socket, "--no-autostart"}, &stdout, &stderr), exitOK, &stderr)
+		errOut := stderr.String()
+		for _, want := range c.want {
+			if !strings.Contains(errOut, want) {
+				t.Errorf("%s: stderr %q lacks %q", state, errOut, want)
+			}
+		}
+		for _, never := range c.never {
+			if strings.Contains(errOut, never) {
+				t.Errorf("%s: stderr %q says %q", state, errOut, never)
+			}
+		}
+	}
+}

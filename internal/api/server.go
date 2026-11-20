@@ -151,6 +151,9 @@ type Config struct {
 	// Status is called by system.status. A nil Status reports an empty daemon, which
 	// is what F0 has before sessions exist.
 	Status StatusFunc
+	// Sandbox is the sandbox's state, fixed at start, which system.status reports and a
+	// hosted thread's `sandbox` follows (REQ-SBX-003). The zero value reads `unavailable`.
+	Sandbox SandboxStatus
 	// Sessions is the terminal module's inbound port. A nil value leaves the session.*
 	// methods answering METHOD_NOT_FOUND, which is what the daemon does before T-F0-05
 	// is wired in.
