@@ -24,6 +24,27 @@ const Tool = "/usr/bin/sandbox-exec"
 // resolves (measured on macOS 26, docs/spikes/2026-11-seatbelt.md).
 const resolver = "/private/var/run/mDNSResponder"
 
+// services are the Mach services a confined process may look up: the ones a program needs to
+// log, to learn who its user is, to resolve a name and to check a certificate. Every other
+// lookup is refused — the preferences daemon, the keychain, Launch Services and the rest of
+// the user's session among them. A shell, git, a name lookup and an HTTPS request were
+// measured to work with all of them refused; these are margin for programs that were not.
+var services = []string{
+	"com.apple.system.notification_center",
+	"com.apple.system.logger",
+	"com.apple.logd",
+	"com.apple.diagnosticd",
+	"com.apple.bsd.dirhelper",
+	"com.apple.system.opendirectoryd.libinfo",
+	"com.apple.system.opendirectoryd.membership",
+	"com.apple.dnssd.service",
+	"com.apple.SystemConfiguration.DNSConfiguration",
+	"com.apple.SystemConfiguration.configd",
+	"com.apple.trustd",
+	"com.apple.trustd.agent",
+	"com.apple.ocspd",
+}
+
 // Sandbox is the macOS adapter of the sandbox port.
 type Sandbox struct{ status domain.Status }
 
@@ -65,6 +86,8 @@ func (s *Sandbox) Command(p domain.Profile, argv []string) ([]string, error) {
 //     session services through them. The resolver's stays.
 //   - Launch Services, Apple events and launchd jobs: refused. Each starts a process outside
 //     the sandbox for the caller.
+//   - Mach services: every lookup refused but the few in services.
+//   - Signals: only to a process in the same sandbox, the command's own children.
 func Render(p domain.Profile) (string, error) {
 	if err := p.Validate(); err != nil {
 		return "", err
@@ -106,6 +129,11 @@ func Render(p domain.Profile) (string, error) {
 		return "", err
 	}
 	b.WriteString("(deny lsopen)\n(deny appleevent-send)\n(deny job-creation)\n")
+	b.WriteString("(deny mach-lookup)\n")
+	for _, name := range services {
+		fmt.Fprintf(&b, "(allow mach-lookup (global-name %q))\n", name)
+	}
+	b.WriteString("(deny signal)\n(allow signal (target same-sandbox))\n")
 	return b.String(), nil
 }
 

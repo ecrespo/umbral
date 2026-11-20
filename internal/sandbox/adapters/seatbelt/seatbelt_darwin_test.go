@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/ecrespo/umbral/internal/sandbox/domain"
@@ -256,6 +258,70 @@ func TestAConfinedProcessStartsNothingOutsideTheSandbox_REQ_SBX_001(t *testing.T
 	}
 	if out, err := b.sh(t, p, "/usr/bin/open "+b.main); err == nil {
 		t.Errorf("Launch Services opened something for a confined process: %s", out)
+	}
+}
+
+// TestAConfinedProcessSignalsOnlyItsOwn_REQ_SBX_001: a confined process cannot signal a
+// process outside its sandbox — the daemon, the user's shells — and can signal its own
+// children, which a shell does at every interrupted command.
+func TestAConfinedProcessSignalsOnlyItsOwn_REQ_SBX_001(t *testing.T) {
+	b := newBench(t)
+	p := b.profile(t)
+	victim := exec.CommandContext(t.Context(), "/bin/sleep", "60")
+	if err := victim.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = victim.Process.Kill(); _ = victim.Wait() })
+	pid := strconv.Itoa(victim.Process.Pid)
+	if out, err := b.sh(t, p, "/bin/kill -TERM "+pid); err == nil {
+		t.Errorf("a confined process signalled a process outside its sandbox: %s", out)
+	}
+	if err := victim.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Errorf("the process outside the sandbox is gone: %v", err)
+	}
+	if out, err := b.sh(t, p, "/bin/sleep 30 & /bin/kill -TERM $! && wait $!; echo ended"); err != nil || !strings.Contains(out, "ended") {
+		t.Errorf("a confined process could not signal its own child: %v %s", err, out)
+	}
+}
+
+// TestAConfinedProcessReachesNoSessionService_REQ_SBX_001: the preferences daemon writes a
+// file in the user's home for whoever asks. A confined process's request never lands.
+func TestAConfinedProcessReachesNoSessionService_REQ_SBX_001(t *testing.T) {
+	b := newBench(t)
+	p := b.profile(t)
+	domainName := "io.github.ecrespo.umbral.sandbox-test"
+	t.Cleanup(func() { _ = exec.Command("/usr/bin/defaults", "delete", domainName).Run() })
+	_, _ = b.sh(t, p, "/usr/bin/defaults write "+domainName+" planted yes")
+	if out, err := exec.CommandContext(t.Context(), "/usr/bin/defaults", "read", domainName, "planted").CombinedOutput(); err == nil {
+		t.Errorf("a preference written by a confined process is there: %s", out)
+	}
+	// What a program needs still answers: who the user is, and a name.
+	for name, line := range map[string]string{"the user's name": "/usr/bin/id -un", "a shell": "/bin/zsh -c 'echo ok'"} {
+		if out, err := b.sh(t, p, line); err != nil {
+			t.Errorf("%s was refused: %v %s", name, err, out)
+		}
+	}
+}
+
+// TestAConfinedProcessCannotLinkADeniedFile_REQ_SBX_002: a hard link or a clone of a denied
+// file into the worktree would be a readable copy of it. Both are refused, and so is the
+// file under another spelling of its path on a file system that ignores case.
+func TestAConfinedProcessCannotLinkADeniedFile_REQ_SBX_002(t *testing.T) {
+	b := newBench(t)
+	p := b.profile(t)
+	db := filepath.Join(b.data, "umbral.db")
+	for name, line := range map[string]string{
+		"a hard link":                  "/bin/ln " + db + " " + filepath.Join(b.mine, "hard") + " && cat " + filepath.Join(b.mine, "hard"),
+		"a clone":                      "/bin/cp -c " + db + " " + filepath.Join(b.mine, "clone") + " && cat " + filepath.Join(b.mine, "clone"),
+		"a rename":                     "/bin/mv " + db + " " + filepath.Join(b.mine, "moved"),
+		"another spelling of the path": "cat " + filepath.Join(filepath.Dir(b.data), "DATA", "umbral.db"),
+	} {
+		if out, err := b.sh(t, p, line); err == nil {
+			t.Errorf("%s gave the database: %s", name, out)
+		}
+	}
+	if _, err := os.Stat(db); err != nil {
+		t.Errorf("the database is gone: %v", err)
 	}
 }
 

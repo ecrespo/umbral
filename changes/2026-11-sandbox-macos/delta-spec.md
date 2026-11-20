@@ -21,7 +21,13 @@ Mac. What shaped the decisions:
   socket back restores it.
 - launchd, Launch Services and System Events ran a command outside the sandbox for an
   unconfined caller and refused a confined one.
-- A confined process can still signal any process of the user's.
+- A confined process can signal any process of the user's unless signals are refused and
+  allowed again for its own sandbox only.
+- Every Mach lookup can be refused without breaking a shell, git, a name lookup or an HTTPS
+  request; with them open, a confined process wrote a preference through the user's
+  preferences daemon.
+- A hard link, a clone and a rename of a denied file are refused to the confined process, and
+  so is another spelling of its path on a file system that ignores case.
 
 ## Decisions
 
@@ -41,23 +47,29 @@ Mac. What shaped the decisions:
 4. **Launch Services, Apple events and launchd jobs are refused in the profile**, though
    launchd already refused a confined caller when measured: the profile should not depend on
    that.
-5. **`enforcing` is probed, not assumed.** At start the adapter runs the tool once under a
+5. **Mach services.** Every lookup is refused, and thirteen are allowed back: logging, the
+   directory service, name resolution and certificate trust. The preferences daemon, the
+   keychain, Launch Services and the rest of the user's session are not among them. Found by
+   the security review of this task's first commit, which had left every lookup open.
+6. **Signals** reach only a process in the same sandbox: the agent's own children. The
+   review's finding too.
+7. **`enforcing` is probed, not assumed.** At start the adapter runs the tool once under a
    profile that allows everything; where that fails — the tool missing, the daemon itself
    inside a sandbox — the status is `unavailable`, `seatbelt_unavailable`.
-6. **A path is data.** Quotes and backslashes are escaped; a path with a control character
+8. **A path is data.** Quotes and backslashes are escaped; a path with a control character
    is refused, and so is a command whose name the tool would read as one of its flags.
-7. **What this adapter does not close**, beyond decision 15 of `2026-11-sandbox-linux`:
-   - signals: a confined process can signal any process of the user's, the daemon included;
-   - Mach services other than the three refused: `(allow default)` leaves lookups open, and
-     only the ways out the spike lists were tried;
+9. **What this adapter does not close**, beyond decision 15 of `2026-11-sandbox-linux`:
    - the name of a denied directory shows in its parent's listing;
-   - a denied file the user hard-linked elsewhere is read;
+   - a denied file the **user** hard-linked elsewhere is read;
+   - whatever the thirteen services allowed back can be made to do for a caller;
    - `sandbox-exec` is deprecated by Apple. It is what other agent tools use; the adapter is
      small and behind a port.
    Better than Linux: `stat`, `chmod`, `chown`, times and extended attributes are refused by
-   path.
-8. **A tool that sandboxes itself fails**: a sandbox cannot be applied inside one. An agent
-   that wraps its own commands in `sandbox-exec` needs `[sandbox] mode = "off"`.
+   path, and the keychain is out of reach.
+10. **What it may break.** A program that needs a session service outside the thirteen — a
+    credential helper that reads the keychain, a tool that opens a browser — fails under the
+    profile, and so does one that sandboxes its own commands, since a sandbox cannot be
+    applied inside one. `[sandbox] mode = "off"` is the way out, disclosed.
 
 ## Amendments
 
@@ -72,9 +84,9 @@ Mac. What shaped the decisions:
 
 ## Open questions
 
-- **Signals.** Whether an agent that can kill the user's processes is acceptable on macOS
-  until a rule that stops it is found. Recommended: yes, disclosed here; a task of its own
-  with a Mac at hand.
+- **The thirteen services.** They were chosen by what they are for, not by measuring a real
+  agent: none was needed by anything the spike ran. Recommended: keep them until an agent is
+  run on a Mac, then trim or extend.
 - **A stricter base.** `(deny default)` with an allow list is what Apple's own profiles use
   and would close the Mach services. It cannot be written without a Mac to measure what a
   real agent needs. Recommended: later, with one.
@@ -87,7 +99,9 @@ Mac. What shaped the decisions:
 - Against the kernel, on `macos-latest` only: T-HRD-15's cases through this adapter — writes
   refused outside the profile and landing inside, the device files, Umbral's directories
   unreadable and the thread's own readable, another process's socket unreachable, a launchd
-  job and a Launch Services open refused — and the hosted-agent tests of `cmd/umbrald`
+  job and a Launch Services open refused, a signal to a process outside refused and one to
+  its own child delivered, a preference not written, a hard link, a clone and another
+  spelling of a denied file refused — and the hosted-agent tests of `cmd/umbrald`
   against a real daemon. CI's macOS job now fails if the runner cannot confine.
 - Not verified: a Mac with a desktop session, an Intel Mac, a real hosted agent, and each
   kernel rule's mutation — the kernel tests cannot be run where the code was written.

@@ -113,6 +113,32 @@ func TestTheProfileRefusesWaysOutOfTheSandbox_REQ_SBX_001(t *testing.T) {
 	}
 }
 
+// TestTheProfileRefusesTheSessionsServicesAndSignals_REQ_SBX_001: every Mach lookup is refused
+// before the few a program needs are allowed — never the preferences daemon, the keychain or
+// Launch Services — and a signal reaches only a process in the same sandbox.
+func TestTheProfileRefusesTheSessionsServicesAndSignals_REQ_SBX_001(t *testing.T) {
+	text, err := Render(agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	order(t, text, "(deny mach-lookup)", `(allow mach-lookup (global-name "com.apple.trustd"))`)
+	order(t, text, "(deny mach-lookup)", `(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo"))`)
+	order(t, text, "(deny signal)", "(allow signal (target same-sandbox))")
+	if strings.Count(text, "(deny mach-lookup)\n") != 1 || strings.Count(text, "(deny signal)\n") != 1 || strings.Count(text, "(allow signal") != 1 {
+		t.Errorf("the refusals are not the ones expected:\n%s", text)
+	}
+	if got := strings.Count(text, "(allow mach-lookup "); got != len(services) {
+		t.Errorf("%d lookups allowed, want the %d listed", got, len(services))
+	}
+	for _, name := range []string{"cfprefsd", "SecurityServer", "securityd", "secd", "launchservicesd", "lsd", "coreservices", "pasteboard", "tccd", "windowserver"} {
+		for _, s := range services {
+			if strings.Contains(strings.ToLower(s), strings.ToLower(name)) {
+				t.Errorf("%s is allowed: it reaches %s", s, name)
+			}
+		}
+	}
+}
+
 // TestAPathCannotWriteRulesOfItsOwn_REQ_SBX_001: a path is data. A quote or a backslash in one
 // is escaped, so it cannot close its string and add a rule; a control character is refused,
 // and so is a path that is not clean and absolute.

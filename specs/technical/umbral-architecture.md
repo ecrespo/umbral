@@ -1543,7 +1543,8 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
     denied directories and allowed again under the thread's own two, whose ancestors answer
     `stat` only. A connection to another process's Unix-domain socket is refused, the
     resolver's excepted, and so are a Launch Services open, an Apple event and a launchd job.
-    `enforcing` is probed by running the tool once; signals and Mach services stay open.
+    Every Mach lookup is refused but thirteen (logging, directory, DNS, trust), and a signal
+    reaches only a process in the same sandbox. `enforcing` is probed by running the tool once.
   - *`[sandbox]`* (§5.1): `mode`, `enforce` or `off`; `write`, clean absolute paths. An entry
     that reaches the data directory, the runtime directory or the cache the daemon loads libffi
     from (T-HRD-18) stops the daemon at start.

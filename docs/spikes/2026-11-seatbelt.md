@@ -64,15 +64,46 @@ sandboxed caller.
 
 ## Signals
 
-`kill -TERM` of a process outside the sandbox **succeeds** under the base profile, and still
-does with `(deny signal (target others))` added. The second pass of the script, which tried
-other spellings, was cut by the job's ten-minute limit before it got there.
+One process outside the sandbox as the victim, and the command's own child.
+
+| Rule added | `kill` of the outside process | `kill` of its own child |
+|---|---|---|
+| none | **succeeds** | works |
+| `(deny signal (target others))` | **succeeds** | works |
+| `(deny signal)` | refused | refused |
+| `(deny signal)(allow signal (target self))` | refused | refused |
+| `(deny signal)(allow signal (target children))` | refused | refused |
+| `(deny signal)(allow signal (target pgrp))` | **succeeds** | works |
+| `(deny signal)(allow signal (target same-sandbox))` | refused | works |
+
+## Links, clones and case
+
+Under the base profile, by the confined process itself: a hard link of a denied file into the
+allowed directory, a clone of it (`cp -c`) and a rename of it are each refused with
+`Operation not permitted`. The runner's file system ignores case; the denied file under
+another spelling of its directory (`DENIED/token`) is refused all the same, and so is a write
+under another spelling of a directory outside the allowed one.
+
+## Mach services
+
+With the socket, Launch Services, Apple-event and job rules in place:
+
+| Rule added | zsh, bash + `id` | DNS, TCP, `curl https://` | `git init` | `defaults write` |
+|---|---|---|---|---|
+| none | work | work | works | **written** |
+| `(deny mach-lookup)` | work | work | works | refused |
+| the same with thirteen services allowed back (logging, directory, DNS, trust) | work | work | works | exit 0, **nothing written** |
+| `(deny user-preference-write)` | work | work | works | refused |
+| `(deny mach-register)`, `(deny distributed-notification-post)` | work | work | works | written |
+
+Refusing every lookup broke nothing these probes ran. `go` was not on the script's `PATH`, so
+a Go program under the profile was not measured.
 
 ## Not measured
 
 - Anything on a Mac with a logged-in desktop session: the runner has a `gui/<uid>` domain but
   nobody at it.
 - A real hosted agent (OpenCode) under the profile.
-- Mach services in general. `(allow default)` leaves every lookup open; only the ways out
-  listed above were tried.
+- A program that checks certificates through the system (a Go or Swift binary): whether the
+  trust services allowed back are enough.
 - Intel Macs, and any macOS before 26.
