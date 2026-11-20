@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.96 |
+| **Version** | 1.97 |
 | **Date** | 2026-11-19 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -2246,7 +2246,10 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   it refuses a tag on neither `develop` nor `main`, builds and checks the `.deb` and both
   archives as those jobs do, writes `SHA256SUMS` and a CycloneDX SBOM of the module graph,
   attests build provenance and the SBOM through Sigstore under the workflow's own identity —
-  there is no release-signing key to keep — and leaves a draft release a person publishes. The
+  there is no release-signing key to keep — then checks what it made before it releases
+  anything: `sha256sum -c`, every package listed, and each package's provenance and SBOM
+  attestations verified as signed by this workflow at this tag, so a run that lost an
+  attestation step fails; and leaves a draft release a person publishes. The
   macOS archive is attested and not notarised. The workflow has not run yet; its first run is
   T-REL-03.
 
@@ -2365,3 +2368,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.94 | 2026-11-18 | E. Crespo (assisted draft) | Ratifies delta `2026-11-signed-releases` (T-REL-03): §9.3 what a `v*` tag builds, attests and leaves as a draft release; §5.3 points at the ratified, unbuilt sandbox of delta `2026-11-agent-sandbox` |
 | 1.95 | 2026-11-18 | E. Crespo (assisted draft) | Delta `2026-11-open-questions`: §9.3 where each OS's libffi comes from, and the user-writable path macOS and Windows load it from (T-HRD-18) |
 | 1.96 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-run-command-prompt` (T-HRD-13): §5.3b `run_command` returns once the shell has drawn its next prompt, at most 500 ms after its block closes. Ratified by the Tech Lead on 2026-11-19 |
+| 1.97 | 2026-11-19 | E. Crespo (assisted draft) | T-REL-03: §9.3 the release workflow verifies its checksums and both attestations of every package before it creates the draft release |
