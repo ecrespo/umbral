@@ -74,14 +74,19 @@ type Bootstrapper interface {
 // there (REQ-SBX-006). The sandbox is `cmd/umbrald`'s to wire: this module knows only that
 // a shell's command line may be replaced by one that confines it.
 type ShellConfiner interface {
-	// Confined reports whether the shell threadID runs its commands in, started in cwd,
-	// is to be confined now. The answer changes when the thread enters or leaves
-	// `full-auto`, and the next command then gets a new shell.
-	Confined(ctx context.Context, threadID, cwd string) bool
-	// Confine returns argv as the command line that runs it confined, and the variables
-	// the confined shell needs. read are the directories of the daemon's the shell must
-	// still read. An error means the shell cannot be confined, and it is not started.
-	Confine(ctx context.Context, threadID, cwd string, read, argv []string) (confined, env []string, err error)
+	// Enforces reports whether a sandbox confines on this system now. Where it does not,
+	// no shell is confined and `full-auto` runs as it did, disclosed.
+	Enforces() bool
+	// FullAuto reports whether the thread's record says its next turn decides under
+	// `full-auto`. The service confines a shell when this or the calling turn's own mark
+	// (domain.WithFullAuto) says so — never by where the shell starts, which a command can
+	// change. Where the record cannot be read the answer is yes, and Confine then refuses.
+	FullAuto(ctx context.Context, threadID string) bool
+	// Confine returns argv as the command line that runs it confined to the thread's
+	// worktree, and the variables the confined shell needs. read are the directories of
+	// the daemon's the shell must still read. An error means the shell cannot be
+	// confined, and it is not started.
+	Confine(ctx context.Context, threadID string, read, argv []string) (confined, env []string, err error)
 }
 
 // PTY is a pseudo-terminal the daemon owns.

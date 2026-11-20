@@ -32,11 +32,14 @@ type fakeKeys struct {
 	err    error
 	// waitErr fails the wait alone, after the keys were sent.
 	waitErr error
+	// fullAuto is whether the last send carried the turn's full-auto mark.
+	fullAuto bool
 }
 
 func (f *fakeKeys) InteractState(string, string) sessdomain.InteractState { return f.state }
 
-func (f *fakeKeys) SendKeys(_ context.Context, _, _ string, keys []sessdomain.Key, expect sessdomain.InteractState) (sessdomain.Plan, error) {
+func (f *fakeKeys) SendKeys(ctx context.Context, _, _ string, keys []sessdomain.Key, expect sessdomain.InteractState) (sessdomain.Plan, error) {
+	f.fullAuto = sessdomain.FullAuto(ctx)
 	if f.err != nil {
 		return sessdomain.Plan{}, f.err
 	}

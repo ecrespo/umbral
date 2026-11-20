@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ecrespo/umbral/internal/sessions"
+	"github.com/ecrespo/umbral/internal/sessions/domain"
 )
 
 // fakeConfiner stands for the sandbox: it says whether a thread's shell is to be confined now
@@ -20,20 +21,23 @@ import (
 type fakeConfiner struct {
 	want atomic.Bool
 	fail atomic.Bool
+	off  atomic.Bool
 
-	mu   sync.Mutex
-	read [][]string
-	cwds []string
+	mu      sync.Mutex
+	read    [][]string
+	threads []string
 }
 
-func (f *fakeConfiner) Confined(context.Context, string, string) bool { return f.want.Load() }
+func (f *fakeConfiner) Enforces() bool { return !f.off.Load() }
 
-func (f *fakeConfiner) Confine(_ context.Context, _, cwd string, read, argv []string) ([]string, []string, error) {
+func (f *fakeConfiner) FullAuto(context.Context, string) bool { return f.want.Load() }
+
+func (f *fakeConfiner) Confine(_ context.Context, threadID string, read, argv []string) ([]string, []string, error) {
 	if f.fail.Load() {
 		return nil, nil, errors.New("this thread cannot be confined")
 	}
 	f.mu.Lock()
-	f.read, f.cwds = append(f.read, read), append(f.cwds, cwd)
+	f.read, f.threads = append(f.read, read), append(f.threads, threadID)
 	f.mu.Unlock()
 	return append([]string{"/usr/bin/env", "UMBRAL_TEST_WRAPPED=yes"}, argv...), []string{"UMBRAL_TEST_ENV=given"}, nil
 }
@@ -80,10 +84,10 @@ func TestAThreadsShellIsReplacedWhenItsConfinementChanges_REQ_SBX_006(t *testing
 		t.Errorf("a confined thread got a new shell with nothing changed: %s then %s", confined, again)
 	}
 	confiner.mu.Lock()
-	read, cwds := confiner.read, confiner.cwds
+	read, threads := confiner.read, confiner.threads
 	confiner.mu.Unlock()
-	if len(read) != 1 || len(read[0]) != 1 || !strings.HasPrefix(filepath.Base(read[0][0]), "shellinteg-") || cwds[0] != cwd {
-		t.Fatalf("the confiner was given read %v in %v, want the shell's one start-up directory in %s", read, cwds, cwd)
+	if len(read) != 1 || len(read[0]) != 1 || !strings.HasPrefix(filepath.Base(read[0][0]), "shellinteg-") || threads[0] != threadID {
+		t.Fatalf("the confiner was given read %v for %v, want the shell's one start-up directory for %s", read, threads, threadID)
 	}
 	if info, err := os.Stat(read[0][0]); err != nil || !info.IsDir() {
 		t.Errorf("the start-up directory handed to the confiner is not there: %v", err)
@@ -114,4 +118,43 @@ func TestAShellThatCannotBeConfinedDoesNotRun_REQ_SBX_006(t *testing.T) {
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("the command ran although its shell could not be confined")
 	}
+}
+
+// TestATurnsOwnFullAutoConfinesWhateverTheRecordSays_REQ_SBX_006: a turn reads its mode once
+// and lets its commands run unasked on that reading. Its shell is confined on the same one:
+// when the thread's record no longer says full-auto — or a command made it read otherwise —
+// a command of that turn still gets the confined shell, and never the plain one a command of
+// another turn left. Where no sandbox enforces, neither reading confines anything.
+func TestATurnsOwnFullAutoConfinesWhateverTheRecordSays_REQ_SBX_006(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/env"); err != nil {
+		t.Skipf("no /usr/bin/env: %v", err)
+	}
+	confiner := &fakeConfiner{}
+	h := newHarnessForShell(t, "bash", func(cfg *sessions.Config) { cfg.Confiner = confiner })
+	cwd := t.TempDir()
+	threadID := thread(t, h, cwd)
+	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
+	defer cancel()
+	probe := `printf 'wrapped=%s\n' "${UMBRAL_TEST_WRAPPED:-no}"`
+	run := func(ctx context.Context, want string) {
+		t.Helper()
+		r, err := h.RunForThread(ctx, threadID, cwd, probe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(r.Output, want) {
+			t.Fatalf("output %q, want %q", r.Output, want)
+		}
+	}
+	run(ctx, "wrapped=no")
+	// The record says no; the turn says full-auto.
+	run(domain.WithFullAuto(ctx), "wrapped=yes")
+	run(domain.WithFullAuto(ctx), "wrapped=yes")
+	// Another turn, not in full-auto, with the record still saying no.
+	run(ctx, "wrapped=no")
+
+	confiner.off.Store(true)
+	run(domain.WithFullAuto(ctx), "wrapped=no")
+	confiner.want.Store(true)
+	run(ctx, "wrapped=no")
 }

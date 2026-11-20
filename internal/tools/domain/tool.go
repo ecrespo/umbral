@@ -31,6 +31,11 @@ type Env struct {
 	ThreadID  string
 	Cwd       string
 	WriteRoot string
+	// FullAuto says the turn that makes this call decides under `full-auto`, as it read once
+	// at its start. A tool that runs commands tells the terminal, which confines the shell
+	// where a sandbox enforces (REQ-SBX-006): what the policy let run unasked and what the
+	// kernel bounds are then decided from the same reading.
+	FullAuto bool
 	// Target is set by the registry to the target the grant was checked against, with its
 	// links resolved at that check. A writer writes there and resolves nothing again, so a
 	// link swapped in since fails the write instead of redirecting it.

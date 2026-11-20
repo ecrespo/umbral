@@ -271,7 +271,7 @@ func (s *Service) threadSession(ctx context.Context, threadID, cwd string) (*liv
 		return nil, fmt.Errorf("%w: %q is not a thread id", domain.ErrValidation, threadID)
 	}
 	// Asked before any lock is taken: the answer comes from the thread's own record.
-	confined := s.confined(ctx, threadID, cwd)
+	confined := s.confined(ctx, threadID)
 	key := shellKey(cwd, confined)
 	// One thread's first two commands must not each create a PTY.
 	s.threadMu.Lock()
@@ -329,8 +329,15 @@ func (s *Service) threadSession(ctx context.Context, threadID, cwd string) (*liv
 
 // confined reports whether the thread's shell in cwd is to run inside the sandbox now
 // (REQ-SBX-006): while the thread is in `full-auto`, where a sandbox enforces.
-func (s *Service) confined(ctx context.Context, threadID, cwd string) bool {
-	return s.cfg.Confiner != nil && s.cfg.Confiner.Confined(ctx, threadID, cwd)
+//
+// Two readings can say so: the turn's own, taken once at its start and carried by ctx, and the
+// thread's record now. Either is enough. The turn's is the one its command was let run
+// unasked on, so a record that changed since — a worktree gone missing clears the flag — does
+// not release the shell; and where the shell starts is never asked, since a command can make
+// the thread's directory resolve somewhere else.
+func (s *Service) confined(ctx context.Context, threadID string) bool {
+	c := s.cfg.Confiner
+	return c != nil && c.Enforces() && (domain.FullAuto(ctx) || c.FullAuto(ctx, threadID))
 }
 
 // shellCwd is the cwd in a shellKey.

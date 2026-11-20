@@ -16,10 +16,12 @@ type fakeTerminal struct {
 	run                  sessdomain.AgentRun
 	wait                 bool
 	deadline             time.Time
+	fullAuto             bool
 }
 
 func (f *fakeTerminal) RunForThread(ctx context.Context, threadID, cwd, command string) (sessdomain.AgentRun, error) {
 	f.thread, f.cwd, f.command = threadID, cwd, command
+	f.fullAuto = sessdomain.FullAuto(ctx)
 	f.deadline, _ = ctx.Deadline()
 	if f.wait {
 		<-ctx.Done()
@@ -29,6 +31,31 @@ func (f *fakeTerminal) RunForThread(ctx context.Context, threadID, cwd, command 
 }
 
 func exit(code int) *int { return &code }
+
+// TestACommandCarriesItsTurnsFullAuto_REQ_SBX_006: the terminal is told when the turn that
+// runs a command, or sends keys, decides under full-auto — and only then — so the shell is
+// confined on the reading the command was let run on.
+func TestACommandCarriesItsTurnsFullAuto_REQ_SBX_006(t *testing.T) {
+	t.Parallel()
+	for _, fullAuto := range []bool{true, false} {
+		term := &fakeTerminal{run: sessdomain.AgentRun{Block: sessdomain.Block{ExitCode: exit(0), State: sessdomain.BlockFinished}}}
+		env := domain.Env{ThreadID: "thr_1", Cwd: work, FullAuto: fullAuto}
+		if _, err := (runCommand{term: term}).Run(context.Background(), env, in(map[string]any{"command": "make"})); err != nil {
+			t.Fatal(err)
+		}
+		if term.fullAuto != fullAuto {
+			t.Errorf("run_command in a turn with full-auto %v told the terminal %v", fullAuto, term.fullAuto)
+		}
+		keys := &fakeKeys{state: sessdomain.InteractState{AtPrompt: true}}
+		env.Target = "ls"
+		if _, err := (terminalInteract{keys: keys}).Run(context.Background(), env, in(map[string]any{"action": "send_keys", "keys": []any{"ls\n"}})); err != nil {
+			t.Fatal(err)
+		}
+		if len(keys.sent) != 1 || keys.fullAuto != fullAuto {
+			t.Errorf("send_keys in a turn with full-auto %v: sent %d, told the terminal %v", fullAuto, len(keys.sent), keys.fullAuto)
+		}
+	}
+}
 
 // TestRunCommandRunsInTheThreadsTerminal_REQ_AGT_003: run_command hands the command to the
 // thread's terminal with the thread and cwd, and returns the exit code and the tail of the

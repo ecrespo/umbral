@@ -63,6 +63,12 @@ func TestFullAutoOnlyInsideAWorktree_REQ_ORC_004(t *testing.T) {
 			r.tools.tools["write_file"].ran.Load(), r.tools.tools["run"].ran.Load())
 	}
 
+	// A tool is told the turn decides under full-auto, as the turn read it at its start: a
+	// command's shell is confined on that reading and no other (REQ-SBX-006).
+	if !r.tools.tools["run"].lastEnv().FullAuto {
+		t.Error("the tool was not told its turn decides under full-auto")
+	}
+
 	// The worktree leaves `active`: the flag no longer applies, and the thread's own mode,
 	// normal, decides again, so the write asks.
 	wts.mu.Lock()

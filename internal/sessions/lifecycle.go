@@ -43,6 +43,11 @@ func (s *Service) launch(ctx context.Context, id string, params domain.CreatePar
 		return s.confine(ctx, params, args, env, dir, cleanup)
 	}
 
+	if params.Confined {
+		// Only a thread's own shell is confined; a command asked for confined must not run
+		// as if it were.
+		return "", nil, nil, nil, fmt.Errorf("%w: a session with a command cannot be confined", domain.ErrValidation)
+	}
 	env = environ(params.Env, s.umbralEnv(id, params.Pane, params.OwnerThreadID != ""))
 	program, err = lookPath(params.Command[0], env)
 	if err != nil {
@@ -136,7 +141,7 @@ func (s *Service) confine(ctx context.Context, params domain.CreateParams, args,
 	if dir != "" {
 		read = []string{dir}
 	}
-	argv, extra, err := s.cfg.Confiner.Confine(ctx, params.OwnerThreadID, params.CWD, read, append([]string{params.Shell}, args...))
+	argv, extra, err := s.cfg.Confiner.Confine(ctx, params.OwnerThreadID, read, append([]string{params.Shell}, args...))
 	if err != nil {
 		return fail(err)
 	}

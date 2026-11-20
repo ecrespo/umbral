@@ -41,24 +41,31 @@ type shellSandbox struct {
 
 func (c *shellConfiner) bind(s *shellSandbox) { c.bound.Store(s) }
 
-// Confined satisfies sessions' port: the thread is Umbral's own, its next turn decides under
-// `full-auto`, cwd is inside its worktree, and the sandbox enforces. Where the thread's record
-// cannot be read the answer is yes, and Confine then refuses: a shell is not started
-// unconfined because a question about it failed.
-func (c *shellConfiner) Confined(ctx context.Context, threadID, cwd string) bool {
+// Enforces satisfies sessions' port.
+func (c *shellConfiner) Enforces() bool {
 	b := c.bound.Load()
-	if b == nil || !b.sandbox.Status().Enforcing() {
+	return b != nil && b.sandbox.Status().Enforcing()
+}
+
+// FullAuto satisfies sessions' port: the thread is Umbral's own and its next turn would decide
+// under `full-auto`. Where the thread's record cannot be read the answer is yes, and Confine
+// then refuses: a shell is not started unconfined because a question about it failed.
+func (c *shellConfiner) FullAuto(ctx context.Context, threadID string) bool {
+	b := c.bound.Load()
+	if b == nil {
 		return false
 	}
-	_, err := b.worktree(ctx, threadID, cwd)
+	_, err := b.worktree(ctx, threadID)
 	return !errors.Is(err, errNotFullAuto)
 }
 
-// errNotFullAuto is a thread whose shell is not to be confined.
-var errNotFullAuto = errors.New("the thread is not in full-auto in its worktree")
+// errNotFullAuto is a thread whose record does not say `full-auto` in an active worktree.
+var errNotFullAuto = errors.New("the thread is not in full-auto in an active worktree")
 
-// worktree is the worktree a `full-auto` thread's shell is confined to.
-func (b *shellSandbox) worktree(ctx context.Context, threadID, cwd string) (string, error) {
+// worktree is the worktree a `full-auto` thread's shell is confined to. Where the shell
+// starts is not asked: the turn's directory can be made to resolve outside the worktree by a
+// command of the thread's own, and a shell released on that account would be the escape.
+func (b *shellSandbox) worktree(ctx context.Context, threadID string) (string, error) {
 	t, err := b.threads.Thread(ctx, threadID)
 	if errors.Is(err, agentsdomain.ErrNotFound) {
 		return "", errNotFullAuto
@@ -67,29 +74,30 @@ func (b *shellSandbox) worktree(ctx context.Context, threadID, cwd string) (stri
 		return "", err
 	}
 	if t.Agent != "" {
-		// A hosted agent's terminals are its own process's children, confined with it.
+		// A hosted thread's turns are its agent's, decided call by call (REQ-ACP-003).
 		return "", errNotFullAuto
 	}
 	place, err := agents.TurnPlace(ctx, b.worktrees, isRepo, t)
 	if err != nil {
 		return "", err
 	}
-	root := resolved(place.WriteRoot)
-	if place.Mode != secdomain.ModeFullAuto || place.WriteRoot == "" || !sandboxdomain.Within(resolved(cwd), root) {
+	if place.Mode != secdomain.ModeFullAuto || place.WriteRoot == "" {
 		return "", errNotFullAuto
 	}
-	return root, nil
+	return resolved(place.WriteRoot), nil
 }
 
 // Confine satisfies sessions' port: argv launched under the thread's profile. The shell
 // writes its worktree and a directory of its own for temporary files, and reads everything
 // but Umbral's directories — save read, its own start-up files.
-func (c *shellConfiner) Confine(ctx context.Context, threadID, cwd string, read, argv []string) ([]string, []string, error) {
+func (c *shellConfiner) Confine(ctx context.Context, threadID string, read, argv []string) ([]string, []string, error) {
 	b := c.bound.Load()
 	if b == nil {
 		return nil, nil, fmt.Errorf("%w: there is no sandbox", sandboxdomain.ErrProfile)
 	}
-	root, err := b.worktree(ctx, threadID, cwd)
+	// A turn that decided under `full-auto` on a record that has changed since has no
+	// worktree to be confined to: its command fails rather than run unconfined.
+	root, err := b.worktree(ctx, threadID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", sandboxdomain.ErrProfile, err)
 	}
@@ -104,6 +112,12 @@ func (c *shellConfiner) Confine(ctx context.Context, threadID, cwd string, read,
 	tmp := filepath.Join(own, "tmp")
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", sandboxdomain.ErrProfile, err)
+	}
+	// The directory just made, inside the runtime directory as the daemon resolved it at
+	// start, and no link put in its place or above it by something an earlier shell of this
+	// thread left running: the profile's rule goes where this path resolves.
+	if info, err := os.Lstat(own); err != nil || !info.IsDir() || resolved(own) != filepath.Join(filepath.Dir(b.homes), "shells", threadID) {
+		return nil, nil, fmt.Errorf("%w: %s is not the directory the daemon made", sandboxdomain.ErrProfile, own)
 	}
 	agent := sandboxdomain.Agent{
 		WorkDir: root, Root: resolved(own), Extra: b.extra, Protected: b.protected,
