@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`. Slice F2a implemented and closed on 2026-10-24 (delta `2026-10-f2a-close`); F2b started on 2026-10-26 |
-| **Version** | 0.17 |
+| **Version** | 0.18 |
 | **Date** | 2026-11-19 |
 | **Reviewers** | spec-guardian (Analyze and two verify passes); Tech Lead, ratified 2026-10-22 |
 | **Source** | `docs/ARCHITECTURE.md` §5.4–5.8 and §10 (F2 ADE row); `specs/prd/umbral-mvp.md` §5.2–5.3; Plan 1.14 §4 |
@@ -242,7 +242,7 @@ so its verification is a manual QA step.
 Delta `2026-11-sandbox-linux` (T-HRD-15), proposed. Linux first; macOS is T-HRD-16, `full-auto`
 shells T-HRD-17.
 
-- **REQ-SBX-001** · MUST · state — WHILE the sandbox enforces, THE SYSTEM SHALL launch every hosted ACP agent confined before any of the agent's code runs, so that the kernel refuses it a write outside its thread's directory, its isolation root, the device files a shell needs and `[sandbox] write` — nothing of the repository's `.git`, its worktree's own record there included — and refuses it a Unix-domain socket. IF the agent cannot be confined — its directory holds Umbral's data or runtime directory, or lies inside one and is not its own worktree — THEN THE SYSTEM SHALL not launch it.
+- **REQ-SBX-001** · MUST · state — WHILE the sandbox enforces, THE SYSTEM SHALL launch every hosted ACP agent confined before any of the agent's code runs, so that the kernel refuses it a write outside its thread's directory, its isolation root, the device files a shell needs and `[sandbox] write` — nothing of the repository's `.git`, its worktree's own record there included — and refuses it a connection to another process's Unix-domain socket. IF the agent cannot be confined — its directory holds Umbral's data or runtime directory, or lies inside one and is not its own worktree — THEN THE SYSTEM SHALL not launch it.
 - **REQ-SBX-002** · MUST · state — WHILE the sandbox enforces, THE SYSTEM SHALL have the kernel refuse a hosted ACP agent reading or listing Umbral's data directory and runtime directory — the database, the token, the trust store, every other thread's worktree and every other agent's home — and SHALL leave it able to read the repository's main copy.
 - **REQ-SBX-003** · MUST · unwanted — IF the system cannot confine a process or `[sandbox] mode = "off"`, THEN THE SYSTEM SHALL launch hosted agents unconfined, report the sandbox's state and the reason in `system.status`, and say on each hosted thread that its agent is unconfined.
 - **REQ-SBX-004** · MUST · unwanted — IF a `[sandbox] write` entry is not a clean absolute path, or is, holds or lies inside Umbral's data directory, its runtime directory or a directory the daemon loads code from, THEN THE SYSTEM SHALL refuse to start.
@@ -374,3 +374,4 @@ Still open, with the draft's default:
 | 0.15 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-opencode-fixed-env` (T-HRD-11): REQ-ACP-009's allowlist gains the manifest's fixed variables, OpenCode's `OPENCODE_DISABLE_*` switches, which no env reference overrides |
 | 0.16 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-service-units` (T-PKG-06): REQ-HND-001 names its two exceptions — a running turn, which REQ-HND-002's refusal already had, and a daemon systemd runs as its unit, which is restarted instead — and §8's metric says so |
 | 0.17 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-linux` (T-HRD-15), proposed: a new §6.13 with REQ-SBX-001 … 005, the sandbox around hosted agents; REQ-ACP-007's disclosure says whether the thread is confined; REQ-ACP-009's environment gains `TMPDIR` |
+| 0.18 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-macos` (T-HRD-16), proposed: REQ-SBX-001 refuses a connection to another process's Unix-domain socket, which the Linux and macOS adapters both meet |

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.98 |
+| **Version** | 1.99 |
 | **Date** | 2026-11-19 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1537,6 +1537,13 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
     `sandbox`, `umb status`, and the disclosure above, which then adds that the agent runs
     unconfined. Confined, the disclosure names what the sandbox keeps from the agent and what
     it leaves open instead of the sibling worktrees.
+  - *macOS* (delta `2026-11-sandbox-macos`, T-HRD-16): the same profile rendered for
+    `/usr/bin/sandbox-exec`, with no helper. Writes are refused and then allowed under the
+    write entries and on the device files; reads, `stat` included, are refused under the
+    denied directories and allowed again under the thread's own two, whose ancestors answer
+    `stat` only. A connection to another process's Unix-domain socket is refused, the
+    resolver's excepted, and so are a Launch Services open, an Apple event and a launchd job.
+    `enforcing` is probed by running the tool once; signals and Mach services stay open.
   - *`[sandbox]`* (§5.1): `mode`, `enforce` or `off`; `write`, clean absolute paths. An entry
     that reaches the data directory, the runtime directory or the cache the daemon loads libffi
     from (T-HRD-18) stops the daemon at start.
@@ -2419,3 +2426,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.96 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-run-command-prompt` (T-HRD-13): §5.3b `run_command` returns once the shell has drawn its next prompt, at most 500 ms after its block closes. Ratified by the Tech Lead on 2026-11-19 |
 | 1.97 | 2026-11-19 | E. Crespo (assisted draft) | T-REL-03: §9.3 the release workflow verifies its checksums and both attestations of every package before it creates the draft release |
 | 1.98 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-linux` (T-HRD-15, proposed): §3.2 and §5.2 the `sandbox` module; §5.3f a hosted agent's profile — nothing of the repository's `.git` — the helper, the degraded mode and `[sandbox]`; the worktree engine names the common directory and reads no replacement object |
+| 1.99 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-macos` (T-HRD-16, proposed): §5.3f the macOS adapter, `sandbox-exec` with a rendered profile |

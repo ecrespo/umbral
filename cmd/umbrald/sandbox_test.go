@@ -17,6 +17,7 @@ import (
 	"github.com/ecrespo/umbral/internal/client"
 	"github.com/ecrespo/umbral/internal/config"
 	"github.com/ecrespo/umbral/internal/sandbox/adapters/landlock"
+	"github.com/ecrespo/umbral/internal/sandbox/adapters/seatbelt"
 	sandboxdomain "github.com/ecrespo/umbral/internal/sandbox/domain"
 )
 
@@ -24,7 +25,7 @@ import (
 // tests are about.
 func needSandbox(t *testing.T) {
 	t.Helper()
-	if st := landlock.New("x").Status(); !st.Enforcing() {
+	if st := platformSandbox("x").Status(); !st.Enforcing() {
 		// Where the sandbox is required (CI's Linux job) a system that cannot confine is a
 		// failure: a skip would leave the kernel's refusals unproven behind a green run.
 		if os.Getenv("UMBRAL_REQUIRE_SANDBOX") == "1" {
@@ -32,6 +33,12 @@ func needSandbox(t *testing.T) {
 		}
 		t.Skipf("no sandbox on this system: %+v", st)
 	}
+}
+
+// refused reports whether an answer of the fake agent is the kernel's refusal: EACCES from
+// Landlock, EPERM from macOS's sandbox.
+func refused(answer string) bool {
+	return strings.Contains(answer, "permission denied") || strings.Contains(answer, "operation not permitted")
 }
 
 // hostedThread creates a thread hosted by the fake agent in a worktree of repo, and returns
@@ -73,8 +80,12 @@ func TestAHostedAgentIsConfinedByTheKernel_REQ_SBX_001(t *testing.T) {
 	if err := stream.Call(ctx, "system.status", map[string]any{}, &status); err != nil {
 		t.Fatal(err)
 	}
-	if status.Sandbox.State != api.SandboxEnforcing || status.Sandbox.Mechanism != landlock.Mechanism || status.Sandbox.Reason != "" {
-		t.Errorf("system.status sandbox = %+v, want enforcing by landlock", status.Sandbox)
+	mechanism := landlock.Mechanism
+	if runtime.GOOS == "darwin" {
+		mechanism = seatbelt.Mechanism
+	}
+	if status.Sandbox.State != api.SandboxEnforcing || status.Sandbox.Mechanism != mechanism || status.Sandbox.Reason != "" {
+		t.Errorf("system.status sandbox = %+v, want enforcing by %s", status.Sandbox, mechanism)
 	}
 
 	outside := filepath.Join(t.TempDir(), "planted")
@@ -83,7 +94,7 @@ func TestAHostedAgentIsConfinedByTheKernel_REQ_SBX_001(t *testing.T) {
 		"the main copy's hook": filepath.Join(repo, ".git", "hooks", "pre-commit"),
 		"a directory outside":  outside,
 	} {
-		if got := agentDoes(t, ctx, stream, thread.ID, "touch "+target); !strings.Contains(got, "permission denied") {
+		if got := agentDoes(t, ctx, stream, thread.ID, "touch "+target); !refused(got) {
 			t.Errorf("%s: the agent's own write answered %q, want the kernel's refusal", name, got)
 		}
 		if _, err := os.Stat(target); err == nil {
@@ -133,7 +144,7 @@ func TestAHostedAgentCannotReadUmbralsData_REQ_SBX_002(t *testing.T) {
 		"the token":                 token,
 		"another thread's worktree": filepath.Join(sibling, "sibling.txt"),
 	} {
-		if got := agentDoes(t, ctx, stream, thread.ID, "cat "+path); !strings.Contains(got, "permission denied") {
+		if got := agentDoes(t, ctx, stream, thread.ID, "cat "+path); !refused(got) {
 			t.Errorf("%s: the agent's own read answered %q, want the kernel's refusal", name, got)
 		}
 	}
@@ -196,7 +207,7 @@ func TestAHostedAgentWritesNothingInTheRepositorysGitDirectory_REQ_SBX_001(t *te
 		"a worktree config":      filepath.Join(admin, "config.worktree"),
 	}
 	for name, target := range inGit {
-		if got := agentDoes(t, ctx, stream, thread.ID, "put "+target+" planted"); !strings.Contains(got, "permission denied") {
+		if got := agentDoes(t, ctx, stream, thread.ID, "put "+target+" planted"); !refused(got) {
 			t.Errorf("%s: the agent's write answered %q, want the kernel's refusal", name, got)
 		}
 	}
@@ -206,14 +217,14 @@ func TestAHostedAgentWritesNothingInTheRepositorysGitDirectory_REQ_SBX_001(t *te
 		t.Fatalf("the agent could not rewrite its own .git: %q", got)
 	}
 	sendAndFinish(t, ctx, stream, thread.ID, "crash")
-	if got := agentDoes(t, ctx, stream, thread.ID, "cat "+secret); !strings.Contains(got, "permission denied") {
+	if got := agentDoes(t, ctx, stream, thread.ID, "cat "+secret); !refused(got) {
 		t.Errorf("after the relaunch the sibling's file answered %q, want the kernel's refusal", got)
 	}
-	if got := agentDoes(t, ctx, stream, thread.ID, "touch "+filepath.Join(sibling, "planted")); !strings.Contains(got, "permission denied") {
+	if got := agentDoes(t, ctx, stream, thread.ID, "touch "+filepath.Join(sibling, "planted")); !refused(got) {
 		t.Errorf("after the relaunch a write in the sibling's worktree answered %q", got)
 	}
 	for name, target := range inGit {
-		if got := agentDoes(t, ctx, stream, thread.ID, "put "+target+" planted"); !strings.Contains(got, "permission denied") {
+		if got := agentDoes(t, ctx, stream, thread.ID, "put "+target+" planted"); !refused(got) {
 			t.Errorf("after the relaunch, %s: the agent's write answered %q", name, got)
 		}
 	}

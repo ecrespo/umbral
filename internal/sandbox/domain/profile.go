@@ -40,6 +40,9 @@ const (
 	ReasonOldLandlock = "landlock_too_old"
 	// ReasonUnsupportedArch is a CPU architecture the socket filter is not written for.
 	ReasonUnsupportedArch = "unsupported_arch"
+	// ReasonNoSeatbelt is a macOS where `sandbox-exec` is missing or cannot apply a profile,
+	// as inside another sandbox.
+	ReasonNoSeatbelt = "seatbelt_unavailable"
 	// ReasonNoHelper is a sandbox given no helper to run.
 	ReasonNoHelper = "no_helper"
 	ReasonConfig   = "config"

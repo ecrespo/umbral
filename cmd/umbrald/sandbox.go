@@ -6,12 +6,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	acpdomain "github.com/ecrespo/umbral/internal/acp/domain"
 	acpports "github.com/ecrespo/umbral/internal/acp/ports"
 	"github.com/ecrespo/umbral/internal/api"
 	"github.com/ecrespo/umbral/internal/config"
 	"github.com/ecrespo/umbral/internal/sandbox/adapters/landlock"
+	"github.com/ecrespo/umbral/internal/sandbox/adapters/seatbelt"
 	sandboxdomain "github.com/ecrespo/umbral/internal/sandbox/domain"
 	sandboxports "github.com/ecrespo/umbral/internal/sandbox/ports"
 )
@@ -34,6 +36,16 @@ func sandboxHelper(args []string, stderr io.Writer) (code int, isHelper bool) {
 	err := landlock.Exec(args[1], args[3:])
 	_, _ = fmt.Fprintln(stderr, "umbrald:", err)
 	return exitSandbox, true
+}
+
+// platformSandbox is this system's adapter of the sandbox port: `sandbox-exec` on macOS
+// (T-HRD-16), which needs no helper, and Landlock everywhere else, where it enforces on Linux
+// and says `unsupported_os` on the rest.
+func platformSandbox(helper string) sandboxports.Sandbox {
+	if runtime.GOOS == "darwin" {
+		return seatbelt.New()
+	}
+	return landlock.New(helper)
 }
 
 // offSandbox is `[sandbox] mode = "off"`: nothing is confined, and the status says the user
@@ -94,7 +106,7 @@ func newSandbox(settings config.Sandbox, dataDir, runtimeDir string, logger *slo
 			return nil, acpConfiner{}, fmt.Errorf("sandbox: find the daemon's own executable: %w", err)
 		}
 		helper = resolved(exe)
-		sb = landlock.New(helper)
+		sb = platformSandbox(helper)
 	}
 	st := sb.Status()
 	if st.Enforcing() {
