@@ -8,13 +8,11 @@ HIGH finding: 183 of 183 MUST requirements have a task.
 
 - **Phases:** F0 closed on 2026-09-26, F1 on 2026-10-22 and slice F2a on 2026-10-24. The tasks
   of F2b … F2f are done; closing those slices is the Tech Lead's. The Hardening phase is open.
-- **Deltas:** 92 are archived under `../changes/_archive/`. 20 are open in `../changes/`: 16
+- **Deltas:** 96 are archived under `../changes/_archive/`. 16 are open in `../changes/`, all
   from F2, approved by the implementing agent and waiting for the Tech Lead's review
-  (`../docs/checkpoints/2026-11-17-delta-review-guide.md` is a reading order), and
-  `2026-11-sandbox-linux` (T-HRD-15), `2026-11-sandbox-macos` (T-HRD-16),
-  `2026-11-full-auto-sandbox` (T-HRD-17) and `2026-11-libffi-load` (T-HRD-18), proposed.
-- **Open tasks:** T-PKG-05 in the F2 file; T-REL-01, T-REL-02, T-REL-03, T-HRD-01 (in
-  progress) and T-HRD-13 … T-HRD-20 in the hardening file.
+  (`../docs/checkpoints/2026-11-17-delta-review-guide.md` is a reading order).
+- **Open tasks:** T-PKG-05 in the F2 file; T-REL-01, T-REL-02, T-REL-03 and T-HRD-01 (both
+  in progress), T-HRD-20 and T-HRD-21 in the hardening file.
 
 `../AGENTS.md`, under "Known status", is the running record; when this summary and that file
 disagree, that file is the newer one.
