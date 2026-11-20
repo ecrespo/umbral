@@ -34,6 +34,7 @@ On Windows, on a Linux kernel without Landlock, with `[sandbox] mode = "off"`, o
 other system where `umb status` reports the sandbox as not enforcing, `full-auto` still works and the thread reads `full-auto unconfined`: the worktree is then the only
 boundary, and a command can write outside it. `umb status` says which of these applies.
 
-A thread hosted by another agent (`umb thread create --agent`) is confined as a process, but
-the terminals it opens are not, and in `full-auto` those started inside the worktree run
-without asking.
+A thread hosted by another agent (`umb thread create --agent`) is confined as a process. The
+terminals it opens are started by Umbral: in `full-auto`, where those started inside the
+worktree run without asking, each runs in a shell confined the same way. In any other mode
+a terminal runs unconfined, and each one is allowed by your rules or asks you first.

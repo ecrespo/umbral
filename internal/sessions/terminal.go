@@ -48,11 +48,16 @@ func (s *Service) StartTerminal(ctx context.Context, threadID, cwd, command stri
 	if err != nil {
 		return nil, err
 	}
+	// Under `full-auto` the command runs unasked, in a shell the daemon starts outside the
+	// hosted agent's own sandbox: it is confined as the thread's own shell is, or not started
+	// (REQ-SBX-007). Asked before any lock is taken, as threadSession does.
+	confined := s.confined(ctx, threadID)
 	// Held while the session is created and marked, so threadSession never sees it unmarked
 	// and takes it for the thread's PTY.
 	s.threadMu.Lock()
 	session, err := s.Create(ctx, domain.CreateParams{
 		Shell: shell, CWD: cwd, Size: domain.Size{Cols: 120, Rows: 40}, ShellIntegration: true, OwnerThreadID: threadID,
+		Confined: confined,
 	})
 	if err != nil {
 		s.threadMu.Unlock()

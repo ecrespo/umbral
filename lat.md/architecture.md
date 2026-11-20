@@ -280,6 +280,16 @@ Where the sandbox enforces, the kernel bounds what full-auto runs unasked (REQ-S
 
 An agent's terminal cannot land its own work. [[internal/api/conn.go#conn#fromAgent]] asks `Config.AgentPeer` about the kernel's peer pid of the connection, and every method marked `userOnly` — `worktree.merge`, `discard`, `close_group`, `approval.respond`, `thread.update`, the skill, MCP and rule changes, `session.input`, and every method that starts a process (`session.create`, `pane.split`, `tab.create`, `workspace.create`, `layout.apply`) — answers `PERMISSION_DENIED` to a client inside one, whatever kind it claims. The verdict taken when the connection starts holds for it, and while an agent's terminal is open a peer that cannot be read is taken for one. [[cmd/umbrald/agentpeer.go#agentPeer]] composes the check from [[internal/sessions/service.go#Service#AgentShellPIDs]], the hosted ACP agents' [[internal/acp/adapters/sdk/host.go#Host#AgentPIDs]], [[internal/integrations/adapters/proctree/proctree.go#Ancestors]] and the POSIX session id; a process that calls `setsid` and forks away from its parents escapes it. A hosted agent leads its own session and counts from its launch, because its isolated `HOME` sits beside the socket and its token (delta `2026-10-hosted-agent-peer`).
 
+### A hosted agent's terminals are confined under full-auto
+
+A hosted agent's terminals are sessions the daemon starts outside the agent's sandbox; under full-auto those in the worktree run unasked, so each shell is confined like the thread's own (REQ-SBX-007, delta `2026-11-hosted-terminal-sandbox`).
+
+[[internal/agents/external.go#externalSink#Request]] marks the request with [[internal/agents/ports/ports.go#WithFullAuto]] when its turn decides under full-auto, [[cmd/umbrald/acp.go#terminalContext]] turns that into the sessions module's mark, and [[internal/sessions/terminal.go#Service#StartTerminal]] asks [[internal/sessions/agent.go#Service#confined]] before it creates the session.
+
+Several terminals live at once, so [[cmd/umbrald/shellsandbox.go#shellConfiner#Confine]] gives each a directory of its own under the thread's instead of emptying one, with a cleanup [[internal/sessions/lifecycle.go#Service#confine]] chains to the session's own, so the directory goes when the terminal does.
+
+A terminal that cannot be confined is refused, and in any other mode a terminal runs unconfined, each one a decision ([[cmd/umbrald/sandbox_test.go#TestAHostedTerminalIsBoundedByTheKernelUnderFullAuto_REQ_SBX_007]] holds both against the kernel).
+
 ## Turns run in parallel up to a limit, then queue in order
 
 Turns of different threads run at once, each in its own goroutine; one over `[agents] max_concurrent_turns` is accepted, written `queued`, and started in arrival order when a turn ends (delta `2026-10-parallel-turns`).

@@ -141,9 +141,20 @@ func (s *Service) confine(ctx context.Context, params domain.CreateParams, args,
 	if dir != "" {
 		read = []string{dir}
 	}
-	argv, extra, err := s.cfg.Confiner.Confine(ctx, params.OwnerThreadID, read, append([]string{params.Shell}, args...))
+	argv, extra, release, err := s.cfg.Confiner.Confine(ctx, params.OwnerThreadID, read, append([]string{params.Shell}, args...))
 	if err != nil {
 		return fail(err)
+	}
+	if release != nil {
+		// What the confiner made for this shell goes with it, after the shell's own files.
+		bootstrap := cleanup
+		cleanup = func() error {
+			var first error
+			if bootstrap != nil {
+				first = bootstrap()
+			}
+			return errors.Join(first, release())
+		}
 	}
 	if len(argv) == 0 {
 		return fail(fmt.Errorf("%w: the sandbox gave no command to run", domain.ErrValidation))

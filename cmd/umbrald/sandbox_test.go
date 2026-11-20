@@ -366,3 +366,82 @@ func TestASandboxWriteEntryThatReachesUmbralStopsTheDaemon_REQ_SBX_004(t *testin
 		t.Error("with the sandbox off, a write entry naming the data directory was accepted")
 	}
 }
+
+// TestAHostedTerminalIsBoundedByTheKernelUnderFullAuto_REQ_SBX_007: a hosted agent is confined
+// as a process, but its terminals are sessions the daemon starts outside that sandbox. In
+// `full-auto` one whose directory is the worktree runs unasked, whatever paths its command
+// names, so its shell is confined as the agent is: the kernel refuses its write outside the
+// worktree and its write inside lands. In `normal` the terminal asks, and the same line,
+// approved, writes: there every command is the user's decision.
+func TestAHostedTerminalIsBoundedByTheKernelUnderFullAuto_REQ_SBX_007(t *testing.T) {
+	needSandbox(t)
+	repo, env := gitRepo(t)
+	stream, ctx := acpDaemon(t, env...)
+	thread, worktree := hostedThread(t, ctx, stream, repo)
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One turn in which the fake agent opens a terminal for line; every approval asked is
+	// approved and counted.
+	terminal := func(line string) (answer string, asked int) {
+		t.Helper()
+		if err := stream.Call(ctx, "thread.send", map[string]any{"thread_id": thread.ID, "text": "term " + line}, nil); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			select {
+			case n, ok := <-stream.Notifications():
+				if !ok {
+					t.Fatalf("the stream ended: %v", stream.Err())
+				}
+				switch n.Method {
+				case "approval.requested":
+					var a struct{ ID string }
+					_ = n.Decode(&a)
+					asked++
+					if err := stream.Call(ctx, "approval.respond", map[string]any{"approval_id": a.ID, "decision": "approve", "scope": "once"}, nil); err != nil {
+						t.Fatal(err)
+					}
+				case "thread.turn_finished":
+					return lastAnswer(t, ctx, stream, thread.ID), asked
+				}
+			case <-ctx.Done():
+				t.Fatal("the turn did not finish")
+			}
+		}
+	}
+
+	if err := stream.Call(ctx, "thread.update", map[string]any{"thread_id": thread.ID, "mode": "full-auto"}, &thread); err != nil {
+		t.Fatal(err)
+	}
+	planted := filepath.Join(outside, "auto")
+	answer, asked := terminal("touch " + planted)
+	if asked != 0 {
+		t.Fatalf("full-auto asked %d times for a terminal in its worktree", asked)
+	}
+	if _, err := os.Stat(planted); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a full-auto terminal wrote outside the worktree (%v); the agent read %q", err, answer)
+	}
+	if strings.HasPrefix(answer, "exit=0 ") {
+		t.Errorf("the refused write answered %q, want a failed command", answer)
+	}
+	inside := filepath.Join(worktree, "made.txt")
+	if answer, asked := terminal("touch " + inside); asked != 0 || !strings.HasPrefix(answer, "exit=0 ") {
+		t.Errorf("a write in the worktree: asked %d, answered %q", asked, answer)
+	}
+	if _, err := os.Stat(inside); err != nil {
+		t.Errorf("the file in the worktree is not there: %v", err)
+	}
+
+	if err := stream.Call(ctx, "thread.update", map[string]any{"thread_id": thread.ID, "mode": "normal"}, &thread); err != nil {
+		t.Fatal(err)
+	}
+	approved := filepath.Join(outside, "normal")
+	if answer, asked := terminal("touch " + approved); asked != 1 {
+		t.Errorf("normal mode asked %d times, want once (answer %q)", asked, answer)
+	}
+	if _, err := os.Stat(approved); err != nil {
+		t.Errorf("a terminal approved in normal mode was confined: %v", err)
+	}
+}

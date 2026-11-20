@@ -430,6 +430,10 @@ func (s *externalSink) Request(ctx context.Context, op ports.ExternalOp, perform
 		}
 		return ports.ErrDenied
 	}
+	if op.Method == ports.OpTerminal && s.t.mode == secdomain.ModeFullAuto {
+		// The terminal is started on the reading it was let run unasked on (REQ-SBX-007).
+		ctx = ports.WithFullAuto(ctx)
+	}
 	summary, perr := perform(ctx, a.Target)
 	if perr != nil {
 		if err := finish(domain.ToolError, "error: "+perr.Error()); err != nil {
