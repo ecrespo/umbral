@@ -66,7 +66,11 @@ Mac. What shaped the decisions:
      small and behind a port.
    Better than Linux: `stat`, `chmod`, `chown`, times and extended attributes are refused by
    path, and the keychain is out of reach.
-10. **What it may break.** A program that needs a session service outside the thirteen — a
+10. **The user's own temporary directory stays refused.** macOS gives each user one under
+    `/var/folders`, shared by all their programs, and some tools write there whatever `TMPDIR`
+    says (`mktemp -t` was measured). The agent's `TMPDIR` is its own; a tool that ignores it
+    fails.
+11. **What it may break.** A program that needs a session service outside the thirteen — a
     credential helper that reads the keychain, a tool that opens a browser — fails under the
     profile, and so does one that sandboxes its own commands, since a sandbox cannot be
     applied inside one. `[sandbox] mode = "off"` is the way out, disclosed.

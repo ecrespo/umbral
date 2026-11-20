@@ -144,7 +144,9 @@ func TestAConfinedProcessWritesOnlyInsideItsProfile_REQ_SBX_001(t *testing.T) {
 func TestAConfinedProcessWritesItsDeviceFiles_REQ_SBX_001(t *testing.T) {
 	b := newBench(t)
 	p := b.profile(t)
-	for _, line := range []string{"echo x > /dev/null", "cat /dev/zero | head -c 1 > /dev/null", "/usr/bin/mktemp -t umbral >/dev/null"} {
+	// `mktemp -t` is not among them: it writes to the user's own temporary directory whatever
+	// TMPDIR says, and that directory is every program's of the user's, so it stays refused.
+	for _, line := range []string{"echo x > /dev/null", "cat /dev/zero | head -c 1 > /dev/null", "/usr/bin/mktemp " + filepath.Join(b.root, "tmp", "umbral.XXXXXX") + " >/dev/null"} {
 		if out, err := b.sh(t, p, line); err != nil {
 			t.Errorf("%q was refused: %v %s", line, err, out)
 		}

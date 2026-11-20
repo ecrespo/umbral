@@ -1,6 +1,7 @@
 package seatbelt
 
 import (
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +14,15 @@ import (
 var agent = domain.Profile{
 	Write:    []string{"/data/worktrees/r/thr_1", "/run/umbral/acp/thr_1", "/Users/u/Library/Caches/go-build"},
 	DenyRead: []string{"/data", "/run/umbral"},
+}
+
+// posixPaths skips a test whose profile is written with POSIX paths: `/data` is not absolute
+// on Windows, where this adapter never renders one.
+func posixPaths(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the profile's paths are POSIX paths; sandbox-exec is macOS's")
+	}
 }
 
 // order fails unless each of lines appears in text, in that order.
@@ -32,6 +42,7 @@ func order(t *testing.T, text string, lines ...string) {
 // refusal of every write comes first and the profile's own directories and the device files
 // after it; nothing else is allowed a write.
 func TestTheProfileRefusesEveryWriteButItsOwn_REQ_SBX_001(t *testing.T) {
+	posixPaths(t)
 	text, err := Render(agent)
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +72,7 @@ func TestTheProfileRefusesEveryWriteButItsOwn_REQ_SBX_001(t *testing.T) {
 // them, are read again by a later rule, and each directory above one answers `stat` and no
 // more, so the path to it resolves. A write entry outside a denied directory needs neither.
 func TestTheProfileDeniesUmbralsDirectoriesAndReopensItsOwn_REQ_SBX_002(t *testing.T) {
+	posixPaths(t)
 	text, err := Render(agent)
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +112,7 @@ func TestTheProfileDeniesUmbralsDirectoriesAndReopensItsOwn_REQ_SBX_002(t *testi
 // sandbox for the caller. All four are refused; the resolver's socket, without which no name
 // resolves, is allowed after the refusal.
 func TestTheProfileRefusesWaysOutOfTheSandbox_REQ_SBX_001(t *testing.T) {
+	posixPaths(t)
 	text, err := Render(agent)
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +130,7 @@ func TestTheProfileRefusesWaysOutOfTheSandbox_REQ_SBX_001(t *testing.T) {
 // before the few a program needs are allowed — never the preferences daemon, the keychain or
 // Launch Services — and a signal reaches only a process in the same sandbox.
 func TestTheProfileRefusesTheSessionsServicesAndSignals_REQ_SBX_001(t *testing.T) {
+	posixPaths(t)
 	text, err := Render(agent)
 	if err != nil {
 		t.Fatal(err)
@@ -143,6 +157,7 @@ func TestTheProfileRefusesTheSessionsServicesAndSignals_REQ_SBX_001(t *testing.T
 // is escaped, so it cannot close its string and add a rule; a control character is refused,
 // and so is a path that is not clean and absolute.
 func TestAPathCannotWriteRulesOfItsOwn_REQ_SBX_001(t *testing.T) {
+	posixPaths(t)
 	text, err := Render(domain.Profile{Write: []string{`/w/a")) (allow file-write* (subpath "/x`, `/w/back\slash`}})
 	if err != nil {
 		t.Fatal(err)
@@ -168,6 +183,7 @@ func TestAPathCannotWriteRulesOfItsOwn_REQ_SBX_001(t *testing.T) {
 // returns the command as it was, and says why in its status (REQ-SBX-003). A command whose
 // name the tool would read as a flag is refused.
 func TestTheCommandRunsThroughAppleTool_REQ_SBX_001(t *testing.T) {
+	posixPaths(t)
 	on := &Sandbox{status: domain.Status{State: domain.StateEnforcing, Mechanism: Mechanism}}
 	argv, err := on.Command(agent, []string{"/bin/agent", "acp", "-p"})
 	if err != nil {
