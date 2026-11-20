@@ -30,7 +30,7 @@ func TestLaunchRunsTheCommandAndSkipsTheBootstrap_REQ_WS_005(t *testing.T) {
 		Logger:    slog.New(slog.DiscardHandler),
 	}}
 
-	program, args, env, cleanup, err := s.launch("ses_test", domain.CreateParams{
+	program, args, env, cleanup, err := s.launch(t.Context(), "ses_test", domain.CreateParams{
 		Shell:            "/bin/sh",
 		Command:          []string{"sh", "-c", "true"},
 		ShellIntegration: true,
@@ -57,9 +57,9 @@ func TestLaunchRunsTheCommandAndSkipsTheBootstrap_REQ_WS_005(t *testing.T) {
 // must not reach it at all — `Prepare` is what would inject an rc file into the child.
 type refusingBootstrap struct{ t *testing.T }
 
-func (b refusingBootstrap) Prepare(shell string) ([]string, []string, func() error, error) {
+func (b refusingBootstrap) Prepare(shell string) ([]string, []string, string, func() error, error) {
 	b.t.Errorf("the bootstrap was asked to prepare %q for a session that carries a command", shell)
-	return nil, nil, nil, nil
+	return nil, nil, "", nil, nil
 }
 
 // TestLaunchResolvesAgainstTheSessionsPath pins the resolution rule: a portable layout may
@@ -72,7 +72,7 @@ func TestLaunchResolvesAgainstTheSessionsPath(t *testing.T) {
 	target := writeProgram(t, dir, name)
 
 	s := &Service{cfg: Config{Logger: slog.New(slog.DiscardHandler)}}
-	program, _, _, _, err := s.launch("ses_test", domain.CreateParams{
+	program, _, _, _, err := s.launch(t.Context(), "ses_test", domain.CreateParams{
 		Command: []string{name},
 		Env:     map[string]string{"PATH": dir},
 	})

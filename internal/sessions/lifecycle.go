@@ -33,12 +33,21 @@ import (
 // carry `env: {"PATH": "/opt/toolchain/bin"}` beside `command: ["mytool"]`, and the
 // daemon's PATH is not where that layout said to look. The environment is assembled here,
 // so this is where the answer lives.
-func (s *Service) launch(id string, params domain.CreateParams) (program string, args, env []string, cleanup func() error, err error) {
+func (s *Service) launch(ctx context.Context, id string, params domain.CreateParams) (program string, args, env []string, cleanup func() error, err error) {
 	if len(params.Command) == 0 {
-		args, env, cleanup, err = s.bootstrap(id, params)
-		return params.Shell, args, env, cleanup, err
+		var dir string
+		args, env, dir, cleanup, err = s.bootstrap(id, params)
+		if err != nil || !params.Confined {
+			return params.Shell, args, env, cleanup, err
+		}
+		return s.confine(ctx, params, args, env, dir, cleanup)
 	}
 
+	if params.Confined {
+		// Only a thread's own shell is confined; a command asked for confined must not run
+		// as if it were.
+		return "", nil, nil, nil, fmt.Errorf("%w: a session with a command cannot be confined", domain.ErrValidation)
+	}
 	env = environ(params.Env, s.umbralEnv(id, params.Pane, params.OwnerThreadID != ""))
 	program, err = lookPath(params.Command[0], env)
 	if err != nil {
@@ -99,20 +108,47 @@ func pathFrom(env []string) string {
 // A shell with no bootstrap is not an error. The session starts without integration and
 // REQ-BLK-003 marks it `integration: none` after five seconds, which is the degraded mode
 // DD-002 describes.
-func (s *Service) bootstrap(id string, params domain.CreateParams) (args, env []string, cleanup func() error, err error) {
+func (s *Service) bootstrap(id string, params domain.CreateParams) (args, env []string, dir string, cleanup func() error, err error) {
 	env = environ(params.Env, s.umbralEnv(id, params.Pane, params.OwnerThreadID != ""))
 
 	if !params.ShellIntegration || s.cfg.Bootstrap == nil {
-		return nil, env, nil, nil
+		return nil, env, "", nil, nil
 	}
 
-	args, extraEnv, cleanup, err := s.cfg.Bootstrap.Prepare(params.Shell)
+	args, extraEnv, dir, cleanup, err := s.cfg.Bootstrap.Prepare(params.Shell)
 	if err != nil {
 		s.cfg.Logger.Info("starting without shell integration",
 			slog.String("shell", params.Shell), slog.Any("reason", err))
-		return nil, env, nil, nil
+		return nil, env, "", nil, nil
 	}
-	return args, append(env, extraEnv...), cleanup, nil
+	return args, append(env, extraEnv...), dir, cleanup, nil
+}
+
+// confine replaces a thread's shell's command line by the one that runs it inside the sandbox
+// (REQ-SBX-006). A shell that cannot be confined is not started: running it unconfined
+// instead would give a `full-auto` thread the whole machine while it reads as confined.
+func (s *Service) confine(ctx context.Context, params domain.CreateParams, args, env []string, dir string, cleanup func() error) (string, []string, []string, func() error, error) {
+	fail := func(err error) (string, []string, []string, func() error, error) {
+		if cleanup != nil {
+			_ = cleanup()
+		}
+		return "", nil, nil, nil, err
+	}
+	if s.cfg.Confiner == nil {
+		return fail(fmt.Errorf("%w: a confined shell was asked for and there is no sandbox", domain.ErrValidation))
+	}
+	var read []string
+	if dir != "" {
+		read = []string{dir}
+	}
+	argv, extra, err := s.cfg.Confiner.Confine(ctx, params.OwnerThreadID, read, append([]string{params.Shell}, args...))
+	if err != nil {
+		return fail(err)
+	}
+	if len(argv) == 0 {
+		return fail(fmt.Errorf("%w: the sandbox gave no command to run", domain.ErrValidation))
+	}
+	return argv[0], argv[1:], append(env, extra...), cleanup, nil
 }
 
 // paneTerminal is what every pane says it is: the emulator that renders it (REQ-TERM-013).

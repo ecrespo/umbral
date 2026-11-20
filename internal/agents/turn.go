@@ -529,7 +529,7 @@ func (t *turnRun) runTool(ctx context.Context, c domain.ToolCall) error {
 // callTool runs one tool call: classify, record, decide, ask if it must, invoke.
 func (t *turnRun) callTool(ctx context.Context, c domain.ToolCall) error {
 	cfg := t.r.cfg
-	env := toolsdomain.Env{ThreadID: t.thread.ID, Cwd: t.cwd, WriteRoot: t.writeRoot}
+	env := toolsdomain.Env{ThreadID: t.thread.ID, Cwd: t.cwd, WriteRoot: t.writeRoot, FullAuto: t.mode == secdomain.ModeFullAuto}
 	call := toolsdomain.Call{Tool: c.Tool, Input: c.Args}
 
 	var action secdomain.Action

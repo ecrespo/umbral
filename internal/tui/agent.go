@@ -618,6 +618,9 @@ func (m *Model) threadLines(width int) []string {
 		parts := []string{t.ID, attention}
 		if t.Agent != "" {
 			parts = append(parts, oneLine(t.Agent)+" "+oneLine(t.EgressVisibility))
+		} else if t.Sandbox != "" {
+			// Umbral's own thread in full-auto: whether the kernel bounds what runs unasked.
+			parts = append(parts, "full-auto "+oneLine(t.Sandbox))
 		}
 		if t.Queued {
 			parts = append(parts, "queued")

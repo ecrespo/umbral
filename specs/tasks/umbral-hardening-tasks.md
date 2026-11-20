@@ -384,7 +384,7 @@ its matrix lists commands.
   reddens when the rule is removed; without Landlock the daemon says so and the thread's
   disclosure says the agent is unconfined.
 
-### [ ] T-HRD-16 · The macOS sandbox adapter
+### [x] 2026-11-19 T-HRD-16 · The macOS sandbox adapter
 - **What:** the delta's decision 3: `sandbox-exec` with a generated profile behind the same
   port.
 - **REQ:** Art. 5; the `SBX` requirements T-HRD-15 writes
@@ -392,17 +392,18 @@ its matrix lists commands.
 - **Depends on:** T-HRD-15
 - **Done:** T-HRD-15's tests pass on `macos-latest` through this adapter.
 
-### [ ] T-HRD-17 · `full-auto` shells confined; `egress_visibility = confined`; the disclosures
-- **What:** the delta's decisions 6 and 8: an Umbral thread's own shell is confined while the
-  thread is in `full-auto`, a hosted thread whose network profile the kernel enforces reports
-  `confined`, and the disclosures say which threads are confined. The amendment to
-  REQ-ORC-004 and the new `egress_visibility` value go through a delta before any code, T-HRD-15's
-  or one of its own; the value needs a forward-only migration, since migration 0007's `CHECK`
-  names `observed` and `unobserved` only (Art. 6).
-- **REQ:** Art. 5, Art. 4; the `SBX` requirements T-HRD-15 writes; REQ-ORC-004
-- **Files:** `internal/sessions/**`, `internal/agents/**`, `internal/acp/**`,
-  `internal/api/**`, `internal/store/migrations/**`, `cmd/umb/**`, `specs/prd/umbral-f2.md`,
-  `specs/api/umbral-daemon-api-v1.md`, `specs/data-model/umbral-schema.md`
+### [x] 2026-11-19 T-HRD-17 · `full-auto` shells confined; the disclosures
+- **What:** decision 6 of delta `2026-11-agent-sandbox`: an Umbral thread's own shell is
+  confined while the thread is in `full-auto`, and the disclosures say which threads are
+  confined. REQ-ORC-004 stands as written; the task's own delta, `2026-11-full-auto-sandbox`,
+  adds REQ-SBX-006 beside it. The `egress_visibility = confined` value of that delta's
+  decision 8 and its migration are T-HRD-20's (this task's delta, decision 9): no thread has
+  a network profile before the relay.
+- **REQ:** REQ-SBX-006 (written by this task's delta `2026-11-full-auto-sandbox`); Art. 5, Art. 4; REQ-ORC-004
+- **Files:** `internal/sessions/**`, `internal/agents/**`, `internal/tools/**`,
+  `internal/sandbox/**`, `internal/api/**`, `internal/tui/**`, `cmd/umbrald/**`,
+  `cmd/umbral-desktop/frontend/app.js`, `docs/user/full-auto.md`, `specs/prd/umbral-f2.md`,
+  `specs/api/umbral-daemon-api-v1.md`, `specs/technical/umbral-architecture.md`
 - **Depends on:** T-HRD-15. Delta `2026-11-open-questions`: `full-auto` without a sandbox is
   allowed, degraded and disclosed (S2), and the opt-out covers `full-auto` shells too (S4).
 - **Done:** a `full-auto` command that writes outside its worktree is refused by the kernel
@@ -441,14 +442,37 @@ its matrix lists commands.
 - **What:** option (b) of delta `2026-11-agent-sandbox` Q1: a confined agent has no network,
   and reaches its model endpoint through a relay the daemon serves on a Unix socket, so the
   agent's model calls are Umbral's own and are recorded in `egress_log`. Sized from what the
-  spike measured; it starts with a delta of its own.
+  spike measured; it starts with a delta of its own. With the network profile comes decision
+  8 of that delta, moved here from T-HRD-17: a hosted thread whose network profile the kernel
+  enforces reports `egress_visibility = confined`. The value needs a forward-only migration,
+  since migration 0007's `CHECK` names `observed` and `unobserved` only (Art. 6).
 - **REQ:** Art. 4; the `SBX` requirements T-HRD-15 writes
-- **Files:** `internal/sandbox/**`, `internal/acp/**`, `internal/llmgw/**`
+- **Files:** `internal/sandbox/**`, `internal/acp/**`, `internal/llmgw/**`,
+  `internal/store/migrations/**`, `internal/api/**`, `specs/data-model/umbral-schema.md`,
+  `specs/api/umbral-daemon-api-v1.md`
 - **Depends on:** T-HRD-15
 - **Done:** a hosted agent whose profile allows no network completes a turn through the
   relay; its requests to a non-loopback endpoint are `egress_log` rows and those to a loopback
   model are none, as Tech Design §4 has it for Umbral's own calls, unless the task's delta
   decides the relay records more.
+
+### [ ] T-HRD-21 · A hosted thread in `full-auto`: its terminals, and what its notice says
+- **What:** the open question of delta `2026-11-full-auto-sandbox`. A hosted thread can be in
+  `full-auto` (REQ-ORC-004 covers an ACP thread's permission requests), and a
+  `terminal/create` inside its worktree then runs unasked in a session the daemon starts
+  outside the agent's sandbox. So the notice a confined hosted thread shows — the agent "can
+  write this thread's directory only, so it cannot commit" — is not true of what the agent
+  can cause while the thread is in `full-auto`. The Tech Lead chooses: confine an ACP
+  terminal's shell with the thread's profile, make every `terminal/create` ask while the
+  sandbox enforces, or refuse `full-auto` to a hosted thread. Until then, at least the
+  notice's text says it. It starts with a delta of its own.
+- **REQ:** Art. 5; REQ-SBX-005, REQ-ACP-007 (the disclosure); REQ-ORC-004, REQ-ACP-003
+- **Files:** `internal/sessions/**`, `internal/agents/**`, `internal/tui/**`,
+  `cmd/umbral-desktop/frontend/app.js`, `cmd/umb/**`
+- **Depends on:** T-HRD-17
+- **Done:** what a hosted thread in `full-auto` can write through a terminal is what its
+  notice says it can, proved against the kernel or by an approval being asked. Whether this
+  task gates release 0.1 is the Tech Lead's to decide.
 
 ## Traceability matrix (hardening)
 
@@ -475,6 +499,7 @@ its matrix lists commands.
 | REQ-SBX-003 | T-HRD-15 | TestTheAdapterSaysWhatItEnforces_REQ_SBX_003, TestTheSandboxOptOutIsSaid_REQ_SBX_003, TestAHostedThreadSaysWhetherItIsConfined_REQ_SBX_003, TestAgentPanelSaysWhetherAHostedThreadIsConfined_REQ_SBX_003, TestStatusSaysWhetherTheSandboxEnforces_REQ_SBX_003 |
 | REQ-SBX-004 | T-HRD-15 | TestSandboxWriteRefusesWhatReachesAProtectedDirectory_REQ_SBX_004, TestTheSandboxSectionIsRead_REQ_SBX_004, TestASandboxWriteEntryThatReachesUmbralStopsTheDaemon_REQ_SBX_004 |
 | REQ-SBX-005 | T-HRD-15 | the confined wording of TestAHostedThreadSaysWhetherItIsConfined_REQ_SBX_003 and TestAgentPanelSaysWhetherAHostedThreadIsConfined_REQ_SBX_003, which carry REQ_SBX_005's sentence |
+| REQ-SBX-006 | T-HRD-17 | TestAFullAutoCommandIsBoundedByTheKernel_REQ_SBX_006, TestAThreadsShellIsReplacedWhenItsConfinementChanges_REQ_SBX_006, TestAShellThatCannotBeConfinedDoesNotRun_REQ_SBX_006, TestAReadEntryOpensOnlyWhatLiesInsideADeniedDirectory_REQ_SBX_006, TestAReadEntryIsReadAndNotWritten_REQ_SBX_006, TestAReadEntryIsReopenedForReadingOnly_REQ_SBX_006, TestAgentPanelSaysWhetherAFullAutoThreadIsConfined_REQ_SBX_006, TestAFullAutoCommandCannotSwitchItsConfinementOff_REQ_SBX_006, TestACommandCarriesItsTurnsFullAuto_REQ_SBX_006 |
 
 ## Execution log
 
@@ -512,3 +537,6 @@ its matrix lists commands.
 | 2026-11-19 | T-HRD-15 | done; its delta awaits review | Delta `2026-11-sandbox-linux` (PRD F2 0.17 §6.13, API 1.63, Tech 1.98), written first and **not approved before the code**, as the task asks: the Tech Lead asked for the implementation in the same request, so both are his to review. `internal/sandbox` has its arch rules, a domain (the profile, the four git paths, `[sandbox] write`'s check), one port and the Landlock adapter, which `umbrald --sandbox-exec` reaches. `acp` asks through its own `Confiner` port; `cmd/umbrald` builds each agent's profile. Against the kernel, and against a real daemon with a hosted agent that reads and writes without asking: writes outside the worktree and the agent's root are refused, the main copy and a hook included; the database, the token and a sibling thread's worktree are unreadable; a commit in the worktree lands. `system.status` and the thread say `enforcing`/`confined`, or `off`/`unconfined` under the opt-out, and `umb status`, `umb thread create --agent`, the panel and the desktop say it. Spec-guardian's review of the first version found two CRITICAL and two HIGH defects, each fixed with a test that was red on that version: an agent that rewrote its worktree's `.git` was given every sibling worktree at its next launch (the file is now believed only when the directory it names points back, and never for a path that reaches a protected directory); a thread whose directory held the data directory was given the database (it is no longer launched); a symbolic link beside a denied directory opened it; and through the user's D-Bus a process confined by Landlock alone ran `systemd-run --user` outside the sandbox, measured, which a seccomp filter refusing `socket(AF_UNIX)` and `io_uring_setup` closes. Also from the review: `enforcing` needs Landlock 3, the pseudo-terminals left the write list, every path is resolved, and CI's Linux job fails where its kernel cannot confine. The product's helper ran a real OpenCode turn, a commit and a build. Twenty-two mutations each reddened a test; the three symlink defences redden only together. What the sandbox does not close is listed in the delta's decision 15. Two existing tests changed: the peer check of `REQ_ORC_004` runs with the sandbox off, since a confined agent cannot read the token at all, and `FailOnce`'s marker moved into the thread's directory. Not verified here: a kernel without Landlock (the `unavailable` path is covered by the adapter's unit test and the opt-out only); macOS and Windows report `unsupported_os`, by reading. Two reviews of the first commit — an automated security review and spec-guardian's second pass — found ways out through the repository's `.git`, which the first version let a worktree's agent write so that it could commit: a rewritten `commondir` made the daemon's own git run a repository of the agent's, and a replace ref or a rewritten loose object landed content the user had not reviewed. The profile now holds nothing of `.git` — a confined agent cannot commit, and what lands is its files (decision 2) — and the worktree engine names the common directory, reads only the worktree's own record and reads no replacement object, for an agent that is not confined. Metadata operations are not mediated (decision 15). Three tests failed on the Windows runner for their POSIX paths and one for a one-second margin; fixed. |
 | 2026-11-19 | T-HRD-19 | done | v1.19.2 checks the types a `cmd` package hands to a module's constructor as arguments, and reported `localSuggester` and `blockOutput` passed to `activeai.New`; every other module takes its ports inside its `Config`, which the linter does not follow. The notice was right about the shape and wrong about a violation: `cmd/umbrald` is where adapters are wired (Art. 3). `activeai.Config` now carries `Model` and `Blocks` like the rest, with no change of behaviour; the pin moved to v1.19.2 in `Taskfile.yml` and `ci.yml`, and `task arch` and `task arch:selftest` pass on it. Stacked on T-HRD-15's branch, whose `.go-arch-lint.yml` it needs. |
 | 2026-11-19 | T-HRD-18 | done; its delta awaits review | Delta `2026-11-libffi-load` (Tech 1.100 §9.3). The binding loads libffi in its own `init`, before any of Umbral's code, so the change is in a copy of it, `third_party/ffi`, used through a `replace`: the file at the cache path is loaded only when it is a regular file with exactly the embedded bytes, anything else is written over, an unusable cache falls back to a private directory, and no bare name is loaded on macOS or Windows, `FFI_NO_EMBED` or not. `scripts/ffi_copy_check.sh` compares the rest of the copy, the four libraries included, with upstream v0.8.0. Not closed: the instant between the check and the load. The tests of the check run on every system; the one that reads what the process itself loaded runs on macOS and Windows in CI only. |
+| 2026-11-19 | T-HRD-17 | done; its delta awaits review | Delta `2026-11-full-auto-sandbox` (PRD F2 0.19 REQ-SBX-006, API 1.65, Tech 1.101). A process takes a sandbox for good, so the thread's shell is replaced by a confined one at the first command after it enters `full-auto`, and by a plain one after it leaves, through the mechanism that already replaces it on a change of directory. Measured against a real daemon and the kernel: a `full-auto` command that writes outside its worktree runs unasked and is refused, and the same line approved in `normal` writes. `egress_visibility = confined` and its migration are **not** added: no thread has a network profile until T-HRD-20, which is where the delta moves them (decision 9) — a departure from this task's title, for the Tech Lead. The Done line's two halves are met on Linux; macOS runs the same test on its runner. |
+| 2026-11-19 | T-HRD-16 | done; its delta awaits review | Delta `2026-11-sandbox-macos`. The same profile rendered for `/usr/bin/sandbox-exec`, behind the port T-HRD-15 wrote. The Done line is met: T-HRD-15's tests, and the kernel tests of this adapter, pass on `macos-latest` (pull request #95, merged 2026-11-20). The mark was left for T-HRD-17's branch, so the three branches above it did not each need a rebase. |
+| 2026-11-20 | T-HRD-17 | closed | spec-guardian's review of the first commit reproduced an escape by running it: confinement was decided from where the shell started, and a `full-auto` command could replace the thread's directory by a link out of the worktree and get a plain shell for its next command. Fixed in `68256aa`: confinement is read from the turn's own mode or the thread's record, never the cwd, and `TestAFullAutoCommandCannotSwitchItsConfinementOff_REQ_SBX_006` holds it against the kernel. The delta, Tech Design §5.3 and §5.3f, this task's title, What and Files, and T-HRD-20's text now say what was built: `egress_visibility = confined` and its migration are T-HRD-20's. The desktop says what the agent panel says, and `docs/user/full-auto.md` is new. **Found while closing, not fixed, for the Tech Lead:** the delta said a hosted thread cannot be in `full-auto`; it can (T-F2-08), and its terminals inside the worktree then run unasked in a shell the sandbox does not confine — the delta's open question, with three ways to close it, now **T-HRD-21**. The review's request for a test that `thread.update` refuses `full-auto` to a hosted thread was not met: there is no such refusal. Two Windows failures of the branch were tests' own (a helper in a unix-only file, a POSIX profile rendered without its skip). |

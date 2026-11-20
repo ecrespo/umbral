@@ -153,6 +153,28 @@ func TestTheProfileRefusesTheSessionsServicesAndSignals_REQ_SBX_001(t *testing.T
 	}
 }
 
+// TestAReadEntryIsReopenedForReadingOnly_REQ_SBX_006: a read entry inside a denied directory is
+// allowed to read after the refusal, its ancestors answer `stat`, and it gets no write rule.
+func TestAReadEntryIsReopenedForReadingOnly_REQ_SBX_006(t *testing.T) {
+	posixPaths(t)
+	p := agent
+	p.Read = []string{"/run/umbral/shellinteg-1"}
+	text, err := Render(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	order(t, text, `(deny file-read* (subpath "/run/umbral"))`, `(allow file-read* (subpath "/run/umbral/shellinteg-1"))`)
+	if strings.Contains(text, `(allow file-write* (subpath "/run/umbral/shellinteg-1"))`) {
+		t.Errorf("a read entry was given a write rule:\n%s", text)
+	}
+	if strings.Count(text, "(allow file-read* ") != 3 {
+		t.Errorf("read is reopened somewhere unexpected:\n%s", text)
+	}
+	if _, err := Render(domain.Profile{Read: []string{"/w/\x01"}}); err == nil {
+		t.Error("a read entry with a control character was rendered")
+	}
+}
+
 // TestAPathCannotWriteRulesOfItsOwn_REQ_SBX_001: a path is data. A quote or a backslash in one
 // is escaped, so it cannot close its string and add a rule; a control character is refused,
 // and so is a path that is not clean and absolute.

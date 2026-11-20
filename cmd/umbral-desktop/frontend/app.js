@@ -316,6 +316,10 @@ async function renderThread(view, id) {
       : t.sandbox === "unconfined"
         ? "The agent can read the repository's main copy and every other thread's worktree, and runs unconfined: nothing but its own asking keeps it from other files."
         : "The agent can read the repository's main copy and every other thread's worktree.")));
+  // Umbral's own thread carries `sandbox` only while it is in `full-auto` (REQ-SBX-006).
+  if (!t.agent && t.sandbox) view.append(el("p", "meta", t.sandbox === "confined"
+    ? "full-auto: this thread's commands run without asking. The kernel confines its shell: it can write this thread's worktree only, so it cannot commit, and cannot read Umbral's data; it can still read the rest of your files and reach the network."
+    : "full-auto: this thread's commands run without asking, and its shell runs unconfined: a command can write outside the worktree."));
   const log = el("div", "transcript");
   for (const m of messages) log.append(el("div", "msg " + m.role, messageText(m)));
   for (const m of state.transcript.get(id) ?? []) log.append(el("div", "msg " + m.role, m.text));

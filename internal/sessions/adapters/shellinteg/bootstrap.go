@@ -230,12 +230,12 @@ type Adapter struct {
 }
 
 // Prepare satisfies ports.Bootstrapper.
-func (a Adapter) Prepare(shellPath string) (args, env []string, cleanup func() error, err error) {
+func (a Adapter) Prepare(shellPath string) (args, env []string, dir string, cleanup func() error, err error) {
 	b, err := Prepare(shellPath, a.Dir)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, "", nil, err
 	}
-	return b.Argv(), b.Env, b.Close, nil
+	return b.Argv(), b.Env, b.dir, b.Close, nil
 }
 
 // Compile-time proof that the adapter satisfies the port.

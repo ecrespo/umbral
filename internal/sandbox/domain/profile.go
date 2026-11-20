@@ -68,6 +68,9 @@ type Profile struct {
 	// DenyRead are directories the process may not read or list, save for a Write entry
 	// inside one.
 	DenyRead []string `json:"deny_read"`
+	// Read are directories inside a DenyRead one that the process may read and run from, and
+	// not write: a shell's start-up files, which the daemon keeps in its runtime directory.
+	Read []string `json:"read,omitempty"`
 }
 
 // Devices are the device files every confined process may write: a redirect to /dev/null, and
@@ -78,7 +81,7 @@ var Devices = []string{"/dev/null", "/dev/zero", "/dev/full", "/dev/tty"}
 
 // Validate refuses a profile the adapter could not apply as written.
 func (p Profile) Validate() error {
-	for _, list := range [][]string{p.Write, p.DenyRead} {
+	for _, list := range [][]string{p.Write, p.DenyRead, p.Read} {
 		for _, path := range list {
 			if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 				return fmt.Errorf("sandbox: %q is not a clean absolute path", path)
@@ -121,6 +124,27 @@ func reaches(path string, dirs []string) bool {
 	return false
 }
 
+// readableKinds are the directories a read entry may be: the ones the daemon makes for one
+// session and nothing else lives in. A sibling's worktree, an agent's home and a file of the
+// daemon's own are also "inside a protected directory", and none may be opened.
+var readableKinds = []string{"shellinteg-"}
+
+// readable reports whether path is a directory made for one session, directly inside a
+// protected directory.
+func readable(path string, protected []string) bool {
+	for _, p := range protected {
+		if p == "" || filepath.Dir(path) != p {
+			continue
+		}
+		for _, kind := range readableKinds {
+			if strings.HasPrefix(filepath.Base(path), kind) && filepath.Base(path) != kind {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ErrWrite is a `[sandbox] write` entry the daemon refuses.
 var ErrWrite = errors.New("sandbox: write entry refused")
 
@@ -153,6 +177,9 @@ type Agent struct {
 	// Root is the agent's isolation root, which holds its home and its temporary directory;
 	// the daemon made it, inside its runtime directory.
 	Root string
+	// Read are directories of the daemon's the process reads and does not write: its shell's
+	// start-up files. Each lies inside a protected directory without being one.
+	Read []string
 	// Extra is `[sandbox] write`.
 	Extra []string
 	// Protected are Umbral's data and runtime directories.
@@ -186,8 +213,13 @@ func AgentProfile(a Agent) (Profile, error) {
 			return Profile{}, fmt.Errorf("%w: its directory %s is inside %s and is not its worktree", ErrProfile, a.WorkDir, p)
 		}
 	}
+	for _, r := range a.Read {
+		if !filepath.IsAbs(r) || filepath.Clean(r) != r || !readable(r, a.Protected) {
+			return Profile{}, fmt.Errorf("%w: %q is not a directory of its own inside one of Umbral's", ErrProfile, r)
+		}
+	}
 	write := make([]string, 0, 2+len(a.Extra))
 	write = append(write, a.WorkDir, a.Root)
 	write = append(write, a.Extra...)
-	return Profile{Write: write, DenyRead: append([]string(nil), a.Protected...)}, nil
+	return Profile{Write: write, DenyRead: append([]string(nil), a.Protected...), Read: append([]string(nil), a.Read...)}, nil
 }

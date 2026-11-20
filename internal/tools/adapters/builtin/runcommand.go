@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
+	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 	sessionsports "github.com/ecrespo/umbral/internal/sessions/ports"
 	"github.com/ecrespo/umbral/internal/tools/domain"
 )
@@ -83,7 +84,7 @@ func (r runCommand) Run(ctx context.Context, env domain.Env, input json.RawMessa
 	if in.TimeoutSeconds > 0 {
 		timeout = time.Duration(in.TimeoutSeconds) * time.Second
 	}
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	runCtx, cancel := context.WithTimeout(fullAuto(ctx, env), timeout)
 	defer cancel()
 
 	run, err := r.term.RunForThread(runCtx, env.ThreadID, env.Cwd, in.Command)
@@ -119,4 +120,13 @@ func (r runCommand) Run(ctx context.Context, env domain.Env, input json.RawMessa
 		fmt.Fprintf(&text, "[the command ended without an exit code: %s]\n", run.Block.State)
 	}
 	return domain.Result{Summary: summary, Text: text.String()}, nil
+}
+
+// fullAuto tells the terminal that the turn making this call decides under `full-auto`, so
+// the command's shell is the confined one where a sandbox enforces (REQ-SBX-006).
+func fullAuto(ctx context.Context, env domain.Env) context.Context {
+	if env.FullAuto {
+		return sessdomain.WithFullAuto(ctx)
+	}
+	return ctx
 }

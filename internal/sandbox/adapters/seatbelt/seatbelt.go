@@ -92,6 +92,14 @@ func Render(p domain.Profile) (string, error) {
 	if err := p.Validate(); err != nil {
 		return "", err
 	}
+	// Every path is checked, whether or not a rule comes of it below.
+	for _, list := range [][]string{p.Write, p.DenyRead, p.Read} {
+		for _, path := range list {
+			if err := rule(&strings.Builder{}, "", "", path); err != nil {
+				return "", err
+			}
+		}
+	}
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n")
 	for _, w := range p.Write {
@@ -109,8 +117,11 @@ func Render(p domain.Profile) (string, error) {
 			return "", err
 		}
 	}
+	// What is read again inside a denied directory: the write entries there, and the read
+	// entries, which get no write rule.
+	reopened := append(append([]string(nil), p.Write...), p.Read...)
 	for _, d := range p.DenyRead {
-		for _, w := range p.Write {
+		for _, w := range reopened {
 			if !domain.Within(w, d) {
 				continue
 			}

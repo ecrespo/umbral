@@ -37,7 +37,10 @@ type Config struct {
 	NewPTY    ports.PTYFactory
 	NewEmu    ports.EmulatorFactory
 	Bootstrap ports.Bootstrapper
-	Logger    *slog.Logger
+	// Confiner confines a thread's own shell while the thread is in `full-auto`
+	// (REQ-SBX-006). Nil leaves every shell unconfined.
+	Confiner ports.ShellConfiner
+	Logger   *slog.Logger
 	// Blocks and NewScanner turn PTY output into blocks (T-F0-09). Leaving either nil
 	// runs the session without block recording, which is what the older tests and the
 	// spike binaries do.
@@ -130,8 +133,8 @@ type liveSession struct {
 	pty ports.PTY
 	emu ports.Emulator
 
-	// threadCwd is the cwd a thread's PTY was started for (RunForThread), "" for any other
-	// session. Guarded by mu.
+	// threadCwd is what a thread's PTY was started for (RunForThread) — its cwd and whether it
+	// is confined, as shellKey writes them — and "" for any other session. Guarded by mu.
 	threadCwd string
 	// terminal marks an ACP terminal's session (StartTerminal): the thread owns it, but it is
 	// not the thread's PTY, which RunForThread must neither reuse nor close.
@@ -291,7 +294,7 @@ func (s *Service) Create(ctx context.Context, params domain.CreateParams) (domai
 
 	// The id is chosen before the launch because the child is told it (REQ-INT-001).
 	id := store.NewID(store.PrefixSession)
-	program, args, env, cleanup, err := s.launch(id, params)
+	program, args, env, cleanup, err := s.launch(ctx, id, params)
 	if err != nil {
 		return domain.Session{}, err
 	}

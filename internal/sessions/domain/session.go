@@ -162,6 +162,9 @@ type CreateParams struct {
 	// OwnerThreadID makes the session a thread's PTY (REQ-AGT-003): its input belongs to the
 	// agent from the start, and `sessions.owner_thread_id` records whose it is.
 	OwnerThreadID string
+	// Confined launches the thread's own shell inside the sandbox (REQ-SBX-006). The service
+	// sets it, for a thread's PTY and nothing else; no client can ask for it.
+	Confined bool
 	// TypeAtPrompt is written into the session once its shell shows a prompt, without a
 	// trailing newline, so it sits on the command line as if the user had typed it.
 	//

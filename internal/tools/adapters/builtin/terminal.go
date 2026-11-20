@@ -493,7 +493,7 @@ func (t terminalInteract) send(ctx context.Context, env domain.Env, keys []sessd
 	if target != env.Target || program != env.ProgramInput {
 		return domain.Result{}, 0, sessdomain.ErrTerminalChanged
 	}
-	plan, err := t.keys.SendKeys(ctx, env.ThreadID, env.Cwd, keys, state)
+	plan, err := t.keys.SendKeys(fullAuto(ctx, env), env.ThreadID, env.Cwd, keys, state)
 	if err != nil {
 		res, err := heldOr(err)
 		return res, 0, err
