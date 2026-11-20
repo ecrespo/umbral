@@ -328,6 +328,12 @@ On macOS the same profile is rendered by [[internal/sandbox/adapters/seatbelt/se
 
 Where the system cannot confine, or under `[sandbox] mode = "off"`, the agent runs unconfined and it is said: [[internal/api/system.go#Server#sandboxStatus]] in `system.status`, [[internal/api/threads.go#Server#wireThread]] on a hosted thread, and the clients' notices. [[internal/sandbox/domain/profile.go#ValidateWrite]] refuses a `[sandbox] write` entry that reaches the data directory, the runtime directory or [[cmd/umbrald/sandbox.go#codeCacheDir]].
 
+## libffi is loaded only after its bytes are checked
+
+On macOS and Windows libffi is kept in the user's cache directory, which any process of the user can write; the daemon loads a file there only when it holds exactly the bytes embedded in the binary (delta `2026-11-libffi-load`).
+
+The binding loads the library in its own `init`, before any of Umbral's code runs, so the check lives in a copy of it under `third_party/ffi`, used through a `replace` in `go.mod`. [[third_party/ffi/verified.go#verifiedLibrary]] takes the cached file only as a regular file with the embedded bytes, writes them over anything else through a new file moved into place, and falls back to a private directory when the cache cannot be used; no bare name is ever loaded. `scripts/ffi_copy_check.sh` proves every other file of the copy, the libraries included, is upstream's.
+
 ## Agent detection labels a pane and never decides its state
 
 [[internal/integrations/detect.go#Detector]] names the third-party agent running in a pane: its root process or anything under it. It is a label beside the pane: never an input of DD-012's state precedence (delta `2026-10-agent-detection`).

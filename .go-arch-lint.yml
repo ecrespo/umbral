@@ -26,6 +26,8 @@ exclude:
   - e2e/us003/fixture
   - docs/spikes/acp
   - cmd/umbral-desktop
+  # A module of its own: a dependency's copy, used through a replace (T-HRD-18).
+  - third_party/ffi
 
 components:
   # --- composition root -------------------------------------------------------

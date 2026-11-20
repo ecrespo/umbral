@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.99 |
+| **Version** | 1.100 |
 | **Date** | 2026-11-19 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -2235,10 +2235,13 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
   reference, libc being all they link since libghostty-vt is static; `libffi8` is linked by
   none of them and opened by `umbrald` when it starts, through the purego bindings of the
   embedded provider (§5.1), whether or not one is configured, and without it the daemon panics
-  before it listens (delta `2026-11-deb-libffi`). On macOS and on Windows x86_64 no system
-  library is needed: the binding embeds libffi and, at start, writes it to the user's cache
-  directory and loads it from there, taking a file already there as it is — a path the user's
-  own processes can write, which T-HRD-18 is to close (delta `2026-11-open-questions`).
+  before it listens (delta `2026-11-deb-libffi`). On macOS and on Windows no system
+  library is needed: the binding embeds libffi and keeps it in the user's cache directory, a
+  path the user's own processes can write. `third_party/ffi`, a copy of the binding used
+  through a `replace`, loads the file there only when it is a regular file holding exactly the
+  embedded bytes, writes them over anything else, falls back to a private directory when the
+  cache cannot be used, and never loads by a bare name; `scripts/ffi_copy_check.sh` proves the
+  rest of the copy is upstream's, byte for byte (T-HRD-18, delta `2026-11-libffi-load`).
   `packaging/deb/check.sh` refuses a package
   whose `Depends` lacks either, and `smoke.sh` first installs the package alone, without its
   `Recommends`, and starts the daemon before any other package is added. The Linux tar.gz
@@ -2428,3 +2431,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.97 | 2026-11-19 | E. Crespo (assisted draft) | T-REL-03: §9.3 the release workflow verifies its checksums and both attestations of every package before it creates the draft release |
 | 1.98 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-linux` (T-HRD-15, proposed): §3.2 and §5.2 the `sandbox` module; §5.3f a hosted agent's profile — nothing of the repository's `.git` — the helper, the degraded mode and `[sandbox]`; the worktree engine names the common directory and reads no replacement object |
 | 1.99 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-macos` (T-HRD-16, proposed): §5.3f the macOS adapter, `sandbox-exec` with a rendered profile |
+| 1.100 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-libffi-load` (T-HRD-18, proposed): §9.3 on macOS and Windows the daemon loads only a libffi whose bytes it has checked, through a patched copy of the binding |

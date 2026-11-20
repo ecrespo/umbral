@@ -213,6 +213,8 @@ jobs:
       - name: Build libghostty-vt (cgo dependency of the sessions emulator)
         run: ./scripts/build_libghostty.sh
       - run: echo "PKG_CONFIG_PATH=$HOME/.local/ghostty-vt/share/pkgconfig" >> "$GITHUB_ENV"
+      - name: "third_party/ffi is upstream's module but for the files it lists (T-HRD-18)"
+        run: ./scripts/ffi_copy_check.sh
       - name: gofumpt
         run: |
           go install mvdan.cc/gofumpt@"$GOFUMPT_VERSION"
@@ -280,6 +282,12 @@ jobs:
           CGO_ENABLED=1 go test -race $pkgs
       # libghostty-vt built for Windows by the pinned Zig and linked by MinGW's gcc as a DLL.
       # These steps run whatever the tests above said, so one run reports both.
+      - name: The libffi the daemon loads is the embedded one, checked (T-HRD-18)
+        working-directory: third_party/ffi
+        shell: bash
+        env:
+          FFI_NO_EMBED: '1'
+        run: go vet ./... && CGO_ENABLED=1 go test -race ./...
       - name: Zig, which builds libghostty-vt
         if: success() || failure()
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
@@ -377,6 +385,11 @@ jobs:
           left=$(audit)
           if [ -n "$left" ]; then echo "still insecure: $left" >&2; exit 1; fi
       - run: go test -race ./...
+      - name: The libffi the daemon loads is the embedded one, checked (T-HRD-18)
+        working-directory: third_party/ffi
+        env:
+          FFI_NO_EMBED: '1'
+        run: go vet ./... && go test -race ./...
       - name: Build every binary
         run: go build ./...
       - name: F0 exit criterion 4 — the CLI round trip against a real daemon (T-F0-20)

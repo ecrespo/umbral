@@ -1,0 +1,135 @@
+name: Run examples
+
+on: [push, pull_request]
+
+env:
+  CGO_ENABLED: 0
+
+jobs:
+  run-examples-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26-intel, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+      - name: Build dynamic library
+        run: |
+          clang -shared -o libitem.dylib -fPIC examples/structs/item/item.c
+          clang -shared -o libcallback.dylib -fPIC examples/closures/callback/callback.c
+      - name: Run testable examples
+        run: go test -v
+      - name: Run examples
+        run: |
+          go run examples/simple/cos/main.go
+          go run examples/varargs/libc/main.go
+          go run examples/structs/item/main.go
+          go run examples/closures/callback/main.go
+  run-examples-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+      - name: Install Zig
+        run: choco install zig
+      - name: Build dynamic library ARM64
+        if: runner.arch == 'ARM64'
+        run: |
+          zig cc -shared -o item.dll -fPIC examples/structs/item/item.c -target aarch64-windows-gnu
+          zig cc -shared -o callback.dll -fPIC examples/closures/callback/callback.c -target aarch64-windows-gnu
+      - name: Build dynamic library AMD64
+        if: runner.arch == 'X64'
+        run: |
+          zig cc -shared -o item.dll -fPIC examples/structs/item/item.c
+          zig cc -shared -o callback.dll -fPIC examples/closures/callback/callback.c
+      - name: Run testable examples
+        run: go test -v
+      - name: Run examples
+        run: |
+          go run examples/simple/cos/main.go
+          go run examples/varargs/libc/main.go
+          go run examples/structs/item/main.go
+          go run examples/closures/callback/main.go
+  run-examples-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-26.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+      - name: Build dynamic library
+        run: |
+          gcc -shared -o libitem.so -fPIC examples/structs/item/item.c
+          gcc -shared -o libcallback.so -fPIC examples/closures/callback/callback.c
+      - name: Run testable examples
+        run: go test -v
+      - name: Run examples
+        run: |
+          go run examples/simple/cos/main.go
+          go run examples/varargs/libc/main.go
+          go run examples/structs/item/main.go
+          go run examples/closures/callback/main.go
+  run-examples-linux-riscv64:
+    runs-on: ubuntu-latest
+    env:
+      LD_LIBRARY_PATH: libffi/riscv64-unknown-linux-gnu/.libs/
+      QEMU_LD_PREFIX: /usr/riscv64-linux-gnu
+      GOARCH: riscv64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install autoconf automake gcc-riscv64-linux-gnu libtool qemu-user texinfo libltdl-dev
+      - name: Clone and build libffi
+        run: |
+          git clone https://github.com/libffi/libffi.git
+          cd libffi
+          git checkout v3.8.0
+          ./autogen.sh
+          ./configure --host=riscv64-linux-gnu CC=riscv64-linux-gnu-gcc
+          make
+      - name: Build dynamic library
+        run: |
+          riscv64-linux-gnu-gcc -shared -o libitem.so -fPIC examples/structs/item/item.c
+          riscv64-linux-gnu-gcc -shared -o libcallback.so -fPIC examples/closures/callback/callback.c
+      - name: Run testable examples
+        run: |
+          sudo ln -sf /usr/riscv64-linux-gnu/lib/ld-linux-riscv64-lp64d.so.1 /lib/ld.so.1
+          go test -c -o test
+          qemu-riscv64 ./test -test.v
+      - name: Run examples
+        run: |
+          go build -o cos examples/simple/cos/main.go
+          qemu-riscv64 ./cos
+          go build -o libc examples/varargs/libc/main.go
+          qemu-riscv64 ./libc
+          go build -o item examples/structs/item/main.go
+          qemu-riscv64 ./item
+          go build -o callback examples/closures/callback/main.go
+          qemu-riscv64 ./callback

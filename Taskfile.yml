@@ -76,6 +76,21 @@ tasks:
     cmds:
       - go test -race ./...
 
+  ffi:check:
+    desc: "third_party/ffi is upstream's module but for the files its UMBRAL.md lists (T-HRD-18)"
+    cmds:
+      - ./scripts/ffi_copy_check.sh
+
+  ffi:test:
+    desc: 'The copy loads only a libffi whose bytes it has checked (T-HRD-18)'
+    dir: third_party/ffi
+    env:
+      # Upstream answers this by loading the library by its bare name; the copy ignores it.
+      FFI_NO_EMBED: '1'
+    cmds:
+      - go vet ./...
+      - go test -race ./...
+
   test:hygiene:
     desc: 'Run the suite and fail if it leaked a daemon, a temp directory or a write to the real database'
     cmds:
@@ -252,6 +267,8 @@ tasks:
       - task: lint
       - task: arch
       - task: arch:selftest
+      - task: ffi:check
+      - task: ffi:test
       - task: test:hygiene
       - task: test:hygiene:selftest
       - task: test:portability
