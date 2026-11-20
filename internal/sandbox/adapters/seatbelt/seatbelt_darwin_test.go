@@ -390,7 +390,7 @@ func TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008(t *testing.T) {
 		t.Fatalf("an enforcing sandbox on macOS does not confine the network: %+v", b.sb.Status())
 	}
 	listener := func() string {
-		ln, err := net.Listen("tcp4", "127.0.0.1:0")
+		ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -407,7 +407,7 @@ func TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008(t *testing.T) {
 		return strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 	}
 	free := func() string {
-		ln, err := net.Listen("tcp4", "127.0.0.1:0")
+		ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}

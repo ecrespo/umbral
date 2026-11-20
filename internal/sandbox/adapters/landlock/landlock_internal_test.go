@@ -12,8 +12,8 @@ import (
 // all — it is never run without its network. The same profile without one goes through as
 // before: confined where the sandbox enforces, as it came where it does not.
 func TestANetworkProfileIsRefusedWhereItCannotBeEnforced_REQ_SBX_008(t *testing.T) {
-	net := domain.Profile{Write: []string{"/w"}, Net: &domain.Net{Connect: []uint16{4096}}}
-	plain := domain.Profile{Write: []string{"/w"}}
+	net := domain.Profile{Net: &domain.Net{Connect: []uint16{4096}}}
+	plain := domain.Profile{}
 	for name, c := range map[string]struct {
 		status   domain.Status
 		wantArgs int

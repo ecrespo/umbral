@@ -166,7 +166,7 @@ func posixPaths(t *testing.T) {
 // the helper as written, a profile without one says nothing of it, and port 0 — the kernel's
 // choice of port, and so every port — is refused on either side of the encoding.
 func TestAProfilesNetworkIsCarriedToTheHelper_REQ_SBX_008(t *testing.T) {
-	p := domain.Profile{Write: []string{"/w"}, Net: &domain.Net{Bind: []uint16{4096}, Connect: []uint16{4096, 51234}}}
+	p := domain.Profile{Net: &domain.Net{Bind: []uint16{4096}, Connect: []uint16{4096, 51234}}}
 	arg, err := p.Encode()
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestAProfilesNetworkIsCarriedToTheHelper_REQ_SBX_008(t *testing.T) {
 	if got.Net == nil || len(got.Net.Bind) != 1 || got.Net.Bind[0] != 4096 || len(got.Net.Connect) != 2 || got.Net.Connect[1] != 51234 {
 		t.Errorf("decoded network %+v from %s", got.Net, arg)
 	}
-	plain, err := domain.Profile{Write: []string{"/w"}}.Encode()
+	plain, err := domain.Profile{}.Encode()
 	if err != nil || strings.Contains(plain, "net") {
 		t.Errorf("a profile without a network encodes as %s (%v)", plain, err)
 	}

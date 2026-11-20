@@ -447,7 +447,7 @@ func TestTheAdapterSaysWhatItEnforces_REQ_SBX_003(t *testing.T) {
 // listener is a TCP listener on a loopback port of the kernel's choosing, and that port.
 func listener(t *testing.T) (net.Listener, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
