@@ -638,3 +638,43 @@ func TestAnACPTurnHasATrace_REQ_ACP_007(t *testing.T) {
 		t.Errorf("spans %v, want one per call and request", got)
 	}
 }
+
+// TestAHostedTerminalCarriesItsTurnsFullAuto_REQ_SBX_007: the turn read its mode once, and a
+// terminal it lets run unasked under `full-auto` is started with that reading, so whoever
+// starts it confines its shell whatever the thread's record says by then. A terminal of a
+// turn in another mode, approved by the user, carries no such mark.
+func TestAHostedTerminalCarriesItsTurnsFullAuto_REQ_SBX_007(t *testing.T) {
+	posixLines(t)
+	for _, fullAuto := range []bool{true, false} {
+		repo := realDir(t)
+		wts := &fakeWorktrees{root: realDir(t), repo: repo}
+		marked := make(chan bool, 1)
+		r := acpRig(t, wts, func(ctx context.Context, req ports.ExternalRequest, sink ports.ExternalSink) {
+			if err := sink.Request(ctx, ports.ExternalOp{Method: ports.OpTerminal, Command: "make", Cwd: req.Dir}, func(ctx context.Context, _ string) (string, error) {
+				marked <- ports.FullAuto(ctx)
+				return "started", nil
+			}); err != nil {
+				t.Error(err)
+			}
+		})
+		th := r.thread(t, domain.CreateParams{Cwd: repo, Agent: "fake", Worktree: true, Mode: secdomain.ModeNormal})
+		if fullAuto {
+			if _, err := r.rt.Update(t.Context(), th.ID, domain.UpdateParams{Mode: modePtr(secdomain.ModeFullAuto)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r.sendOnly(t, th.ID)
+		if !fullAuto {
+			r.respond(t, r.requested(t), true)
+		}
+		select {
+		case got := <-marked:
+			if got != fullAuto {
+				t.Errorf("a terminal of a turn with full-auto %v was started marked %v", fullAuto, got)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("full-auto %v: the terminal was never started", fullAuto)
+		}
+		r.finished(t)
+	}
+}

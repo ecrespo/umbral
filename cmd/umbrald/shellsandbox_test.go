@@ -14,6 +14,7 @@ import (
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	"github.com/ecrespo/umbral/internal/client"
 	sandboxdomain "github.com/ecrespo/umbral/internal/sandbox/domain"
+	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 )
 
 // runCommandReply is a scripted model's two answers for one turn: a run_command call, then
@@ -195,7 +196,8 @@ func shellBench(t *testing.T, thread agentsdomain.Thread, threadsErr error, wts 
 }
 
 // TestWhetherAShellIsConfinedIsReadFromTheThread_REQ_SBX_006: the record says full-auto for
-// Umbral's own thread with the flag set and an active worktree, and for nothing else. A
+// a thread, Umbral's own or a hosted one, with the flag set and an active worktree, and for
+// nothing else. A
 // record that cannot be read answers yes, so that Confine refuses instead of a plain shell
 // being started; and before the confiner is bound nothing is confined.
 func TestWhetherAShellIsConfinedIsReadFromTheThread_REQ_SBX_006(t *testing.T) {
@@ -203,6 +205,8 @@ func TestWhetherAShellIsConfinedIsReadFromTheThread_REQ_SBX_006(t *testing.T) {
 	plain, hosted := own, own
 	plain.FullAuto = false
 	hosted.Agent = "opencode"
+	hostedPlain := hosted
+	hostedPlain.FullAuto = false
 	for name, c := range map[string]struct {
 		thread agentsdomain.Thread
 		err    error
@@ -212,10 +216,12 @@ func TestWhetherAShellIsConfinedIsReadFromTheThread_REQ_SBX_006(t *testing.T) {
 		"full-auto in an active worktree": {thread: own, wts: fakeWorktrees{active: true}, want: true},
 		"the flag without a worktree":     {thread: own, wts: fakeWorktrees{active: false}},
 		"normal mode":                     {thread: plain, wts: fakeWorktrees{active: true}},
-		"a hosted thread":                 {thread: hosted, wts: fakeWorktrees{active: true}},
-		"an unknown thread":               {thread: own, err: agentsdomain.ErrNotFound, wts: fakeWorktrees{active: true}},
-		"a record that cannot be read":    {thread: own, err: errors.New("disk"), wts: fakeWorktrees{active: true}, want: true},
-		"a worktree that cannot be read":  {thread: own, wts: fakeWorktrees{err: errors.New("disk")}, want: true},
+		// REQ-SBX-007: a hosted thread's terminals are confined on the same reading.
+		"a hosted thread in full-auto":   {thread: hosted, wts: fakeWorktrees{active: true}, want: true},
+		"a hosted thread without it":     {thread: hostedPlain, wts: fakeWorktrees{active: true}},
+		"an unknown thread":              {thread: own, err: agentsdomain.ErrNotFound, wts: fakeWorktrees{active: true}},
+		"a record that cannot be read":   {thread: own, err: errors.New("disk"), wts: fakeWorktrees{active: true}, want: true},
+		"a worktree that cannot be read": {thread: own, wts: fakeWorktrees{err: errors.New("disk")}, want: true},
 	} {
 		confiner, _, _, _ := shellBench(t, c.thread, c.err, c.wts)
 		if !confiner.Enforces() {
@@ -224,7 +230,7 @@ func TestWhetherAShellIsConfinedIsReadFromTheThread_REQ_SBX_006(t *testing.T) {
 		if got := confiner.FullAuto(t.Context(), c.thread.ID); got != c.want {
 			t.Errorf("%s: FullAuto = %v, want %v", name, got, c.want)
 		}
-		if _, _, err := confiner.Confine(t.Context(), c.thread.ID, nil, []string{"/bin/sh"}); (err == nil) != (c.want && c.err == nil && c.wts.err == nil) {
+		if _, _, _, err := confiner.Confine(t.Context(), c.thread.ID, nil, []string{"/bin/sh"}); (err == nil) != (c.want && c.err == nil && c.wts.err == nil) {
 			t.Errorf("%s: Confine err = %v", name, err)
 		}
 	}
@@ -232,7 +238,7 @@ func TestWhetherAShellIsConfinedIsReadFromTheThread_REQ_SBX_006(t *testing.T) {
 	if unbound.Enforces() || unbound.FullAuto(t.Context(), "thr_1") {
 		t.Error("an unbound confiner confines")
 	}
-	if _, _, err := unbound.Confine(t.Context(), "thr_1", nil, []string{"/bin/sh"}); err == nil {
+	if _, _, _, err := unbound.Confine(t.Context(), "thr_1", nil, []string{"/bin/sh"}); err == nil {
 		t.Error("an unbound confiner confined a shell")
 	}
 }
@@ -251,7 +257,7 @@ func TestAShellIsConfinedToItsWorktreeWhereverItStarts_REQ_SBX_006(t *testing.T)
 	thread := agentsdomain.Thread{ID: "thr_1", Cwd: outside, Mode: "normal", FullAuto: true}
 	confiner, profile, worktree, run := shellBench(t, thread, nil, fakeWorktrees{active: true})
 	boot := filepath.Join(run, "shellinteg-1")
-	argv, env, err := confiner.Confine(t.Context(), thread.ID, []string{boot}, []string{"/bin/zsh", "-i"})
+	argv, env, _, err := confiner.Confine(t.Context(), thread.ID, []string{boot}, []string{"/bin/zsh", "-i"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +289,7 @@ func TestAShellIsConfinedToItsWorktreeWhereverItStarts_REQ_SBX_006(t *testing.T)
 	if err := os.WriteFile(filepath.Join(tmp, "left"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := confiner.Confine(t.Context(), thread.ID, nil, []string{"/bin/sh"}); err != nil {
+	if _, _, _, err := confiner.Confine(t.Context(), thread.ID, nil, []string{"/bin/sh"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "left")); !errors.Is(err, os.ErrNotExist) {
@@ -295,7 +301,7 @@ func TestAShellIsConfinedToItsWorktreeWhereverItStarts_REQ_SBX_006(t *testing.T)
 	if err := os.Symlink(outside, filepath.Join(run, "shells")); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := confiner.Confine(t.Context(), thread.ID, nil, []string{"/bin/sh"}); !errors.Is(err, sandboxdomain.ErrProfile) {
+	if _, _, _, err := confiner.Confine(t.Context(), thread.ID, nil, []string{"/bin/sh"}); !errors.Is(err, sandboxdomain.ErrProfile) {
 		t.Errorf("a shells directory that is a link elsewhere: err = %v, want ErrProfile", err)
 	}
 	// A thread id is a name, never a path: the directory emptied at each launch is built from
@@ -308,7 +314,7 @@ func TestAShellIsConfinedToItsWorktreeWhereverItStarts_REQ_SBX_006(t *testing.T)
 		t.Fatal(err)
 	}
 	for name, id := range map[string]string{"a path": "../thr_1", "nothing": ""} {
-		if _, _, err := confiner.Confine(t.Context(), id, nil, []string{"/bin/sh"}); err == nil {
+		if _, _, _, err := confiner.Confine(t.Context(), id, nil, []string{"/bin/sh"}); err == nil {
 			t.Errorf("%s as a thread id was confined", name)
 		}
 	}
@@ -368,4 +374,77 @@ func TestAFullAutoCommandCannotSwitchItsConfinementOff_REQ_SBX_006(t *testing.T)
 func runCommandCall(command string) []string {
 	arg, _ := json.Marshal(command)
 	return []string{fmt.Sprintf(`{"model":"m","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"run_command","arguments":{"command":%s}}}]},"done":true,"done_reason":"stop","prompt_eval_count":10,"eval_count":5}`, arg)}
+}
+
+// TestAHostedThreadsTerminalsEachGetADirectoryOfTheirOwn_REQ_SBX_007: a hosted agent may hold
+// several terminals at once, so launching one must not empty another's temporary files as
+// launching a thread's single shell does. Each gets a directory of its own under the
+// thread's, and its profile writes the worktree and that directory.
+func TestAHostedThreadsTerminalsEachGetADirectoryOfTheirOwn_REQ_SBX_007(t *testing.T) {
+	thread := agentsdomain.Thread{ID: "thr_1", Cwd: t.TempDir(), Mode: "normal", FullAuto: true, Agent: "opencode"}
+	confiner, profile, worktree, run := shellBench(t, thread, nil, fakeWorktrees{active: true})
+	var release func() error
+	tmpOf := func() string {
+		t.Helper()
+		_, env, cleanup, err := confiner.Confine(t.Context(), thread.ID, nil, []string{"/bin/sh"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(env) != 2 || !strings.HasPrefix(env[0], "TMPDIR=") || cleanup == nil {
+			t.Fatalf("env = %q, cleanup nil: %v", env, cleanup == nil)
+		}
+		release = cleanup
+		return strings.TrimPrefix(env[0], "TMPDIR=")
+	}
+	first := tmpOf()
+	if err := os.WriteFile(filepath.Join(first, "live"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second := tmpOf()
+	if first == second {
+		t.Fatalf("two terminals share %s", first)
+	}
+	if _, err := os.Stat(filepath.Join(first, "live")); err != nil {
+		t.Errorf("starting a second terminal emptied the first one's directory: %v", err)
+	}
+	own := filepath.Dir(second)
+	if filepath.Dir(own) != filepath.Join(run, "shells", thread.ID) {
+		t.Errorf("the terminal's directory is %s, want one directly under the thread's", own)
+	}
+	if want := []string{worktree, own}; len(profile.Write) != 2 || profile.Write[0] != want[0] || profile.Write[1] != want[1] {
+		t.Errorf("the profile writes %v, want %v", profile.Write, want)
+	}
+	if sandboxdomain.Within(own, first) {
+		t.Errorf("the second terminal writes the first one's directory %s", first)
+	}
+	// A terminal's directory goes with it, and only its own: an agent in full-auto opens
+	// terminals unasked, and the runtime directory is the socket's.
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(own); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the ended terminal's directory is still there: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(first, "live")); err != nil {
+		t.Errorf("ending one terminal removed another's files: %v", err)
+	}
+	// Umbral's own thread has one shell, whose directory is emptied at the next launch:
+	// nothing is handed back to remove.
+	plain := agentsdomain.Thread{ID: "thr_2", Cwd: t.TempDir(), Mode: "normal", FullAuto: true}
+	single, _, _, _ := shellBench(t, plain, nil, fakeWorktrees{active: true})
+	if _, _, cleanup, err := single.Confine(t.Context(), plain.ID, nil, []string{"/bin/sh"}); err != nil || cleanup != nil {
+		t.Errorf("a thread's own shell: cleanup given %v, err %v", cleanup != nil, err)
+	}
+}
+
+// TestATerminalIsStartedOnItsTurnsReading_REQ_SBX_007: the agent runtime marks a terminal's
+// request when its turn decides under `full-auto`, and the sessions module confines on a mark
+// of its own; the daemon's wiring turns one into the other, and adds none.
+func TestATerminalIsStartedOnItsTurnsReading_REQ_SBX_007(t *testing.T) {
+	if !sessdomain.FullAuto(terminalContext(agentsports.WithFullAuto(t.Context()))) {
+		t.Error("a full-auto turn's terminal reached the sessions module unmarked")
+	}
+	if sessdomain.FullAuto(terminalContext(t.Context())) {
+		t.Error("a terminal of a turn in another mode was marked full-auto")
+	}
 }

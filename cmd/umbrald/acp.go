@@ -16,6 +16,7 @@ import (
 	"github.com/ecrespo/umbral/internal/config"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 	"github.com/ecrespo/umbral/internal/sessions"
+	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
 	"github.com/ecrespo/umbral/internal/tools/adapters/builtin"
 )
 
@@ -53,11 +54,23 @@ func (acpFiles) Write(target, content string) error { return builtin.WriteText(t
 type acpTerminals struct{ sessions *sessions.Service }
 
 func (t acpTerminals) Start(ctx context.Context, threadID, cwd, command string) (acpports.Terminal, error) {
+	// A terminal of a turn that decides under `full-auto` runs unasked, so its shell is
+	// confined on the turn's own reading (REQ-SBX-007); the two modules do not know each
+	// other's mark, and this is where one becomes the other.
+	ctx = terminalContext(ctx)
 	term, err := t.sessions.StartTerminal(ctx, threadID, cwd, command)
 	if err != nil {
 		return nil, err
 	}
 	return acpTerminal{term}, nil
+}
+
+// terminalContext carries the agent runtime's `full-auto` mark over to the sessions module's.
+func terminalContext(ctx context.Context) context.Context {
+	if agentsports.FullAuto(ctx) {
+		return sessdomain.WithFullAuto(ctx)
+	}
+	return ctx
 }
 
 type acpTerminal struct{ *sessions.Terminal }

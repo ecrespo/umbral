@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`. Slice F2a implemented and closed on 2026-10-24 (delta `2026-10-f2a-close`); F2b started on 2026-10-26 |
-| **Version** | 0.19 |
-| **Date** | 2026-11-19 |
+| **Version** | 0.20 |
+| **Date** | 2026-11-20 |
 | **Reviewers** | spec-guardian (Analyze and two verify passes); Tech Lead, ratified 2026-10-22 |
 | **Source** | `docs/ARCHITECTURE.md` §5.4–5.8 and §10 (F2 ADE row); `specs/prd/umbral-mvp.md` §5.2–5.3; Plan 1.14 §4 |
 | **Builds on** | PRD MVP 1.21, API 1.41, Tech 1.55, Data Model 1.23, constitution 1.3 |
@@ -248,6 +248,7 @@ shells T-HRD-17.
 - **REQ-SBX-004** · MUST · unwanted — IF a `[sandbox] write` entry is not a clean absolute path, or is, holds or lies inside Umbral's data directory, its runtime directory or a directory the daemon loads code from, THEN THE SYSTEM SHALL refuse to start.
 - **REQ-SBX-005** · SHOULD · ubiquitous — THE SYSTEM SHOULD say on each confined thread what the sandbox leaves open: the repository's main copy to read, and the network; and that the agent cannot commit.
 - **REQ-SBX-006** · MUST · state — WHILE the sandbox enforces and a thread of Umbral's own agent is in `full-auto` with its worktree `active`, THE SYSTEM SHALL run that thread's commands in a shell confined before any of the shell's code runs, so that the kernel refuses it a write outside the worktree, a directory of its own for temporary files, the device files a shell needs and `[sandbox] write`, and a read of Umbral's data and runtime directories other than its own start-up files; SHALL replace a shell that is not so confined before the thread's next command, and one that is before the next command of a thread that has left `full-auto`; and IF the shell cannot be confined THEN THE SYSTEM SHALL fail the command rather than run it unconfined.
+- **REQ-SBX-007** · MUST · state — WHILE the sandbox enforces and a thread hosted by an ACP agent is in `full-auto` with its worktree `active`, THE SYSTEM SHALL start each terminal the agent creates in a shell confined before any of the shell's code runs, so that the kernel refuses it what REQ-SBX-006 refuses a `full-auto` thread's own shell, with a directory for temporary files that no other terminal of the thread can write; and IF the shell cannot be confined THEN THE SYSTEM SHALL refuse the terminal rather than start it unconfined. A hosted thread's terminal in any other mode is not confined: each of its commands is a decision (REQ-ACP-003).
 
 ## 7. Non-functional requirements
 
@@ -377,3 +378,4 @@ Still open, with the draft's default:
 | 0.17 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-linux` (T-HRD-15), ratified 2026-11-20: a new §6.13 with REQ-SBX-001 … 005, the sandbox around hosted agents; REQ-ACP-007's disclosure says whether the thread is confined; REQ-ACP-009's environment gains `TMPDIR` |
 | 0.18 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-macos` (T-HRD-16), ratified 2026-11-20: REQ-SBX-001 refuses a connection to another process's Unix-domain socket, which the Linux and macOS adapters both meet |
 | 0.19 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-full-auto-sandbox` (T-HRD-17), ratified 2026-11-20: REQ-SBX-006, a `full-auto` thread's shell is confined by the kernel |
+| 0.20 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-hosted-terminal-sandbox` (T-HRD-21), proposed, its direction chosen by the Tech Lead: REQ-SBX-007, a hosted thread's terminals are confined by the kernel while the thread is in `full-auto` |

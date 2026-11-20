@@ -456,23 +456,41 @@ its matrix lists commands.
   model are none, as Tech Design §4 has it for Umbral's own calls, unless the task's delta
   decides the relay records more.
 
-### [ ] T-HRD-21 · A hosted thread in `full-auto`: its terminals, and what its notice says
+### [x] 2026-11-20 T-HRD-21 · A hosted thread in `full-auto`: its terminals are confined
 - **What:** the open question of delta `2026-11-full-auto-sandbox`. A hosted thread can be in
   `full-auto` (REQ-ORC-004 covers an ACP thread's permission requests), and a
   `terminal/create` inside its worktree then runs unasked in a session the daemon starts
-  outside the agent's sandbox. So the notice a confined hosted thread shows — the agent "can
-  write this thread's directory only, so it cannot commit" — is not true of what the agent
-  can cause while the thread is in `full-auto`. The Tech Lead chooses: confine an ACP
-  terminal's shell with the thread's profile, make every `terminal/create` ask while the
-  sandbox enforces, or refuse `full-auto` to a hosted thread. Until then, at least the
-  notice's text says it. It starts with a delta of its own.
-- **REQ:** Art. 5; REQ-SBX-005, REQ-ACP-007 (the disclosure); REQ-ORC-004, REQ-ACP-003
-- **Files:** `internal/sessions/**`, `internal/agents/**`, `internal/tui/**`,
-  `cmd/umbral-desktop/frontend/app.js`, `cmd/umb/**`
+  outside the agent's sandbox. The Tech Lead chose, on 2026-11-20, to confine the terminal's
+  shell with the thread's profile rather than make it ask or refuse `full-auto` to a hosted
+  thread (delta `2026-11-hosted-terminal-sandbox`).
+- **REQ:** REQ-SBX-007 (written by this task's delta); Art. 5; REQ-ORC-004, REQ-ACP-003
+- **Files:** `internal/sessions/terminal.go`, `internal/sessions/lifecycle.go`,
+  `internal/sessions/ports/ports.go`, `internal/agents/external.go`,
+  `internal/agents/ports/ports.go`, `cmd/umbrald/acp.go`, `cmd/umbrald/shellsandbox.go`,
+  `docs/user/full-auto.md`, `specs/prd/umbral-f2.md`, `specs/technical/umbral-architecture.md`
 - **Depends on:** T-HRD-17
 - **Done:** what a hosted thread in `full-auto` can write through a terminal is what its
-  notice says it can, proved against the kernel or by an approval being asked. Whether this
-  task gates release 0.1 is the Tech Lead's to decide.
+  notice says it can, proved against the kernel.
+
+### [ ] T-HRD-22 · The daemon's file writes follow a link swapped after the decision
+- **What:** read by spec-guardian while reviewing T-HRD-21, not reproduced. `write_file` and
+  a hosted agent's `fs/write_text_file` are performed by the daemon, which no sandbox
+  confines. The policy resolves the target's links and decides; the write then opens the
+  deepest existing directory of the target and checks only that its last component is a
+  directory. A process confined to the worktree — a `full-auto` shell, a hosted agent or one
+  of its terminals — that replaces a directory of the worktree by a link between the two
+  gets a write outside the worktree, with content it chose, unasked under `full-auto` or
+  `auto-edit`. `fs/read_text_file` and `read_file` have the same shape for reads. First
+  reproduce it with a test that widens the window; then open the root at the write root and
+  write relative to it, so a link met on the way is refused by the kernel.
+- **REQ:** Art. 5; REQ-SBX-001, REQ-SBX-006, REQ-SBX-007 (what they bound, this goes around);
+  REQ-ACP-004
+- **Files:** `internal/tools/adapters/builtin/files.go`, `internal/agents/external.go`
+- **Depends on:** —
+- **Done:** a test that swaps a worktree directory for a link between the decision and the
+  write goes red before the fix and green after; a write or a read whose path leaves the
+  write root through a link is refused whenever the link appeared. Whether this task gates
+  release 0.1 is the Tech Lead's to decide.
 
 ## Traceability matrix (hardening)
 
@@ -500,6 +518,7 @@ its matrix lists commands.
 | REQ-SBX-004 | T-HRD-15 | TestSandboxWriteRefusesWhatReachesAProtectedDirectory_REQ_SBX_004, TestTheSandboxSectionIsRead_REQ_SBX_004, TestASandboxWriteEntryThatReachesUmbralStopsTheDaemon_REQ_SBX_004 |
 | REQ-SBX-005 | T-HRD-15 | the confined wording of TestAHostedThreadSaysWhetherItIsConfined_REQ_SBX_003 and TestAgentPanelSaysWhetherAHostedThreadIsConfined_REQ_SBX_003, which carry REQ_SBX_005's sentence |
 | REQ-SBX-006 | T-HRD-17 | TestAFullAutoCommandIsBoundedByTheKernel_REQ_SBX_006, TestAThreadsShellIsReplacedWhenItsConfinementChanges_REQ_SBX_006, TestAShellThatCannotBeConfinedDoesNotRun_REQ_SBX_006, TestAReadEntryOpensOnlyWhatLiesInsideADeniedDirectory_REQ_SBX_006, TestAReadEntryIsReadAndNotWritten_REQ_SBX_006, TestAReadEntryIsReopenedForReadingOnly_REQ_SBX_006, TestAgentPanelSaysWhetherAFullAutoThreadIsConfined_REQ_SBX_006, TestAFullAutoCommandCannotSwitchItsConfinementOff_REQ_SBX_006, TestACommandCarriesItsTurnsFullAuto_REQ_SBX_006 |
+| REQ-SBX-007 | T-HRD-21 | TestAHostedTerminalIsBoundedByTheKernelUnderFullAuto_REQ_SBX_007, TestAHostedTerminalIsConfinedUnderFullAuto_REQ_SBX_007, TestAHostedTerminalCarriesItsTurnsFullAuto_REQ_SBX_007, TestATerminalIsStartedOnItsTurnsReading_REQ_SBX_007, TestATerminalIsStartedOnTheContextItsTurnGave_REQ_SBX_007, TestAHostedThreadsTerminalsEachGetADirectoryOfTheirOwn_REQ_SBX_007 |
 
 ## Execution log
 
@@ -541,3 +560,5 @@ its matrix lists commands.
 | 2026-11-19 | T-HRD-16 | done; its delta awaits review | Delta `2026-11-sandbox-macos`. The same profile rendered for `/usr/bin/sandbox-exec`, behind the port T-HRD-15 wrote. The Done line is met: T-HRD-15's tests, and the kernel tests of this adapter, pass on `macos-latest` (pull request #95, merged 2026-11-20). The mark was left for T-HRD-17's branch, so the three branches above it did not each need a rebase. |
 | 2026-11-20 | T-HRD-17 | closed | spec-guardian's review of the first commit reproduced an escape by running it: confinement was decided from where the shell started, and a `full-auto` command could replace the thread's directory by a link out of the worktree and get a plain shell for its next command. Fixed in `68256aa`: confinement is read from the turn's own mode or the thread's record, never the cwd, and `TestAFullAutoCommandCannotSwitchItsConfinementOff_REQ_SBX_006` holds it against the kernel. The delta, Tech Design §5.3 and §5.3f, this task's title, What and Files, and T-HRD-20's text now say what was built: `egress_visibility = confined` and its migration are T-HRD-20's. The desktop says what the agent panel says, and `docs/user/full-auto.md` is new. **Found while closing, not fixed, for the Tech Lead:** the delta said a hosted thread cannot be in `full-auto`; it can (T-F2-08), and its terminals inside the worktree then run unasked in a shell the sandbox does not confine — the delta's open question, with three ways to close it, now **T-HRD-21**. The review's request for a test that `thread.update` refuses `full-auto` to a hosted thread was not met: there is no such refusal. Two Windows failures of the branch were tests' own (a helper in a unix-only file, a POSIX profile rendered without its skip). |
 | 2026-11-20 | T-HRD-15, T-HRD-16, T-HRD-17, T-HRD-18 | ratified | The Tech Lead ratified deltas `2026-11-sandbox-linux`, `2026-11-sandbox-macos`, `2026-11-libffi-load` and `2026-11-full-auto-sandbox` as written, the recommendations of their open questions included, and they are archived. Two things the ratification does not settle: whether a hosted agent's process survives a live handoff with its sandbox, which `2026-11-sandbox-linux` lists as not checked, and a hosted thread in `full-auto`, which is T-HRD-21. Pull requests #89 to #97 were merged the same day. |
+| 2026-11-20 | T-HRD-21 | done; its delta awaits review | The Tech Lead chose option A of the three the question offered. Delta `2026-11-hosted-terminal-sandbox` (PRD F2 0.20 REQ-SBX-007, Tech 1.102), written with the code. Tests first: a real daemon and the test agent against Landlock — in `full-auto` a terminal that writes outside the worktree runs unasked and is refused by the kernel, its write inside lands, and in `normal` the same line asks and, approved, writes. The launcher needed no change: a terminal is a shell the command is typed into, so the session is created confined as the thread's own shell is. A hosted agent holds several terminals, so each gets a directory of its own instead of the thread's being emptied. spec-guardian's review found no escape and two gaps, both closed before the commit: the mark's passage through the ACP host had no test, and a terminal's directory was never removed — the confiner's port now hands back a cleanup. Ten mutations, each killed by a test. Not done: the kernel's refusal between two live terminals is not measured, and a killed daemon leaves its live terminals' directories. The review also read a race in the daemon's own file writes, which is T-HRD-22. |
+| 2026-11-20 | T-HRD-22 | added | Read, not reproduced, by spec-guardian's review of T-HRD-21: the daemon's own file writes, performed unconfined on a path decided a moment earlier, follow a link a confined process puts in the worktree between the decision and the write. Older than the sandbox and outside T-HRD-21's diff; it goes around what REQ-SBX-001, 006 and 007 bound. |

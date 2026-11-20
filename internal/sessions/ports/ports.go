@@ -70,9 +70,10 @@ type Bootstrapper interface {
 	Prepare(shellPath string) (args, env []string, dir string, cleanup func() error, err error)
 }
 
-// ShellConfiner says whether a thread's own shell runs inside the sandbox, and launches it
-// there (REQ-SBX-006). The sandbox is `cmd/umbrald`'s to wire: this module knows only that
-// a shell's command line may be replaced by one that confines it.
+// ShellConfiner says whether a shell of a thread's runs inside the sandbox, and launches it
+// there: the thread's own shell (REQ-SBX-006) and a hosted agent's terminals (REQ-SBX-007).
+// The sandbox is `cmd/umbrald`'s to wire: this module knows only that a shell's command line
+// may be replaced by one that confines it.
 type ShellConfiner interface {
 	// Enforces reports whether a sandbox confines on this system now. Where it does not,
 	// no shell is confined and `full-auto` runs as it did, disclosed.
@@ -84,9 +85,10 @@ type ShellConfiner interface {
 	FullAuto(ctx context.Context, threadID string) bool
 	// Confine returns argv as the command line that runs it confined to the thread's
 	// worktree, and the variables the confined shell needs. read are the directories of
-	// the daemon's the shell must still read. An error means the shell cannot be
-	// confined, and it is not started.
-	Confine(ctx context.Context, threadID string, read, argv []string) (confined, env []string, err error)
+	// the daemon's the shell must still read. cleanup, when not nil, removes what was made
+	// for this shell alone and is called once the shell has ended, or was never started.
+	// An error means the shell cannot be confined, and it is not started.
+	Confine(ctx context.Context, threadID string, read, argv []string) (confined, env []string, cleanup func() error, err error)
 }
 
 // PTY is a pseudo-terminal the daemon owns.

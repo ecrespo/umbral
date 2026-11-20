@@ -22,6 +22,8 @@ type fakeConfiner struct {
 	want atomic.Bool
 	fail atomic.Bool
 	off  atomic.Bool
+	// released counts the shells whose cleanup the service has called.
+	released atomic.Int32
 
 	mu      sync.Mutex
 	read    [][]string
@@ -32,14 +34,18 @@ func (f *fakeConfiner) Enforces() bool { return !f.off.Load() }
 
 func (f *fakeConfiner) FullAuto(context.Context, string) bool { return f.want.Load() }
 
-func (f *fakeConfiner) Confine(_ context.Context, threadID string, read, argv []string) ([]string, []string, error) {
+func (f *fakeConfiner) Confine(_ context.Context, threadID string, read, argv []string) ([]string, []string, func() error, error) {
 	if f.fail.Load() {
-		return nil, nil, errors.New("this thread cannot be confined")
+		return nil, nil, nil, errors.New("this thread cannot be confined")
 	}
 	f.mu.Lock()
 	f.read, f.threads = append(f.read, read), append(f.threads, threadID)
 	f.mu.Unlock()
-	return append([]string{"/usr/bin/env", "UMBRAL_TEST_WRAPPED=yes"}, argv...), []string{"UMBRAL_TEST_ENV=given"}, nil
+	release := func() error {
+		f.released.Add(1)
+		return nil
+	}
+	return append([]string{"/usr/bin/env", "UMBRAL_TEST_WRAPPED=yes"}, argv...), []string{"UMBRAL_TEST_ENV=given"}, release, nil
 }
 
 // TestAThreadsShellIsReplacedWhenItsConfinementChanges_REQ_SBX_006: a sandbox is taken by a
@@ -157,4 +163,75 @@ func TestATurnsOwnFullAutoConfinesWhateverTheRecordSays_REQ_SBX_006(t *testing.T
 	run(domain.WithFullAuto(ctx), "wrapped=no")
 	confiner.want.Store(true)
 	run(ctx, "wrapped=no")
+}
+
+// TestAHostedTerminalIsConfinedUnderFullAuto_REQ_SBX_007: an ACP terminal is a session of its
+// own, started by the daemon outside the agent's sandbox. Under `full-auto` its command runs
+// unasked, so its shell is launched through the confiner — on the turn's own reading or the
+// thread's record — and one that cannot be confined is not started. In any other mode each
+// command was a decision, and the terminal is launched plainly.
+func TestAHostedTerminalIsConfinedUnderFullAuto_REQ_SBX_007(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/env"); err != nil {
+		t.Skipf("no /usr/bin/env: %v", err)
+	}
+	confiner := &fakeConfiner{}
+	h := newHarnessForShell(t, "bash", func(cfg *sessions.Config) { cfg.Confiner = confiner })
+	cwd := t.TempDir()
+	threadID := thread(t, h, cwd)
+	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
+	defer cancel()
+	marker := filepath.Join(cwd, "ran")
+	probe := `printf 'wrapped=%s env=%s\n' "${UMBRAL_TEST_WRAPPED:-no}" "${UMBRAL_TEST_ENV:-none}"; : > ` + marker
+	run := func(ctx context.Context, want string) {
+		t.Helper()
+		term, err := h.StartTerminal(ctx, threadID, cwd, probe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := term.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if out, _ := term.Output(); !strings.Contains(out, want) {
+			t.Fatalf("output %q, want %q", out, want)
+		}
+		if err := term.Release(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run(ctx, "wrapped=no env=none")
+	// The turn's own reading.
+	run(domain.WithFullAuto(ctx), "wrapped=yes env=given")
+	// The thread's record.
+	confiner.want.Store(true)
+	run(ctx, "wrapped=yes env=given")
+	confiner.mu.Lock()
+	threads, read := confiner.threads, confiner.read
+	confiner.mu.Unlock()
+	if len(threads) != 2 || threads[0] != threadID || len(read[0]) != 1 {
+		t.Errorf("the confiner was asked for %v with %v, want this thread twice with its start-up directory", threads, read)
+	}
+	// What the confiner made for a terminal goes when the terminal is released.
+	for deadline := time.Now().Add(20 * time.Second); confiner.released.Load() != 2; time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d of the 2 confined terminals were cleaned up after their sessions ended", confiner.released.Load())
+		}
+	}
+
+	// A terminal that cannot be confined is not started, and nothing of its command runs.
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	confiner.fail.Store(true)
+	if term, err := h.StartTerminal(domain.WithFullAuto(ctx), threadID, cwd, probe); err == nil {
+		_, _ = term.Wait(ctx)
+		t.Error("a terminal that could not be confined was started")
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the command ran in a terminal that could not be confined: %v", err)
+	}
+
+	// Where no sandbox enforces, nothing is confined.
+	confiner.fail.Store(false)
+	confiner.off.Store(true)
+	run(domain.WithFullAuto(ctx), "wrapped=no env=none")
 }

@@ -336,6 +336,22 @@ type ExternalOp struct {
 	Cwd    string
 }
 
+type fullAutoKey struct{}
+
+// WithFullAuto marks ctx as the request of a turn that decides under `full-auto`
+// (REQ-SBX-007). The turn read its mode once, at its start, and let a terminal run unasked on
+// that reading; whoever starts the terminal confines its shell on the same one, whatever the
+// thread's record says by then.
+func WithFullAuto(ctx context.Context) context.Context {
+	return context.WithValue(ctx, fullAutoKey{}, true)
+}
+
+// FullAuto reports whether ctx carries WithFullAuto's mark.
+func FullAuto(ctx context.Context) bool {
+	marked, _ := ctx.Value(fullAutoKey{}).(bool)
+	return marked
+}
+
 // ErrDenied is a hosted agent's request the policy or the user did not allow.
 var ErrDenied = errors.New("agents: the request was not allowed")
 

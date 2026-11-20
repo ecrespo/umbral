@@ -715,15 +715,20 @@ type fakeTerms struct {
 	mu   sync.Mutex
 	hold bool
 	// entered, when set, receives a value as Start begins, and Start then waits for gate.
-	entered  chan struct{}
-	gate     chan struct{}
-	started  []string
-	cwds     []string
+	entered chan struct{}
+	gate    chan struct{}
+	started []string
+	cwds    []string
+	// ctxs are the contexts Start was called with.
+	ctxs     []context.Context
 	killedAt []time.Time
 	released atomic.Int32
 }
 
-func (f *fakeTerms) Start(_ context.Context, _, cwd, command string) (ports.Terminal, error) {
+func (f *fakeTerms) Start(ctx context.Context, _, cwd, command string) (ports.Terminal, error) {
+	f.mu.Lock()
+	f.ctxs = append(f.ctxs, ctx)
+	f.mu.Unlock()
 	if f.entered != nil {
 		f.entered <- struct{}{}
 		<-f.gate
@@ -1118,5 +1123,29 @@ func TestAReusedPidStaysListedForItsNewerAgent_REQ_ORC_004(t *testing.T) {
 	h.trackPID(4242, false)
 	if got := h.AgentPIDs(); len(got) != 0 {
 		t.Errorf("after both releases AgentPIDs is %v, want none", got)
+	}
+}
+
+type turnMark struct{}
+
+// TestATerminalIsStartedOnTheContextItsTurnGave_REQ_SBX_007: the turn decides a terminal and
+// then has it started on a context of its own, which says how the turn decided — under
+// `full-auto` the terminal's shell is confined on that. The host starts the terminal on that
+// context and no other: one it kept from the agent's request would lose what the turn said.
+func TestATerminalIsStartedOnTheContextItsTurnGave_REQ_SBX_007(t *testing.T) {
+	t.Parallel()
+	terms := &fakeTerms{}
+	h := newHost(t, func(c *Config) { c.Terminals = terms })
+	s := &sink{serve: func(ctx context.Context, req domain.Request, perform func(context.Context, string) (string, error)) error {
+		_, err := perform(context.WithValue(ctx, turnMark{}, "full-auto"), req.Command)
+		return err
+	}}
+	if _, err := promptWith(t, h, workDir(t), "term printf hello", s); err != nil {
+		t.Fatal(err)
+	}
+	terms.mu.Lock()
+	defer terms.mu.Unlock()
+	if len(terms.ctxs) != 1 || terms.ctxs[0].Value(turnMark{}) != "full-auto" {
+		t.Errorf("the terminal was started on a context without the turn's mark (%d starts)", len(terms.ctxs))
 	}
 }

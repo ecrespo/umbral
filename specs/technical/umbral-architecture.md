@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.101 |
-| **Date** | 2026-11-19 |
+| **Version** | 1.102 |
+| **Date** | 2026-11-20 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
 | **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
@@ -1004,9 +1004,11 @@ allows it as in `normal`.
   worktree (REQ-SBX-006, delta `2026-11-full-auto-sandbox`, T-HRD-17; §5.3f), and a hosted
   agent's process is (REQ-SBX-001, T-HRD-15). Where it does not — another system, an old
   kernel, `[sandbox] mode = "off"` — `full-auto` runs as this paragraph says, and the
-  thread's `sandbox` reads `unconfined`. A hosted agent's terminals are confined in neither
-  case, and under `full-auto` those inside the worktree run unasked (the delta's open
-  question).
+  thread's `sandbox` reads `unconfined`. A hosted agent's terminals are sessions the daemon
+  starts, outside the agent's own sandbox: under `full-auto`, where those inside the worktree
+  run unasked, each is started in a shell confined as the thread's own would be
+  (REQ-SBX-007, delta `2026-11-hosted-terminal-sandbox`, T-HRD-21), or refused; in any other
+  mode each is a decision and runs unconfined.
 - **An agent's terminal cannot land its own work.** The destructive pattern `umb_worktree_change`
   is a textual barrier: a renamed binary, or a launcher the normaliser does not know, escapes it. So `internal/api` reads the connecting
   process from the kernel (`SO_PEERCRED`, `LOCAL_PEERPID`) and refuses a client inside an agent's
@@ -1557,6 +1559,14 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
     turn's mark on a record that no longer says `full-auto` fails the command. The shell's
     own directory must be the one the daemon just made, not a link; its environment is the
     daemon's.
+  - *A hosted thread's terminals under `full-auto`* (delta `2026-11-hosted-terminal-sandbox`,
+    T-HRD-21, REQ-SBX-007) go through the same port and profile. The agent runtime marks the
+    `terminal/create` it lets through with its turn's mode (`agents/ports.WithFullAuto`),
+    `cmd/umbrald` turns that into `sessdomain.WithFullAuto`, and `StartTerminal` asks as
+    `threadSession` does. A hosted agent holds several terminals at once, so each gets
+    `shells/<thread>/term-<random>` and the thread's directory is not emptied at a launch;
+    `Confine` hands back a cleanup that removes a terminal's directory when its session
+    ends.
   - *macOS* (delta `2026-11-sandbox-macos`, T-HRD-16): the same profile rendered for
     `/usr/bin/sandbox-exec`, with no helper. Writes are refused and then allowed under the
     write entries and on the device files; reads, `stat` included, are refused under the
@@ -2453,3 +2463,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.99 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-macos` (T-HRD-16, ratified 2026-11-20): §5.3f the macOS adapter, `sandbox-exec` with a rendered profile |
 | 1.100 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-libffi-load` (T-HRD-18, ratified 2026-11-20): §9.3 on macOS and Windows the daemon loads only a libffi whose bytes it has checked, through a patched copy of the binding |
 | 1.101 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-full-auto-sandbox` (T-HRD-17, ratified 2026-11-20): §5.3 `full-auto`'s boundary is the kernel's where the sandbox enforces; §5.3f a `full-auto` thread's shell is confined, on the turn's own mode or the thread's record, the profile's read entries, the `ShellConfiner` port |
+| 1.102 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-hosted-terminal-sandbox` (T-HRD-21, proposed): §5.3 and §5.3f a hosted thread's terminals are confined under `full-auto`, each with a directory of its own |
