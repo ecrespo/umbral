@@ -84,6 +84,8 @@ func (s *Sandbox) Command(p domain.Profile, argv []string) ([]string, error) {
 //     directories above such an entry answer `stat`, which resolving a path needs.
 //   - Local sockets: no connection to one, as on Linux, where a process reached the user's
 //     session services through them. The resolver's stays.
+//   - The network, when the profile names one: refused whole, then allowed on the loopback's
+//     ports it names. Without one it is left open.
 //   - Launch Services, Apple events and launchd jobs: refused. Each starts a process outside
 //     the sandbox for the caller.
 //   - Mach services: every lookup refused but the few in services.
@@ -135,9 +137,23 @@ func Render(p domain.Profile) (string, error) {
 			}
 		}
 	}
-	b.WriteString("(deny network-outbound (remote unix-socket))\n")
-	if err := rule(&b, "allow network-outbound", "literal", resolver); err != nil {
-		return "", err
+	if p.Net == nil {
+		b.WriteString("(deny network-outbound (remote unix-socket))\n")
+		if err := rule(&b, "allow network-outbound", "literal", resolver); err != nil {
+			return "", err
+		}
+	} else {
+		// All of it refused — every protocol, the local sockets and the resolver's with them —
+		// and then the loopback's ports the profile names. Unlike Landlock's, these rules name
+		// the host: a port is not opened on any other.
+		b.WriteString("(deny network*)\n")
+		for _, port := range p.Net.Connect {
+			fmt.Fprintf(&b, "(allow network-outbound (remote ip \"localhost:%d\"))\n", port)
+		}
+		for _, port := range p.Net.Bind {
+			fmt.Fprintf(&b, "(allow network-bind (local ip \"localhost:%d\"))\n", port)
+			fmt.Fprintf(&b, "(allow network-inbound (local ip \"localhost:%d\"))\n", port)
+		}
 	}
 	b.WriteString("(deny lsopen)\n(deny appleevent-send)\n(deny job-creation)\n")
 	b.WriteString("(deny mach-lookup)\n")

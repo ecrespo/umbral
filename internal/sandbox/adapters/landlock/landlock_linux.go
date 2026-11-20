@@ -33,6 +33,22 @@ const (
 		unix.LANDLOCK_ACCESS_FS_READ_FILE | unix.LANDLOCK_ACCESS_FS_TRUNCATE | unix.LANDLOCK_ACCESS_FS_IOCTL_DEV
 )
 
+// Landlock's network rules, which golang.org/x/sys does not name yet: the two TCP rights, the
+// rule type and its attribute (include/uapi/linux/landlock.h).
+const (
+	accessNetBindTCP    = 1 << 0
+	accessNetConnectTCP = 1 << 1
+	ruleNetPort         = 2
+	// netABI is the first Landlock with network rules (kernel 6.7).
+	netABI = 4
+)
+
+// netPortAttr is struct landlock_net_port_attr.
+type netPortAttr struct {
+	allowedAccess uint64
+	port          uint64
+}
+
 // minABI is the oldest Landlock this adapter enforces with. Before version 3 the kernel does
 // not mediate truncate, so a confined process could empty any file its user can write — the
 // database included — and "confined" would not mean what REQ-SBX-001 says.
@@ -56,7 +72,7 @@ func probe() domain.Status {
 	case auditArch == 0:
 		return domain.Status{State: domain.StateUnavailable, Reason: domain.ReasonUnsupportedArch}
 	}
-	return domain.Status{State: domain.StateEnforcing, Mechanism: Mechanism}
+	return domain.Status{State: domain.StateEnforcing, Mechanism: Mechanism, Network: abi() >= netABI}
 }
 
 // handled are the rights the ruleset governs on this kernel: every one it knows, so nothing
@@ -103,8 +119,15 @@ func restrict(p domain.Profile) error {
 	if version < minABI || auditArch == 0 {
 		return errors.New("sandbox: this system cannot confine a process")
 	}
+	if p.Net != nil && version < netABI {
+		return errors.New("sandbox: this kernel's Landlock cannot confine the network")
+	}
 	rights := handled(version)
 	attr := unix.LandlockRulesetAttr{Access_fs: rights}
+	if p.Net != nil {
+		// Every TCP bind and connect is governed, and only the ports below are allowed.
+		attr.Access_net = accessNetBindTCP | accessNetConnectTCP
+	}
 	if version >= 6 {
 		// No signal to a process outside the sandbox — the daemon, the user's shells — and no
 		// connection to an abstract Unix socket made outside it.
@@ -142,13 +165,29 @@ func restrict(p domain.Profile) error {
 			return err
 		}
 	}
+	if p.Net != nil {
+		ports := map[uint16]uint64{}
+		for _, port := range p.Net.Bind {
+			ports[port] |= accessNetBindTCP
+		}
+		for _, port := range p.Net.Connect {
+			ports[port] |= accessNetConnectTCP
+		}
+		for port, access := range ports {
+			rule := netPortAttr{allowedAccess: access, port: uint64(port)}
+			if _, _, errno := syscall.Syscall6(unix.SYS_LANDLOCK_ADD_RULE, uintptr(ruleset), ruleNetPort,
+				uintptr(unsafe.Pointer(&rule)), 0, 0, 0); errno != 0 { // #nosec G103 -- the kernel reads the struct during the call
+				return fmt.Errorf("sandbox: allow port %d: %w", port, errno)
+			}
+		}
+	}
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 		return fmt.Errorf("sandbox: no_new_privs: %w", err)
 	}
 	if _, _, errno := syscall.Syscall(unix.SYS_LANDLOCK_RESTRICT_SELF, uintptr(ruleset), 0, 0); errno != 0 {
 		return fmt.Errorf("sandbox: restrict: %w", errno)
 	}
-	return noLocalSockets()
+	return socketFilter(p.Net != nil)
 }
 
 // The seccomp filter's return values and the offsets of struct seccomp_data it reads.
@@ -158,6 +197,10 @@ const (
 	offsetSyscall  = 0
 	offsetArch     = 4
 	offsetArg0     = 16
+	offsetArg1     = 24
+	offsetArg2     = 32
+	sockTypeMask   = 0xf  // SOCK_TYPE_MASK: the type without SOCK_NONBLOCK and SOCK_CLOEXEC
+	bpfAnd         = 0x54 // BPF_ALU | BPF_AND | BPF_K
 	x32SyscallBit  = 0x40000000
 	bpfLoadWord    = 0x20 // BPF_LD | BPF_W | BPF_ABS
 	bpfJumpEqual   = 0x15 // BPF_JMP | BPF_JEQ | BPF_K
@@ -165,17 +208,26 @@ const (
 	bpfReturn      = 0x06 // BPF_RET | BPF_K
 )
 
-// noLocalSockets installs a seccomp filter that refuses the process a Unix-domain socket.
+// socketFilter installs a seccomp filter on the sockets the process may make.
 //
-// Landlock does not mediate connecting to one. A process confined by Landlock alone reached the
-// user's D-Bus and ran `systemd-run --user`, a command outside the sandbox, and the same road
-// leads to the keyring, ssh-agent and a container daemon (docs/spikes/2026-11-landlock.md).
-// seccomp cannot read the address a connect names, so the socket itself is refused:
-// `socket(AF_UNIX)` fails with EACCES. A socketpair is not a socket() call and still works.
-// `io_uring_setup` answers ENOSYS, since a ring can make a socket without the system call; a
-// program falls back to ordinary calls. System calls of another architecture's table are
-// refused whole, because their numbers mean something else.
-func noLocalSockets() error {
+// Always, no Unix-domain socket. Landlock does not mediate connecting to one. A process
+// confined by Landlock alone reached the user's D-Bus and ran `systemd-run --user`, a command
+// outside the sandbox, and the same road leads to the keyring, ssh-agent and a container daemon
+// (docs/spikes/2026-11-landlock.md). seccomp cannot read the address a connect names, so the
+// socket itself is refused: `socket(AF_UNIX)` fails with EACCES. A socketpair is not a
+// socket() call and still works. `io_uring_setup` answers ENOSYS, since a ring can make a
+// socket without the system call; a program falls back to ordinary calls. System calls of
+// another architecture's table are refused whole, because their numbers mean something else.
+//
+// With net, the profile names a network, and Landlock's port rules are TCP's alone: a
+// datagram left with every TCP port denied (the same spike). So the only sockets left are a
+// TCP one of either Internet family, which Landlock then holds to its ports, and a netlink
+// one, which a resolver and `getifaddrs` open and which sends nothing off the machine. A
+// datagram, a raw socket, a stream that is not TCP — MPTCP, SCTP — and every other family
+// fail with EACCES.
+func socketFilter(net bool) error {
+	denied := unix.SockFilter{Code: bpfReturn, K: seccompErrno | uint32(unix.EACCES)}
+	allowed := unix.SockFilter{Code: bpfReturn, K: seccompAllow}
 	filter := []unix.SockFilter{
 		{Code: bpfLoadWord, K: offsetArch},
 		{Code: bpfJumpEqual, Jt: 1, Jf: 0, K: auditArch},
@@ -185,13 +237,33 @@ func noLocalSockets() error {
 		{Code: bpfReturn, K: seccompErrno | uint32(unix.EPERM)},
 		{Code: bpfJumpEqual, Jt: 0, Jf: 1, K: unix.SYS_IO_URING_SETUP},
 		{Code: bpfReturn, K: seccompErrno | uint32(unix.ENOSYS)},
-		{Code: bpfJumpEqual, Jt: 0, Jf: 3, K: unix.SYS_SOCKET},
+		{Code: bpfJumpEqual, Jt: 1, Jf: 0, K: unix.SYS_SOCKET},
+		allowed,
 		{Code: bpfLoadWord, K: offsetArg0},
 		{Code: bpfJumpEqual, Jt: 0, Jf: 1, K: unix.AF_UNIX},
-		{Code: bpfReturn, K: seccompErrno | uint32(unix.EACCES)},
-		{Code: bpfReturn, K: seccompAllow},
+		denied,
 	}
-	prog := unix.SockFprog{Len: uint16(len(filter)), Filter: &filter[0]}
+	if !net {
+		filter = append(filter, allowed)
+	} else {
+		// The jumps are counted from the instruction after each: to `denied` and `allowed`,
+		// the last two.
+		filter = append(filter,
+			unix.SockFilter{Code: bpfJumpEqual, Jt: 0, Jf: 1, K: unix.AF_NETLINK},
+			allowed,
+			unix.SockFilter{Code: bpfJumpEqual, Jt: 1, Jf: 0, K: unix.AF_INET},
+			unix.SockFilter{Code: bpfJumpEqual, Jt: 0, Jf: 6, K: unix.AF_INET6},
+			unix.SockFilter{Code: bpfLoadWord, K: offsetArg1},
+			unix.SockFilter{Code: bpfAnd, K: sockTypeMask},
+			unix.SockFilter{Code: bpfJumpEqual, Jt: 0, Jf: 3, K: unix.SOCK_STREAM},
+			unix.SockFilter{Code: bpfLoadWord, K: offsetArg2},
+			unix.SockFilter{Code: bpfJumpEqual, Jt: 2, Jf: 0, K: 0},
+			unix.SockFilter{Code: bpfJumpEqual, Jt: 1, Jf: 0, K: unix.IPPROTO_TCP},
+			denied,
+			allowed,
+		)
+	}
+	prog := unix.SockFprog{Len: uint16(len(filter)), Filter: &filter[0]}                                                               // #nosec G115 -- a few dozen instructions
 	if _, _, errno := syscall.Syscall(unix.SYS_SECCOMP, unix.SECCOMP_SET_MODE_FILTER, 0, uintptr(unsafe.Pointer(&prog))); errno != 0 { // #nosec G103 -- the kernel reads the program during the call
 		return fmt.Errorf("sandbox: seccomp: %w", errno)
 	}

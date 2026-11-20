@@ -229,3 +229,38 @@ func TestTheCommandRunsThroughAppleTool_REQ_SBX_001(t *testing.T) {
 		t.Errorf("an adapter that does not enforce returned %q, %v", argv, err)
 	}
 }
+
+// TestANetworkProfileOpensOnlyItsLoopbackPorts_REQ_SBX_008: a profile that names a network
+// refuses all of it, the local sockets and the resolver's included, and then allows the
+// loopback's ports it names — a connection out to one kind, a bind and what arrives on the
+// other. A profile without one keeps the network open and says nothing of ports.
+func TestANetworkProfileOpensOnlyItsLoopbackPorts_REQ_SBX_008(t *testing.T) {
+	posixPaths(t)
+	p := agent
+	p.Net = &domain.Net{Connect: []uint16{4096, 51234}, Bind: []uint16{4096}}
+	text, err := Render(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	order(t, text, `(deny network*)`,
+		`(allow network-outbound (remote ip "localhost:4096"))`,
+		`(allow network-outbound (remote ip "localhost:51234"))`,
+		`(allow network-bind (local ip "localhost:4096"))`,
+		`(allow network-inbound (local ip "localhost:4096"))`)
+	if strings.Count(text, "(allow network-") != 4 {
+		t.Errorf("the profile opens more of the network than its ports:\n%s", text)
+	}
+	if strings.Contains(text, resolver) || strings.Contains(text, `"localhost:51234"))`+"\n(allow network-bind (local ip \"localhost:51234\")") {
+		t.Errorf("the resolver's socket or a bind on a connect port is open:\n%s", text)
+	}
+	open, err := Render(agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(open, "(deny network*)") || strings.Contains(open, "localhost:") {
+		t.Errorf("a profile without a network refuses it:\n%s", open)
+	}
+	if _, err := Render(domain.Profile{Net: &domain.Net{Bind: []uint16{0}}}); err == nil {
+		t.Error("a bind on port 0, the kernel's choice of port, was rendered")
+	}
+}

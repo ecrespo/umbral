@@ -55,6 +55,10 @@ type Status struct {
 	Mechanism string
 	// Reason says why it is not enforcing, and is empty when it is.
 	Reason string
+	// Network says whether a profile's Net is enforced here. Landlock has had network rules
+	// since its fourth version (kernel 6.7); an enforcing sandbox without them confines files
+	// and refuses a profile that names a network.
+	Network bool
 }
 
 // Enforcing reports whether a covered process is confined.
@@ -71,6 +75,18 @@ type Profile struct {
 	// Read are directories inside a DenyRead one that the process may read and run from, and
 	// not write: a shell's start-up files, which the daemon keeps in its runtime directory.
 	Read []string `json:"read,omitempty"`
+	// Net, when set, is all of the network the process has. Nil leaves the network open.
+	Net *Net `json:"net,omitempty"`
+}
+
+// Net is a confined process's network: TCP on the ports named, and nothing else — no
+// datagram, no raw socket, no stream that is not TCP. On Linux a port is allowed on every
+// host, since Landlock's rules name no address; on macOS it is the loopback's.
+type Net struct {
+	// Bind are the TCP ports the process may listen on.
+	Bind []uint16 `json:"bind,omitempty"`
+	// Connect are the TCP ports the process may connect to.
+	Connect []uint16 `json:"connect,omitempty"`
 }
 
 // Devices are the device files every confined process may write: a redirect to /dev/null, and
@@ -85,6 +101,14 @@ func (p Profile) Validate() error {
 		for _, path := range list {
 			if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 				return fmt.Errorf("sandbox: %q is not a clean absolute path", path)
+			}
+		}
+	}
+	if p.Net != nil {
+		for _, port := range append(append([]uint16(nil), p.Net.Bind...), p.Net.Connect...) {
+			// Port 0 asks the kernel to choose, and a rule on it opens every port it may choose.
+			if port == 0 {
+				return errors.New("sandbox: port 0 is not a port a profile can name")
 			}
 		}
 	}

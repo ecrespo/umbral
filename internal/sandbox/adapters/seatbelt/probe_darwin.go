@@ -17,5 +17,5 @@ func probe() domain.Status {
 	if err := exec.CommandContext(ctx, Tool, "-p", "(version 1)(allow default)", "/usr/bin/true").Run(); err != nil {
 		return domain.Status{State: domain.StateUnavailable, Reason: domain.ReasonNoSeatbelt}
 	}
-	return domain.Status{State: domain.StateEnforcing, Mechanism: Mechanism}
+	return domain.Status{State: domain.StateEnforcing, Mechanism: Mechanism, Network: true}
 }
