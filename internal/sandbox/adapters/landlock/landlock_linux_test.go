@@ -78,8 +78,13 @@ func probeNetwork(args []string) {
 	bindOK := unix.Bind(tcp(), loopback(port(args[2])))
 	bindNo := unix.Bind(tcp(), loopback(port(args[3])))
 	bindAny := unix.Bind(tcp(), loopback(0))
-	fmt.Printf("udp=%v udp6=%v raw=%v mptcp=%v packet=%v netlink=%v pair=%v connect-ok=%v connect-no=%v bind-ok=%v bind-no=%v bind-any=%v connect-to-bind-port=%v bind-on-connect-port=%v\n",
-		udpErr, udp6Err, rawErr, mptcpErr, packetErr, netlinkErr, pairErr, connectOK, connectNo, bindOK, bindNo, bindAny, crossConnect, crossBind)
+	// A socket that listens without a bind is given a port by the kernel, with no bind for a
+	// rule to refuse.
+	listenUnbound := unix.Listen(tcp(), 1)
+	// TCP Fast Open connects inside a send, with no connect for a rule to refuse.
+	fastOpen := unix.Sendto(tcp(), []byte("x"), unix.MSG_FASTOPEN, loopback(port(args[1])))
+	fmt.Printf("udp=%v udp6=%v raw=%v mptcp=%v packet=%v netlink=%v pair=%v connect-ok=%v connect-no=%v bind-ok=%v bind-no=%v bind-any=%v connect-to-bind-port=%v bind-on-connect-port=%v listen-unbound=%v fast-open=%v\n",
+		udpErr, udp6Err, rawErr, mptcpErr, packetErr, netlinkErr, pairErr, connectOK, connectNo, bindOK, bindNo, bindAny, crossConnect, crossBind, listenUnbound, fastOpen)
 }
 
 // probeSockets makes the test binary report which sockets it can make.
@@ -486,14 +491,22 @@ func TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008(t *testing.T) {
 	want := "udp=" + denied + " udp6=" + denied + " raw=" + denied + " mptcp=" + denied + " packet=" + denied +
 		" netlink=<nil> pair=<nil> connect-ok=<nil> connect-no=" + denied + " bind-ok=<nil> bind-no=" + denied + " bind-any=" + denied +
 		" connect-to-bind-port=" + denied + " bind-on-connect-port=" + denied
-	if got := run(p); got != want {
-		t.Errorf("with a network profile the probe says\n %q, want\n %q", got, want)
+	// The limit the delta records: a process that may bind keeps `listen`, and a socket that
+	// listens without a bind is given a port by the kernel. Landlock has no right for it.
+	// Should a kernel refuse it one day, this line says so.
+	if got := run(p); got != want+" listen-unbound=<nil> fast-open="+denied {
+		t.Errorf("with a network profile the probe says\n %q, want\n %q", got, want+" listen-unbound=<nil> fast-open="+denied)
+	}
+	// A profile with no port to bind has no use for `listen`, and is refused it.
+	p.Net = &domain.Net{Connect: []uint16{port(allowed)}}
+	if got := run(p); !strings.Contains(got, "connect-ok=<nil>") || !strings.Contains(got, "bind-ok="+denied) || !strings.Contains(got, "listen-unbound="+denied) {
+		t.Errorf("with nothing to bind the probe says %q, want its connection allowed and no bind or listen", got)
 	}
 
 	// The same probe with no network in its profile: the test proves nothing unless what was
 	// refused above works here.
 	plain := run(b.profile(t))
-	for _, open := range []string{"udp=<nil>", "udp6=<nil>", "connect-ok=<nil>", "connect-no=<nil>", "bind-ok=<nil>", "bind-no=<nil>", "bind-any=<nil>"} {
+	for _, open := range []string{"udp=<nil>", "udp6=<nil>", "connect-ok=<nil>", "connect-no=<nil>", "bind-ok=<nil>", "bind-no=<nil>", "bind-any=<nil>", "listen-unbound=<nil>"} {
 		if !strings.Contains(plain, open) {
 			t.Errorf("without a network profile the probe says %q, want %s", plain, open)
 		}

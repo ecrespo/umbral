@@ -187,7 +187,7 @@ func restrict(p domain.Profile) error {
 	if _, _, errno := syscall.Syscall(unix.SYS_LANDLOCK_RESTRICT_SELF, uintptr(ruleset), 0, 0); errno != 0 {
 		return fmt.Errorf("sandbox: restrict: %w", errno)
 	}
-	return socketFilter(p.Net != nil)
+	return socketFilter(p.Net != nil, p.Net != nil && len(p.Net.Bind) == 0)
 }
 
 // The seccomp filter's return values and the offsets of struct seccomp_data it reads.
@@ -225,7 +225,13 @@ const (
 // one, which a resolver and `getifaddrs` open and which sends nothing off the machine. A
 // datagram, a raw socket, a stream that is not TCP — MPTCP, SCTP — and every other family
 // fail with EACCES.
-func socketFilter(net bool) error {
+//
+// With noListen, the profile gives the process no port to listen on, and `listen` fails with
+// EACCES. Landlock cannot say it: a socket that listens without a bind is given a port by the
+// kernel, with no bind for a rule to refuse, and Landlock has no right for listen. A process
+// that may bind a port keeps `listen`, and with it that way to a port of the kernel's choosing
+// — for connections coming in, never going out. The delta records it.
+func socketFilter(net, noListen bool) error {
 	denied := unix.SockFilter{Code: bpfReturn, K: seccompErrno | uint32(unix.EACCES)}
 	allowed := unix.SockFilter{Code: bpfReturn, K: seccompAllow}
 	filter := []unix.SockFilter{
@@ -237,12 +243,17 @@ func socketFilter(net bool) error {
 		{Code: bpfReturn, K: seccompErrno | uint32(unix.EPERM)},
 		{Code: bpfJumpEqual, Jt: 0, Jf: 1, K: unix.SYS_IO_URING_SETUP},
 		{Code: bpfReturn, K: seccompErrno | uint32(unix.ENOSYS)},
-		{Code: bpfJumpEqual, Jt: 1, Jf: 0, K: unix.SYS_SOCKET},
-		allowed,
-		{Code: bpfLoadWord, K: offsetArg0},
-		{Code: bpfJumpEqual, Jt: 0, Jf: 1, K: unix.AF_UNIX},
-		denied,
 	}
+	if noListen {
+		filter = append(filter, unix.SockFilter{Code: bpfJumpEqual, Jt: 0, Jf: 1, K: unix.SYS_LISTEN}, denied)
+	}
+	filter = append(filter,
+		unix.SockFilter{Code: bpfJumpEqual, Jt: 1, Jf: 0, K: unix.SYS_SOCKET},
+		allowed,
+		unix.SockFilter{Code: bpfLoadWord, K: offsetArg0},
+		unix.SockFilter{Code: bpfJumpEqual, Jt: 0, Jf: 1, K: unix.AF_UNIX},
+		denied,
+	)
 	if !net {
 		filter = append(filter, allowed)
 	} else {

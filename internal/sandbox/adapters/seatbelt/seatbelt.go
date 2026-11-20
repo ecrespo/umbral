@@ -45,6 +45,18 @@ var services = []string{
 	"com.apple.ocspd",
 }
 
+// networked are the services among them that reach the network on their caller's behalf: name
+// resolution, the network's configuration and certificate checks. A profile that names a
+// network gets none of them, so nothing is resolved and no certificate is checked under one.
+var networked = map[string]bool{
+	"com.apple.dnssd.service":                        true,
+	"com.apple.SystemConfiguration.DNSConfiguration": true,
+	"com.apple.SystemConfiguration.configd":          true,
+	"com.apple.trustd":                               true,
+	"com.apple.trustd.agent":                         true,
+	"com.apple.ocspd":                                true,
+}
+
 // Sandbox is the macOS adapter of the sandbox port.
 type Sandbox struct{ status domain.Status }
 
@@ -147,17 +159,24 @@ func Render(p domain.Profile) (string, error) {
 		// and then the loopback's ports the profile names. Unlike Landlock's, these rules name
 		// the host: a port is not opened on any other.
 		b.WriteString("(deny network*)\n")
+		// TCP by name: an `ip` filter would open the same port to a datagram.
 		for _, port := range p.Net.Connect {
-			fmt.Fprintf(&b, "(allow network-outbound (remote ip \"localhost:%d\"))\n", port)
+			fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"localhost:%d\"))\n", port)
 		}
 		for _, port := range p.Net.Bind {
-			fmt.Fprintf(&b, "(allow network-bind (local ip \"localhost:%d\"))\n", port)
-			fmt.Fprintf(&b, "(allow network-inbound (local ip \"localhost:%d\"))\n", port)
+			fmt.Fprintf(&b, "(allow network-bind (local tcp \"localhost:%d\"))\n", port)
+			fmt.Fprintf(&b, "(allow network-inbound (local tcp \"localhost:%d\"))\n", port)
 		}
 	}
 	b.WriteString("(deny lsopen)\n(deny appleevent-send)\n(deny job-creation)\n")
 	b.WriteString("(deny mach-lookup)\n")
 	for _, name := range services {
+		// A process without a network is not left a service that uses one for it: the
+		// resolver would carry a name out, and the trust daemons fetch what a certificate
+		// names.
+		if p.Net != nil && networked[name] {
+			continue
+		}
 		fmt.Fprintf(&b, "(allow mach-lookup (global-name %q))\n", name)
 	}
 	b.WriteString("(deny signal)\n(allow signal (target same-sandbox))\n")

@@ -370,9 +370,11 @@ func TestMain(m *testing.M) {
 			}
 			return err
 		}
-		fmt.Printf("connect-ok=%s connect-no=%s bind-ok=%s bind-no=%s bind-any=%s udp=%s\n",
+		// A datagram to the very port the profile may connect to: the port is TCP's alone.
+		fmt.Printf("connect-ok=%s connect-no=%s bind-ok=%s bind-no=%s bind-any=%s udp=%s udp-to-its-port=%s\n",
 			said(dial("tcp4", os.Args[2])), said(dial("tcp4", os.Args[3])),
-			said(listen(os.Args[4])), said(listen(os.Args[5])), said(listen("0")), said(dial("udp4", os.Args[3])))
+			said(listen(os.Args[4])), said(listen(os.Args[5])), said(listen("0")),
+			said(dial("udp4", os.Args[3])), said(dial("udp4", os.Args[2])))
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
@@ -436,10 +438,10 @@ func TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008(t *testing.T) {
 	}
 	p := b.profile(t)
 	p.Net = &domain.Net{Connect: []uint16{port(allowed)}, Bind: []uint16{port(bindOK)}}
-	if got, want := run(p), "connect-ok=ok connect-no=refused bind-ok=ok bind-no=refused bind-any=refused udp=refused"; got != want {
+	if got, want := run(p), "connect-ok=ok connect-no=refused bind-ok=ok bind-no=refused bind-any=refused udp=refused udp-to-its-port=refused"; got != want {
 		t.Errorf("with a network profile the probe says %q, want %q", got, want)
 	}
-	if got, want := run(b.profile(t)), "connect-ok=ok connect-no=ok bind-ok=ok bind-no=ok bind-any=ok udp=ok"; got != want {
+	if got, want := run(b.profile(t)), "connect-ok=ok connect-no=ok bind-ok=ok bind-no=ok bind-any=ok udp=ok udp-to-its-port=ok"; got != want {
 		t.Errorf("without a network profile the probe says %q, want %q: the test proves nothing", got, want)
 	}
 }
