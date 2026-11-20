@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-11-20 by the Tech Lead ("Como recomiendas")`: the five open questions are answered as recommended, and the decisions stand as proposed with those answers. **Not implemented**: T-HRD-20a, b and c follow, each with its own tests; the requirements' final text is written into the PRD by the piece that makes each true |
+| **Status** | `APPROVED 2026-11-20 by the Tech Lead ("Como recomiendas")`: the five open questions are answered as recommended. **Piece a is implemented** (2026-11-20); pieces b and c are not. The section "What piece a built, and what it found" amends decisions 4 and 5, each stricter, and raises one new limit: **that section awaits the Tech Lead**, and REQ-SBX-008 says so where it states the limit |
 | **Date** | 2026-11-19 |
 | **Task** | T-HRD-20 |
 | **REQ** | will add REQ-SBX-008 and REQ-SBX-009 (REQ-SBX-007 was taken by T-HRD-21 on 2026-11-20) and amend REQ-ACP-007 and REQ-ACP-009; none is in the PRD yet |
@@ -86,6 +86,46 @@ Each question was answered as recommended.
   there; `[sandbox] mode = "off"` is the way back, and it is disclosed.
 - **Q5 — it does not gate release 0.1.** The network of a hosted agent ships open and
   disclosed (S1 of delta `2026-11-open-questions`) until this lands.
+
+## What piece a built, and what it found (2026-11-20)
+
+`Profile.Net`, on both systems, with no caller. Three things differ from decisions 4 and 5
+as proposed, each stricter, and one limit is new.
+
+- **The socket filter is an allow list.** Decision 4 refused "a datagram or raw socket of
+  the Internet families". Landlock's rules are TCP's alone, and a stream need not be TCP:
+  `socket(AF_INET, SOCK_STREAM, IPPROTO_MPTCP)` is one. Under a network profile the only
+  sockets left are a TCP one of either Internet family and a netlink one of the routing
+  protocol, which a resolver and `getifaddrs` open and which sends nothing off the machine;
+  every other type, protocol and family is refused. Measured.
+- **macOS opens a port to TCP only**, by `tcp` filters: an `ip` filter opens the same port
+  to a datagram.
+- **macOS leaves out six Mach services** under a network profile: the resolver's, the
+  network's configuration and the trust daemons'. Each reaches the network for its caller,
+  and a name resolved is a name sent out. A confined agent therefore resolves nothing and
+  checks no certificate; it reaches its relay by address, over the loopback.
+- **New limit, Linux: `listen` without a bind.** A socket that listens without a bind is
+  given a port by the kernel, with no bind for a rule to refuse, and Landlock has no right
+  for `listen` — none in kernel 7.0's header either. Measured: the confined probe listened.
+  The filter refuses `listen` to a profile with no port to bind. A hosted agent binds its
+  own port, so it keeps `listen`, and can receive connections on a port of the kernel's
+  choosing, on every interface: a way in for whoever can reach the machine, and a way out
+  only over a connection someone else opened. It joins Q1's limit in the disclosure
+  (decision 8). **For the Tech Lead:** whether that is acceptable as disclosed, as Q1's
+  was; the alternative found is to have the daemon listen on the agent's port and hand the
+  agent the socket, which no agent's manifest supports today.
+- **A profile with a network is refused wherever it cannot be enforced**, a system where the
+  sandbox enforces nothing included. A profile without one runs there as it came
+  (REQ-SBX-003); one that names a network does not, so piece c cannot launch an agent it
+  believes cut off and is not. Piece c must also give a confined agent no descriptor but its
+  pipes: the filter does not stop a send on a socket the process inherits.
+- A TCP fast-open send, which connects without a `connect`, is refused by the kernel
+  (measured on 7.0), and the test holds it.
+- Found by the commit's automated security review and fixed before the pull request: the
+  `listen` gap, the `ip` filter and the Mach services.
+- Not measured: macOS, by its runner only; a kernel between 6.7 and 7.0, where a fast-open
+  send may not be refused; whether macOS's directory service resolves a host name for its
+  caller.
 
 ## Tasks proposed
 

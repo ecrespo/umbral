@@ -79,6 +79,9 @@ type Profile struct {
 	Net *Net `json:"net,omitempty"`
 }
 
+// ErrNoNetwork is a profile that names a network on a system that cannot enforce one.
+var ErrNoNetwork = errors.New("sandbox: this system cannot confine the network")
+
 // Net is a confined process's network: TCP on the ports named, and nothing else — no
 // datagram, no raw socket, no stream that is not TCP. On Linux a port is allowed on every
 // host, since Landlock's rules name no address; on macOS it is the loopback's.

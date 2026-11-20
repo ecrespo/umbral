@@ -72,6 +72,10 @@ func (s *Sandbox) Command(p domain.Profile, argv []string) ([]string, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("sandbox: no command to confine")
 	}
+	if p.Net != nil && !(s.status.Enforcing() && s.status.Network) {
+		// A network is never dropped from a profile in silence.
+		return nil, domain.ErrNoNetwork
+	}
 	if !s.status.Enforcing() {
 		return argv, nil
 	}

@@ -33,11 +33,11 @@ const (
 		unix.LANDLOCK_ACCESS_FS_READ_FILE | unix.LANDLOCK_ACCESS_FS_TRUNCATE | unix.LANDLOCK_ACCESS_FS_IOCTL_DEV
 )
 
-// Landlock's network rules, which golang.org/x/sys does not name yet: the two TCP rights, the
-// rule type and its attribute (include/uapi/linux/landlock.h).
+// Landlock's network rules. golang.org/x/sys names the two TCP rights and not yet the rule's
+// type or its attribute (include/uapi/linux/landlock.h).
 const (
-	accessNetBindTCP    = 1 << 0
-	accessNetConnectTCP = 1 << 1
+	accessNetBindTCP    = unix.LANDLOCK_ACCESS_NET_BIND_TCP
+	accessNetConnectTCP = unix.LANDLOCK_ACCESS_NET_CONNECT_TCP
 	ruleNetPort         = 2
 	// netABI is the first Landlock with network rules (kernel 6.7).
 	netABI = 4
@@ -222,9 +222,9 @@ const (
 // With net, the profile names a network, and Landlock's port rules are TCP's alone: a
 // datagram left with every TCP port denied (the same spike). So the only sockets left are a
 // TCP one of either Internet family, which Landlock then holds to its ports, and a netlink
-// one, which a resolver and `getifaddrs` open and which sends nothing off the machine. A
-// datagram, a raw socket, a stream that is not TCP — MPTCP, SCTP — and every other family
-// fail with EACCES.
+// one of the routing protocol, which a resolver and `getifaddrs` open and which sends nothing
+// off the machine. A datagram, a raw socket, a stream that is not TCP — MPTCP, SCTP — a
+// netlink socket of any other protocol and every other family fail with EACCES.
 //
 // With noListen, the profile gives the process no port to listen on, and `listen` fails with
 // EACCES. Landlock cannot say it: a socket that listens without a bind is given a port by the
@@ -257,11 +257,15 @@ func socketFilter(net, noListen bool) error {
 	if !net {
 		filter = append(filter, allowed)
 	} else {
-		// The jumps are counted from the instruction after each: to `denied` and `allowed`,
-		// the last two.
+		// The jumps are counted from the instruction after each. A netlink socket is decided
+		// on its protocol at once; the Internet families' checks end at `denied` and
+		// `allowed`, the last two.
 		filter = append(filter,
-			unix.SockFilter{Code: bpfJumpEqual, Jt: 0, Jf: 1, K: unix.AF_NETLINK},
+			unix.SockFilter{Code: bpfJumpEqual, Jt: 0, Jf: 4, K: unix.AF_NETLINK},
+			unix.SockFilter{Code: bpfLoadWord, K: offsetArg2},
+			unix.SockFilter{Code: bpfJumpEqual, Jt: 0, Jf: 1, K: unix.NETLINK_ROUTE},
 			allowed,
+			denied,
 			unix.SockFilter{Code: bpfJumpEqual, Jt: 1, Jf: 0, K: unix.AF_INET},
 			unix.SockFilter{Code: bpfJumpEqual, Jt: 0, Jf: 6, K: unix.AF_INET6},
 			unix.SockFilter{Code: bpfLoadWord, K: offsetArg1},

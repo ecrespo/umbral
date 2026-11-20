@@ -43,15 +43,17 @@ func (s *Sandbox) Command(p domain.Profile, argv []string) ([]string, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("sandbox: no command to confine")
 	}
+	if p.Net != nil && !(s.status.Enforcing() && s.status.Network) {
+		// A network is never dropped from a profile in silence, where the kernel cannot
+		// enforce one or where nothing is enforced at all: the caller asks Status first, and
+		// says what it finds.
+		return nil, domain.ErrNoNetwork
+	}
 	if !s.status.Enforcing() {
 		return argv, nil
 	}
 	if err := p.Validate(); err != nil {
 		return nil, err
-	}
-	if p.Net != nil && !s.status.Network {
-		// Never dropped in silence: the caller asks Status first and says what it finds.
-		return nil, errors.New("sandbox: this kernel's Landlock cannot confine the network")
 	}
 	arg, err := p.Encode()
 	if err != nil {
