@@ -56,3 +56,8 @@ graphify-out/
 
 # Packages built by `task deb` (T-PKG-03)
 /dist/
+
+# The libffi the binding embeds, in Umbral's copy of it (T-HRD-18): tracked on purpose, and
+# compared with upstream's by scripts/ffi_copy_check.sh.
+!third_party/ffi/assets/libffi/*/*.dylib
+!third_party/ffi/assets/libffi/*/*.dll
