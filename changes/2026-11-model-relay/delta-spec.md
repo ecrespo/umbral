@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED`, **not implemented**. T-HRD-20 "starts with a delta of its own"; this is it, with what was measured for it. Its decisions change who holds a provider's key, what `egress_log` records and a table's `CHECK`, and four of them are questions only the Tech Lead can answer. No product code was written |
+| **Status** | `APPROVED 2026-11-20 by the Tech Lead ("Como recomiendas")`: the five open questions are answered as recommended, and the decisions stand as proposed with those answers. **Not implemented**: T-HRD-20a, b and c follow, each with its own tests; the requirements' final text is written into the PRD by the piece that makes each true |
 | **Date** | 2026-11-19 |
 | **Task** | T-HRD-20 |
-| **REQ** | would add REQ-SBX-007 and REQ-SBX-008 and amend REQ-ACP-007; none is in the PRD yet |
+| **REQ** | will add REQ-SBX-008 and REQ-SBX-009 (REQ-SBX-007 was taken by T-HRD-21 on 2026-11-20) and amend REQ-ACP-007 and REQ-ACP-009; none is in the PRD yet |
 | **Raised by** | Delta `2026-11-agent-sandbox` Q1 option (b) and decision 8; delta `2026-11-open-questions` S1; delta `2026-11-full-auto-sandbox` decision 9 |
 | **Depends on** | T-HRD-15, T-HRD-16, T-HRD-17 |
 
@@ -62,32 +62,30 @@ Ollama with `gpt-oss:20b`, through the spike's helper. The first three are from
    are recorded; it reaches nothing else over the network — on Linux, nothing else over
    TCP but its own port **on any host**, and no UDP.
 
-## Open questions for the Tech Lead
+## Answers of the Tech Lead (2026-11-20)
 
-- **Q1 — the port rule's reach on Linux.** "Connect to port R" allows port R on every host,
-  not only loopback. R is chosen at random per thread and the agent knows it, so an agent
-  that has been told where to send data can reach a server listening on that port. The
-  alternatives are a network namespace, which Ubuntu's AppArmor restricts for unprivileged
-  users, or a filter on `connect`'s address, which seccomp cannot read. Recommended: accept
-  and disclose; it is the same limit delta `2026-11-agent-sandbox` Q1 named.
-- **Q2 — what the relay records and whether it redacts.** Umbral's own calls are redacted
-  before they leave (REQ-SEC-001). The agent's are not Umbral's text. Redacting them would
-  change a request the agent signed for; not redacting them makes `egress_log` say less
-  than it does for Umbral's own. Recommended: record, do not redact, and say so in the
-  disclosure and in Art. 4's amendment of 2026-10-22.
-- **Q3 — rebuilding `threads`.** The alternative to a table rebuild is a new column beside
-  `egress_visibility` (say `network_profile`), leaving the old `CHECK` alone. It is less
-  clean and far less risky: one `ALTER TABLE … ADD COLUMN`. Recommended: the new column,
-  and `egress_visibility` on the wire computed from both.
-- **Q4 — the key leaves the agent.** Decision 2 changes REQ-ACP-009's environment: a
-  manifest's `env_refs` for the provider's key would no longer reach a confined agent.
-  An agent that uses its key for anything but the model endpoint — OpenCode's own sign-in,
-  a provider's file API on another host — stops working. Recommended: yes, behind the relay
-  the key stays with the daemon; `[sandbox] mode = "off"` is the way back.
-- **Q5 — whether this gates release 0.1.** It is the largest of the hardening tasks: a
-  listener, a forwarder that streams, the token, the manifest's base URL and port, two
-  network profiles, the migration and the disclosures. Recommended: no; S1 already ships
-  the network open and disclosed.
+Each question was answered as recommended.
+
+- **Q1 — the port rule's reach on Linux: accepted and disclosed.** "Connect to port R" allows
+  port R on every host, not only loopback, and the agent knows R. A network namespace is
+  restricted for unprivileged users by Ubuntu's AppArmor, and seccomp cannot read
+  `connect`'s address. The thread's disclosure says it (decision 8); macOS names the host
+  and does not have the limit.
+- **Q2 — the relay records and does not redact.** A request to a non-loopback endpoint is an
+  `egress_log` row; its body is the agent's, forwarded as it came, neither stored nor
+  redacted. The disclosure says so, and so does Art. 4's amendment of 2026-10-22, whose
+  text T-HRD-20c changes with the code that makes it true.
+- **Q3 — a new column, not a rebuilt table.** `threads` gains `network_profile` in one
+  `ALTER TABLE … ADD COLUMN` with its own `CHECK`; `egress_visibility` on the wire is
+  computed from both, and reads `confined` for a hosted thread whose network profile the
+  kernel enforces. The stored `egress_visibility` keeps its two values and its `CHECK`.
+  Decision 7 is read with this answer.
+- **Q4 — the key stays with the daemon.** A confined agent behind the relay is not given the
+  provider's key: its `env_refs` for it are withheld and the relay adds the key to what it
+  forwards. An agent that uses its key for anything but its model endpoint stops working
+  there; `[sandbox] mode = "off"` is the way back, and it is disclosed.
+- **Q5 — it does not gate release 0.1.** The network of a hosted agent ships open and
+  disclosed (S1 of delta `2026-11-open-questions`) until this lands.
 
 ## Tasks proposed
 
@@ -104,8 +102,9 @@ T-HRD-20 is three pieces, each mergeable on its own:
 
 ## Constitution check
 
-- **Art. 4:** this narrows what the 2026-10-22 amendment leaves undisclosed; Q2 decides
-  whether the amendment's text changes.
+- **Art. 4:** this narrows what the 2026-10-22 amendment leaves undisclosed; by Q2's answer
+  the amendment's text changes, in T-HRD-20c.
 - **Art. 5:** a hosted agent would hold no secret (decision 2).
-- **Art. 6:** Q3.
+- **Art. 6:** a forward-only migration that adds one column (Q3's answer); no applied
+  migration is edited.
 - **Art. 9:** no new dependency: `net/http/httputil` and `golang.org/x/sys/unix`.
