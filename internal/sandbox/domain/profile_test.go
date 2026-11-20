@@ -104,6 +104,54 @@ func TestSandboxWriteRefusesWhatReachesAProtectedDirectory_REQ_SBX_004(t *testin
 	}
 }
 
+// TestAReadEntryOpensOnlyWhatLiesInsideADeniedDirectory_REQ_SBX_006: a thread's own shell reads
+// its start-up files, which the daemon keeps in its runtime directory. The profile carries
+// them as read entries; one that is not inside a denied directory, or that is a denied
+// directory or holds one, opens nothing it should and is refused.
+func TestAReadEntryOpensOnlyWhatLiesInsideADeniedDirectory_REQ_SBX_006(t *testing.T) {
+	posixPaths(t)
+	agent := domain.Agent{
+		WorkDir: "/data/worktrees/r/thr_1", OwnWorktree: true, Root: "/run/umbral/shells/thr_1",
+		Read: []string{"/run/umbral/shellinteg-1"}, Protected: []string{"/data", "/run/umbral"},
+	}
+	p, err := domain.AgentProfile(agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(p.Read, []string{"/run/umbral/shellinteg-1"}) || slices.Contains(p.Write, "/run/umbral/shellinteg-1") {
+		t.Errorf("Read = %v, Write = %v", p.Read, p.Write)
+	}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	arg, err := p.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back, err := domain.Decode(arg); err != nil || !slices.Equal(back.Read, p.Read) {
+		t.Fatalf("Decode(Encode) = %+v, %v", back, err)
+	}
+	for name, read := range map[string]string{
+		"a denied directory itself":        "/run/umbral",
+		"a directory holding a denied one": "/run",
+		"the data directory":               "/data",
+		"a sibling's worktree":             "/data/worktrees/r/thr_2",
+		"every agent's home":               "/run/umbral/acp",
+		"the token":                        "/run/umbral/token",
+		"one named alike, deeper":          "/run/umbral/acp/shellinteg-1",
+		"the bare prefix":                  "/run/umbral/shellinteg-",
+		"a relative path":                  "shellinteg-1",
+	} {
+		agent.Read = []string{read}
+		if p, err := domain.AgentProfile(agent); !errors.Is(err, domain.ErrProfile) {
+			t.Errorf("%s as a read entry: %+v, %v; want ErrProfile", name, p, err)
+		}
+	}
+	if err := (domain.Profile{Read: []string{"relative"}}).Validate(); err == nil {
+		t.Error("a relative read entry was validated")
+	}
+}
+
 // posixPaths skips a test whose paths are written as POSIX ones: `/data` is not absolute on
 // Windows, where no adapter builds a profile (delta `2026-11-agent-sandbox`, decision 4).
 func posixPaths(t *testing.T) {

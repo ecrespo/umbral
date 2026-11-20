@@ -46,9 +46,10 @@ type Thread struct {
 	// traffic Umbral does not see (REQ-ACP-007).
 	Agent            *string `json:"agent"`
 	EgressVisibility string  `json:"egress_visibility"`
-	// Sandbox says whether the kernel confines the hosted agent's process: `confined` or
-	// `unconfined`. Null for Umbral's own agent, which the sandbox does not cover
-	// (REQ-SBX-003).
+	// Sandbox says whether the kernel confines the hosted agent's process, or the shell of
+	// Umbral's own thread while it is in `full-auto`: `confined` or `unconfined`. Null for
+	// Umbral's own thread in any other mode, which the sandbox does not cover (REQ-SBX-003,
+	// REQ-SBX-006).
 	Sandbox *string `json:"sandbox"`
 }
 
@@ -62,7 +63,9 @@ const (
 // hosted agent launched now would be confined.
 func (s *Server) wireThread(t agentsdomain.Thread) Thread {
 	out := toWireThread(t)
-	if t.Agent != "" {
+	// A hosted agent, and Umbral's own thread while it is in `full-auto`, whose shell is then
+	// confined (REQ-SBX-006).
+	if t.Agent != "" || t.FullAuto {
 		state := threadUnconfined
 		if s.cfg.Sandbox.State == SandboxEnforcing {
 			state = threadConfined

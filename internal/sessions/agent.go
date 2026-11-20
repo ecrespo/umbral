@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ecrespo/umbral/internal/sessions/domain"
@@ -269,6 +270,9 @@ func (s *Service) threadSession(ctx context.Context, threadID, cwd string) (*liv
 	if !validThread(threadID) {
 		return nil, fmt.Errorf("%w: %q is not a thread id", domain.ErrValidation, threadID)
 	}
+	// Asked before any lock is taken: the answer comes from the thread's own record.
+	confined := s.confined(ctx, threadID, cwd)
+	key := shellKey(cwd, confined)
 	// One thread's first two commands must not each create a PTY.
 	s.threadMu.Lock()
 	defer s.threadMu.Unlock()
@@ -277,7 +281,7 @@ func (s *Service) threadSession(ctx context.Context, threadID, cwd string) (*liv
 	for _, live := range s.live {
 		live.mu.RLock()
 		mine := live.session.OwnerThreadID == threadID && live.session.State == domain.StateAlive && !live.terminal
-		same := live.threadCwd == cwd
+		same := live.threadCwd == key
 		live.mu.RUnlock()
 		if mine && same {
 			s.mu.Unlock()
@@ -308,6 +312,7 @@ func (s *Service) threadSession(ctx context.Context, threadID, cwd string) (*liv
 
 	session, err := s.Create(ctx, domain.CreateParams{
 		CWD: cwd, Size: domain.Size{Cols: 120, Rows: 40}, ShellIntegration: true, OwnerThreadID: threadID,
+		Confined: confined,
 	})
 	if err != nil {
 		return nil, err
@@ -317,9 +322,31 @@ func (s *Service) threadSession(ctx context.Context, threadID, cwd string) (*liv
 		return nil, fmt.Errorf("%w: %s", domain.ErrNotFound, session.ID)
 	}
 	live.mu.Lock()
-	live.threadCwd = cwd
+	live.threadCwd = key
 	live.mu.Unlock()
 	return live, nil
+}
+
+// confined reports whether the thread's shell in cwd is to run inside the sandbox now
+// (REQ-SBX-006): while the thread is in `full-auto`, where a sandbox enforces.
+func (s *Service) confined(ctx context.Context, threadID, cwd string) bool {
+	return s.cfg.Confiner != nil && s.cfg.Confiner.Confined(ctx, threadID, cwd)
+}
+
+// shellCwd is the cwd in a shellKey.
+func shellCwd(key string) string {
+	cwd, _, _ := strings.Cut(key, "\x00")
+	return cwd
+}
+
+// shellKey is what a thread's PTY was started for: its cwd, and whether it is confined. A
+// process takes a sandbox for good, so a shell of the other kind is as stale as one started
+// in another directory, and is replaced the same way. NUL cannot occur in a path.
+func shellKey(cwd string, confined bool) string {
+	if confined {
+		return cwd + "\x00confined"
+	}
+	return cwd
 }
 
 func validThread(id string) bool { return len(id) > 4 && id[:4] == "thr_" }

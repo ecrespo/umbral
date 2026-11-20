@@ -1197,6 +1197,28 @@ func TestAgentPanelSaysAHostedThreadIsUnobserved_REQ_ACP_007(t *testing.T) {
 	}
 }
 
+// TestAgentPanelSaysWhetherAFullAutoThreadIsConfined_REQ_SBX_006: Umbral's own thread in
+// full-auto shows on its row whether the kernel bounds what it runs unasked; a thread in any
+// other mode, which the sandbox does not cover, shows nothing of the kind.
+func TestAgentPanelSaysWhetherAFullAutoThreadIsConfined_REQ_SBX_006(t *testing.T) {
+	t.Parallel()
+	for state, want := range map[string]string{"confined": "full-auto confined", "unconfined": "full-auto unconfined", "": ""} {
+		h := newHarness(t)
+		h.daemon.setThreads(ports.ThreadList{WorkspaceID: "w1", Threads: []ports.Thread{
+			{ID: "thr_own", WorkspaceID: "w1", Attention: "idle", State: "idle", Sandbox: state},
+		}})
+		h.openSession()
+		h.step(ctrlSpace())
+		words := strings.Join(strings.Fields(h.m.View().Content), " ")
+		if want != "" && !strings.Contains(words, want) {
+			t.Errorf("sandbox %q: the row does not say %q:\n%s", state, want, words)
+		}
+		if want == "" && strings.Contains(words, "full-auto") {
+			t.Errorf("a thread the sandbox does not cover says full-auto:\n%s", words)
+		}
+	}
+}
+
 // TestAgentPanelSaysWhetherAHostedThreadIsConfined_REQ_SBX_003: the hosted thread's notice
 // says whether the kernel confines its agent — what the sandbox keeps from it and what it
 // leaves open, or that it runs unconfined.

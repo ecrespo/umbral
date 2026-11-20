@@ -27,6 +27,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ecrespo/umbral/internal/agents/adapters/threadstore"
+
 	remoteports "github.com/ecrespo/umbral/internal/remote/ports"
 
 	"github.com/ecrespo/umbral/internal/agents"
@@ -329,7 +331,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 	}
 	defer func() { _ = blocks.Close() }()
 
+	// Filled in once the sandbox, the thread store and the worktree engine exist (T-HRD-17).
+	shells := &shellConfiner{}
 	sessionService, err := sessions.New(sessions.Config{
+		Confiner:  shells,
 		Store:     db,
 		Bus:       eventBus,
 		NewPTY:    pty.Open,
@@ -521,6 +526,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 		logger.Error("the [sandbox] settings cannot be honoured", slog.Any("error", err))
 		return exitConfig
 	}
+	shellThreads, err := threadstore.New(db)
+	if err != nil {
+		logger.Error("cannot read threads for the shells' sandbox", slog.Any("error", err))
+		return exitCantCreate
+	}
+	shells.bind(&shellSandbox{
+		acpConfiner: confiner, shells: filepath.Join(filepath.Dir(socket), "shells"),
+		threads: shellThreads, worktrees: runtimeWorktrees{svc: worktreeEngine},
+	})
 	acpHost, err := newACP(settings.ACP, filepath.Dir(socket), confiner, providers, sessionService, func(threadID string) bool {
 		rt := runtimeRef.Load()
 		return rt != nil && rt.AwaitingApproval(threadID)

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.100 |
+| **Version** | 1.101 |
 | **Date** | 2026-11-19 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1537,6 +1537,15 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
     `sandbox`, `umb status`, and the disclosure above, which then adds that the agent runs
     unconfined. Confined, the disclosure names what the sandbox keeps from the agent and what
     it leaves open instead of the sibling worktrees.
+  - *A `full-auto` thread's shell* (delta `2026-11-full-auto-sandbox`, T-HRD-17, REQ-SBX-006)
+    is launched under the same profile while the sandbox enforces: it writes the worktree and
+    `shells/<thread>` in the runtime directory, where its `TMPDIR` and `TMPPREFIX` point. The
+    profile's `read` entries — only a shell's own `shellinteg-*` start-up directory is
+    accepted — are read inside a denied directory and never written. Whether a thread's shell
+    is confined is part of what it was started for, like its directory: the first command
+    after the thread enters or leaves `full-auto` gets a new shell, and one that cannot be
+    confined is not started. `sessions` asks through a port of its own, `ShellConfiner`,
+    which `cmd/umbrald` answers from the thread's record and `TurnPlace`.
   - *macOS* (delta `2026-11-sandbox-macos`, T-HRD-16): the same profile rendered for
     `/usr/bin/sandbox-exec`, with no helper. Writes are refused and then allowed under the
     write entries and on the device files; reads, `stat` included, are refused under the
@@ -2432,3 +2441,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.98 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-linux` (T-HRD-15, proposed): §3.2 and §5.2 the `sandbox` module; §5.3f a hosted agent's profile — nothing of the repository's `.git` — the helper, the degraded mode and `[sandbox]`; the worktree engine names the common directory and reads no replacement object |
 | 1.99 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-macos` (T-HRD-16, proposed): §5.3f the macOS adapter, `sandbox-exec` with a rendered profile |
 | 1.100 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-libffi-load` (T-HRD-18, proposed): §9.3 on macOS and Windows the daemon loads only a libffi whose bytes it has checked, through a patched copy of the binding |
+| 1.101 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-full-auto-sandbox` (T-HRD-17, proposed): §5.3f a `full-auto` thread's shell is confined, the profile's read entries, the `ShellConfiner` port |

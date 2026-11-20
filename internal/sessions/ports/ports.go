@@ -63,8 +63,25 @@ type Snapshot struct {
 // A shell it does not support is not an error the caller should propagate: the session
 // starts without integration and REQ-BLK-003 marks it `integration: none`, which is the
 // degraded mode DD-002 describes.
+//
+// dir is the directory holding the files the shell reads at start, "" when there is none: a
+// confined shell must be allowed to read it.
 type Bootstrapper interface {
-	Prepare(shellPath string) (args, env []string, cleanup func() error, err error)
+	Prepare(shellPath string) (args, env []string, dir string, cleanup func() error, err error)
+}
+
+// ShellConfiner says whether a thread's own shell runs inside the sandbox, and launches it
+// there (REQ-SBX-006). The sandbox is `cmd/umbrald`'s to wire: this module knows only that
+// a shell's command line may be replaced by one that confines it.
+type ShellConfiner interface {
+	// Confined reports whether the shell threadID runs its commands in, started in cwd,
+	// is to be confined now. The answer changes when the thread enters or leaves
+	// `full-auto`, and the next command then gets a new shell.
+	Confined(ctx context.Context, threadID, cwd string) bool
+	// Confine returns argv as the command line that runs it confined, and the variables
+	// the confined shell needs. read are the directories of the daemon's the shell must
+	// still read. An error means the shell cannot be confined, and it is not started.
+	Confine(ctx context.Context, threadID, cwd string, read, argv []string) (confined, env []string, err error)
 }
 
 // PTY is a pseudo-terminal the daemon owns.

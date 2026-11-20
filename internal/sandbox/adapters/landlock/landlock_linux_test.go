@@ -262,6 +262,39 @@ func TestAConfinedProcessWritesNothingInTheRepositorysGitDirectory_REQ_SBX_001(t
 	}
 }
 
+// TestAReadEntryIsReadAndNotWritten_REQ_SBX_006: a read entry inside a denied directory — a
+// shell's start-up files in the runtime directory — is read and run from, and neither written
+// nor a way to its neighbours.
+func TestAReadEntryIsReadAndNotWritten_REQ_SBX_006(t *testing.T) {
+	b := newBench(t)
+	boot := filepath.Join(b.run, "shellinteg-1")
+	if err := os.MkdirAll(boot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(boot, "rc"), []byte("echo sourced\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := b.profile(t)
+	if out, err := b.sh(t, p, "cat "+filepath.Join(boot, "rc")); err == nil {
+		t.Fatalf("without a read entry the start-up file is read: %s", out)
+	}
+	p.Read = []string{boot}
+	if out, err := b.sh(t, p, ". "+filepath.Join(boot, "rc")+" && ls "+boot); err != nil || !strings.Contains(out, "sourced") {
+		t.Errorf("the read entry is not readable: %v %s", err, out)
+	}
+	for name, line := range map[string]string{
+		"writing the start-up file": "echo x >> " + filepath.Join(boot, "rc"),
+		"creating beside it":        "echo x > " + filepath.Join(boot, "planted"),
+		"the token beside it":       "cat " + filepath.Join(b.run, "token"),
+		"another agent's home":      "cat " + filepath.Join(b.run, "acp", "thr_other", "auth.json"),
+		"listing the runtime dir":   "ls " + b.run,
+	} {
+		if out, err := b.sh(t, p, line); err == nil {
+			t.Errorf("%s was not refused: %s", name, out)
+		}
+	}
+}
+
 // TestALinkBesideADeniedDirectoryOpensNothing_REQ_SBX_002: the read list is made of what lies
 // beside each denied directory, and a symbolic link there — to the data directory itself, to a
 // directory above it — gets no rule, so it opens nothing the profile denies. A link to a

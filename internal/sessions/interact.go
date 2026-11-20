@@ -24,7 +24,9 @@ func (s *Service) threadPTY(threadID, cwd string) (live *liveSession, heldElsewh
 	for _, l := range s.live {
 		l.mu.RLock()
 		mine := l.session.OwnerThreadID == threadID && l.session.State == domain.StateAlive && !l.terminal
-		same, held := l.threadCwd == cwd, l.takenOver
+		// Reading asks for the thread's shell in cwd of either kind: there is one at most,
+		// and a read starts and replaces nothing.
+		same, held := shellCwd(l.threadCwd) == cwd, l.takenOver
 		l.mu.RUnlock()
 		switch {
 		case mine && same:

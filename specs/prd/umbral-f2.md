@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo (Tech Lead) · assisted draft |
 | **Status** | `RATIFIED` 2026-10-22 by the Tech Lead (PR #32), with Q-F2-01…05, 08 and 09 and the Analyze decisions on Art. 4, Art. 5 and `full-auto`. Slice F2a implemented and closed on 2026-10-24 (delta `2026-10-f2a-close`); F2b started on 2026-10-26 |
-| **Version** | 0.18 |
+| **Version** | 0.19 |
 | **Date** | 2026-11-19 |
 | **Reviewers** | spec-guardian (Analyze and two verify passes); Tech Lead, ratified 2026-10-22 |
 | **Source** | `docs/ARCHITECTURE.md` §5.4–5.8 and §10 (F2 ADE row); `specs/prd/umbral-mvp.md` §5.2–5.3; Plan 1.14 §4 |
@@ -247,6 +247,7 @@ shells T-HRD-17.
 - **REQ-SBX-003** · MUST · unwanted — IF the system cannot confine a process or `[sandbox] mode = "off"`, THEN THE SYSTEM SHALL launch hosted agents unconfined, report the sandbox's state and the reason in `system.status`, and say on each hosted thread that its agent is unconfined.
 - **REQ-SBX-004** · MUST · unwanted — IF a `[sandbox] write` entry is not a clean absolute path, or is, holds or lies inside Umbral's data directory, its runtime directory or a directory the daemon loads code from, THEN THE SYSTEM SHALL refuse to start.
 - **REQ-SBX-005** · SHOULD · ubiquitous — THE SYSTEM SHOULD say on each confined thread what the sandbox leaves open: the repository's main copy to read, and the network; and that the agent cannot commit.
+- **REQ-SBX-006** · MUST · state — WHILE the sandbox enforces and a thread of Umbral's own agent is in `full-auto` with its worktree `active`, THE SYSTEM SHALL run that thread's commands in a shell confined before any of the shell's code runs, so that the kernel refuses it a write outside the worktree, a directory of its own for temporary files, the device files a shell needs and `[sandbox] write`, and a read of Umbral's data and runtime directories other than its own start-up files; SHALL replace a shell that is not so confined before the thread's next command, and one that is before the next command of a thread that has left `full-auto`; and IF the shell cannot be confined THEN THE SYSTEM SHALL fail the command rather than run it unconfined.
 
 ## 7. Non-functional requirements
 
@@ -375,3 +376,4 @@ Still open, with the draft's default:
 | 0.16 | 2026-10-31 | E. Crespo (assisted draft) | Delta `2026-10-service-units` (T-PKG-06): REQ-HND-001 names its two exceptions — a running turn, which REQ-HND-002's refusal already had, and a daemon systemd runs as its unit, which is restarted instead — and §8's metric says so |
 | 0.17 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-linux` (T-HRD-15), proposed: a new §6.13 with REQ-SBX-001 … 005, the sandbox around hosted agents; REQ-ACP-007's disclosure says whether the thread is confined; REQ-ACP-009's environment gains `TMPDIR` |
 | 0.18 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-macos` (T-HRD-16), proposed: REQ-SBX-001 refuses a connection to another process's Unix-domain socket, which the Linux and macOS adapters both meet |
+| 0.19 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-full-auto-sandbox` (T-HRD-17), proposed: REQ-SBX-006, a `full-auto` thread's shell is confined by the kernel |

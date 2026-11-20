@@ -136,6 +136,12 @@ func restrict(p domain.Profile) error {
 			return err
 		}
 	}
+	// A read entry lies inside a denied directory, which is why it needs a rule of its own.
+	for _, path := range p.Read {
+		if err := allow(ruleset, path, readRights, rights, nil); err != nil {
+			return err
+		}
+	}
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 		return fmt.Errorf("sandbox: no_new_privs: %w", err)
 	}
