@@ -97,7 +97,10 @@ func TestConnectDoesNotAutostartWhenAskedNotTo(t *testing.T) {
 	if !errors.Is(err, ErrNoSocket) {
 		t.Errorf("error = %v, want ErrNoSocket", err)
 	}
-	if elapsed := time.Since(start); elapsed > time.Second {
+	// The bound is the launch's own budget, not a guess at how fast a dial fails: one refused
+	// dial took 1.3 s on a loaded Windows runner, and a launch that was attempted spends the
+	// budget whole before it gives up.
+	if elapsed := time.Since(start); elapsed >= StartTimeout {
 		t.Errorf("waited %v before failing; with autostart off there is nothing to wait for", elapsed)
 	}
 }

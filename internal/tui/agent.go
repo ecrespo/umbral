@@ -1121,7 +1121,7 @@ func hostedNotice(agent, sandbox string) string {
 	head := agent + " runs this thread: Umbral does not record its own network traffic or file reads; "
 	switch sandbox {
 	case sandboxConfined:
-		return head + "the kernel confines " + agent + ": it can write this thread's directory only and cannot read Umbral's data or any other thread's worktree; it can still read the repository's main copy and reach the network"
+		return head + "the kernel confines " + agent + ": it can write this thread's directory only, so it cannot commit, and cannot read Umbral's data or any other thread's worktree; it can still read the repository's main copy and reach the network"
 	case sandboxUnconfined:
 		return head + agent + " can read the repository's main copy and every other thread's worktree, and runs unconfined: nothing but its own asking keeps it from other files"
 	default:

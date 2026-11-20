@@ -242,11 +242,11 @@ so its verification is a manual QA step.
 Delta `2026-11-sandbox-linux` (T-HRD-15), proposed. Linux first; macOS is T-HRD-16, `full-auto`
 shells T-HRD-17.
 
-- **REQ-SBX-001** · MUST · state — WHILE the sandbox enforces, THE SYSTEM SHALL launch every hosted ACP agent confined before any of the agent's code runs, so that the kernel refuses it a write outside its thread's directory, its isolation root, the device files a shell needs, the paths of the repository's main copy a commit in its worktree writes — never its hooks or its configuration — and `[sandbox] write`, and refuses it a Unix-domain socket. IF the agent cannot be confined — its directory holds Umbral's data or runtime directory, or lies inside one and is not its own worktree — THEN THE SYSTEM SHALL not launch it.
+- **REQ-SBX-001** · MUST · state — WHILE the sandbox enforces, THE SYSTEM SHALL launch every hosted ACP agent confined before any of the agent's code runs, so that the kernel refuses it a write outside its thread's directory, its isolation root, the device files a shell needs and `[sandbox] write` — nothing of the repository's `.git`, its worktree's own record there included — and refuses it a Unix-domain socket. IF the agent cannot be confined — its directory holds Umbral's data or runtime directory, or lies inside one and is not its own worktree — THEN THE SYSTEM SHALL not launch it.
 - **REQ-SBX-002** · MUST · state — WHILE the sandbox enforces, THE SYSTEM SHALL have the kernel refuse a hosted ACP agent reading or listing Umbral's data directory and runtime directory — the database, the token, the trust store, every other thread's worktree and every other agent's home — and SHALL leave it able to read the repository's main copy.
 - **REQ-SBX-003** · MUST · unwanted — IF the system cannot confine a process or `[sandbox] mode = "off"`, THEN THE SYSTEM SHALL launch hosted agents unconfined, report the sandbox's state and the reason in `system.status`, and say on each hosted thread that its agent is unconfined.
 - **REQ-SBX-004** · MUST · unwanted — IF a `[sandbox] write` entry is not a clean absolute path, or is, holds or lies inside Umbral's data directory, its runtime directory or a directory the daemon loads code from, THEN THE SYSTEM SHALL refuse to start.
-- **REQ-SBX-005** · SHOULD · ubiquitous — THE SYSTEM SHOULD say on each confined thread what the sandbox leaves open: the repository's main copy to read, and the network.
+- **REQ-SBX-005** · SHOULD · ubiquitous — THE SYSTEM SHOULD say on each confined thread what the sandbox leaves open: the repository's main copy to read, and the network; and that the agent cannot commit.
 
 ## 7. Non-functional requirements
 

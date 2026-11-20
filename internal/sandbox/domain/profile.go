@@ -108,52 +108,6 @@ func Within(path, dir string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// GitWrites are the paths of a repository's main copy that a commit in one of its worktrees
-// writes: the worktree's own administrative directory, the objects, the refs and their logs.
-//
-// dotGit is the content of the worktree's `.git` file, `gitdir: <main>/.git/worktrees/<name>`,
-// and back the content of `<that directory>/gitdir`, which git writes to point back at the
-// worktree's `.git`. The agent can write the first, so it is believed only when the second
-// agrees: a `.git` rewritten to name another directory finds no file there pointing back at
-// this worktree, and one it could plant is inside what it may already write. Anything else — a
-// `.git` that is a directory, a submodule's, a file that does not parse, a path that reaches a
-// protected directory — gives none. The hooks and the configuration of the main copy are never
-// among them, since a hook written there runs as the user at their next commit.
-func GitWrites(workDir, dotGit, back string, protected []string) []string {
-	gitdir := GitDir(dotGit)
-	if gitdir == "" || filepath.Clean(strings.TrimSpace(back)) != filepath.Join(workDir, ".git") {
-		return nil
-	}
-	common := filepath.Dir(filepath.Dir(gitdir))
-	paths := []string{
-		gitdir,
-		filepath.Join(common, "objects"),
-		filepath.Join(common, "refs"),
-		filepath.Join(common, "logs"),
-	}
-	for _, path := range paths {
-		if reaches(path, protected) {
-			return nil
-		}
-	}
-	return paths
-}
-
-// GitDir is the administrative directory a worktree's `.git` file names, or "" when the
-// content is not a worktree's.
-func GitDir(dotGit string) string {
-	line, _, _ := strings.Cut(dotGit, "\n")
-	gitdir, ok := strings.CutPrefix(strings.TrimSpace(line), "gitdir:")
-	if !ok {
-		return ""
-	}
-	gitdir = filepath.Clean(strings.TrimSpace(gitdir))
-	if !filepath.IsAbs(gitdir) || filepath.Base(filepath.Dir(gitdir)) != "worktrees" || filepath.Base(gitdir) == "." {
-		return ""
-	}
-	return gitdir
-}
-
 // reaches reports whether path is, holds or lies inside one of dirs.
 func reaches(path string, dirs []string) bool {
 	for _, d := range dirs {
@@ -196,10 +150,6 @@ type Agent struct {
 	// Root is the agent's isolation root, which holds its home and its temporary directory;
 	// the daemon made it, inside its runtime directory.
 	Root string
-	// DotGit is the content of WorkDir's `.git` when that is a file, and GitBack the content
-	// of the `gitdir` file in the directory it names; both empty otherwise.
-	DotGit  string
-	GitBack string
 	// Extra is `[sandbox] write`.
 	Extra []string
 	// Protected are Umbral's data and runtime directories.
@@ -211,9 +161,14 @@ type Agent struct {
 var ErrProfile = errors.New("sandbox: the agent cannot be confined")
 
 // AgentProfile is a hosted agent's profile (REQ-SBX-001, REQ-SBX-002): it writes its thread's
-// directory, its own isolation root, what a commit in a worktree needs and `[sandbox] write`,
-// and reads everything but Umbral's directories — where the other threads' worktrees and the
-// other agents' homes live.
+// directory, its own isolation root and `[sandbox] write`, and reads everything but Umbral's
+// directories — where the other threads' worktrees and the other agents' homes live.
+//
+// Nothing of the repository's `.git` is written, a worktree's own record there included: the
+// daemon's git reads that record, the objects and the refs when it lands the thread's work,
+// and an agent that could write them could change what lands after the review, or what
+// commands that git runs. A confined agent therefore cannot commit; what lands is its
+// worktree's files, which Umbral snapshots itself.
 //
 // A rule on a directory covers everything beneath it, so a thread whose directory holds one of
 // Umbral's — the user's home, the root — cannot be confined, and neither can one working
@@ -228,10 +183,8 @@ func AgentProfile(a Agent) (Profile, error) {
 			return Profile{}, fmt.Errorf("%w: its directory %s is inside %s and is not its worktree", ErrProfile, a.WorkDir, p)
 		}
 	}
-	git := GitWrites(a.WorkDir, a.DotGit, a.GitBack, a.Protected)
-	write := make([]string, 0, 2+len(git)+len(a.Extra))
+	write := make([]string, 0, 2+len(a.Extra))
 	write = append(write, a.WorkDir, a.Root)
-	write = append(write, git...)
 	write = append(write, a.Extra...)
 	return Profile{Write: write, DenyRead: append([]string(nil), a.Protected...)}, nil
 }

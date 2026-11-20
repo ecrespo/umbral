@@ -144,7 +144,6 @@ func (c acpConfiner) Confine(req acpdomain.Confinement, argv []string) ([]string
 		// daemon made for it, `<worktrees>/<repository>/<thread>`.
 		OwnWorktree: filepath.Dir(filepath.Dir(dir)) == c.worktrees && filepath.Base(dir) == req.ThreadID,
 	}
-	agent.DotGit, agent.GitBack = gitPointers(dir)
 	profile, err := sandboxdomain.AgentProfile(agent)
 	if err != nil {
 		return nil, err
@@ -157,29 +156,4 @@ func (c acpConfiner) Confine(req acpdomain.Confinement, argv []string) ([]string
 		}
 	}
 	return c.sandbox.Command(profile, argv)
-}
-
-// gitPointers reads a worktree's `.git` file and the file that points back at it from the
-// repository's administrative directory. Both must be plain files: the agent can write the
-// first, and what it names is believed only through the second (domain.GitWrites). Anything
-// else reads as empty, which gives the agent no git path.
-func gitPointers(dir string) (dotGit, back string) {
-	dotGit = plainFile(filepath.Join(dir, ".git"))
-	if gitdir := sandboxdomain.GitDir(dotGit); gitdir != "" {
-		back = plainFile(filepath.Join(gitdir, "gitdir"))
-	}
-	return dotGit, back
-}
-
-// plainFile is a small regular file's content, "" for anything else — a link included.
-func plainFile(path string) string {
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
-		return ""
-	}
-	b, err := os.ReadFile(path) // #nosec G304 -- a git pointer file of the thread's own worktree
-	if err != nil {
-		return ""
-	}
-	return string(b)
 }

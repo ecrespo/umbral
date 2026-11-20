@@ -90,24 +90,10 @@ func newBench(t *testing.T) bench {
 	return b
 }
 
-// profile is the thread's profile; with git, its worktree's `.git` and the file that points
-// back at it are read as the daemon reads them.
-func (b bench) profile(t *testing.T, git bool) domain.Profile {
+// profile is the thread's profile, as the daemon makes it.
+func (b bench) profile(t *testing.T) domain.Profile {
 	t.Helper()
-	a := domain.Agent{WorkDir: b.mine, OwnWorktree: true, Root: b.root, Protected: []string{b.data, b.run}}
-	if git {
-		dotGit, err := os.ReadFile(filepath.Join(b.mine, ".git"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		a.DotGit = string(dotGit)
-		back, err := os.ReadFile(filepath.Join(domain.GitDir(a.DotGit), "gitdir"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		a.GitBack = string(back)
-	}
-	p, err := domain.AgentProfile(a)
+	p, err := domain.AgentProfile(domain.Agent{WorkDir: b.mine, OwnWorktree: true, Root: b.root, Protected: []string{b.data, b.run}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +118,7 @@ func (b bench) sh(t *testing.T, p domain.Profile, line string) (string, error) {
 // the user's home — and allows one inside either.
 func TestAConfinedProcessWritesOnlyInsideItsProfile_REQ_SBX_001(t *testing.T) {
 	b := newBench(t)
-	p := b.profile(t, false)
+	p := b.profile(t)
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +155,7 @@ func TestAConfinedProcessWritesOnlyInsideItsProfile_REQ_SBX_001(t *testing.T) {
 // the device files every shell and git fail at their first one.
 func TestAConfinedProcessWritesItsDeviceFiles_REQ_SBX_001(t *testing.T) {
 	b := newBench(t)
-	if out, err := b.sh(t, b.profile(t, false), "echo x > /dev/null && head -c 4 /dev/zero > /dev/null && echo ran"); err != nil || !strings.Contains(out, "ran") {
+	if out, err := b.sh(t, b.profile(t), "echo x > /dev/null && head -c 4 /dev/zero > /dev/null && echo ran"); err != nil || !strings.Contains(out, "ran") {
 		t.Fatalf("the device files were refused: %v %s", err, out)
 	}
 }
@@ -180,7 +166,7 @@ func TestAConfinedProcessWritesItsDeviceFiles_REQ_SBX_001(t *testing.T) {
 // directory — stay readable.
 func TestAConfinedProcessCannotReadUmbralsDirectories_REQ_SBX_002(t *testing.T) {
 	b := newBench(t)
-	p := b.profile(t, false)
+	p := b.profile(t)
 	for name, line := range map[string]string{
 		"the database":         "cat " + filepath.Join(b.data, "umbral.db"),
 		"the token":            "cat " + filepath.Join(b.run, "token"),
@@ -207,22 +193,27 @@ func TestAConfinedProcessCannotReadUmbralsDirectories_REQ_SBX_002(t *testing.T) 
 	}
 }
 
-// TestAConfinedCommitLandsAndPlantsNoHook_REQ_SBX_001: a commit in the thread's worktree
-// works, though it writes into the main copy's `.git`; a hook, the main copy's configuration
-// and its working tree stay unwritable.
-func TestAConfinedCommitLandsAndPlantsNoHook_REQ_SBX_001(t *testing.T) {
+// TestAConfinedProcessWritesNothingInTheRepositorysGitDirectory_REQ_SBX_001: a worktree's
+// commit writes into the main copy's `.git` — the worktree's record, the objects, the refs —
+// and the daemon's own git reads all three when it lands the work. None is the agent's to
+// write: a commit, a staged file, a moved branch, a planted object, a replaced object, a
+// rewritten `commondir`, a hook and the configuration are all refused, and the worktree's
+// files, which are what lands, are written.
+func TestAConfinedProcessWritesNothingInTheRepositorysGitDirectory_REQ_SBX_001(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git is not installed: %v", err)
 	}
 	b := newBench(t)
-	git := func(dir string, args ...string) {
+	git := func(dir string, args ...string) string {
 		t.Helper()
 		cmd := exec.CommandContext(t.Context(), "git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.invalid"}, args...)...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
-		if out, err := cmd.CombinedOutput(); err != nil {
+		out, err := cmd.CombinedOutput()
+		if err != nil {
 			t.Fatalf("git %v: %v %s", args, err, out)
 		}
+		return strings.TrimSpace(string(out))
 	}
 	git(b.main, "init", "-q", "-b", "main")
 	git(b.main, "add", "-A")
@@ -231,27 +222,43 @@ func TestAConfinedCommitLandsAndPlantsNoHook_REQ_SBX_001(t *testing.T) {
 		t.Fatal(err)
 	}
 	git(b.main, "worktree", "add", "-q", "-b", "umbral/thr_mine", b.mine)
-	p := b.profile(t, true)
+	head := git(b.main, "rev-parse", "main")
+	p := b.profile(t)
 
-	commit := "export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null; echo work > work.txt && git add -A && " +
-		"git -c user.name=t -c user.email=t@example.invalid commit -q -m work && git log --format=%s -1"
-	if out, err := b.sh(t, p, commit); err != nil || !strings.Contains(out, "work") {
-		t.Fatalf("the commit did not land: %v %s", err, out)
+	if out, err := b.sh(t, p, "echo work > work.txt && cat work.txt"); err != nil || !strings.Contains(out, "work") {
+		t.Fatalf("the worktree's own file was not written: %v %s", err, out)
 	}
 	gitDir := filepath.Join(b.main, ".git")
-	for name, target := range map[string]string{
-		"a hook":                 filepath.Join(gitDir, "hooks", "pre-commit"),
-		"the main copy's config": filepath.Join(gitDir, "config"),
-		"the main copy's file":   filepath.Join(b.main, "README"),
-		"the main copy's HEAD":   filepath.Join(gitDir, "HEAD"),
+	admin := filepath.Join(gitDir, "worktrees", "thr_mine")
+	setup := "export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null; "
+	for name, line := range map[string]string{
+		"staging a file":              setup + "git add -A",
+		"a commit":                    setup + "git -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m work",
+		"moving a branch":             setup + "git update-ref refs/heads/main " + head,
+		"a replace ref":               "mkdir -p " + filepath.Join(gitDir, "refs", "replace") + " && echo " + head + " > " + filepath.Join(gitDir, "refs", "replace", head),
+		"an object":                   setup + "echo planted | git hash-object -w --stdin",
+		"an object file":              "echo x > " + filepath.Join(gitDir, "objects", "planted"),
+		"the record's commondir":      "echo /elsewhere > " + filepath.Join(admin, "commondir"),
+		"the record's gitdir":         "echo /elsewhere/.git > " + filepath.Join(admin, "gitdir"),
+		"the record's HEAD":           "echo garbage > " + filepath.Join(admin, "HEAD"),
+		"a worktree configuration":    "echo '[core]' > " + filepath.Join(admin, "config.worktree"),
+		"a hook":                      "echo x >> " + filepath.Join(gitDir, "hooks", "pre-commit"),
+		"the main copy's config":      "echo x >> " + filepath.Join(gitDir, "config"),
+		"the main copy's HEAD":        "echo x >> " + filepath.Join(gitDir, "HEAD"),
+		"the main copy's file":        "echo x >> " + filepath.Join(b.main, "README"),
+		"the main copy's reflog":      "echo x >> " + filepath.Join(gitDir, "logs", "HEAD"),
+		"the main copy's packed-refs": "echo x >> " + filepath.Join(gitDir, "packed-refs"),
 	} {
-		if out, err := b.sh(t, p, "echo x >> "+target); err == nil {
-			t.Errorf("%s was written: %s", name, out)
+		if out, err := b.sh(t, p, line); err == nil {
+			t.Errorf("%s was not refused: %s", name, out)
 		}
 	}
-	// Without the worktree's git paths the same commit is refused: they are what lets it land.
-	if out, err := b.sh(t, b.profile(t, false), "echo more > more.txt && git add -A"); err == nil {
-		t.Errorf("a commit landed with no git path in the profile: %s", out)
+	if got := git(b.main, "rev-parse", "umbral/thr_mine"); got != head {
+		t.Errorf("the thread's branch moved to %s", got)
+	}
+	// Reading stays: the agent sees its branch, its changes and the history.
+	if out, err := b.sh(t, p, setup+"git status --porcelain && git log --format=%s -1"); err != nil || !strings.Contains(out, "work.txt") || !strings.Contains(out, "init") {
+		t.Errorf("git status and log under the sandbox: %v %s", err, out)
 	}
 }
 
@@ -267,7 +274,7 @@ func TestALinkBesideADeniedDirectoryOpensNothing_REQ_SBX_002(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	p := b.profile(t, false)
+	p := b.profile(t)
 	for name, line := range map[string]string{
 		"a link to the data directory":     "cat " + filepath.Join(base, "alias", "umbral.db"),
 		"a link to the directory above it": "cat " + filepath.Join(base, "above", "data", "umbral.db"),
@@ -289,7 +296,7 @@ func TestALinkBesideADeniedDirectoryOpensNothing_REQ_SBX_002(t *testing.T) {
 // can make one; a socketpair and an Internet socket still work.
 func TestAConfinedProcessMakesNoLocalSocket_REQ_SBX_001(t *testing.T) {
 	b := newBench(t)
-	argv, err := b.sb.Command(b.profile(t, false), []string{os.Args[0], probeSockets})
+	argv, err := b.sb.Command(b.profile(t), []string{os.Args[0], probeSockets})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +340,7 @@ func TestTheAdapterSaysWhatItEnforces_REQ_SBX_003(t *testing.T) {
 	if st := none.Status(); st.Enforcing() || st.Reason == "" {
 		t.Fatalf("an adapter with no helper: %+v", st)
 	}
-	argv, err := none.Command(b.profile(t, false), []string{"true"})
+	argv, err := none.Command(b.profile(t), []string{"true"})
 	if err != nil || len(argv) != 1 || argv[0] != "true" {
 		t.Fatalf("Command without a sandbox = %v, %v", argv, err)
 	}

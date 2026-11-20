@@ -1204,7 +1204,7 @@ func TestAgentPanelSaysWhetherAHostedThreadIsConfined_REQ_SBX_003(t *testing.T) 
 	t.Parallel()
 	for state, c := range map[string]struct{ want, never []string }{
 		"confined": {
-			want:  []string{"network traffic", "file reads", "confines", "cannot read", "any other thread's worktree", "main copy"},
+			want:  []string{"network traffic", "file reads", "confines", "cannot commit", "cannot read", "any other thread's worktree", "main copy"},
 			never: []string{"unconfined", "every other thread's worktree"},
 		},
 		"unconfined": {

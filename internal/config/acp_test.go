@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -107,10 +108,14 @@ func TestTheSandboxSectionIsRead_REQ_SBX_004(t *testing.T) {
 		t.Fatalf("default [sandbox] = %+v, want enforce and no extra write", settings.Sandbox)
 	}
 
+	// Absolute on the system the test runs on: `/home/u` is not, on Windows. TOML's literal
+	// strings take a backslash as it is.
+	base := t.TempDir()
+	build, mod := filepath.Join(base, "go-build"), filepath.Join(base, "pkg", "mod")
 	settings, err = LoadSettings(nil, write(t, `
 [sandbox]
 mode = "off"
-write = ["/home/u/.cache/go-build", "/home/u/go/pkg/mod"]
+write = ['`+build+`', '`+mod+`']
 
 [agents]
 max_concurrent_turns = 5
@@ -118,7 +123,7 @@ max_concurrent_turns = 5
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !settings.Sandbox.Off || !reflect.DeepEqual(settings.Sandbox.Write, []string{"/home/u/.cache/go-build", "/home/u/go/pkg/mod"}) {
+	if !settings.Sandbox.Off || !reflect.DeepEqual(settings.Sandbox.Write, []string{build, mod}) {
 		t.Fatalf("[sandbox] = %+v", settings.Sandbox)
 	}
 	if settings.MaxConcurrentTurns != 5 {

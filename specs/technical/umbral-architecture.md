@@ -1507,20 +1507,22 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   be applied runs nothing.
   - *Write:* the thread's directory; the agent's isolation root, which now also holds its
     `TMPDIR`; the device files `/dev/null`, `/dev/zero`, `/dev/full` and `/dev/tty`, not the
-    pseudo-terminals; for a worktree, the main copy's `.git/worktrees/<name>`, `.git/objects`,
-    `.git/refs` and `.git/logs`, which a commit writes — never `.git` whole, whose hooks run as
-    the user; and `[sandbox] write`. `.git/refs` holds every branch, so a confined agent can
-    still move another branch's ref.
+    pseudo-terminals; and `[sandbox] write`. Nothing of the repository's `.git`, a worktree's
+    own record there included: the daemon's git reads the record, the objects and the refs
+    when it lands the thread's work, so an agent that wrote them could change what lands
+    after the review or what that git runs. A confined agent therefore cannot commit; what
+    lands is its worktree's files, which Umbral snapshots itself.
   - *Read:* everything the user can read except Umbral's data directory and its runtime
     directory, which hold the database, the trust store, the token, the other threads'
     worktrees and the other agents' homes. Landlock has no deny rule, so the list is generated
     at each launch: every entry beside each denied directory and beside each of its ancestors.
     A file created later directly in such an ancestor is not readable by the agent, and the
     ancestors are not listable by it.
-  - *Nothing the agent can write is believed.* A worktree's `.git` names the administrative
-    directory only when that directory's `gitdir` file points back at it and no resulting
-    path reaches a protected directory; every path is resolved first and no rule is placed
-    through a symbolic link. A thread whose directory holds the data or runtime directory, or
+  - *Nothing the agent can write is believed.* No launch reads the worktree's `.git` file;
+    every path is resolved first and no rule is placed through a symbolic link. For an agent
+    that is not confined, the worktree engine names the common directory itself
+    (`GIT_COMMON_DIR`) on every call through a worktree's record, reads only the record named
+    after the worktree and reads no replacement object (`GIT_NO_REPLACE_OBJECTS`). A thread whose directory holds the data or runtime directory, or
     lies inside one without being its own worktree, is not launched, and neither is one that
     could write the daemon's executable: `agent_unavailable` says it cannot be confined.
   - *Local sockets:* Landlock does not mediate a connection to a Unix-domain socket, and
@@ -2416,4 +2418,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.95 | 2026-11-18 | E. Crespo (assisted draft) | Delta `2026-11-open-questions`: §9.3 where each OS's libffi comes from, and the user-writable path macOS and Windows load it from (T-HRD-18) |
 | 1.96 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-run-command-prompt` (T-HRD-13): §5.3b `run_command` returns once the shell has drawn its next prompt, at most 500 ms after its block closes. Ratified by the Tech Lead on 2026-11-19 |
 | 1.97 | 2026-11-19 | E. Crespo (assisted draft) | T-REL-03: §9.3 the release workflow verifies its checksums and both attestations of every package before it creates the draft release |
-| 1.98 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-linux` (T-HRD-15, proposed): §3.2 and §5.2 the `sandbox` module; §5.3f a hosted agent's profile, the helper, the degraded mode and `[sandbox]` |
+| 1.98 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-linux` (T-HRD-15, proposed): §3.2 and §5.2 the `sandbox` module; §5.3f a hosted agent's profile — nothing of the repository's `.git` — the helper, the degraded mode and `[sandbox]`; the worktree engine names the common directory and reads no replacement object |

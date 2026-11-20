@@ -28,12 +28,20 @@ it has to add and what it cannot say:
    thread's directory without one); its isolation root, which holds its home, its XDG
    directories and a temporary directory of its own; the device files `/dev/null`, `/dev/zero`,
    `/dev/full` and `/dev/tty` — not the pseudo-terminals, through which a process could open
-   the user's other terminals, Umbral's panes included; for a worktree, the main copy's
-   `.git/worktrees/<name>`, `.git/objects`, `.git/refs` and `.git/logs`; and `[sandbox] write`.
-   - Never the main copy's `.git` whole: a hook written there runs as the user later.
-   - `.git/refs` holds every branch. A confined agent can move another branch's ref, the
-     sibling threads' included. Narrowing it needs a directory per thread under
-     `refs/heads/`, a change to the worktree engine, and is an open question.
+   the user's other terminals, Umbral's panes included; and `[sandbox] write`.
+   - **Nothing of the repository's `.git`**, a worktree's own record there included. The
+     spike found that a commit in a worktree needs `.git/worktrees/<name>`, `.git/objects`,
+     `.git/refs` and `.git/logs`, and the first version of this delta granted them. Two
+     reviews of that version showed what the grant costs. The record holds `commondir`,
+     `gitdir` and, with `extensions.worktreeConfig`, a configuration: rewritten, they made
+     the daemon's own git run commands of the agent's outside the sandbox. The objects and
+     the refs are what the worktree engine reads when it lands the thread's work: a
+     `refs/replace` entry, or a loose object rewritten under its own id, landed content the
+     user had not reviewed. And `.git/refs` holds every branch, the sibling threads'
+     included.
+   - **So a confined agent cannot commit, stage or move a branch.** It does not need to:
+     what lands is its worktree's files, which Umbral snapshots itself (REQ-WT-004). `git
+     status`, `diff` and `log` still read. The disclosure says it.
 3. **The read list** is everything the user can read except Umbral's data directory and its
    runtime directory. That covers the database, the trust store, the token, every other
    thread's worktree and every other agent's home. The repository's main copy stays readable.
@@ -62,14 +70,17 @@ it has to add and what it cannot say:
     `adapters/landlock`. `acp` does not import it: it declares a port of its own, `Confiner`,
     which `cmd/umbrald` adapts. No new dependency: `golang.org/x/sys/unix`.
 11. **The profile believes nothing the agent can write.**
-    - A worktree's `.git` file names the administrative directory a commit writes, and the
-      agent can rewrite it. Its content is believed only when that directory's own `gitdir`
-      file points back at this worktree's `.git`, and never for a path that reaches a
-      protected directory. Otherwise the agent gets no git path. Found in review: without the
-      check, an agent that rewrote `.git` to name the directory of its sibling worktrees was
-      given all of them at its next launch.
+    - The worktree's `.git` file is the agent's to write, and no launch reads it. Found in
+      review of the first version, which did: rewritten to name the directory of its sibling
+      worktrees, it gave the agent all of them at its next launch.
     - Every path is resolved before it is compared or allowed, and a rule is never placed
       through a symbolic link.
+    - **The daemon's own git is hardened for an agent that is not confined** — the opt-out,
+      another system, an older kernel — which can write all of the above. The worktree
+      engine names the common directory itself (`GIT_COMMON_DIR`) on every call that goes
+      through a worktree's record, reads only the record named after the worktree, and reads
+      no replacement object (`GIT_NO_REPLACE_OBJECTS`). What it does not close there is in
+      decision 15.
 12. **A thread that cannot be confined is not launched** (REQ-SBX-001's IF). A rule on a
     directory covers everything beneath it, so a thread whose directory holds the data or the
     runtime directory — the user's home, `/` — would be given the database. A thread working
@@ -93,9 +104,15 @@ it has to add and what it cannot say:
 15. **What the sandbox does not close**, said here because the disclosure cannot list it all:
     - the network, loopback TCP services included, and UDP;
     - a thread without a worktree, in a repository: its `.git` is inside its own directory,
-      hooks and configuration with it. The four-path rule is a worktree's;
+      hooks, configuration, objects and refs with it;
     - `stat` of a denied path, so a sibling thread's id can be probed; changing the mode,
-      owner or times of a file the user owns anywhere;
+      owner, times or extended attributes of a file the user owns anywhere. Landlock does not
+      mediate them, and a seccomp filter cannot refuse them by path: git, npm and the Go
+      toolchain change modes inside the thread's own directory;
+    - for an agent that is **not** confined, the repository's `.git` whole: a loose object
+      rewritten under its own id lands content that was not reviewed, a `config.worktree`
+      left in the worktree's record runs once the user enables `extensions.worktreeConfig`,
+      and a hook runs at the user's next commit. The sandbox is what closes them;
     - a denied file the user hard-linked elsewhere, and a denied directory bind-mounted
       under a readable one;
     - Umbral's configuration directory, which stays readable on purpose: `models.toml` holds
@@ -108,7 +125,7 @@ it has to add and what it cannot say:
 - **REQ-SBX-001** · MUST · state — WHILE the sandbox enforces, THE SYSTEM SHALL launch every
   hosted ACP agent confined before any of the agent's code runs, so that the kernel refuses
   it a write outside its thread's directory, its isolation root, the device files a shell
-  needs, the paths of the repository's main copy a commit in its worktree writes — never its hooks or its configuration — and `[sandbox] write`, and refuses it a Unix-domain socket. IF the agent cannot be confined — its directory holds Umbral's data or runtime directory, or lies inside one and is not its own worktree — THEN THE SYSTEM SHALL not launch it.
+  needs and `[sandbox] write` — nothing of the repository's `.git`, its worktree's own record there included — and refuses it a Unix-domain socket. IF the agent cannot be confined — its directory holds Umbral's data or runtime directory, or lies inside one and is not its own worktree — THEN THE SYSTEM SHALL not launch it.
 - **REQ-SBX-002** · MUST · state — WHILE the sandbox enforces, THE SYSTEM SHALL have the
   kernel refuse a hosted ACP agent reading or listing Umbral's data directory and runtime
   directory — the database, the token, the trust store, every other thread's worktree and
@@ -121,7 +138,8 @@ it has to add and what it cannot say:
   path, or is, holds or lies inside Umbral's data directory, its runtime directory or a
   directory the daemon loads code from, THEN THE SYSTEM SHALL refuse to start.
 - **REQ-SBX-005** · SHOULD · ubiquitous — THE SYSTEM SHOULD say on each confined thread what
-  the sandbox leaves open: the repository's main copy to read, and the network.
+  the sandbox leaves open: the repository's main copy to read, and the network; and that
+  the agent cannot commit.
 
 ## Amendments
 
@@ -142,8 +160,11 @@ it has to add and what it cannot say:
 
 ## Open questions
 
-- **Narrowing `.git/refs`** to the thread's own branch (decision 2). Recommended: a task of
-  its own, after T-HRD-17.
+- **Whether a confined agent that cannot commit is acceptable** (decision 2). An agent told
+  to commit fails with a permission error; its files still land through Umbral. The
+  alternative is an object directory and a ref namespace of the thread's own, a change to
+  the worktree engine. Recommended: as written, and that change as a task of its own if a
+  hosted agent turns out to need its commits.
 - **Whether the two unreadable-ancestor limits of decision 3 are acceptable.** Recommended:
   yes; the alternative is a listing right that shows sibling worktrees' file names.
 - **Whether refusing every Unix-domain socket is too blunt** (decision 13). It also stops an
@@ -161,21 +182,28 @@ it has to add and what it cannot say:
 
 - `internal/sandbox/adapters/landlock`, against the kernel: writes outside the profile are
   refused and inside it land; the device files are writable; the database, the token, a
-  sibling's worktree and another agent's home are refused, and the main copy is read; a commit
-  in a worktree lands and a hook, the main copy's configuration, its `HEAD` and its files are
-  refused; a profile that does not parse runs nothing.
+  sibling's worktree and another agent's home are refused, and the main copy is read; in a
+  worktree a commit, a staged file, a moved branch, an object, a replace ref, the record's
+  `commondir`, `gitdir`, `HEAD` and `config.worktree`, a hook, the main copy's configuration,
+  its `HEAD` and its files are all refused, while `git status` and `git log` read; a profile that does not parse runs nothing.
 - `cmd/umbrald`, against a real daemon with a hosted agent that reads and writes without
   asking: the same refusals, `system.status` and the thread's `sandbox`, and the opt-out.
 - Each rule was removed in turn and its test went red: the deny list, the write rights, the
-  device files, each git path, the profile check, the protected directories, the confiner,
-  the socket filter and its `io_uring` line, the back pointer, the two directory checks and
+  device files, the profile check, the protected directories, the confiner,
+  the socket filter and its `io_uring` line, the two directory checks and
   the helper's. The three defences against a link beside a denied directory — skipping it,
   not following it, and checking what was opened — hold one another up: the test goes red
   only with all three removed.
 - Spec-guardian's review found two CRITICAL and two HIGH defects in the first version: the
   rewritten `.git`, a thread directory holding Umbral's data, links beside a denied
   directory, and local sockets. Each has a test that was red on that version.
-- The product's helper ran a real OpenCode turn against `gpt-oss:20b`, a commit in a
-  worktree and a redirect to `/dev/null` under the profile the daemon makes.
+- The first version's helper ran a real OpenCode turn against `gpt-oss:20b` and a redirect
+  to `/dev/null` under the profile the daemon made. Not run again since the git paths were
+  taken out of the profile.
+- Two reviews of the first commit — an automated security review and spec-guardian's second
+  pass — found the ways through the repository's `.git` that decision 2 now closes; the
+  hosted-agent test that writes an object, a ref, the record's `commondir` and a
+  `config.worktree` was red on that version, and so were the worktree engine's tests for a
+  redirected `commondir` and a replace ref.
 - Not verified: a kernel without Landlock or older than 6.2, by reading and a stub only;
   arm64; CI's Linux job now fails if its kernel cannot confine.

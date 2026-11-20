@@ -173,11 +173,12 @@ func TestTheSandboxOptOutIsSaid_REQ_SBX_003(t *testing.T) {
 	}
 }
 
-// TestARewrittenDotGitOpensNothingAtTheNextLaunch_REQ_SBX_001: the agent can write its
-// worktree's `.git`, which the next launch reads to find what a commit needs. Rewritten to name
-// the directory holding every sibling worktree, it grants nothing: after the agent is launched
-// again, a sibling's file is still unreadable and unwritable.
-func TestARewrittenDotGitOpensNothingAtTheNextLaunch_REQ_SBX_001(t *testing.T) {
+// TestAHostedAgentWritesNothingInTheRepositorysGitDirectory_REQ_SBX_001: the agent can write
+// its worktree's `.git` file, and no launch reads it: rewritten to name the directory holding
+// every sibling worktree, or left as git wrote it, it opens no path. After the agent is
+// launched again, a sibling's file is unreadable and unwritable, and so are the repository's
+// objects, its refs and the worktree's own record there.
+func TestAHostedAgentWritesNothingInTheRepositorysGitDirectory_REQ_SBX_001(t *testing.T) {
 	needSandbox(t)
 	repo, env := gitRepo(t)
 	stream, ctx := acpDaemon(t, env...)
@@ -186,6 +187,18 @@ func TestARewrittenDotGitOpensNothingAtTheNextLaunch_REQ_SBX_001(t *testing.T) {
 	secret := filepath.Join(sibling, "sibling.txt")
 	if err := os.WriteFile(secret, []byte("another thread's work"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	admin := filepath.Join(repo, ".git", "worktrees", filepath.Base(worktree))
+	inGit := map[string]string{
+		"an object":              filepath.Join(repo, ".git", "objects", "planted"),
+		"a ref":                  filepath.Join(repo, ".git", "refs", "heads", "planted"),
+		"the record's commondir": filepath.Join(admin, "commondir"),
+		"a worktree config":      filepath.Join(admin, "config.worktree"),
+	}
+	for name, target := range inGit {
+		if got := agentDoes(t, ctx, stream, thread.ID, "put "+target+" planted"); !strings.Contains(got, "permission denied") {
+			t.Errorf("%s: the agent's write answered %q, want the kernel's refusal", name, got)
+		}
 	}
 	// `<data>/worktrees/<repository>`, whose base passes for a repository's `worktrees/<name>`.
 	target := filepath.Dir(worktree)
@@ -198,6 +211,11 @@ func TestARewrittenDotGitOpensNothingAtTheNextLaunch_REQ_SBX_001(t *testing.T) {
 	}
 	if got := agentDoes(t, ctx, stream, thread.ID, "touch "+filepath.Join(sibling, "planted")); !strings.Contains(got, "permission denied") {
 		t.Errorf("after the relaunch a write in the sibling's worktree answered %q", got)
+	}
+	for name, target := range inGit {
+		if got := agentDoes(t, ctx, stream, thread.ID, "put "+target+" planted"); !strings.Contains(got, "permission denied") {
+			t.Errorf("after the relaunch, %s: the agent's write answered %q", name, got)
+		}
 	}
 }
 

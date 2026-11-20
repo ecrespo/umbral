@@ -239,7 +239,7 @@ func TestAHostedThreadSaysWhetherItIsConfined_REQ_SBX_003(t *testing.T) {
 	t.Parallel()
 	for state, c := range map[string]struct{ want, never []string }{
 		"confined": {
-			want:  []string{"opencode", "network traffic", "file reads", "confines", "cannot read", "any other thread's worktree", "main copy", "network"},
+			want:  []string{"opencode", "network traffic", "file reads", "confines", "cannot commit", "cannot read", "any other thread's worktree", "main copy", "network"},
 			never: []string{"unconfined", "every other thread's worktree"},
 		},
 		"unconfined": {

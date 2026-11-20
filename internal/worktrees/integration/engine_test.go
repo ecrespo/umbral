@@ -612,6 +612,113 @@ func TestARedirectedWorktreeGitDirIsNotFollowed_REQ_WT_004(t *testing.T) {
 	}
 }
 
+// TestARedirectedCommonDirIsNotFollowed_REQ_WT_004: a confined agent may write its worktree's
+// administrative directory, `<main>/.git/worktrees/<name>`, because a commit does (REQ-SBX-001).
+// Its `commondir` file names where git finds the repository's configuration and hooks, so one
+// rewritten to a directory of the agent's would have the daemon's own diff and merge run what
+// that configuration names, outside the sandbox. The engine names the common directory itself.
+func TestARedirectedCommonDirIsNotFollowed_REQ_WT_004(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	w := f.create("thr_a")
+	marker := filepath.Join(t.TempDir(), "ran")
+	evil := filepath.Join(t.TempDir(), "evil.git")
+	f.git(f.repo, "clone", "-q", "--bare", f.repo, evil)
+	f.git(evil, "config", "core.bare", "false")
+	f.git(evil, "config", "filter.x.clean", "touch "+filepath.ToSlash(marker)+"; cat")
+	f.git(evil, "config", "core.fsmonitor", "touch "+filepath.ToSlash(marker)+" #")
+	hooks := filepath.Join(evil, "hooks")
+	if err := os.MkdirAll(hooks, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, hook := range []string{"pre-commit", "post-commit", "post-checkout", "pre-merge-commit", "prepare-commit-msg", "commit-msg"} {
+		if err := os.WriteFile(filepath.Join(hooks, hook), []byte("#!/bin/sh\ntouch "+filepath.ToSlash(marker)+"\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.write(w.Path, ".gitattributes", "* filter=x\n")
+	f.write(w.Path, "a.txt", "agent's change\n")
+	admin := filepath.Join(f.repo, ".git", "worktrees", filepath.Base(w.Path))
+	if err := os.WriteFile(filepath.Join(admin, "commondir"), []byte(evil+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := f.svc.Diff(t.Context(), w.ID); err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the diff ran a command the redirected common directory named")
+	}
+	if _, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID}); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the merge ran a command the redirected common directory named")
+	}
+	if f.read(f.repo, "a.txt") != "agent's change\n" {
+		t.Error("the merge did not land the worktree's change")
+	}
+}
+
+// TestAReplaceRefCannotChangeWhatLands_REQ_WT_004: a `refs/replace/<id>` makes git read another
+// object wherever <id> is named. An agent that is not confined can write one for a blob the
+// user reviewed; the engine reads no replacement, so what lands is what was shown.
+func TestAReplaceRefCannotChangeWhatLands_REQ_WT_004(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	w := f.create("thr_a")
+	f.write(w.Path, "a.txt", "reviewed\n")
+	reviewed, err := f.svc.Diff(t.Context(), w.ID)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	good := f.git(w.Path, "hash-object", "a.txt")
+	f.write(w.Path, "other.tmp", "never reviewed\n")
+	other := f.git(w.Path, "hash-object", "-w", "other.tmp")
+	if err := os.Remove(filepath.Join(w.Path, "other.tmp")); err != nil {
+		t.Fatal(err)
+	}
+	replace := filepath.Join(f.repo, ".git", "refs", "replace")
+	if err := os.MkdirAll(replace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(replace, good), []byte(other+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID, Revision: reviewed.Revision}); err != nil {
+		t.Fatalf("Merge of the reviewed revision: %v", err)
+	}
+	if got := f.read(f.repo, "a.txt"); got != "reviewed\n" {
+		t.Errorf("landed %q, want what was reviewed", got)
+	}
+}
+
+// TestAnAdminDirectoryCannotClaimAnotherWorktree_REQ_WT_004: each worktree's administrative
+// directory holds a `gitdir` file naming its worktree, and a confined agent can write its own.
+// Rewritten to name a sibling's worktree, it must not become the directory the engine reads
+// that sibling through: its HEAD and index would then be the agent's.
+func TestAnAdminDirectoryCannotClaimAnotherWorktree_REQ_WT_004(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	a := f.create("thr_a")
+	b := f.create("thr_b")
+	f.write(b.Path, "b.txt", "the sibling's change\n")
+	// thr_a's record now claims thr_b's worktree; sorted first, it is the one a search finds.
+	adminA := filepath.Join(f.repo, ".git", "worktrees", filepath.Base(a.Path))
+	if err := os.WriteFile(filepath.Join(adminA, "gitdir"), []byte(filepath.Join(b.Path, ".git")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(adminA, "HEAD"), []byte("not a head\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: b.ID}); err != nil {
+		t.Fatalf("Merge of the sibling: %v", err)
+	}
+	if f.read(f.repo, "b.txt") != "the sibling's change\n" {
+		t.Error("the sibling's merge did not land its own change")
+	}
+}
+
 // TestAMergeNeverOverwritesAnIgnoredFile_REQ_WT_004: git's cherry-pick overwrites an untracked
 // file the main copy ignores — the user's `.env` — when the worktree carries that path, and the
 // rollback would then delete it. The merge is refused as a conflict naming the path before
@@ -821,6 +928,43 @@ func TestAReviewedRevisionMergesThroughTheUsersFilter_REQ_WT_004(t *testing.T) {
 	f.write(w.Path, "x.up", "hello\n")
 	if _, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID, Revision: reviewed.Revision}); err != nil {
 		t.Fatalf("Merge of the reviewed revision: %v", err)
+	}
+	if got := f.git(f.repo, "show", "HEAD:x.up"); got != "HELLO" {
+		t.Errorf("landed %q, want the filtered HELLO", got)
+	}
+}
+
+// TestAReviewedMergeReadsFiltersFromTheRealCommonDir_REQ_WT_004: a reviewed revision that lands
+// through a clean filter is checked by hashing the reviewed blob through that filter. The check
+// runs through the worktree's record, whose `commondir` the agent can rewrite: the filter it
+// runs is the main repository's, never one a redirected common directory names.
+func TestAReviewedMergeReadsFiltersFromTheRealCommonDir_REQ_WT_004(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.git(f.repo, "config", "filter.up.clean", "tr a-z A-Z")
+	f.write(f.repo, ".gitattributes", "*.up filter=up\n")
+	f.git(f.repo, "add", "-A")
+	f.git(f.repo, "commit", "-q", "-m", "filter")
+	w := f.create("thr_a")
+	f.write(w.Path, "x.up", "hello\n")
+	reviewed, err := f.svc.Diff(t.Context(), w.ID)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	marker := filepath.Join(t.TempDir(), "ran")
+	evil := filepath.Join(t.TempDir(), "evil.git")
+	f.git(f.repo, "clone", "-q", "--bare", f.repo, evil)
+	f.git(evil, "config", "core.bare", "false")
+	f.git(evil, "config", "filter.up.clean", "touch "+filepath.ToSlash(marker)+"; tr a-z A-Z")
+	admin := filepath.Join(f.repo, ".git", "worktrees", filepath.Base(w.Path))
+	if err := os.WriteFile(filepath.Join(admin, "commondir"), []byte(evil+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Merge(t.Context(), domain.MergeRequest{ID: w.ID, Revision: reviewed.Revision}); err != nil {
+		t.Fatalf("Merge of the reviewed revision: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the merge ran the filter a redirected common directory named")
 	}
 	if got := f.git(f.repo, "show", "HEAD:x.up"); got != "HELLO" {
 		t.Errorf("landed %q, want the filtered HELLO", got)

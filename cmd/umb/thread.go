@@ -150,7 +150,7 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 		reach := "%[1]s can read the repository's main copy and every other thread's worktree"
 		switch result["sandbox"] {
 		case "confined":
-			reach = "the kernel confines %[1]s: it can write this thread's directory only and cannot read Umbral's data or any other thread's worktree; it can still read the repository's main copy and reach the network"
+			reach = "the kernel confines %[1]s: it can write this thread's directory only, so it cannot commit, and cannot read Umbral's data or any other thread's worktree; it can still read the repository's main copy and reach the network"
 		case "unconfined":
 			reach += ", and runs unconfined: nothing but its own asking keeps it from other files"
 		}
