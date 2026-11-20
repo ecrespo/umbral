@@ -37,6 +37,9 @@ func TestAPipeOfTheCurrentUserIsTrusted_REQ_WIN_001(t *testing.T) {
 	}()
 	conn, err := winio.DialPipeContext(t.Context(), name)
 	if err != nil {
+		// No client ever connected, so closing here cannot meet the race, and it ends the
+		// Accept the deferred close waits for.
+		_ = ln.Close()
 		t.Fatal(err)
 	}
 	// Deferred after the listener's, so it runs first: the client hangs up once the server has
