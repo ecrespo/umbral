@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED`. Written with its code: the Tech Lead asked for T-HRD-17 on 2026-11-19 in one instruction with the tasks around it. It is the Tech Lead's to ratify |
+| **Status** | `RATIFIED 2026-11-20 by the Tech Lead ("Ratifico los deltas que mencionas")`, as written; its open question, a hosted thread in `full-auto`, is not answered by this ratification and stays T-HRD-21. Written with its code on 2026-11-19, reviewed after it; folded into the specs and archived |
 | **Date** | 2026-11-19 |
 | **Task** | T-HRD-17 |
 | **REQ** | adds REQ-SBX-006; REQ-ORC-004 is not reworded (see decision 7) |

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED`. Written with its code: the Tech Lead asked for T-HRD-18 on 2026-11-19 in one instruction with the tasks around it. It is the Tech Lead's to ratify |
+| **Status** | `RATIFIED 2026-11-20 by the Tech Lead ("Ratifico los deltas que mencionas")`, as written. Written with its code on 2026-11-19, reviewed after it; folded into the specs and archived |
 | **Date** | 2026-11-19 |
 | **Task** | T-HRD-18 |
 | **REQ** | none new; Art. 5 |

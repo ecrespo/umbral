@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED`. T-HRD-15 asks for this delta to be approved before any code; the Tech Lead asked on 2026-11-19 for T-HRD-15 to be implemented in the same request, so the code is written against this text and both await his review. Written into PRD F2 0.17, API 1.63 and Tech 1.98 as proposed |
+| **Status** | `RATIFIED 2026-11-20 by the Tech Lead ("Ratifico los deltas que mencionas")`, the recommendations of its open questions included; whether a hosted agent's process survives a live handoff stays unchecked. Written with its code on 2026-11-19, reviewed after it; folded into the specs and archived |
 | **Date** | 2026-11-19 |
 | **Task** | T-HRD-15 |
 | **REQ** | adds REQ-SBX-001 … REQ-SBX-005; amends REQ-ACP-007 and REQ-ACP-009 |
