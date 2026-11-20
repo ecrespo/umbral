@@ -28,6 +28,10 @@ type Config struct {
 	PerMinute int
 	Now       func() time.Time
 	Logger    *slog.Logger
+	// Model and Blocks are the service's two ports. They are part of the configuration, as
+	// every other module takes the ports cmd/umbrald adapts for it (T-HRD-19).
+	Model  ports.Model
+	Blocks ports.Blocks
 }
 
 // Service turns failed blocks into suggestions.
@@ -46,7 +50,8 @@ type Service struct {
 
 // New subscribes a service to block.closed. It returns nil, and subscribes nothing, while
 // Active AI is disabled.
-func New(cfg Config, b *bus.Bus, model ports.Model, blocks ports.Blocks) (*Service, error) {
+func New(cfg Config, b *bus.Bus) (*Service, error) {
+	model, blocks := cfg.Model, cfg.Blocks
 	if !cfg.Enabled {
 		return nil, nil //nolint:nilnil // a disabled feature has no service and no error
 	}

@@ -60,8 +60,10 @@ func run(t *testing.T, model ports.Model, perMinute int, now func() time.Time) (
 	t.Helper()
 	b := bus.New()
 	sub := b.Subscribe(ports.KindBlockSuggestion)
-	svc, err := New(Config{Enabled: true, PerMinute: perMinute, Now: now}, b, model,
-		fakeBlocks{output: "line one\nzsh: command not found: gti\n"})
+	svc, err := New(Config{
+		Enabled: true, PerMinute: perMinute, Now: now,
+		Model: model, Blocks: fakeBlocks{output: "line one\nzsh: command not found: gti\n"},
+	}, b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +122,7 @@ func TestAFailedBlockGetsASuggestion_REQ_AAI_001(t *testing.T) {
 	// A disabled service asks nothing.
 	off := bus.New()
 	defer off.Close()
-	svc, err := New(Config{Enabled: false, PerMinute: 4}, off, model, fakeBlocks{})
+	svc, err := New(Config{Enabled: false, PerMinute: 4, Model: model, Blocks: fakeBlocks{}}, off)
 	if err != nil || svc != nil {
 		t.Errorf("a disabled service: %v, %v; want none", svc, err)
 	}

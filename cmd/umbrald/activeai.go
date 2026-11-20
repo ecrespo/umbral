@@ -22,8 +22,10 @@ const suggestionClass = "fast"
 // newActiveAI builds Active AI (T-F2-22) over the router, local only, and the block reader. It
 // returns nil while `[active_ai] enabled` is false.
 func newActiveAI(settings config.ActiveAI, b *bus.Bus, router *llmgw.Router, blocks *sessions.Reader, logger *slog.Logger) (*activeai.Service, error) {
-	return activeai.New(activeai.Config{Enabled: settings.Enabled, PerMinute: settings.PerMinute, Logger: logger},
-		b, localSuggester{router: router}, blockOutput{reader: blocks})
+	return activeai.New(activeai.Config{
+		Enabled: settings.Enabled, PerMinute: settings.PerMinute, Logger: logger,
+		Model: localSuggester{router: router}, Blocks: blockOutput{reader: blocks},
+	}, b)
 }
 
 // streamer is the router as localSuggester calls it.
