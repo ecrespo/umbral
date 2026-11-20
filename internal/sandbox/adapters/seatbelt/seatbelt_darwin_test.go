@@ -1,0 +1,337 @@
+package seatbelt
+
+import (
+	"errors"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+
+	"github.com/ecrespo/umbral/internal/sandbox/domain"
+)
+
+// These tests run a real command under the profile, against the kernel. They are the ones
+// T-HRD-15 runs against Landlock, through this adapter (T-HRD-16's Done line).
+
+// bench is a thread's surroundings on disk: Umbral's data and runtime directories, with this
+// thread's worktree and root and a sibling's inside them, and a repository's main copy.
+type bench struct {
+	data, run, mine, sibling, root, main string
+	sb                                   *Sandbox
+}
+
+func newBench(t *testing.T) bench {
+	t.Helper()
+	sb := New()
+	if st := sb.Status(); !st.Enforcing() {
+		// Where the sandbox is required (CI's macOS job) a system that cannot confine is a
+		// failure: a skip would leave the kernel's refusals unproven behind a green run.
+		if os.Getenv("UMBRAL_REQUIRE_SANDBOX") == "1" {
+			t.Fatalf("UMBRAL_REQUIRE_SANDBOX is set and this system cannot confine: %+v", st)
+		}
+		t.Skipf("no sandbox on this system: %+v", st)
+	}
+	// Resolved, as the daemon resolves every path it puts in a profile: a rule written with
+	// `/var/…` does not match the `/private/var/…` the kernel sees.
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := bench{data: filepath.Join(base, "data"), run: filepath.Join(base, "run"), main: filepath.Join(base, "repo"), sb: sb}
+	b.mine = filepath.Join(b.data, "worktrees", "r", "thr_mine")
+	b.sibling = filepath.Join(b.data, "worktrees", "r", "thr_other")
+	b.root = filepath.Join(b.run, "acp", "thr_mine")
+	for _, d := range []string{b.mine, b.sibling, filepath.Join(b.root, "tmp"), filepath.Join(b.main, ".git", "objects"), filepath.Join(b.run, "acp", "thr_other")} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, text := range map[string]string{
+		filepath.Join(b.data, "umbral.db"):                    "the database",
+		filepath.Join(b.run, "token"):                         "the token",
+		filepath.Join(b.sibling, "secret.txt"):                "a sibling's work",
+		filepath.Join(b.run, "acp", "thr_other", "auth.json"): "another agent's credentials",
+		filepath.Join(b.main, "README"):                       "the main copy",
+		filepath.Join(b.mine, "mine.txt"):                     "my work",
+	} {
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return b
+}
+
+func (b bench) profile(t *testing.T) domain.Profile {
+	t.Helper()
+	p, err := domain.AgentProfile(domain.Agent{WorkDir: b.mine, OwnWorktree: true, Root: b.root, Protected: []string{b.data, b.run}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// sh runs a shell line confined to p, in the thread's worktree, with the temporary directory
+// the daemon gives a hosted agent.
+func (b bench) sh(t *testing.T, p domain.Profile, line string) (string, error) {
+	t.Helper()
+	argv, err := b.sb.Command(p, []string{"/bin/sh", "-c", line})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
+	cmd.Dir = b.mine
+	cmd.Env = append(os.Environ(), "TMPDIR="+filepath.Join(b.root, "tmp"))
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// TestAConfinedProcessWritesOnlyInsideItsProfile_REQ_SBX_001: the kernel refuses a write
+// outside the thread's directory and the agent's root — the main copy, its `.git`, a sibling's
+// worktree, the user's home — and allows one inside either. A process the command starts is
+// confined with it.
+func TestAConfinedProcessWritesOnlyInsideItsProfile_REQ_SBX_001(t *testing.T) {
+	b := newBench(t)
+	p := b.profile(t)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := map[string]string{
+		"the main copy":            filepath.Join(b.main, "planted"),
+		"the main copy's objects":  filepath.Join(b.main, ".git", "objects", "planted"),
+		"a sibling's worktree":     filepath.Join(b.sibling, "planted"),
+		"Umbral's data directory":  filepath.Join(b.data, "planted"),
+		"another agent's home":     filepath.Join(b.run, "acp", "thr_other", "planted"),
+		"the user's home":          filepath.Join(home, ".umbral-sandbox-test-planted"),
+		"the directory above mine": filepath.Join(filepath.Dir(b.mine), "planted"),
+	}
+	for name, target := range refused {
+		if out, err := b.sh(t, p, "echo x > "+target); err == nil {
+			t.Errorf("%s was written: %s", name, out)
+		}
+		if out, err := b.sh(t, p, "/bin/sh -c 'echo x > "+target+"'"); err == nil {
+			t.Errorf("%s was written by a child process: %s", name, out)
+		}
+		if _, err := os.Lstat(target); err == nil {
+			t.Errorf("%s exists after the refusal", name)
+			_ = os.Remove(target)
+		}
+	}
+	if out, err := b.sh(t, p, "/bin/chmod 644 "+filepath.Join(b.main, "README")); err == nil {
+		t.Errorf("the main copy's file changed mode: %s", out)
+	}
+	for name, target := range map[string]string{
+		"the worktree":     filepath.Join(b.mine, "made.txt"),
+		"the agent's root": filepath.Join(b.root, "made.txt"),
+		"its TMPDIR":       filepath.Join(b.root, "tmp", "made.txt"),
+	} {
+		if out, err := b.sh(t, p, "echo x > "+target+" && cat "+target); err != nil {
+			t.Errorf("%s was refused: %v %s", name, err, out)
+		}
+	}
+	if out, err := b.sh(t, p, "cat "+filepath.Join(b.main, "README")); err != nil || !strings.Contains(out, "the main copy") {
+		t.Errorf("the main copy is not readable: %v %s", err, out)
+	}
+}
+
+// TestAConfinedProcessWritesItsDeviceFiles_REQ_SBX_001: a shell's redirect to /dev/null works,
+// and the tools Apple ships as launchers of the developer tools start, which need a writable
+// temporary directory.
+func TestAConfinedProcessWritesItsDeviceFiles_REQ_SBX_001(t *testing.T) {
+	b := newBench(t)
+	p := b.profile(t)
+	// `mktemp -t` is not among them: it writes to the user's own temporary directory whatever
+	// TMPDIR says, and that directory is every program's of the user's, so it stays refused.
+	for _, line := range []string{"echo x > /dev/null", "cat /dev/zero | head -c 1 > /dev/null", "/usr/bin/mktemp " + filepath.Join(b.root, "tmp", "umbral.XXXXXX") + " >/dev/null"} {
+		if out, err := b.sh(t, p, line); err != nil {
+			t.Errorf("%q was refused: %v %s", line, err, out)
+		}
+	}
+	if _, err := os.Stat("/usr/bin/git"); err == nil {
+		if out, err := b.sh(t, p, "/usr/bin/git --version"); err != nil {
+			t.Errorf("/usr/bin/git does not start under the sandbox: %v %s", err, out)
+		}
+	}
+}
+
+// TestAConfinedProcessCannotReadUmbralsDirectories_REQ_SBX_002: the database, the token, a
+// sibling's worktree and another agent's home are neither read, listed nor probed with stat.
+// The thread's own worktree and root, inside those directories, are read, and the path to
+// them resolves.
+func TestAConfinedProcessCannotReadUmbralsDirectories_REQ_SBX_002(t *testing.T) {
+	b := newBench(t)
+	p := b.profile(t)
+	for name, line := range map[string]string{
+		"the database":               "cat " + filepath.Join(b.data, "umbral.db"),
+		"the token":                  "cat " + filepath.Join(b.run, "token"),
+		"a sibling's file":           "cat " + filepath.Join(b.sibling, "secret.txt"),
+		"a sibling's listing":        "ls " + b.sibling,
+		"the worktrees' listing":     "ls " + filepath.Dir(b.mine),
+		"the data directory listing": "ls " + b.data,
+		"another agent's file":       "cat " + filepath.Join(b.run, "acp", "thr_other", "auth.json"),
+		"stat of a sibling's file":   "/usr/bin/stat " + filepath.Join(b.sibling, "secret.txt"),
+		"stat of the database":       "/usr/bin/stat " + filepath.Join(b.data, "umbral.db"),
+	} {
+		if out, err := b.sh(t, p, line); err == nil {
+			t.Errorf("%s answered: %s", name, out)
+		}
+	}
+	for name, line := range map[string]string{
+		"my own file":        "cat mine.txt",
+		"my own listing":     "ls " + b.mine,
+		"the resolved cwd":   "pwd -P",
+		"realpath of mine":   "/bin/realpath " + filepath.Join(b.mine, "mine.txt"),
+		"my root's listing":  "ls " + b.root,
+		"a file in my root":  "echo x > " + filepath.Join(b.root, "f") + " && cat " + filepath.Join(b.root, "f"),
+		"a shell started in": "/bin/zsh -c 'cd " + b.mine + " && ls >/dev/null'",
+	} {
+		if out, err := b.sh(t, p, line); err != nil {
+			t.Errorf("%s was refused: %v %s", name, err, out)
+		}
+	}
+	// A link in the worktree to a denied file opens nothing: the rule is on the file reached.
+	if err := os.Symlink(filepath.Join(b.data, "umbral.db"), filepath.Join(b.mine, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := b.sh(t, p, "cat link"); err == nil {
+		t.Errorf("the database was read through a link in the worktree: %s", out)
+	}
+}
+
+// TestAConfinedProcessReachesNoLocalSocket_REQ_SBX_001: a connection to another process's
+// Unix-domain socket is refused — through one, on Linux, a confined process had the user's
+// session services run a command outside the sandbox. A pair of its own still works.
+func TestAConfinedProcessReachesNoLocalSocket_REQ_SBX_001(t *testing.T) {
+	b := newBench(t)
+	p := b.profile(t)
+	// A short path: a socket's is limited to 104 bytes.
+	dir, err := os.MkdirTemp("/tmp", "umb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "s")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = c.Write([]byte("reached\n"))
+			_ = c.Close()
+		}
+	}()
+	line := "/usr/bin/nc -U " + sock + " </dev/null"
+	// The same line outside the sandbox reaches the listener: the refusal below is the
+	// sandbox's and not a broken probe.
+	plain := exec.CommandContext(t.Context(), "/bin/sh", "-c", line)
+	if out, err := plain.CombinedOutput(); err != nil || !strings.Contains(string(out), "reached") {
+		t.Fatalf("the probe does not reach the socket even unconfined: %v %s", err, out)
+	}
+	if out, err := b.sh(t, p, line); err == nil || strings.Contains(out, "reached") {
+		t.Errorf("a confined process reached another process's socket: %v %s", err, out)
+	}
+	if out, err := b.sh(t, p, "echo piped | cat"); err != nil || !strings.Contains(out, "piped") {
+		t.Errorf("a pipe of its own was refused: %v %s", err, out)
+	}
+}
+
+// TestAConfinedProcessStartsNothingOutsideTheSandbox_REQ_SBX_001: launchd starts a job as the
+// user, outside any sandbox. A confined process cannot hand it one: the job's file is never
+// made.
+func TestAConfinedProcessStartsNothingOutsideTheSandbox_REQ_SBX_001(t *testing.T) {
+	b := newBench(t)
+	p := b.profile(t)
+	escaped := filepath.Join(b.main, "escaped")
+	label := "io.github.ecrespo.umbral.sandbox-test"
+	t.Cleanup(func() { _ = exec.Command("/bin/launchctl", "remove", label).Run() })
+	out, _ := b.sh(t, p, "/bin/launchctl submit -l "+label+" -- /usr/bin/touch "+escaped+"; sleep 2")
+	if _, err := os.Stat(escaped); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a launchd job ran outside the sandbox (%v): %s", err, out)
+	}
+	if out, err := b.sh(t, p, "/usr/bin/open "+b.main); err == nil {
+		t.Errorf("Launch Services opened something for a confined process: %s", out)
+	}
+}
+
+// TestAConfinedProcessSignalsOnlyItsOwn_REQ_SBX_001: a confined process cannot signal a
+// process outside its sandbox — the daemon, the user's shells — and can signal its own
+// children, which a shell does at every interrupted command.
+func TestAConfinedProcessSignalsOnlyItsOwn_REQ_SBX_001(t *testing.T) {
+	b := newBench(t)
+	p := b.profile(t)
+	victim := exec.CommandContext(t.Context(), "/bin/sleep", "60")
+	if err := victim.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = victim.Process.Kill(); _ = victim.Wait() })
+	pid := strconv.Itoa(victim.Process.Pid)
+	if out, err := b.sh(t, p, "/bin/kill -TERM "+pid); err == nil {
+		t.Errorf("a confined process signalled a process outside its sandbox: %s", out)
+	}
+	if err := victim.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Errorf("the process outside the sandbox is gone: %v", err)
+	}
+	if out, err := b.sh(t, p, "/bin/sleep 30 & /bin/kill -TERM $! && wait $!; echo ended"); err != nil || !strings.Contains(out, "ended") {
+		t.Errorf("a confined process could not signal its own child: %v %s", err, out)
+	}
+}
+
+// TestAConfinedProcessReachesNoSessionService_REQ_SBX_001: the preferences daemon writes a
+// file in the user's home for whoever asks. A confined process's request never lands.
+func TestAConfinedProcessReachesNoSessionService_REQ_SBX_001(t *testing.T) {
+	b := newBench(t)
+	p := b.profile(t)
+	domainName := "io.github.ecrespo.umbral.sandbox-test"
+	t.Cleanup(func() { _ = exec.Command("/usr/bin/defaults", "delete", domainName).Run() })
+	_, _ = b.sh(t, p, "/usr/bin/defaults write "+domainName+" planted yes")
+	if out, err := exec.CommandContext(t.Context(), "/usr/bin/defaults", "read", domainName, "planted").CombinedOutput(); err == nil {
+		t.Errorf("a preference written by a confined process is there: %s", out)
+	}
+	// What a program needs still answers: who the user is, and a name.
+	for name, line := range map[string]string{"the user's name": "/usr/bin/id -un", "a shell": "/bin/zsh -c 'echo ok'"} {
+		if out, err := b.sh(t, p, line); err != nil {
+			t.Errorf("%s was refused: %v %s", name, err, out)
+		}
+	}
+}
+
+// TestAConfinedProcessCannotLinkADeniedFile_REQ_SBX_002: a hard link or a clone of a denied
+// file into the worktree would be a readable copy of it. Both are refused, and so is the
+// file under another spelling of its path on a file system that ignores case.
+func TestAConfinedProcessCannotLinkADeniedFile_REQ_SBX_002(t *testing.T) {
+	b := newBench(t)
+	p := b.profile(t)
+	db := filepath.Join(b.data, "umbral.db")
+	for name, line := range map[string]string{
+		"a hard link":                  "/bin/ln " + db + " " + filepath.Join(b.mine, "hard") + " && cat " + filepath.Join(b.mine, "hard"),
+		"a clone":                      "/bin/cp -c " + db + " " + filepath.Join(b.mine, "clone") + " && cat " + filepath.Join(b.mine, "clone"),
+		"a rename":                     "/bin/mv " + db + " " + filepath.Join(b.mine, "moved"),
+		"another spelling of the path": "cat " + filepath.Join(filepath.Dir(b.data), "DATA", "umbral.db"),
+	} {
+		if out, err := b.sh(t, p, line); err == nil {
+			t.Errorf("%s gave the database: %s", name, out)
+		}
+	}
+	if _, err := os.Stat(db); err != nil {
+		t.Errorf("the database is gone: %v", err)
+	}
+}
+
+// TestTheAdapterSaysWhatItEnforces_REQ_SBX_003: on a Mac that can confine, the status names
+// the mechanism and no reason.
+func TestTheAdapterSaysWhatItEnforces_REQ_SBX_003(t *testing.T) {
+	b := newBench(t)
+	if st := b.sb.Status(); st.State != domain.StateEnforcing || st.Mechanism != Mechanism || st.Reason != "" {
+		t.Errorf("Status = %+v", st)
+	}
+}

@@ -349,10 +349,10 @@ jobs:
       - name: Build libghostty-vt (cgo dependency of the sessions emulator)
         run: ./scripts/build_libghostty.sh
       - run: echo "PKG_CONFIG_PATH=$HOME/.local/ghostty-vt/share/pkgconfig" >> "$GITHUB_ENV"
-      # The sandbox's tests skip on a kernel that cannot confine, which would leave REQ-SBX-001
-      # and REQ-SBX-002 unproven behind a green run. On the Linux runner a skip is a failure.
-      - if: runner.os == 'Linux'
-        run: echo "UMBRAL_REQUIRE_SANDBOX=1" >> "$GITHUB_ENV"
+      # The sandbox's tests skip on a system that cannot confine, which would leave REQ-SBX-001
+      # and REQ-SBX-002 unproven behind a green run. On both runners a skip is a failure:
+      # Landlock on Linux, `sandbox-exec` on macOS (T-HRD-16).
+      - run: echo "UMBRAL_REQUIRE_SANDBOX=1" >> "$GITHUB_ENV"
       - name: Install the shells the block tests need (T-F0-08)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zsh fish

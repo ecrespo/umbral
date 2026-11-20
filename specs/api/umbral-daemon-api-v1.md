@@ -588,10 +588,12 @@ rule: the line was never parsed, so it has no method to name, and its size is lo
 
 - `state`: `enforcing` | `unavailable` | `off`. `unavailable` is a degraded mode: this system
   cannot confine a process and hosted agents run unconfined. `off` is `[sandbox] mode = "off"`.
-- `mechanism`: what enforces it, `landlock`; absent unless `enforcing`.
+- `mechanism`: what enforces it, `landlock` on Linux or `seatbelt` on macOS (delta
+  `2026-11-sandbox-macos`); absent unless `enforcing`.
 - `reason`: why it is not enforcing, absent when it is: `landlock_unavailable`,
   `landlock_too_old` (a kernel before 6.2, whose Landlock does not mediate truncate),
-  `unsupported_arch`, `unsupported_os`, `no_helper` and `not_configured` (a daemon built
+  `unsupported_arch`, `seatbelt_unavailable` (a Mac whose `sandbox-exec` is missing or cannot
+  apply a profile), `unsupported_os`, `no_helper` and `not_configured` (a daemon built
   without one), or `config` for `off`.
 
 ### 5.3 `session.snapshot` — REQ-API-001, REQ-API-002
@@ -1914,3 +1916,4 @@ printf '%s\n' \
 | 1.61 | 2026-10-31 | Additive within `protocol_version = 1`. Delta `2026-10-pane-graphics` (T-F2-61, REQ-PLG-003): §2 and §5.1 a client's own `capabilities`, of which `graphics` is read; §5.11 the Kitty graphics filter for a client without it; §9 `graphics` no longer reserved |
 | 1.62 | 2026-11-19 | No change to the wire. Delta `2026-11-run-command-prompt` (T-HRD-13, ratified 2026-11-19): §5.44 says a dropped link's `session.unsubscribed` and `remote.state_changed` `disconnected` come in no fixed order (REQ-RMT-002) |
 | 1.63 | 2026-11-19 | Additive within `protocol_version = 1`. Delta `2026-11-sandbox-linux` (T-HRD-15, proposed): §5.2 `system.status` gains `sandbox`; §4 `Thread` gains `sandbox` (REQ-SBX-003) |
+| 1.64 | 2026-11-19 | Additive within `protocol_version = 1`. Delta `2026-11-sandbox-macos` (T-HRD-16, proposed): §5.1 `sandbox.mechanism` may be `seatbelt` and `sandbox.reason` `seatbelt_unavailable` |

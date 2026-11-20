@@ -314,7 +314,7 @@ A hosted turn has the turn span of Umbral's own, with a child span per reported 
 
 ### A hosted agent is confined by the kernel
 
-On Linux a hosted agent is launched through the sandbox: it writes only its thread's directory and its own root, and cannot read Umbral's data or runtime directories (REQ-SBX-001, REQ-SBX-002, delta `2026-11-sandbox-linux`).
+On Linux and macOS a hosted agent is launched through the sandbox: it writes only its thread's directory and its own root, and cannot read Umbral's data or runtime directories (REQ-SBX-001, REQ-SBX-002, delta `2026-11-sandbox-linux`).
 
 [[internal/acp/adapters/sdk/host.go#Host#launch]] asks [[internal/acp/ports/ports.go#Confiner]] for the command to run; `cmd/umbrald`'s [[cmd/umbrald/sandbox.go#acpConfiner#Confine]] builds the profile with [[internal/sandbox/domain/profile.go#AgentProfile]] and [[internal/sandbox/adapters/landlock/landlock.go#Sandbox#Command]] returns `umbrald --sandbox-exec <profile> -- <command>`. [[cmd/umbrald/sandbox.go#sandboxHelper]] is that helper: [[internal/sandbox/adapters/landlock/landlock_linux.go#Exec]] restricts the process and then becomes the agent, so none of the agent's code runs unconfined, and a profile it cannot apply runs nothing.
 
@@ -324,7 +324,9 @@ Nothing of the repository's `.git` is in the profile, a worktree's own record th
 
 Landlock does not mediate a connection to a Unix-domain socket: through the user's D-Bus a process confined by it alone ran a command outside the sandbox. [[internal/sandbox/adapters/landlock/landlock_linux.go#noLocalSockets]] is a seccomp filter that refuses the socket itself and `io_uring_setup`. [[internal/sandbox/adapters/landlock/landlock_linux.go#minABI]] is the floor for `enforcing`: before it truncate is not mediated.
 
-Where the kernel has no Landlock, on another system, or under `[sandbox] mode = "off"`, the agent runs unconfined and it is said: [[internal/api/system.go#Server#sandboxStatus]] in `system.status`, [[internal/api/threads.go#Server#wireThread]] on a hosted thread, and the clients' notices. [[internal/sandbox/domain/profile.go#ValidateWrite]] refuses a `[sandbox] write` entry that reaches the data directory, the runtime directory or [[cmd/umbrald/sandbox.go#codeCacheDir]].
+On macOS the same profile is rendered by [[internal/sandbox/adapters/seatbelt/seatbelt.go#Render]] for `sandbox-exec`, which needs no helper: the last matching rule decides, so each refusal is written before what it leaves open. Reads are refused under Umbral's directories, `stat` included, and reopened under the thread's own two, whose ancestors answer `stat` only. A connection to another process's local socket, a Launch Services open, an Apple event and a launchd job are refused, every Mach lookup but the few in [[internal/sandbox/adapters/seatbelt/seatbelt.go#services]] is too, and a signal reaches only a process in the same sandbox (delta `2026-11-sandbox-macos`). [[cmd/umbrald/sandbox.go#platformSandbox]] picks the adapter.
+
+Where the system cannot confine, or under `[sandbox] mode = "off"`, the agent runs unconfined and it is said: [[internal/api/system.go#Server#sandboxStatus]] in `system.status`, [[internal/api/threads.go#Server#wireThread]] on a hosted thread, and the clients' notices. [[internal/sandbox/domain/profile.go#ValidateWrite]] refuses a `[sandbox] write` entry that reaches the data directory, the runtime directory or [[cmd/umbrald/sandbox.go#codeCacheDir]].
 
 ## Agent detection labels a pane and never decides its state
 
