@@ -156,6 +156,7 @@ func TestTheProfileRefusesTheSessionsServicesAndSignals_REQ_SBX_001(t *testing.T
 // TestAReadEntryIsReopenedForReadingOnly_REQ_SBX_006: a read entry inside a denied directory is
 // allowed to read after the refusal, its ancestors answer `stat`, and it gets no write rule.
 func TestAReadEntryIsReopenedForReadingOnly_REQ_SBX_006(t *testing.T) {
+	posixPaths(t)
 	p := agent
 	p.Read = []string{"/run/umbral/shellinteg-1"}
 	text, err := Render(p)
