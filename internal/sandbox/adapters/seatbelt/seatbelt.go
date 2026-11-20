@@ -45,6 +45,18 @@ var services = []string{
 	"com.apple.ocspd",
 }
 
+// networked are the services among them that reach the network on their caller's behalf: name
+// resolution, the network's configuration and certificate checks. A profile that names a
+// network gets none of them, so nothing is resolved and no certificate is checked under one.
+var networked = map[string]bool{
+	"com.apple.dnssd.service":                        true,
+	"com.apple.SystemConfiguration.DNSConfiguration": true,
+	"com.apple.SystemConfiguration.configd":          true,
+	"com.apple.trustd":                               true,
+	"com.apple.trustd.agent":                         true,
+	"com.apple.ocspd":                                true,
+}
+
 // Sandbox is the macOS adapter of the sandbox port.
 type Sandbox struct{ status domain.Status }
 
@@ -59,6 +71,10 @@ func (s *Sandbox) Status() domain.Status { return s.status }
 func (s *Sandbox) Command(p domain.Profile, argv []string) ([]string, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("sandbox: no command to confine")
+	}
+	if p.Net != nil && (!s.status.Enforcing() || !s.status.Network) {
+		// A network is never dropped from a profile in silence.
+		return nil, domain.ErrNoNetwork
 	}
 	if !s.status.Enforcing() {
 		return argv, nil
@@ -84,6 +100,8 @@ func (s *Sandbox) Command(p domain.Profile, argv []string) ([]string, error) {
 //     directories above such an entry answer `stat`, which resolving a path needs.
 //   - Local sockets: no connection to one, as on Linux, where a process reached the user's
 //     session services through them. The resolver's stays.
+//   - The network, when the profile names one: refused whole, then allowed on the loopback's
+//     ports it names. Without one it is left open.
 //   - Launch Services, Apple events and launchd jobs: refused. Each starts a process outside
 //     the sandbox for the caller.
 //   - Mach services: every lookup refused but the few in services.
@@ -135,13 +153,34 @@ func Render(p domain.Profile) (string, error) {
 			}
 		}
 	}
-	b.WriteString("(deny network-outbound (remote unix-socket))\n")
-	if err := rule(&b, "allow network-outbound", "literal", resolver); err != nil {
-		return "", err
+	if p.Net == nil {
+		b.WriteString("(deny network-outbound (remote unix-socket))\n")
+		if err := rule(&b, "allow network-outbound", "literal", resolver); err != nil {
+			return "", err
+		}
+	} else {
+		// All of it refused — every protocol, the local sockets and the resolver's with them —
+		// and then the loopback's ports the profile names. Unlike Landlock's, these rules name
+		// the host: a port is not opened on any other.
+		b.WriteString("(deny network*)\n")
+		// TCP by name: an `ip` filter would open the same port to a datagram.
+		for _, port := range p.Net.Connect {
+			fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"localhost:%d\"))\n", port)
+		}
+		for _, port := range p.Net.Bind {
+			fmt.Fprintf(&b, "(allow network-bind (local tcp \"localhost:%d\"))\n", port)
+			fmt.Fprintf(&b, "(allow network-inbound (local tcp \"localhost:%d\"))\n", port)
+		}
 	}
 	b.WriteString("(deny lsopen)\n(deny appleevent-send)\n(deny job-creation)\n")
 	b.WriteString("(deny mach-lookup)\n")
 	for _, name := range services {
+		// A process without a network is not left a service that uses one for it: the
+		// resolver would carry a name out, and the trust daemons fetch what a certificate
+		// names.
+		if p.Net != nil && networked[name] {
+			continue
+		}
 		fmt.Fprintf(&b, "(allow mach-lookup (global-name %q))\n", name)
 	}
 	b.WriteString("(deny signal)\n(allow signal (target same-sandbox))\n")

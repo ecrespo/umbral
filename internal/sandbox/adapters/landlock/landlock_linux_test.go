@@ -4,9 +4,11 @@ package landlock_test
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -34,7 +36,70 @@ func TestMain(m *testing.M) {
 		fmt.Printf("unix=%v ring=%v pair=%v inet=%v\n", unixErr, ringErr, pairErr, inetErr)
 		os.Exit(0)
 	}
+	if len(os.Args) == 6 && os.Args[1] == probeNet {
+		probeNetwork(os.Args[2:])
+		os.Exit(0)
+	}
 	os.Exit(m.Run())
+}
+
+// probeNet makes the test binary report what it can do on the network: its arguments are a
+// port it may connect to, one it may not, one it may bind and one it may not.
+const probeNet = "--probe-net"
+
+func probeNetwork(args []string) {
+	port := func(s string) int {
+		n, _ := strconv.Atoi(s)
+		return n
+	}
+	loopback := func(p int) unix.Sockaddr { return &unix.SockaddrInet4{Port: p, Addr: [4]byte{127, 0, 0, 1}} }
+	tcp := func() int {
+		fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+		if err != nil {
+			fmt.Printf("tcp-socket=%v\n", err)
+			os.Exit(0)
+		}
+		return fd
+	}
+	_, udpErr := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+	_, udp6Err := unix.Socket(unix.AF_INET6, unix.SOCK_DGRAM|unix.SOCK_NONBLOCK, 0)
+	_, rawErr := unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_ICMP)
+	// A stream socket that is not TCP: Landlock's port rules are TCP's alone.
+	_, mptcpErr := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 262)
+	_, packetErr := unix.Socket(unix.AF_PACKET, unix.SOCK_DGRAM, 0)
+	_, netlinkErr := unix.Socket(unix.AF_NETLINK, unix.SOCK_RAW, unix.NETLINK_ROUTE)
+	// Another netlink protocol: this one reads every socket on the machine.
+	_, diagErr := unix.Socket(unix.AF_NETLINK, unix.SOCK_RAW, unix.NETLINK_SOCK_DIAG)
+	// The other Internet family: the rules are by port, whatever the address.
+	loopback6 := func(p int) unix.Sockaddr {
+		return &unix.SockaddrInet6{Port: p, Addr: [16]byte{15: 1}}
+	}
+	tcp6 := func() (int, error) { return unix.Socket(unix.AF_INET6, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0) }
+	connect6 := func(p int) error {
+		fd, err := tcp6()
+		if err != nil {
+			return err
+		}
+		return unix.Connect(fd, loopback6(p))
+	}
+	connect6OK, connect6No := connect6(port(args[0])), connect6(port(args[1]))
+	_, pairErr := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+	// A port's two rights are separate: the one it may connect to is not one it may listen
+	// on, and the reverse. Tried before the bind below takes its port.
+	crossConnect := unix.Connect(tcp(), loopback(port(args[2])))
+	crossBind := unix.Bind(tcp(), loopback(port(args[0])))
+	connectOK := unix.Connect(tcp(), loopback(port(args[0])))
+	connectNo := unix.Connect(tcp(), loopback(port(args[1])))
+	bindOK := unix.Bind(tcp(), loopback(port(args[2])))
+	bindNo := unix.Bind(tcp(), loopback(port(args[3])))
+	bindAny := unix.Bind(tcp(), loopback(0))
+	// A socket that listens without a bind is given a port by the kernel, with no bind for a
+	// rule to refuse.
+	listenUnbound := unix.Listen(tcp(), 1)
+	// TCP Fast Open connects inside a send, with no connect for a rule to refuse.
+	fastOpen := unix.Sendto(tcp(), []byte("x"), unix.MSG_FASTOPEN, loopback(port(args[1])))
+	fmt.Printf("udp=%v udp6=%v raw=%v mptcp=%v packet=%v netlink=%v pair=%v connect-ok=%v connect-no=%v bind-ok=%v bind-no=%v bind-any=%v connect-to-bind-port=%v bind-on-connect-port=%v listen-unbound=%v fast-open=%v netlink-diag=%v connect6-ok=%v connect6-no=%v\n",
+		udpErr, udp6Err, rawErr, mptcpErr, packetErr, netlinkErr, pairErr, connectOK, connectNo, bindOK, bindNo, bindAny, crossConnect, crossBind, listenUnbound, fastOpen, diagErr, connect6OK, connect6No)
 }
 
 // probeSockets makes the test binary report which sockets it can make.
@@ -376,5 +441,113 @@ func TestTheAdapterSaysWhatItEnforces_REQ_SBX_003(t *testing.T) {
 	argv, err := none.Command(b.profile(t), []string{"true"})
 	if err != nil || len(argv) != 1 || argv[0] != "true" {
 		t.Fatalf("Command without a sandbox = %v, %v", argv, err)
+	}
+}
+
+// listener is a TCP listener on a loopback port of the kernel's choosing, and that port.
+func listener(t *testing.T) (net.Listener, string) {
+	t.Helper()
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	return ln, strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+}
+
+// freePort is a loopback port nothing listens on now.
+func freePort(t *testing.T) string {
+	t.Helper()
+	ln, port := listener(t)
+	_ = ln.Close()
+	return port
+}
+
+// TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008: a profile that names a network leaves
+// the process TCP alone, and of TCP only a connection to the ports it may connect to and a
+// bind on the ports it may bind — no other port, and no port of the kernel's choosing. Landlock
+// has no rule for anything but TCP, so every other Internet socket is refused when it is made:
+// a datagram, a raw one, and a stream that is not TCP. Without a network in the profile the
+// same process reaches all of it.
+func TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008(t *testing.T) {
+	b := newBench(t)
+	if !b.sb.Status().Network {
+		if os.Getenv("UMBRAL_REQUIRE_SANDBOX") == "1" {
+			t.Fatalf("UMBRAL_REQUIRE_SANDBOX is set and this kernel cannot confine the network: %+v", b.sb.Status())
+		}
+		t.Skipf("this kernel's Landlock has no network rules: %+v", b.sb.Status())
+	}
+	_, allowed := listener(t)
+	_, other := listener(t)
+	bindOK, bindNo := freePort(t), freePort(t)
+	port := func(s string) uint16 {
+		n, err := strconv.ParseUint(s, 10, 16)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return uint16(n)
+	}
+	run := func(p domain.Profile) string {
+		t.Helper()
+		argv, err := b.sb.Command(p, []string{os.Args[0], probeNet, allowed, other, bindOK, bindNo})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.CommandContext(t.Context(), argv[0], argv[1:]...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("the probe did not run: %v %s", err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	p := b.profile(t)
+	p.Net = &domain.Net{Connect: []uint16{port(allowed)}, Bind: []uint16{port(bindOK)}}
+	const denied = "permission denied"
+	want := "udp=" + denied + " udp6=" + denied + " raw=" + denied + " mptcp=" + denied + " packet=" + denied +
+		" netlink=<nil> pair=<nil> connect-ok=<nil> connect-no=" + denied + " bind-ok=<nil> bind-no=" + denied + " bind-any=" + denied +
+		" connect-to-bind-port=" + denied + " bind-on-connect-port=" + denied
+	// The limit the delta records: a process that may bind keeps `listen`, and a socket that
+	// listens without a bind is given a port by the kernel. Landlock has no right for it.
+	// Should a kernel refuse it one day, this line says so.
+	// Nothing listens on the IPv6 loopback: an allowed port answers "connection refused", the
+	// peer's answer, and a refused one "permission denied", the kernel's, before any peer.
+	want += " listen-unbound=<nil> fast-open=" + denied + " netlink-diag=" + denied + " connect6-ok=connection refused connect6-no=" + denied
+	if got := run(p); got != want {
+		t.Errorf("with a network profile the probe says\n %q, want\n %q", got, want)
+	}
+	// A profile with no port to bind has no use for `listen`, and is refused it.
+	p.Net = &domain.Net{Connect: []uint16{port(allowed)}}
+	if got := run(p); !strings.Contains(got, "connect-ok=<nil>") || !strings.Contains(got, "bind-ok="+denied) || !strings.Contains(got, "listen-unbound="+denied) {
+		t.Errorf("with nothing to bind the probe says %q, want its connection allowed and no bind or listen", got)
+	}
+
+	// The same probe with no network in its profile: the test proves nothing unless what was
+	// refused above works here.
+	plain := run(b.profile(t))
+	for _, open := range []string{"udp=<nil>", "udp6=<nil>", "connect-ok=<nil>", "connect-no=<nil>", "bind-ok=<nil>", "bind-no=<nil>", "bind-any=<nil>", "listen-unbound=<nil>", "fast-open=<nil>", "netlink-diag=<nil>", "connect6-no=connection refused"} {
+		if !strings.Contains(plain, open) {
+			t.Errorf("without a network profile the probe says %q, want %s", plain, open)
+		}
+	}
+}
+
+// TestANetworkProfileCannotNameEveryPort_REQ_SBX_008: a port of zero is the kernel's choice of
+// port, which is every port. The adapter refuses a profile that names it, and so does the
+// helper, so one handed to it directly runs nothing.
+func TestANetworkProfileCannotNameEveryPort_REQ_SBX_008(t *testing.T) {
+	b := newBench(t)
+	p := b.profile(t)
+	p.Net = &domain.Net{Connect: []uint16{0}}
+	if _, err := b.sb.Command(p, []string{"true"}); err == nil {
+		t.Error("a profile that connects to port 0 was accepted")
+	}
+	p.Net = &domain.Net{Bind: []uint16{0}}
+	if _, err := b.sb.Command(p, []string{"true"}); err == nil {
+		t.Error("a profile that binds port 0 was accepted")
+	}
+	// The helper refuses the same, so a profile handed to it directly runs nothing.
+	cmd := exec.CommandContext(t.Context(), os.Args[0], landlock.HelperFlag, `{"net":{"bind":[0]}}`, "--", "/bin/sh", "-c", "echo the-command-ran")
+	if out, err := cmd.CombinedOutput(); err == nil || strings.Contains(string(out), "the-command-ran") {
+		t.Errorf("the helper ran its command under a network it cannot apply: %v %s", err, out)
 	}
 }

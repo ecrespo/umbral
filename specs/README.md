@@ -2,8 +2,8 @@
 
 This folder holds the Spec-Driven Development artifacts the code is written from.
 
-**Status on 2026-11-20:** constitution 1.6, PRD 1.24, F2 PRD 0.20, API 1.65, Technical Design
-1.102, Data Model 1.28, Plan 1.15. `python3 tools/sdd_check.py` passes with no CRITICAL and no
+**Status on 2026-11-20:** constitution 1.6, PRD 1.24, F2 PRD 0.21, API 1.65, Technical Design
+1.103, Data Model 1.28, Plan 1.15. `python3 tools/sdd_check.py` passes with no CRITICAL and no
 HIGH finding: 183 of 183 MUST requirements have a task.
 
 - **Phases:** F0 closed on 2026-09-26, F1 on 2026-10-22 and slice F2a on 2026-10-24. The tasks
@@ -12,7 +12,7 @@ HIGH finding: 183 of 183 MUST requirements have a task.
   from F2, approved by the implementing agent and waiting for the Tech Lead's review
   (`../docs/checkpoints/2026-11-17-delta-review-guide.md` is a reading order), and
   `2026-11-hosted-terminal-sandbox` (T-HRD-21), proposed, and `2026-11-model-relay`
-  (T-HRD-20), approved and not implemented.
+  (T-HRD-20), approved, its first piece of three implemented.
 - **Open tasks:** T-PKG-05 in the F2 file; T-REL-01, T-REL-02, T-REL-03 and T-HRD-01 (both
   in progress), T-HRD-20 and T-HRD-22 in the hardening file.
 

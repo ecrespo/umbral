@@ -449,16 +449,16 @@ its matrix lists commands.
   thread whose network profile the kernel enforces reads `egress_visibility = confined`,
   computed from a new `network_profile` column rather than a rebuilt `threads` (Art. 6); and
   the task does not gate release 0.1. Three pieces, each mergeable on its own:
-  - **a · the network profile:** `Profile.Net` (ports), Landlock's port rules, the datagram
-    filter, the macOS rules, kernel tests for each, no caller yet;
+  - **a · the network profile (done 2026-11-20):** `Profile.Net` (ports), Landlock's port
+    rules, the socket filter, the macOS rules, kernel tests for each, no caller yet;
   - **b · the relay:** a port in `internal/acp` and an adapter in `cmd/umbrald` over
     `llmgw`'s provider configuration — the listener, the thread's token, the streaming
     forwarder, the `egress_log` row;
   - **c · wiring and disclosure:** the manifest's base URL and port flag, two ports per
     thread, the profile's use, the migration, `egress_visibility`, the clients' text, Art.
     4's amendment, and the Done line against a real OpenCode.
-- **REQ:** Art. 4; two new `SBX` requirements, written into the PRD by the pieces that make
-  them true; REQ-ACP-007 and REQ-ACP-009, amended
+- **REQ:** Art. 4; REQ-SBX-008 (piece a) and one more `SBX` requirement, written into the PRD
+  by the piece that makes it true; REQ-ACP-007 and REQ-ACP-009, amended
 - **Files:** `internal/sandbox/**`, `internal/acp/**`, `internal/llmgw/**`, `cmd/umbrald/**`,
   `internal/store/migrations/**`, `internal/api/**`, `specs/data-model/umbral-schema.md`,
   `specs/api/umbral-daemon-api-v1.md`
@@ -530,6 +530,7 @@ its matrix lists commands.
 | REQ-SBX-005 | T-HRD-15 | the confined wording of TestAHostedThreadSaysWhetherItIsConfined_REQ_SBX_003 and TestAgentPanelSaysWhetherAHostedThreadIsConfined_REQ_SBX_003, which carry REQ_SBX_005's sentence |
 | REQ-SBX-006 | T-HRD-17 | TestAFullAutoCommandIsBoundedByTheKernel_REQ_SBX_006, TestAThreadsShellIsReplacedWhenItsConfinementChanges_REQ_SBX_006, TestAShellThatCannotBeConfinedDoesNotRun_REQ_SBX_006, TestAReadEntryOpensOnlyWhatLiesInsideADeniedDirectory_REQ_SBX_006, TestAReadEntryIsReadAndNotWritten_REQ_SBX_006, TestAReadEntryIsReopenedForReadingOnly_REQ_SBX_006, TestAgentPanelSaysWhetherAFullAutoThreadIsConfined_REQ_SBX_006, TestAFullAutoCommandCannotSwitchItsConfinementOff_REQ_SBX_006, TestACommandCarriesItsTurnsFullAuto_REQ_SBX_006 |
 | REQ-SBX-007 | T-HRD-21 | TestAHostedTerminalIsBoundedByTheKernelUnderFullAuto_REQ_SBX_007, TestAHostedTerminalIsConfinedUnderFullAuto_REQ_SBX_007, TestAHostedTerminalCarriesItsTurnsFullAuto_REQ_SBX_007, TestATerminalIsStartedOnItsTurnsReading_REQ_SBX_007, TestATerminalIsStartedOnTheContextItsTurnGave_REQ_SBX_007, TestAHostedThreadsTerminalsEachGetADirectoryOfTheirOwn_REQ_SBX_007 |
+| REQ-SBX-008 | T-HRD-20 (piece a) | TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008 (Landlock, and `sandbox-exec` on the macOS runner), TestANetworkProfileIsRefusedWhereItCannotBeEnforced_REQ_SBX_008, TestANetworkProfileIsRefusedWhereNothingIsEnforced_REQ_SBX_008, TestANetworkProfileCannotNameEveryPort_REQ_SBX_008, TestANetworkProfileOpensOnlyItsLoopbackPorts_REQ_SBX_008, TestAProfilesNetworkIsCarriedToTheHelper_REQ_SBX_008 |
 
 ## Execution log
 
@@ -574,3 +575,4 @@ its matrix lists commands.
 | 2026-11-20 | T-HRD-21 | done; its delta awaits review | The Tech Lead chose option A of the three the question offered. Delta `2026-11-hosted-terminal-sandbox` (PRD F2 0.20 REQ-SBX-007, Tech 1.102), written with the code. Tests first: a real daemon and the test agent against Landlock — in `full-auto` a terminal that writes outside the worktree runs unasked and is refused by the kernel, its write inside lands, and in `normal` the same line asks and, approved, writes. The launcher needed no change: a terminal is a shell the command is typed into, so the session is created confined as the thread's own shell is. A hosted agent holds several terminals, so each gets a directory of its own instead of the thread's being emptied. spec-guardian's review found no escape and two gaps, both closed before the commit: the mark's passage through the ACP host had no test, and a terminal's directory was never removed — the confiner's port now hands back a cleanup. Ten mutations, each killed by a test. Not done: the kernel's refusal between two live terminals is not measured, and a killed daemon leaves its live terminals' directories. The review also read a race in the daemon's own file writes, which is T-HRD-22. |
 | 2026-11-20 | T-HRD-22 | added | Read, not reproduced, by spec-guardian's review of T-HRD-21: the daemon's own file writes, performed unconfined on a path decided a moment earlier, follow a link a confined process puts in the worktree between the decision and the write. Older than the sandbox and outside T-HRD-21's diff; it goes around what REQ-SBX-001, 006 and 007 bound. |
 | 2026-11-20 | T-HRD-20 | its delta approved | The Tech Lead answered the five questions of delta `2026-11-model-relay` as recommended ("Como recomiendas"): the port rule's reach accepted and disclosed, no redaction in the relay, a new column instead of a rebuilt `threads`, the key kept by the daemon, and no gate on release 0.1. The task is three pieces, a, b and c, and nothing of it is implemented. The delta stays in `changes/` until its last piece folds it into the specs. |
+| 2026-11-20 | T-HRD-20 | piece a done | `Profile.Net` on Linux and macOS, with no caller (PRD F2 0.21 REQ-SBX-008, Tech 1.103 §5.3f). Tests first, against Landlock: a probe that tries each kind of socket, a connect and a bind on an allowed and a refused port, a bind on port 0, each right on the other's port, a listen without a bind and a fast-open send. Stricter than the delta in three places — the socket filter is an allow list, since a stream need not be TCP; macOS opens a port to TCP only; macOS leaves out the Mach services that use the network for their caller. **One new limit, for the Tech Lead:** a process that may bind keeps `listen`, and a socket that listens without a bind gets a port of the kernel's choosing; Landlock has no right for it. Three of these were found by the commit's automated security review; spec-guardian's then found the IF branch untested and a profile with a network passed through unconfined where nothing is enforced, both fixed. The delta's new section amends an approved delta and awaits the Tech Lead. macOS is verified by its runner only. Pieces b and c are not started. |

@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.102 |
+| **Version** | 1.103 |
 | **Date** | 2026-11-20 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1567,6 +1567,26 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
     `shells/<thread>/term-<random>` and the thread's directory is not emptied at a launch;
     `Confine` hands back a cleanup that removes a terminal's directory when its session
     ends.
+  - *A profile's network* (delta `2026-11-model-relay`, T-HRD-20 piece a, REQ-SBX-008). A
+    profile may carry `net`: the TCP ports the process may bind and the ports it may connect
+    to, which is then all of the network it has. Without `net` the network is open, as it
+    was; nothing sets one until T-HRD-20c. `Status.Network` says whether a network can be
+    enforced, and a profile that names one where it cannot — or where the sandbox enforces
+    nothing at all, and a profile without one runs as it came — is refused with
+    `ErrNoNetwork`, never run without it: the caller asks `Status` first. Port 0 is refused,
+    being every port.
+    - *Linux*: Landlock's port rules, from its fourth version (kernel 6.7). They name no
+      host — a port is open on every host — and they are TCP's alone, so the seccomp filter
+      then leaves only a TCP socket of either Internet family and a netlink one of the
+      routing protocol: a datagram, a raw socket, a stream that is not TCP (MPTCP, SCTP), any
+      other netlink protocol and every other family fail with `EACCES` when made. Landlock has no right for `listen`, and a socket that listens
+      without a bind is given a port by the kernel: the filter refuses `listen` to a profile
+      with no port to bind; a profile that binds keeps it, and with it connections arriving
+      on a port of the kernel's choosing. A fast-open send is refused by the kernel.
+    - *macOS*: `(deny network*)`, then the loopback's ports by `tcp` filters, so a datagram
+      to an allowed port is refused too; and the Mach services that reach the network for
+      their caller — name resolution, the network's configuration, certificate checks — are
+      left out, so nothing is resolved and no certificate is checked under such a profile.
   - *macOS* (delta `2026-11-sandbox-macos`, T-HRD-16): the same profile rendered for
     `/usr/bin/sandbox-exec`, with no helper. Writes are refused and then allowed under the
     write entries and on the device files; reads, `stat` included, are refused under the
@@ -2464,3 +2484,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.100 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-libffi-load` (T-HRD-18, ratified 2026-11-20): §9.3 on macOS and Windows the daemon loads only a libffi whose bytes it has checked, through a patched copy of the binding |
 | 1.101 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-full-auto-sandbox` (T-HRD-17, ratified 2026-11-20): §5.3 `full-auto`'s boundary is the kernel's where the sandbox enforces; §5.3f a `full-auto` thread's shell is confined, on the turn's own mode or the thread's record, the profile's read entries, the `ShellConfiner` port |
 | 1.102 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-hosted-terminal-sandbox` (T-HRD-21, proposed): §5.3 and §5.3f a hosted thread's terminals are confined under `full-auto`, each with a directory of its own |
+| 1.103 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a, approved): §5.3f a profile's network, on Linux and macOS, and its limits |

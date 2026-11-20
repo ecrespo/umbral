@@ -2,6 +2,7 @@ package seatbelt
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -333,5 +334,114 @@ func TestTheAdapterSaysWhatItEnforces_REQ_SBX_003(t *testing.T) {
 	b := newBench(t)
 	if st := b.sb.Status(); st.State != domain.StateEnforcing || st.Mechanism != Mechanism || st.Reason != "" {
 		t.Errorf("Status = %+v", st)
+	}
+}
+
+// probeNet makes the test binary report what it can do on the network: its arguments are a
+// port it may connect to, one it may not, one it may bind and one it may not.
+const probeNet = "--probe-net"
+
+// TestMain makes the test binary its own network probe: run with probeNet it tries each thing
+// from inside whatever sandbox it was started in, and prints `ok` or `refused` for each.
+func TestMain(m *testing.M) {
+	if len(os.Args) == 6 && os.Args[1] == probeNet {
+		said := func(err error) string {
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return "refused"
+			}
+			return "ok"
+		}
+		dial := func(network, port string) error {
+			c, err := net.Dial(network, "127.0.0.1:"+port)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = c.Close() }()
+			if network == "udp4" {
+				_, err = c.Write([]byte("x"))
+			}
+			return err
+		}
+		listen := func(port string) error {
+			ln, err := net.Listen("tcp4", "127.0.0.1:"+port)
+			if err == nil {
+				_ = ln.Close()
+			}
+			return err
+		}
+		// A datagram to the very port the profile may connect to: the port is TCP's alone.
+		fmt.Printf("connect-ok=%s connect-no=%s bind-ok=%s bind-no=%s bind-any=%s udp=%s udp-to-its-port=%s\n",
+			said(dial("tcp4", os.Args[2])), said(dial("tcp4", os.Args[3])),
+			said(listen(os.Args[4])), said(listen(os.Args[5])), said(listen("0")),
+			said(dial("udp4", os.Args[3])), said(dial("udp4", os.Args[2])))
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008: with a network in its profile a process
+// connects to the loopback's ports it may connect to and binds the ones it may bind — no
+// other port, no port of the kernel's choosing, and no datagram. Without one the same probe
+// reaches all of it.
+func TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008(t *testing.T) {
+	b := newBench(t)
+	if !b.sb.Status().Network {
+		t.Fatalf("an enforcing sandbox on macOS does not confine the network: %+v", b.sb.Status())
+	}
+	listener := func() string {
+		ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				_ = c.Close()
+			}
+		}()
+		return strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	}
+	free := func() string {
+		ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ln.Close() }()
+		return strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	}
+	port := func(s string) uint16 {
+		n, err := strconv.ParseUint(s, 10, 16)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return uint16(n)
+	}
+	allowed, other, bindOK, bindNo := listener(), listener(), free(), free()
+	run := func(p domain.Profile) string {
+		t.Helper()
+		argv, err := b.sb.Command(p, []string{os.Args[0], probeNet, allowed, other, bindOK, bindNo})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.CommandContext(t.Context(), argv[0], argv[1:]...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("the probe did not run: %v %s", err, out)
+		}
+		t.Logf("%s", out)
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		return lines[len(lines)-1]
+	}
+	p := b.profile(t)
+	p.Net = &domain.Net{Connect: []uint16{port(allowed)}, Bind: []uint16{port(bindOK)}}
+	if got, want := run(p), "connect-ok=ok connect-no=refused bind-ok=ok bind-no=refused bind-any=refused udp=refused udp-to-its-port=refused"; got != want {
+		t.Errorf("with a network profile the probe says %q, want %q", got, want)
+	}
+	if got, want := run(b.profile(t)), "connect-ok=ok connect-no=ok bind-ok=ok bind-no=ok bind-any=ok udp=ok udp-to-its-port=ok"; got != want {
+		t.Errorf("without a network profile the probe says %q, want %q: the test proves nothing", got, want)
 	}
 }

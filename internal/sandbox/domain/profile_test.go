@@ -4,6 +4,7 @@ import (
 	"errors"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ecrespo/umbral/internal/sandbox/domain"
@@ -158,5 +159,42 @@ func posixPaths(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the profile's paths are POSIX paths; Windows has no sandbox adapter")
+	}
+}
+
+// TestAProfilesNetworkIsCarriedToTheHelper_REQ_SBX_008: the network a profile names reaches
+// the helper as written, a profile without one says nothing of it, and port 0 — the kernel's
+// choice of port, and so every port — is refused on either side of the encoding.
+func TestAProfilesNetworkIsCarriedToTheHelper_REQ_SBX_008(t *testing.T) {
+	p := domain.Profile{Net: &domain.Net{Bind: []uint16{4096}, Connect: []uint16{4096, 51234}}}
+	arg, err := p.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := domain.Decode(arg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Net == nil || len(got.Net.Bind) != 1 || got.Net.Bind[0] != 4096 || len(got.Net.Connect) != 2 || got.Net.Connect[1] != 51234 {
+		t.Errorf("decoded network %+v from %s", got.Net, arg)
+	}
+	plain, err := domain.Profile{}.Encode()
+	if err != nil || strings.Contains(plain, "net") {
+		t.Errorf("a profile without a network encodes as %s (%v)", plain, err)
+	}
+	if again, err := domain.Decode(plain); err != nil || again.Net != nil {
+		t.Errorf("a profile without a network decoded with one: %+v, %v", again.Net, err)
+	}
+	// An empty network is not no network: it is all of it refused.
+	if none, err := domain.Decode(`{"net":{}}`); err != nil || none.Net == nil {
+		t.Errorf("an empty network decoded as %+v, %v", none.Net, err)
+	}
+	for name, bad := range map[string]domain.Profile{"a bind": {Net: &domain.Net{Bind: []uint16{0}}}, "a connect": {Net: &domain.Net{Connect: []uint16{80, 0}}}} {
+		if err := bad.Validate(); err == nil {
+			t.Errorf("%s on port 0 is valid", name)
+		}
+	}
+	if _, err := domain.Decode(`{"net":{"connect":[0]}}`); err == nil {
+		t.Error("port 0 was decoded")
 	}
 }
