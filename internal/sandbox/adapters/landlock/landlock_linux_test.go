@@ -3,14 +3,21 @@
 package landlock_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 
@@ -38,6 +45,14 @@ func TestMain(m *testing.M) {
 	}
 	if len(os.Args) == 6 && os.Args[1] == probeNet {
 		probeNetwork(os.Args[2:])
+		os.Exit(0)
+	}
+	if len(os.Args) == 3 && os.Args[1] == probeListen {
+		probeListening(os.Args[2])
+		os.Exit(0)
+	}
+	if len(os.Args) == 3 && (os.Args[1] == probeOrphan || os.Args[1] == probeOrphaned) {
+		probeOrphaning(os.Args[1], os.Args[2])
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
@@ -100,6 +115,125 @@ func probeNetwork(args []string) {
 	fastOpen := unix.Sendto(tcp(), []byte("x"), unix.MSG_FASTOPEN, loopback(port(args[1])))
 	fmt.Printf("udp=%v udp6=%v raw=%v mptcp=%v packet=%v netlink=%v pair=%v connect-ok=%v connect-no=%v bind-ok=%v bind-no=%v bind-any=%v connect-to-bind-port=%v bind-on-connect-port=%v listen-unbound=%v fast-open=%v netlink-diag=%v connect6-ok=%v connect6-no=%v\n",
 		udpErr, udp6Err, rawErr, mptcpErr, packetErr, netlinkErr, pairErr, connectOK, connectNo, bindOK, bindNo, bindAny, crossConnect, crossBind, listenUnbound, fastOpen, diagErr, connect6OK, connect6No)
+}
+
+// probeListen makes the test binary report which sockets it can listen on: its argument is
+// the port it may bind, and connect to.
+const probeListen = "--probe-listen"
+
+func probeListening(arg string) {
+	port, _ := strconv.Atoi(arg)
+	tcp := func(family int) int {
+		fd, err := unix.Socket(family, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+		if err != nil {
+			fmt.Printf("tcp-socket=%v\n", err)
+			os.Exit(0)
+		}
+		return fd
+	}
+	// bound is a socket bound to addr, and what listening on it says; the socket is closed
+	// unless keep, so the next bind finds the port free.
+	bound := func(family int, addr unix.Sockaddr, keep bool) (int, string) {
+		fd := tcp(family)
+		if err := unix.Bind(fd, addr); err != nil {
+			return fd, "bind: " + err.Error()
+		}
+		err := unix.Listen(fd, 4)
+		if !keep {
+			_ = unix.Close(fd)
+		}
+		return fd, fmt.Sprint(err)
+	}
+	// No bind: the kernel would choose the port, on every interface.
+	unbound := unix.Listen(tcp(unix.AF_INET), 1)
+	// The allowed port on every interface: reachable from outside the machine.
+	_, anyAddr := bound(unix.AF_INET, &unix.SockaddrInet4{Port: port}, false)
+	_, any6 := bound(unix.AF_INET6, &unix.SockaddrInet6{Port: port}, false)
+	// The machine's own address that is not the loopback's, when it has one.
+	outward := "none"
+	if addrs, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil && !ipn.IP.IsLoopback() {
+				var addr [4]byte
+				copy(addr[:], ipn.IP.To4())
+				_, outward = bound(unix.AF_INET, &unix.SockaddrInet4{Port: port, Addr: addr}, false)
+				break
+			}
+		}
+	}
+	// The loopback: the one place it may listen.
+	fd, loopback := bound(unix.AF_INET, &unix.SockaddrInet4{Port: port, Addr: [4]byte{127, 0, 0, 1}}, true)
+	_, loopback6 := bound(unix.AF_INET6, &unix.SockaddrInet6{Port: port, Addr: [16]byte{15: 1}}, false)
+	// And it is a listener: a connection to it arrives.
+	self := unix.Connect(tcp(unix.AF_INET), &unix.SockaddrInet4{Port: port, Addr: [4]byte{127, 0, 0, 1}})
+	_, _, acceptErr := unix.Accept(fd)
+	// From another thread of the process, which the supervisor knows by another id.
+	thread := make(chan error)
+	go func() {
+		runtime.LockOSThread()
+		thread <- unix.Listen(fd, 8)
+	}()
+	// A descriptor that is no socket, and one that is not open.
+	notSocket := unix.Listen(int(os.Stdout.Fd()), 1)
+	notOpen := unix.Listen(987, 1)
+	fmt.Printf("unbound=%v any=%v any6=%v outward=%v loopback=%v loopback6=%v self=%v accept=%v thread=%v not-socket=%v not-open=%v\n",
+		unbound, anyAddr, any6, outward, loopback, loopback6, self, acceptErr, <-thread, notSocket, notOpen)
+}
+
+// probeOrphan makes the test binary leave a process behind and exit, so that the helper that
+// supervised it ends; probeOrphaned is that process, which then reports what it can do with
+// nobody left to answer its `listen`. Its argument is the port it may bind.
+const (
+	probeOrphan   = "--probe-orphan"
+	probeOrphaned = "--probe-orphaned"
+)
+
+// ownListener asks the kernel for a notification descriptor of this process's own, on a
+// filter that allows everything: with one, a process answers its own `listen`.
+func ownListener() error {
+	filter := []unix.SockFilter{{Code: 0x06, K: 0x7fff0000}}
+	prog := unix.SockFprog{Len: 1, Filter: &filter[0]}
+	fd, _, errno := unix.Syscall(unix.SYS_SECCOMP, unix.SECCOMP_SET_MODE_FILTER, unix.SECCOMP_FILTER_FLAG_NEW_LISTENER, uintptr(unsafe.Pointer(&prog)))
+	if errno != 0 {
+		return errno
+	}
+	_ = unix.Close(int(fd))
+	return nil
+}
+
+func probeOrphaning(mode, arg string) {
+	if mode == probeOrphan {
+		// While the supervisor lives: a second listener is refused by the profile's own
+		// filter, not merely because the kernel allows one at a time.
+		fmt.Printf("listener-while-supervised=%v\n", ownListener())
+		cmd := exec.CommandContext(context.Background(), os.Args[0], probeOrphaned, arg)
+		cmd.Env = append(os.Environ(), "PROBE_SUPERVISOR="+strconv.Itoa(os.Getppid()))
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := cmd.Start(); err != nil {
+			fmt.Printf("orphan=%v\n", err)
+		}
+		return
+	}
+	// The helper waited for this process's parent and exits after it. A signal to it is
+	// refused while it lives, and finds no process once it is gone.
+	supervisor, _ := strconv.Atoi(os.Getenv("PROBE_SUPERVISOR"))
+	for range 2000 {
+		if errors.Is(unix.Kill(supervisor, 0), unix.ESRCH) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	port, _ := strconv.Atoi(arg)
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
+	if err != nil {
+		fmt.Printf("tcp-socket=%v\n", err)
+		return
+	}
+	bindErr := unix.Bind(fd, &unix.SockaddrInet4{Port: port})
+	before := unix.Listen(fd, 1)
+	listener := ownListener()
+	fmt.Printf("orphan-bind=%v orphan-listen=%v orphan-listener=%v orphan-listen-after=%v\n", bindErr, before, listener, unix.Listen(fd, 1))
 }
 
 // probeSockets makes the test binary report which sockets it can make.
@@ -506,12 +640,12 @@ func TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008(t *testing.T) {
 	want := "udp=" + denied + " udp6=" + denied + " raw=" + denied + " mptcp=" + denied + " packet=" + denied +
 		" netlink=<nil> pair=<nil> connect-ok=<nil> connect-no=" + denied + " bind-ok=<nil> bind-no=" + denied + " bind-any=" + denied +
 		" connect-to-bind-port=" + denied + " bind-on-connect-port=" + denied
-	// The limit the delta records: a process that may bind keeps `listen`, and a socket that
-	// listens without a bind is given a port by the kernel. Landlock has no right for it.
-	// Should a kernel refuse it one day, this line says so.
+	// A socket that listens without a bind would be given a port by the kernel, on every
+	// interface, and Landlock has no right for `listen`: the helper's supervisor refuses it
+	// (TestAConfinedProcessListensOnItsLoopbackPortsOnly_REQ_SBX_008).
 	// Nothing listens on the IPv6 loopback: an allowed port answers "connection refused", the
 	// peer's answer, and a refused one "permission denied", the kernel's, before any peer.
-	want += " listen-unbound=<nil> fast-open=" + denied + " netlink-diag=" + denied + " connect6-ok=connection refused connect6-no=" + denied
+	want += " listen-unbound=" + denied + " fast-open=" + denied + " netlink-diag=" + denied + " connect6-ok=connection refused connect6-no=" + denied
 	if got := run(p); got != want {
 		t.Errorf("with a network profile the probe says\n %q, want\n %q", got, want)
 	}
@@ -529,6 +663,221 @@ func TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008(t *testing.T) {
 			t.Errorf("without a network profile the probe says %q, want %s", plain, open)
 		}
 	}
+}
+
+// TestAConfinedProcessListensOnItsLoopbackPortsOnly_REQ_SBX_008: a process whose profile lets
+// it bind a port can listen on that port of the loopback and nowhere else, so nothing outside
+// the machine can connect to it. Landlock names no host and has no right for `listen`; the
+// helper stays as the process's supervisor and performs each `listen` itself, on a socket it
+// has looked at: one bound to the loopback, on a port of the profile. A socket with no bind,
+// one bound to every interface and one bound to the machine's outward address are refused.
+func TestAConfinedProcessListensOnItsLoopbackPortsOnly_REQ_SBX_008(t *testing.T) {
+	b := newBench(t)
+	if !b.sb.Status().Network {
+		if os.Getenv("UMBRAL_REQUIRE_SANDBOX") == "1" {
+			t.Fatalf("UMBRAL_REQUIRE_SANDBOX is set and this kernel cannot confine the network: %+v", b.sb.Status())
+		}
+		t.Skipf("this kernel's Landlock has no network rules: %+v", b.sb.Status())
+	}
+	free := freePort(t)
+	n, err := strconv.ParseUint(free, 10, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := b.profile(t)
+	p.Net = &domain.Net{Connect: []uint16{uint16(n)}, Bind: []uint16{uint16(n)}}
+	argv, err := b.sb.Command(p, []string{os.Args[0], probeListen, free})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(t.Context(), argv[0], argv[1:]...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the probe did not run: %v %s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	const denied = "permission denied"
+	// The outward address is the machine's own, when it has one beside the loopback.
+	outward := regexp.MustCompile(` outward=(none|` + denied + `) `)
+	if !outward.MatchString(got) {
+		t.Errorf("listening on the machine's outward address says %q, want it refused", got)
+	}
+	got = outward.ReplaceAllString(got, " ")
+	want := "unbound=" + denied + " any=" + denied + " any6=" + denied +
+		" loopback=<nil> loopback6=<nil> self=<nil> accept=<nil> thread=<nil>" +
+		" not-socket=socket operation on non-socket not-open=bad file descriptor"
+	if got != want {
+		t.Errorf("the probe says\n %q, want\n %q", got, want)
+	}
+}
+
+// TestAProcessThatOutlivesItsSupervisorCannotListen_REQ_SBX_008: the helper ends when its
+// command does, and a process the command left behind then has nobody to answer its
+// `listen`: the call fails. It cannot become its own supervisor either — a filter of its own
+// with a notification descriptor, which the kernel would consult before the profile's — at
+// any time: spec-guardian's review did exactly that, and listened on every interface.
+func TestAProcessThatOutlivesItsSupervisorCannotListen_REQ_SBX_008(t *testing.T) {
+	b := newBench(t)
+	if !b.sb.Status().Network {
+		if os.Getenv("UMBRAL_REQUIRE_SANDBOX") == "1" {
+			t.Fatalf("UMBRAL_REQUIRE_SANDBOX is set and this kernel cannot confine the network: %+v", b.sb.Status())
+		}
+		t.Skipf("this kernel's Landlock has no network rules: %+v", b.sb.Status())
+	}
+	free := freePort(t)
+	n, err := strconv.ParseUint(free, 10, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := b.profile(t)
+	p.Net = &domain.Net{Bind: []uint16{uint16(n)}}
+	argv, err := b.sb.Command(p, []string{os.Args[0], probeOrphan, free})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(t.Context(), argv[0], argv[1:]...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the probe did not run: %v %s", err, out)
+	}
+	const refused, gone = "operation not permitted", "function not implemented"
+	want := "listener-while-supervised=" + refused + "\n" +
+		"orphan-bind=<nil> orphan-listen=" + gone + " orphan-listener=" + refused + " orphan-listen-after=" + gone
+	if got := strings.TrimSpace(string(out)); got != want {
+		t.Errorf("the probe says\n %q, want\n %q", got, want)
+	}
+}
+
+// TestAProcessOutsideTheSupervisorsTreeCannotListen_REQ_SBX_008: the supervisor answers its
+// own descendants. A process that left the tree while the supervisor still runs — its parent
+// exited, and it belongs to whoever adopts orphans — is refused even the loopback's port.
+func TestAProcessOutsideTheSupervisorsTreeCannotListen_REQ_SBX_008(t *testing.T) {
+	b := newBench(t)
+	if !b.sb.Status().Network {
+		if os.Getenv("UMBRAL_REQUIRE_SANDBOX") == "1" {
+			t.Fatalf("UMBRAL_REQUIRE_SANDBOX is set and this kernel cannot confine the network: %+v", b.sb.Status())
+		}
+		t.Skipf("this kernel's Landlock has no network rules: %+v", b.sb.Status())
+	}
+	free := freePort(t)
+	n, err := strconv.ParseUint(free, 10, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := b.profile(t)
+	p.Net = &domain.Net{Connect: []uint16{uint16(n)}, Bind: []uint16{uint16(n)}}
+	// The subshell exits at once and leaves the probe behind; the shell stays, and with it
+	// the supervisor.
+	argv, err := b.sb.Command(p, []string{"/bin/sh", "-c", `( "$0" "$1" "$2" & ) ; sleep 1.5`, os.Args[0], probeListen, free})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(t.Context(), argv[0], argv[1:]...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the probe did not run: %v %s", err, out)
+	}
+	if got := string(out); !strings.Contains(got, " loopback=permission denied ") || !strings.Contains(got, "unbound=permission denied ") {
+		t.Errorf("a process outside the supervisor's tree says %q, want every listen refused", got)
+	}
+}
+
+// TestTheHelpersSecondStageIsNotTheCallersToAsk_REQ_SBX_008: the variable that tells the
+// helper it is the second stage is the first stage's to set. Set by a caller, it would skip
+// the supervisor; the helper then has nothing to send its descriptor to, and runs nothing.
+func TestTheHelpersSecondStageIsNotTheCallersToAsk_REQ_SBX_008(t *testing.T) {
+	b := newBench(t)
+	if !b.sb.Status().Network {
+		if os.Getenv("UMBRAL_REQUIRE_SANDBOX") == "1" {
+			t.Fatalf("UMBRAL_REQUIRE_SANDBOX is set and this kernel cannot confine the network: %+v", b.sb.Status())
+		}
+		t.Skipf("this kernel's Landlock has no network rules: %+v", b.sb.Status())
+	}
+	p := b.profile(t)
+	p.Net = &domain.Net{Bind: []uint16{4000}}
+	argv, err := b.sb.Command(p, []string{"/bin/sh", "-c", "echo the-command-ran"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fd := range []string{"3", "0", "x"} {
+		cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
+		cmd.Env = append(os.Environ(), "UMBRAL_SANDBOX_NOTIFY_FD="+fd)
+		if out, err := cmd.CombinedOutput(); err == nil || strings.Contains(string(out), "the-command-ran") {
+			t.Errorf("with the stage variable set to %q by its caller the helper ran its command: %v %s", fd, err, out)
+		}
+	}
+}
+
+// TestASupervisedCommandIsStillTheHelpersCommand_REQ_SBX_008: the helper that stays to
+// supervise is to its caller what the command was: its output is the command's, its exit
+// code is the command's, and when it is killed the command dies with it. That last holds for
+// the command itself; what the command started is ended by whoever launched the helper in a
+// session of its own, as the daemon does.
+func TestASupervisedCommandIsStillTheHelpersCommand_REQ_SBX_008(t *testing.T) {
+	b := newBench(t)
+	if !b.sb.Status().Network {
+		if os.Getenv("UMBRAL_REQUIRE_SANDBOX") == "1" {
+			t.Fatalf("UMBRAL_REQUIRE_SANDBOX is set and this kernel cannot confine the network: %+v", b.sb.Status())
+		}
+		t.Skipf("this kernel's Landlock has no network rules: %+v", b.sb.Status())
+	}
+	free := freePort(t)
+	n, err := strconv.ParseUint(free, 10, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := b.profile(t)
+	p.Net = &domain.Net{Bind: []uint16{uint16(n)}}
+	confined := func(script string) *exec.Cmd {
+		argv, err := b.sb.Command(p, []string{"/bin/sh", "-c", script})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return exec.CommandContext(t.Context(), argv[0], argv[1:]...)
+	}
+	out, err := confined("echo said; exit 7").Output()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 7 || string(out) != "said\n" {
+		t.Errorf("the supervised command gave %q and %v, want its output and exit code 7", out, err)
+	}
+	// Nothing of the helper's own reaches the command: no descriptor beyond the three, and
+	// no variable of its stages. Nor one the helper's own parent left open without
+	// close-on-exec, as a CI runner does: this test opens one before starting it.
+	stray, err := unix.Open("/dev/null", unix.O_RDONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Close(stray) }()
+	out, err = confined("ls /proc/self/fd | tr '\\n' ' '; env | grep -c UMBRAL_SANDBOX").Output()
+	if got := strings.TrimSpace(string(out)); got != "0 1 2 3 0" {
+		// 3 is ls's own, open on the directory it lists.
+		t.Errorf("the command was started with %q (%v), want descriptors 0 to 2 and no stage variable", got, err)
+	}
+
+	cmd := confined("echo $$; exec sleep 300")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var pid int
+	if _, err := fmt.Fscan(stdout, &pid); err != nil || pid <= 0 {
+		t.Fatalf("the command's pid: %d, %v", pid, err)
+	}
+	if pid == cmd.Process.Pid {
+		t.Fatal("the command is the helper's own process: nothing supervises it")
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	for range 200 {
+		if err := unix.Kill(pid, 0); err != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = unix.Kill(pid, unix.SIGKILL)
+	t.Error("the command outlived its supervisor")
 }
 
 // TestANetworkProfileCannotNameEveryPort_REQ_SBX_008: a port of zero is the kernel's choice of

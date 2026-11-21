@@ -169,6 +169,11 @@ func Render(p domain.Profile) (string, error) {
 		}
 		for _, port := range p.Net.Bind {
 			fmt.Fprintf(&b, "(allow network-bind (local tcp \"localhost:%d\"))\n", port)
+			// A `local` filter's host is not checked, and inbound is checked at `listen`, which
+			// has no peer, not at each connection accepted (measured on the runner): a listen on
+			// every interface passes, and a connection from outside the machine reaches it. No
+			// rule here closes that: REQ-SBX-008's macOS limit, accepted by the Tech Lead on
+			// 2026-11-21.
 			fmt.Fprintf(&b, "(allow network-inbound (local tcp \"localhost:%d\"))\n", port)
 		}
 	}

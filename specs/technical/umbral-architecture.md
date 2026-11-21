@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.104 |
-| **Date** | 2026-11-20 |
+| **Version** | 1.106 |
+| **Date** | 2026-11-21 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
 | **Reference architecture** | `docs/ARCHITECTURE.md` · `docs/adr/ADR-0001-architectural-style.md` |
@@ -1583,16 +1583,44 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
       host — a port is open on every host — and they are TCP's alone, so the seccomp filter
       then leaves only a TCP socket of either Internet family and a netlink one of the
       routing protocol: a datagram, a raw socket, a stream that is not TCP (MPTCP, SCTP), any
-      other netlink protocol and every other family fail with `EACCES` when made. Landlock has no right for `listen`, and a socket that listens
-      without a bind is given a port by the kernel: the filter refuses `listen` to a profile
-      with no port to bind; a profile that binds keeps it, and with it connections arriving
-      on a port of the kernel's choosing — which the Tech Lead decided on 2026-11-20 is to be
-      closed, by a supervisor that performs `listen` for the process (the delta's "The Tech
-      Lead on the `listen` limit"; not built yet). A fast-open send is refused by the kernel.
-    - *macOS*: `(deny network*)`, then the loopback's ports by `tcp` filters, so a datagram
+      other netlink protocol and every other family fail with `EACCES` when made.
+      A fast-open send is refused by the kernel.
+    - *Listening, on Linux* (piece a2). Landlock has no right for `listen` and names no
+      address: a socket that listens without a bind gets a port of the kernel's choosing,
+      and a bind on every interface passes the port rule. Neither it nor a seccomp filter
+      can read what a socket is bound to. A profile with no port to bind is refused
+      `listen` by the filter. One that may bind is run under a supervisor: the helper
+      starts itself again as a second stage, which confines itself, installs the filter
+      with a notification on `listen`, sends that descriptor up a socket pair and becomes
+      the command; the first stage stays as its parent. For each `listen` it takes its own
+      duplicate of the caller's socket (`pidfd_getfd`), reads its address, and — for a
+      loopback address of either family on a port of the profile — performs the `listen`
+      itself on that duplicate; anything else is `EACCES`. It never lets the caller's own
+      call go on, where another thread could have changed what the number names. The
+      helper exits as the command did — 128 plus the signal for one a signal killed —
+      forwards the termination signals it is sent, and the command is killed when the
+      helper dies; what the command started is ended by the session's reaper, as before.
+      The helper ends with its command. A process left behind then gets `ENOSYS` from
+      `listen`, and cannot answer its own: the filter refuses `seccomp` asked for a
+      notification descriptor, which the kernel would otherwise consult before the
+      profile's (spec-guardian's review did so, and listened on every interface). The
+      supervisor answers its descendants only — a process reparented away is `EACCES`, as
+      is one whose descriptors it cannot take: a process that is not dumpable, and every
+      process where Yama's ptrace scope is 2 or 3. The supervisor is not confined: it
+      holds no input of the command's but a descriptor number.
+      - *macOS*: `(deny network*)`, then the loopback's ports by `tcp` filters, so a datagram
       to an allowed port is refused too; and the Mach services that reach the network for
       their caller — name resolution, the network's configuration, certificate checks — are
       left out, so nothing is resolved and no certificate is checked under such a profile.
+      It cannot enforce the rule on listening, and a profile that binds is still rendered:
+      a limit the Tech Lead accepted on 2026-11-21 (REQ-SBX-008's macOS exception), which
+      `TestMacOSLeavesAConfinedListenerOpenToTheOutside_REQ_SBX_008` measures so that it
+      reddens the day macOS closes it. Measured on the runner on 2026-11-21: a
+      `local` filter's host is not checked, so a listen on `0.0.0.0` on an allowed port
+      passed, and a connection to the machine's outward address reached it. A rule that
+      also required a loopback peer refused the listen itself. Allowing the port, refusing
+      every peer and letting the loopback's back in listened and still let the outside
+      connection through: inbound is checked at `listen`, which has no peer.
   - *macOS* (delta `2026-11-sandbox-macos`, T-HRD-16): the same profile rendered for
     `/usr/bin/sandbox-exec`, with no helper. Writes are refused and then allowed under the
     write entries and on the device files; reads, `stat` included, are refused under the
@@ -2492,3 +2520,5 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.102 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-hosted-terminal-sandbox` (T-HRD-21, ratified 2026-11-20): §5.3 and §5.3f a hosted thread's terminals are confined under `full-auto`, each with a directory of its own |
 | 1.103 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a, approved): §5.3f a profile's network, on Linux and macOS, and its limits |
 | 1.104 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-write-root-anchor` (T-HRD-22, proposed): §5.3 and §5.3f, a file inside the write root is written and read from the write root, so a directory replaced by a link after the decision does not lead out of it |
+| 1.105 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a2): §5.3f, a process that may bind listens through a supervisor, on the loopback and its ports only |
+| 1.106 | 2026-11-21 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a2), measured on the macOS runner: §5.3f, macOS cannot enforce the rule on listening; the limit, accepted by the Tech Lead, is measured |

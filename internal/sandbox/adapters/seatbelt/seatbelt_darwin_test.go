@@ -1,6 +1,7 @@
 package seatbelt
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/ecrespo/umbral/internal/sandbox/domain"
 )
@@ -341,9 +343,30 @@ func TestTheAdapterSaysWhatItEnforces_REQ_SBX_003(t *testing.T) {
 // port it may connect to, one it may not, one it may bind and one it may not.
 const probeNet = "--probe-net"
 
+// probeInbound makes the test binary listen on every interface on the port it is given, say
+// so, and report whether a connection reached it.
+const probeInbound = "--probe-inbound"
+
 // TestMain makes the test binary its own network probe: run with probeNet it tries each thing
 // from inside whatever sandbox it was started in, and prints `ok` or `refused` for each.
 func TestMain(m *testing.M) {
+	if len(os.Args) == 3 && os.Args[1] == probeInbound {
+		ln, err := net.Listen("tcp4", "0.0.0.0:"+os.Args[2])
+		if err != nil {
+			fmt.Println("listen-refused")
+			os.Exit(0)
+		}
+		fmt.Println("listening")
+		_ = ln.(*net.TCPListener).SetDeadline(time.Now().Add(4 * time.Second))
+		c, err := ln.Accept()
+		if err != nil {
+			fmt.Println("none")
+			os.Exit(0)
+		}
+		_ = c.Close()
+		fmt.Println("accepted")
+		os.Exit(0)
+	}
 	if len(os.Args) == 6 && os.Args[1] == probeNet {
 		said := func(err error) string {
 			if err != nil {
@@ -370,11 +393,31 @@ func TestMain(m *testing.M) {
 			}
 			return err
 		}
+		// The port it may bind, on every interface. The rules let this bind through, and
+		// TestMacOSLeavesAConfinedListenerOpenToTheOutside_REQ_SBX_008 measures that a
+		// connection from outside reaches it: REQ-SBX-008's macOS limit, accepted.
+		everywhere := func(port string) error {
+			ln, err := net.Listen("tcp4", "0.0.0.0:"+port)
+			if err == nil {
+				_ = ln.Close()
+			}
+			return err
+		}
+		// No bind at all: the kernel would choose the port, on every interface.
+		unbound := func() error {
+			fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = syscall.Close(fd) }()
+			return syscall.Listen(fd, 1)
+		}
 		// A datagram to the very port the profile may connect to: the port is TCP's alone.
-		fmt.Printf("connect-ok=%s connect-no=%s bind-ok=%s bind-no=%s bind-any=%s udp=%s udp-to-its-port=%s\n",
+		fmt.Printf("connect-ok=%s connect-no=%s bind-ok=%s bind-no=%s bind-any=%s udp=%s udp-to-its-port=%s listen-everywhere=%s listen-unbound=%s\n",
 			said(dial("tcp4", os.Args[2])), said(dial("tcp4", os.Args[3])),
 			said(listen(os.Args[4])), said(listen(os.Args[5])), said(listen("0")),
-			said(dial("udp4", os.Args[3])), said(dial("udp4", os.Args[2])))
+			said(dial("udp4", os.Args[3])), said(dial("udp4", os.Args[2])),
+			said(everywhere(os.Args[4])), said(unbound()))
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
@@ -438,10 +481,95 @@ func TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008(t *testing.T) {
 	}
 	p := b.profile(t)
 	p.Net = &domain.Net{Connect: []uint16{port(allowed)}, Bind: []uint16{port(bindOK)}}
-	if got, want := run(p), "connect-ok=ok connect-no=refused bind-ok=ok bind-no=refused bind-any=refused udp=refused udp-to-its-port=refused"; got != want {
+	if got, want := run(p), "connect-ok=ok connect-no=refused bind-ok=ok bind-no=refused bind-any=refused udp=refused udp-to-its-port=refused listen-everywhere=ok listen-unbound=refused"; got != want {
 		t.Errorf("with a network profile the probe says %q, want %q", got, want)
 	}
-	if got, want := run(b.profile(t)), "connect-ok=ok connect-no=ok bind-ok=ok bind-no=ok bind-any=ok udp=ok udp-to-its-port=ok"; got != want {
+	if got, want := run(b.profile(t)), "connect-ok=ok connect-no=ok bind-ok=ok bind-no=ok bind-any=ok udp=ok udp-to-its-port=ok listen-everywhere=ok listen-unbound=ok"; got != want {
 		t.Errorf("without a network profile the probe says %q, want %q: the test proves nothing", got, want)
+	}
+}
+
+// outward is an IPv4 address of this machine's that is not the loopback's, or "".
+func outward(t *testing.T) string {
+	t.Helper()
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, i := range ifaces {
+		if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := i.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil && !n.IP.IsLoopback() && !n.IP.IsLinkLocalUnicast() {
+				return n.IP.String()
+			}
+		}
+	}
+	return ""
+}
+
+// TestMacOSLeavesAConfinedListenerOpenToTheOutside_REQ_SBX_008 measures REQ-SBX-008's macOS
+// limit: the rules name the loopback, but a `local` filter's host is not checked and inbound
+// is checked at `listen`, not at each connection, so a listener on every interface on a port
+// the profile may bind is reached from the machine's outward address. The loopback's
+// connection proves the probe. Should this fail, macOS refuses that connection now: the limit
+// is gone, and REQ-SBX-008 and this test say so.
+func TestMacOSLeavesAConfinedListenerOpenToTheOutside_REQ_SBX_008(t *testing.T) {
+	b := newBench(t)
+	addr := outward(t)
+	if addr == "" {
+		t.Skip("this machine has no outward IPv4 address to connect from")
+	}
+	reached := func(host string) string {
+		t.Helper()
+		ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := ln.Addr().(*net.TCPAddr).Port
+		_ = ln.Close()
+		p := b.profile(t)
+		p.Net = &domain.Net{Bind: []uint16{uint16(port)}}
+		argv, err := b.sb.Command(p, []string{os.Args[0], probeInbound, strconv.Itoa(port)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
+		out, err := cmd.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = cmd.Wait() }()
+		lines := bufio.NewScanner(out)
+		if !lines.Scan() {
+			t.Fatal("the probe said nothing")
+		}
+		if first := lines.Text(); first != "listening" {
+			return first
+		}
+		d := net.Dialer{Timeout: 2 * time.Second}
+		if c, err := d.DialContext(t.Context(), "tcp4", net.JoinHostPort(host, strconv.Itoa(port))); err == nil {
+			_ = c.Close()
+		} else {
+			t.Logf("dial %s: %v", host, err)
+		}
+		if !lines.Scan() {
+			t.Fatal("the probe said nothing after listening")
+		}
+		return lines.Text()
+	}
+	if got := reached("127.0.0.1"); got != "accepted" {
+		t.Fatalf("a connection over the loopback: the probe says %q, want accepted: the test proves nothing", got)
+	}
+	if got := reached(addr); got != "accepted" {
+		t.Errorf("a connection to %s, the machine's outward address: the probe says %q; the limit REQ-SBX-008 records is gone", addr, got)
 	}
 }
