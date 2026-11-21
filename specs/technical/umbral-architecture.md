@@ -1582,7 +1582,9 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
       other netlink protocol and every other family fail with `EACCES` when made. Landlock has no right for `listen`, and a socket that listens
       without a bind is given a port by the kernel: the filter refuses `listen` to a profile
       with no port to bind; a profile that binds keeps it, and with it connections arriving
-      on a port of the kernel's choosing. A fast-open send is refused by the kernel.
+      on a port of the kernel's choosing — which the Tech Lead decided on 2026-11-20 is to be
+      closed, by a supervisor that performs `listen` for the process (the delta's "The Tech
+      Lead on the `listen` limit"; not built yet). A fast-open send is refused by the kernel.
     - *macOS*: `(deny network*)`, then the loopback's ports by `tcp` filters, so a datagram
       to an allowed port is refused too; and the Mach services that reach the network for
       their caller — name resolution, the network's configuration, certificate checks — are
@@ -2483,5 +2485,5 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.99 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-sandbox-macos` (T-HRD-16, ratified 2026-11-20): §5.3f the macOS adapter, `sandbox-exec` with a rendered profile |
 | 1.100 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-libffi-load` (T-HRD-18, ratified 2026-11-20): §9.3 on macOS and Windows the daemon loads only a libffi whose bytes it has checked, through a patched copy of the binding |
 | 1.101 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-full-auto-sandbox` (T-HRD-17, ratified 2026-11-20): §5.3 `full-auto`'s boundary is the kernel's where the sandbox enforces; §5.3f a `full-auto` thread's shell is confined, on the turn's own mode or the thread's record, the profile's read entries, the `ShellConfiner` port |
-| 1.102 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-hosted-terminal-sandbox` (T-HRD-21, proposed): §5.3 and §5.3f a hosted thread's terminals are confined under `full-auto`, each with a directory of its own |
+| 1.102 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-hosted-terminal-sandbox` (T-HRD-21, ratified 2026-11-20): §5.3 and §5.3f a hosted thread's terminals are confined under `full-auto`, each with a directory of its own |
 | 1.103 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a, approved): §5.3f a profile's network, on Linux and macOS, and its limits |

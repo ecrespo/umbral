@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-11-20 by the Tech Lead ("Como recomiendas")`: the five open questions are answered as recommended. **Piece a is implemented** (2026-11-20); pieces b and c are not. The section "What piece a built, and what it found" amends decisions 4 and 5, each stricter, and raises one new limit: **that section awaits the Tech Lead**, and REQ-SBX-008 says so where it states the limit |
+| **Status** | `APPROVED 2026-11-20 by the Tech Lead`, twice: the five questions as recommended ("Como recomiendas"), and then the section "What piece a built, and what it found" ("ratifico el delta 2026-11-model-relay") — **except its `listen` limit, which is not accepted and is to be closed** (see "The Tech Lead on the `listen` limit"). Piece a is implemented; the hardening, b and c are not |
 | **Date** | 2026-11-19 |
 | **Task** | T-HRD-20 |
 | **REQ** | will add REQ-SBX-008 and REQ-SBX-009 (REQ-SBX-007 was taken by T-HRD-21 on 2026-11-20) and amend REQ-ACP-007 and REQ-ACP-009; none is in the PRD yet |
@@ -127,10 +127,36 @@ as proposed, each stricter, and one limit is new.
   send may not be refused; whether macOS's directory service resolves a host name for its
   caller.
 
+## The Tech Lead on the `listen` limit (2026-11-20)
+
+"Pienso que puede ser un problema de seguridad, debería blindarse para no aceptar
+comunicaciones externas." The limit is not disclosed and lived with: a confined agent is to
+accept no connection from outside the machine. It is a piece of its own, before b and c,
+since it changes how the helper runs a process with a network.
+
+- **What must hold.** A process with a network profile listens only on a loopback address
+  and only on a port its profile lets it bind. That closes two things, not one: the socket
+  that listens without a bind, and a bind on `0.0.0.0:<its port>`, which Landlock's rule
+  allows since it names no address.
+- **How, on Linux.** Neither Landlock nor a seccomp filter can see what a socket is bound
+  to. `listen` is handed to a supervisor through seccomp's user notification: the helper
+  stays as the confined process's parent, takes the socket itself (`pidfd_getfd`), reads
+  what it is bound to, and performs the `listen` on that same socket or refuses it. It
+  never lets the call continue in the process, where another thread could swap the
+  descriptor between the check and the call. A process that is no longer the supervisor's
+  descendant is refused.
+- **macOS** names the loopback in its rules already; whether a listen without a bind is
+  refused there is measured by the runner.
+- **REQ-SBX-008** loses its sentence on connections arriving and gains the rule above, in
+  the change that makes it true.
+
 ## Tasks proposed
 
 T-HRD-20 is three pieces, each mergeable on its own:
 
+- **T-HRD-20a2 · No connection from outside.** The supervisor for `listen`, above; kernel
+  tests that a listen without a bind and a listen bound to every address are refused and
+  one on the loopback's allowed port works.
 - **T-HRD-20a · The network profile.** `Profile.Net` (ports), Landlock's port rules, the
   datagram filter, the macOS rules; kernel tests for each; no caller yet.
 - **T-HRD-20b · The relay.** `internal/acp` gains a port for it and `cmd/umbrald` an
