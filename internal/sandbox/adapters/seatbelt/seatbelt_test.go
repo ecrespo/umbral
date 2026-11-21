@@ -1,6 +1,7 @@
 package seatbelt
 
 import (
+	"errors"
 	"runtime"
 	"slices"
 	"strings"
@@ -230,28 +231,43 @@ func TestTheCommandRunsThroughAppleTool_REQ_SBX_001(t *testing.T) {
 	}
 }
 
+// TestAProfileThatBindsIsRefusedOnMacOS_REQ_SBX_008: sandbox-exec checks neither the host of a
+// bind nor a connection when it is accepted (measured on the runner), so a listener on a port
+// of the profile would be reached from outside the machine. That is a network the kernel
+// cannot enforce, and REQ-SBX-008 refuses it rather than run the process without it.
+func TestAProfileThatBindsIsRefusedOnMacOS_REQ_SBX_008(t *testing.T) {
+	posixPaths(t)
+	p := agent
+	p.Net = &domain.Net{Connect: []uint16{51234}, Bind: []uint16{4096}}
+	if text, err := Render(p); !errors.Is(err, domain.ErrNoNetwork) {
+		t.Errorf("a profile that binds rendered %v:\n%s", err, text)
+	}
+	on := &Sandbox{status: domain.Status{State: domain.StateEnforcing, Mechanism: Mechanism, Network: true}}
+	if argv, err := on.Command(p, []string{"/bin/agent"}); !errors.Is(err, domain.ErrNoNetwork) {
+		t.Errorf("a profile that binds was run as %q, %v", argv, err)
+	}
+}
+
 // TestANetworkProfileOpensOnlyItsLoopbackPorts_REQ_SBX_008: a profile that names a network
-// refuses all of it, the local sockets and the resolver's included, and then allows the
-// loopback's ports it names — a connection out to one kind, a bind and what arrives on the
-// other. A profile without one keeps the network open and says nothing of ports.
+// refuses all of it, the local sockets and the resolver's included, and then allows a
+// connection out to the loopback's ports it names, by TCP. A profile without one keeps the
+// network open and says nothing of ports.
 func TestANetworkProfileOpensOnlyItsLoopbackPorts_REQ_SBX_008(t *testing.T) {
 	posixPaths(t)
 	p := agent
-	p.Net = &domain.Net{Connect: []uint16{4096, 51234}, Bind: []uint16{4096}}
+	p.Net = &domain.Net{Connect: []uint16{4096, 51234}}
 	text, err := Render(p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	order(t, text, `(deny network*)`,
 		`(allow network-outbound (remote tcp "localhost:4096"))`,
-		`(allow network-outbound (remote tcp "localhost:51234"))`,
-		`(allow network-bind (local tcp "localhost:4096"))`,
-		`(allow network-inbound (local tcp "localhost:4096"))`)
-	if strings.Count(text, "(allow network-") != 4 {
+		`(allow network-outbound (remote tcp "localhost:51234"))`)
+	if strings.Count(text, "(allow network-") != 2 {
 		t.Errorf("the profile opens more of the network than its ports:\n%s", text)
 	}
-	if strings.Contains(text, resolver) || strings.Contains(text, `"localhost:51234"))`+"\n(allow network-bind (local tcp \"localhost:51234\")") {
-		t.Errorf("the resolver's socket or a bind on a connect port is open:\n%s", text)
+	if strings.Contains(text, resolver) || strings.Contains(text, "network-bind") || strings.Contains(text, "network-inbound") {
+		t.Errorf("the resolver's socket, a bind or a listen is open:\n%s", text)
 	}
 	// An `ip` filter would open the port to a datagram too.
 	if strings.Contains(text, " ip \"") {

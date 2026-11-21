@@ -100,8 +100,9 @@ func (s *Sandbox) Command(p domain.Profile, argv []string) ([]string, error) {
 //     directories above such an entry answer `stat`, which resolving a path needs.
 //   - Local sockets: no connection to one, as on Linux, where a process reached the user's
 //     session services through them. The resolver's stays.
-//   - The network, when the profile names one: refused whole, then allowed on the loopback's
-//     ports it names. Without one it is left open.
+//   - The network, when the profile names one: refused whole, then a connection out allowed
+//     to the loopback's ports it names. Without one it is left open. A profile that binds
+//     is refused: no rule keeps a listener here from the outside (REQ-SBX-008).
 //   - Launch Services, Apple events and launchd jobs: refused. Each starts a process outside
 //     the sandbox for the caller.
 //   - Mach services: every lookup refused but the few in services.
@@ -109,6 +110,13 @@ func (s *Sandbox) Command(p domain.Profile, argv []string) ([]string, error) {
 func Render(p domain.Profile) (string, error) {
 	if err := p.Validate(); err != nil {
 		return "", err
+	}
+	// sandbox-exec checks neither the host of a bind nor a connection when it is accepted —
+	// inbound is checked at `listen`, which has no peer — so a process allowed to bind a port
+	// could listen on every interface and be reached from outside the machine (measured on
+	// the runner). That is a network this kernel cannot enforce: refused, not run without.
+	if p.Net != nil && len(p.Net.Bind) > 0 {
+		return "", fmt.Errorf("%w: macOS cannot keep a listener off the outside, so a profile may not bind", domain.ErrNoNetwork)
 	}
 	// Every path is checked, whether or not a rule comes of it below.
 	for _, list := range [][]string{p.Write, p.DenyRead, p.Read} {
@@ -160,20 +168,12 @@ func Render(p domain.Profile) (string, error) {
 		}
 	} else {
 		// All of it refused — every protocol, the local sockets and the resolver's with them —
-		// and then the loopback's ports the profile names. Unlike Landlock's, these rules name
-		// the host: a port is not opened on any other.
+		// and then a connection out to the loopback's ports the profile names. Unlike Landlock's,
+		// these rules name the host: a port is not opened on any other.
 		b.WriteString("(deny network*)\n")
 		// TCP by name: an `ip` filter would open the same port to a datagram.
 		for _, port := range p.Net.Connect {
 			fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"localhost:%d\"))\n", port)
-		}
-		for _, port := range p.Net.Bind {
-			fmt.Fprintf(&b, "(allow network-bind (local tcp \"localhost:%d\"))\n", port)
-			// A `local` filter's host is not checked, and inbound is checked at `listen`, which
-			// has no peer, not at each connection accepted (measured on the runner): a listen on
-			// every interface passes, and a connection from outside the machine reaches it. No
-			// rule here closes that; it is REQ-SBX-008's macOS limit.
-			fmt.Fprintf(&b, "(allow network-inbound (local tcp \"localhost:%d\"))\n", port)
 		}
 	}
 	b.WriteString("(deny lsopen)\n(deny appleevent-send)\n(deny job-creation)\n")
