@@ -3,15 +3,10 @@ package client
 import (
 	"net"
 
-	"github.com/Microsoft/go-winio"
-
 	"github.com/ecrespo/umbral/internal/config"
 )
 
 // listenFake serves a fake daemon on the pipe a client dials for socket.
 func listenFake(socket string) (net.Listener, error) {
-	return winio.ListenPipe(config.PipeName(socket), &winio.PipeConfig{
-		InputBufferSize:  config.PipeBufferSize,
-		OutputBufferSize: config.PipeBufferSize,
-	})
+	return config.ListenPipe(config.PipeName(socket), "")
 }

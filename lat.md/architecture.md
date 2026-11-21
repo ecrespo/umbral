@@ -440,6 +440,14 @@ The Windows twins are the instance lock ([[internal/config/lock_windows.go#acqui
 
 On Windows the protocol runs on a named pipe instead of the socket: [[internal/config/pipe.go#PipeName]] derives it from the runtime directory, [[internal/api/bind_windows.go#bind]] serves it with a DACL admitting the current user alone and fails when the pipe already exists, and [[internal/client/dial_windows.go#dialSocket]] dials it. The name is predictable, so the client calls [[internal/config/pipeowner_windows.go#VerifyPipeServer]] before its handshake and refuses a pipe another user's process serves, which keeps the token from an impostor.
 
+### A pipe listener's close returns
+
+Every pipe listener a client can hang up on is made by [[internal/config/pipelisten_windows.go#ListenPipe]], whose `Close` returns whatever its clients do; go-winio's own can wait for ever (T-HRD-23).
+
+go-winio v0.6.2 hands its accept loop one close signal and waits for the loop to end. A signal taken while the loop waits for a client is lost when a client that connected and hung up at once ends that wait with `ERROR_NO_DATA`: the loop reads the error as "try again" and waits for the next client. The loop reads a new signal on each such wait, so [[internal/config/pipelisten_windows.go#pipeListener#Close]] calls go-winio's `Close` again every [[internal/config/pipelisten_windows.go#closeAgain]] until the first call has returned. Each extra call returns when the loop ends, so none is left behind.
+
+The daemon's pipe in [[internal/api/bind_windows.go#bind]] and the fake daemons of `internal/client` and `cmd/umb`'s tests are made this way. `TestAPipeListenersCloseReturns_REQ_WIN_001` races a close against clients that connect and hang up, on the Windows runner only. Two tests' listeners that no client can hang up on while they close are still go-winio's own.
+
 ### ConPTY, PowerShell and Job Objects
 
 A Windows shell runs on ConPTY ([[internal/sessions/adapters/pty/pty_windows.go#Open]]) inside a Job Object that kills its processes when closed: a hang-up closes the pseudo console, a kill closes the job, and the agent's interrupt types Ctrl-C.

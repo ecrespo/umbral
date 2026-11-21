@@ -509,6 +509,25 @@ its matrix lists commands.
   write root through a link is refused whenever the link appeared. Whether this task gates
   release 0.1 is the Tech Lead's to decide.
 
+### [x] 2026-11-20 T-HRD-23 · The pipe listener's close can wait for ever
+- **What:** found on 2026-11-20 while a Windows test hung for the suite's ten minutes.
+  go-winio v0.6.2's listener hands its accept loop one close signal and waits for the loop to
+  end. If the signal is taken while the loop waits for a client, and a client that connected
+  and hung up at once ends that wait with `ERROR_NO_DATA`, the loop reads the error as "try
+  again" and waits for the next client with the signal spent: `Close` never returns. The
+  daemon closes its pipe this way when it stops (`internal/api/bind_windows.go`), and so do
+  the fake daemons of `internal/client` and `cmd/umb`'s tests. First a test on the Windows
+  runner that races a close against clients hanging up, red with go-winio's own listener;
+  then one constructor for every pipe listener whose `Close` signals again until the loop
+  has ended.
+- **REQ:** Art. 2; REQ-WIN-001; REQ-TERM-003 (a daemon that is told to stop, stops)
+- **Files:** `internal/config/pipelisten_windows.go`, `internal/api/bind_windows.go`,
+  `internal/client/listen_windows_test.go`, `cmd/umb/listen_windows_test.go`
+- **Depends on:** —
+- **Done:** the test fails on the Windows runner before the fix and passes after it, and no
+  pipe listener in the tree is closed through go-winio's `Close` alone where a client can
+  hang up during it.
+
 ## Traceability matrix (hardening)
 
 | REQ | Tasks | Verification |
@@ -539,6 +558,7 @@ its matrix lists commands.
 | REQ-SBX-008 | T-HRD-20 (piece a) | TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008 (Landlock, and `sandbox-exec` on the macOS runner), TestANetworkProfileIsRefusedWhereItCannotBeEnforced_REQ_SBX_008, TestANetworkProfileIsRefusedWhereNothingIsEnforced_REQ_SBX_008, TestANetworkProfileCannotNameEveryPort_REQ_SBX_008, TestANetworkProfileOpensOnlyItsLoopbackPorts_REQ_SBX_008, TestAProfilesNetworkIsCarriedToTheHelper_REQ_SBX_008 |
 | REQ-AGT-013 | T-HRD-22 | TestAWriteStaysUnderItsWriteRoot_REQ_AGT_013 |
 | REQ-ACP-004 | T-HRD-22 | TestAHostedWriteAndReadStayUnderTheWriteRoot_REQ_ACP_004, TestAHostedFileRequestIsReachedFromItsWriteRoot_REQ_ACP_004, TestACPWriteOutsideTheWorktreeAsks_REQ_ACP_004, TestACPFileRequestsArePerformedOnTheDecidedTarget_REQ_ACP_004 |
+| REQ-WIN-001 | T-HRD-23 | TestAPipeListenersCloseReturns_REQ_WIN_001 (Windows runner) |
 
 ## Execution log
 
@@ -586,3 +606,5 @@ its matrix lists commands.
 | 2026-11-20 | T-HRD-20 | piece a done | `Profile.Net` on Linux and macOS, with no caller (PRD F2 0.21 REQ-SBX-008, Tech 1.103 §5.3f). Tests first, against Landlock: a probe that tries each kind of socket, a connect and a bind on an allowed and a refused port, a bind on port 0, each right on the other's port, a listen without a bind and a fast-open send. Stricter than the delta in three places — the socket filter is an allow list, since a stream need not be TCP; macOS opens a port to TCP only; macOS leaves out the Mach services that use the network for their caller. **One new limit, for the Tech Lead:** a process that may bind keeps `listen`, and a socket that listens without a bind gets a port of the kernel's choosing; Landlock has no right for it. Three of these were found by the commit's automated security review; spec-guardian's then found the IF branch untested and a profile with a network passed through unconfined where nothing is enforced, both fixed. The delta's new section amends an approved delta and awaits the Tech Lead. macOS is verified by its runner only. Pieces b and c are not started. |
 | 2026-11-20 | T-HRD-21, T-HRD-20 | ratified; one limit refused | The Tech Lead ratified delta `2026-11-hosted-terminal-sandbox`, archived, and the section piece a added to delta `2026-11-model-relay` — but **not its `listen` limit**: "debería blindarse para no aceptar comunicaciones externas". A confined agent is to accept no connection from outside the machine; that is piece a2, before b and c. The same day the Tech Lead asked for T-HRD-22 now and for a task on the go-winio listener's hang. |
 | 2026-11-20 | T-HRD-22 | done; its delta awaits review | Reproduced first: with the decision made on `worktree/a/b/f` and `a` then replaced by a link out of the worktree, `write_file` and `edit_file` rewrote the file outside, a new file was created outside, and a hosted agent's read returned the outside file — four red cases, no window to widen, since the write takes the decided target and resolves nothing again. The write opened the target's nearest directory, which holds nothing above it. Now a target inside the write root, by the policy's own test, is written and read through an `os.Root` on the write root; one outside it, which a person approved, as before. `read_file` reads the target its grant was checked against instead of resolving again. The write root travels with a hosted request to the code that opens the file. Delta `2026-11-write-root-anchor` (Tech 1.104). spec-guardian's review then found the write root compared as the thread spells it, which may go through a link while the target never does, so that such a root never contained its own files: reproduced with four more red cases, and fixed by resolving the root as the policy does. Fourteen mutations, twelve killed; the two that survive drop the root at `write_file`'s and `edit_file`'s own write, where the read of the current content refuses first through the same root. Not closed: `grep`, `glob`, `list_dir` and the rules files are read by path, which gains Umbral's own agent nothing; a hard link in the worktree to a file outside is read by a hosted agent; and Windows is not measured beyond the suite. |
+| 2026-11-20 | T-HRD-23 | added | Opened at the Tech Lead's order ("Abre la tarea resolviendo el cuelgue"). The hang was read in go-winio v0.6.2's `pipe.go` while fixing a test of T-HRD-17's pull request, and worked around there by ordering the test; the daemon's own listener and two packages' fake daemons still close through it. |
+| 2026-11-20 | T-HRD-23 | done | Test first, on the Windows runner, since nothing here runs Windows: `TestAPipeListenersCloseReturns_REQ_WIN_001` races a close against four clients connecting and hanging up, round after round. With go-winio's own listener it went red on the runner — round 287 of 300, `Close` not back in 10 s — which is the hang as read in `pipe.go`; one observation, so its rate under that load is known no better than "about once in three hundred closes". `config.ListenPipe` now makes every pipe listener: its `Close` calls go-winio's again every 50 ms until the first call returns, because the accept loop reads a new signal each time it waits for a client. The daemon's pipe and both packages' fake daemons use it. The rounds are 1500, so a listener that hangs at that rate would be missed about once in 150 runs. The fix runs nowhere but the Windows runner: its pull request is merged only on a green `windows` job, which is this task's Done line. Not done: `internal/config`'s own owner test and the squatter of `internal/api`'s test still make a go-winio listener directly, each closed only where no client can be hanging up; and go-winio is not patched or reported upstream. |
