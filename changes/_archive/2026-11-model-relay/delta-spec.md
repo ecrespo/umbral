@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-11-20 by the Tech Lead`, twice: the five questions as recommended ("Como recomiendas"), and then the section "What piece a built, and what it found" ("ratifico el delta 2026-11-model-relay") — **except its `listen` limit, which is not accepted and is to be closed** (see "The Tech Lead on the `listen` limit"). Pieces a, a2 and b are implemented — **a2 cannot be enforced on macOS, a limit the Tech Lead accepted on 2026-11-21** —; the sections of a2 and b are the implementing agent's under the Tech Lead's instruction of 2026-11-20 ("auto aprueba cualquier delta que aparezca e implementalo"); c is not |
+| **Status** | `RATIFIED 2026-11-21 by the Tech Lead ("apruebo las decisiones del delta 2026-11-model-relay")`, whole: the five questions and piece a's section approved on 2026-11-20 (its `listen` limit refused, then closed by a2), the macOS limit accepted on 2026-11-21, and the sections of a2, b and piece c's decisions 1–13. All three pieces are implemented (#103 … #107); folded into PRD F2 0.25, API 1.66, Tech 1.108, Data Model 1.29 and constitution 1.7, and archived |
 | **Date** | 2026-11-19 |
 | **Task** | T-HRD-20 |
 | **REQ** | will add REQ-SBX-008 and REQ-SBX-009 (REQ-SBX-007 was taken by T-HRD-21 on 2026-11-20) and amend REQ-ACP-007 and REQ-ACP-009; none is in the PRD yet |
