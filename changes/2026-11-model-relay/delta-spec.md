@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-11-20 by the Tech Lead`, twice: the five questions as recommended ("Como recomiendas"), and then the section "What piece a built, and what it found" ("ratifico el delta 2026-11-model-relay") — **except its `listen` limit, which is not accepted and is to be closed** (see "The Tech Lead on the `listen` limit"). Piece a is implemented; the hardening, b and c are not |
+| **Status** | `APPROVED 2026-11-20 by the Tech Lead`, twice: the five questions as recommended ("Como recomiendas"), and then the section "What piece a built, and what it found" ("ratifico el delta 2026-11-model-relay") — **except its `listen` limit, which is not accepted and is to be closed** (see "The Tech Lead on the `listen` limit"). Pieces a and a2 are implemented; a2's section is the implementing agent's under the Tech Lead's instruction of 2026-11-20 ("auto aprueba cualquier delta que aparezca e implementalo"); b and c are not |
 | **Date** | 2026-11-19 |
 | **Task** | T-HRD-20 |
 | **REQ** | will add REQ-SBX-008 and REQ-SBX-009 (REQ-SBX-007 was taken by T-HRD-21 on 2026-11-20) and amend REQ-ACP-007 and REQ-ACP-009; none is in the PRD yet |
@@ -149,6 +149,58 @@ since it changes how the helper runs a process with a network.
   refused there is measured by the runner.
 - **REQ-SBX-008** loses its sentence on connections arriving and gains the rule above, in
   the change that makes it true.
+
+## What piece a2 built (2026-11-20)
+
+The supervisor, on Linux, as the section above describes it, and the tests first.
+
+- **Measured before:** a process confined with a port to bind listened with no bind, on
+  `0.0.0.0:<its port>`, on `[::]:<its port>` and on the machine's outward address.
+  **After:** each is `permission denied`; the loopback's allowed port, of either family,
+  listens and accepts a connection, from any thread of the process.
+- **Two stages of the helper.** A process cannot be given a seccomp filter from outside, and
+  the filter's notification descriptor has to reach a process that is not under it. The
+  helper starts itself again with one end of a socket pair; the second stage confines
+  itself, sends the descriptor up, closes both and becomes the command. The stage is told by
+  a variable, removed before the command runs; set by anyone else it only makes the helper
+  fail, since there is nothing to send the descriptor to.
+- **What the caller sees is unchanged:** the helper's output and exit code are the
+  command's, and killing the helper kills the command (`PR_SET_PDEATHSIG`). The command is
+  now the helper's child, not the helper itself: the pid the daemon holds is the
+  supervisor's, in the same session.
+- **The rule** is a loopback address — `127.0.0.0/8` or `::1`, not an address mapped from
+  the other family — on a port of the profile's `bind`. A socket with no bind has port 0
+  and is refused.
+- **Fails closed.** The helper ends with its command; a process left behind then gets
+  `ENOSYS` from `listen`. **And it cannot become its own supervisor**: spec-guardian's
+  review of this piece had such a process install a filter of its own with a notification
+  descriptor — the kernel asks the newest filter that notifies — answer its own `listen`
+  with "go on", and listen on every interface. The profile's filter now refuses `seccomp`
+  asked for that descriptor, at any time; a refusal outranks a notification whatever is
+  added later. Reproduced red, then fixed.
+- **Descendants only.** The supervisor refuses a caller that is no longer below it — a
+  process whose parent exited while the supervisor runs. Yama's ptrace scope 1, Ubuntu's
+  default, already made that so, since only a descendant's descriptors can be taken; the
+  check makes it the same under scope 0. A process that is not dumpable is refused, and
+  under scope 2 or 3 every `listen` is, so there a confined agent cannot listen at all;
+  piece c reports that when it finds it.
+- **What killing the helper ends** is the command itself (`PR_SET_PDEATHSIG`). What the
+  command started is ended by the launcher's reaper of the helper's session, as before:
+  the pid the daemon holds is still the session's.
+- **For piece c, before a terminal uses it:** a command killed by a signal is reported as
+  exit 128 + signal; six termination signals are forwarded and the stop, continue and
+  window ones are not; on a terminal the helper would be the session's leader.
+- **The supervisor is not confined.** It reads one descriptor number from the command and
+  nothing else. A confined process cannot trace or signal it: Landlock refuses a process
+  outside its domain, and from kernel 6.12 its signals too.
+- **Not measured:** the descriptor swapped by another thread between the look and the call
+  — closed by construction, since the supervisor listens on its own duplicate, and with no
+  test; a process whose threads do not share descriptors; a kernel between 6.7 and 7.0.
+  The check that the notification is still its caller's (`NOTIF_ID_VALID`) has no test: the
+  one mutation of seventeen that survives on its own; the descendants check survives in
+  the kernel test wherever Yama already refuses, and is held by a test of its own.
+- **macOS:** the darwin kernel test now tries a listen on every interface and one with no
+  bind, and expects both refused; written blind, verified by its runner.
 
 ## Tasks proposed
 

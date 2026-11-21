@@ -106,21 +106,37 @@ func Exec(arg string, argv []string) error {
 	if err != nil {
 		return fmt.Errorf("sandbox: %w", err)
 	}
+	if supervised(p) && os.Getenv(stageEnv) == "" {
+		// A process that may bind is not left alone with `listen`: this process stays as
+		// its supervisor, and the command is run by a second stage.
+		return supervise(p, arg, argv)
+	}
 	// Landlock and no_new_privs are per thread, and exec keeps the calling thread's.
 	runtime.LockOSThread()
-	if err := restrict(p); err != nil {
+	notify, err := restrict(p)
+	if err != nil {
 		return err
+	}
+	if notify >= 0 {
+		if err := handUp(notify); err != nil {
+			return err
+		}
+	}
+	if err := os.Unsetenv(stageEnv); err != nil {
+		return fmt.Errorf("sandbox: %w", err)
 	}
 	return fmt.Errorf("sandbox: exec %s: %w", path, syscall.Exec(path, argv, os.Environ())) // #nosec G204 -- the command the daemon was configured to run, now confined
 }
 
-func restrict(p domain.Profile) error {
+// restrict confines the calling thread to p. Where p lets the process bind a port it returns
+// the descriptor its `listen` calls are notified on, and -1 otherwise.
+func restrict(p domain.Profile) (int, error) {
 	version := abi()
 	if version < minABI || auditArch == 0 {
-		return errors.New("sandbox: this system cannot confine a process")
+		return -1, errors.New("sandbox: this system cannot confine a process")
 	}
 	if p.Net != nil && version < netABI {
-		return errors.New("sandbox: this kernel's Landlock cannot confine the network")
+		return -1, errors.New("sandbox: this kernel's Landlock cannot confine the network")
 	}
 	rights := handled(version)
 	attr := unix.LandlockRulesetAttr{Access_fs: rights}
@@ -135,7 +151,7 @@ func restrict(p domain.Profile) error {
 	}
 	fd, _, errno := syscall.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET, uintptr(unsafe.Pointer(&attr)), unsafe.Sizeof(attr), 0) // #nosec G103 -- the kernel reads the struct during the call
 	if errno != 0 {
-		return fmt.Errorf("sandbox: create the ruleset: %w", errno)
+		return -1, fmt.Errorf("sandbox: create the ruleset: %w", errno)
 	}
 	ruleset := int(fd)
 	defer func() { _ = unix.Close(ruleset) }()
@@ -146,23 +162,23 @@ func restrict(p domain.Profile) error {
 	}
 	for _, path := range p.Write {
 		if err := allow(ruleset, path, rights, rights, nil); err != nil {
-			return err
+			return -1, err
 		}
 	}
 	for _, path := range domain.Devices {
 		if err := allow(ruleset, path, rights&^unix.LANDLOCK_ACCESS_FS_EXECUTE, rights, nil); err != nil {
-			return err
+			return -1, err
 		}
 	}
 	for _, path := range readable(denied) {
 		if err := allow(ruleset, path, readRights, rights, denied); err != nil {
-			return err
+			return -1, err
 		}
 	}
 	// A read entry lies inside a denied directory, which is why it needs a rule of its own.
 	for _, path := range p.Read {
 		if err := allow(ruleset, path, readRights, rights, nil); err != nil {
-			return err
+			return -1, err
 		}
 	}
 	if p.Net != nil {
@@ -177,17 +193,24 @@ func restrict(p domain.Profile) error {
 			rule := netPortAttr{allowedAccess: access, port: uint64(port)}
 			if _, _, errno := syscall.Syscall6(unix.SYS_LANDLOCK_ADD_RULE, uintptr(ruleset), ruleNetPort,
 				uintptr(unsafe.Pointer(&rule)), 0, 0, 0); errno != 0 { // #nosec G103 -- the kernel reads the struct during the call
-				return fmt.Errorf("sandbox: allow port %d: %w", port, errno)
+				return -1, fmt.Errorf("sandbox: allow port %d: %w", port, errno)
 			}
 		}
 	}
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
-		return fmt.Errorf("sandbox: no_new_privs: %w", err)
+		return -1, fmt.Errorf("sandbox: no_new_privs: %w", err)
 	}
 	if _, _, errno := syscall.Syscall(unix.SYS_LANDLOCK_RESTRICT_SELF, uintptr(ruleset), 0, 0); errno != 0 {
-		return fmt.Errorf("sandbox: restrict: %w", errno)
+		return -1, fmt.Errorf("sandbox: restrict: %w", errno)
 	}
-	return socketFilter(p.Net != nil, p.Net != nil && len(p.Net.Bind) == 0)
+	listen := listenAllowed
+	switch {
+	case supervised(p):
+		listen = listenNotified
+	case p.Net != nil:
+		listen = listenDenied
+	}
+	return socketFilter(p.Net != nil, listen)
 }
 
 // The seccomp filter's return values and the offsets of struct seccomp_data it reads.
@@ -226,12 +249,12 @@ const (
 // off the machine. A datagram, a raw socket, a stream that is not TCP — MPTCP, SCTP — a
 // netlink socket of any other protocol and every other family fail with EACCES.
 //
-// With noListen, the profile gives the process no port to listen on, and `listen` fails with
-// EACCES. Landlock cannot say it: a socket that listens without a bind is given a port by the
-// kernel, with no bind for a rule to refuse, and Landlock has no right for listen. A process
-// that may bind a port keeps `listen`, and with it that way to a port of the kernel's choosing
-// — for connections coming in, never going out. The delta records it.
-func socketFilter(net, noListen bool) error {
+// listen says what becomes of `listen`, which Landlock cannot: a socket that listens without
+// a bind is given a port by the kernel, with no bind for a rule to refuse, and Landlock has no
+// right for listen. A profile with a network and no port to bind is refused it, with EACCES.
+// One that may bind has each call handed to its supervisor (supervise_linux.go), and the
+// filter's notification descriptor is returned; otherwise -1 is.
+func socketFilter(net bool, listen listenRule) (int, error) {
 	denied := unix.SockFilter{Code: bpfReturn, K: seccompErrno | uint32(unix.EACCES)}
 	allowed := unix.SockFilter{Code: bpfReturn, K: seccompAllow}
 	filter := []unix.SockFilter{
@@ -244,8 +267,25 @@ func socketFilter(net, noListen bool) error {
 		{Code: bpfJumpEqual, Jt: 0, Jf: 1, K: unix.SYS_IO_URING_SETUP},
 		{Code: bpfReturn, K: seccompErrno | uint32(unix.ENOSYS)},
 	}
-	if noListen {
+	switch listen {
+	case listenDenied:
 		filter = append(filter, unix.SockFilter{Code: bpfJumpEqual, Jt: 0, Jf: 1, K: unix.SYS_LISTEN}, denied)
+	case listenNotified:
+		// No notification descriptor of the process's own. The kernel asks the newest filter
+		// that notifies, so a process with one would answer its own `listen` and tell the
+		// kernel to go on — once its supervisor is gone, since only one descriptor exists at
+		// a time. A refusal outranks a notification whatever filter is added later, and the
+		// flag is a register value, which a filter can read.
+		filter = append(filter,
+			unix.SockFilter{Code: bpfJumpEqual, Jt: 0, Jf: 4, K: unix.SYS_SECCOMP},
+			unix.SockFilter{Code: bpfLoadWord, K: offsetArg1},
+			unix.SockFilter{Code: bpfAnd, K: unix.SECCOMP_FILTER_FLAG_NEW_LISTENER},
+			unix.SockFilter{Code: bpfJumpEqual, Jt: 1, Jf: 0, K: 0},
+			unix.SockFilter{Code: bpfReturn, K: seccompErrno | uint32(unix.EPERM)},
+			unix.SockFilter{Code: bpfLoadWord, K: offsetSyscall},
+			unix.SockFilter{Code: bpfJumpEqual, Jt: 0, Jf: 1, K: unix.SYS_LISTEN},
+			unix.SockFilter{Code: bpfReturn, K: unix.SECCOMP_RET_USER_NOTIF})
+	case listenAllowed:
 	}
 	filter = append(filter,
 		unix.SockFilter{Code: bpfJumpEqual, Jt: 1, Jf: 0, K: unix.SYS_SOCKET},
@@ -278,12 +318,29 @@ func socketFilter(net, noListen bool) error {
 			allowed,
 		)
 	}
-	prog := unix.SockFprog{Len: uint16(len(filter)), Filter: &filter[0]}                                                               // #nosec G115 -- a few dozen instructions
-	if _, _, errno := syscall.Syscall(unix.SYS_SECCOMP, unix.SECCOMP_SET_MODE_FILTER, 0, uintptr(unsafe.Pointer(&prog))); errno != 0 { // #nosec G103 -- the kernel reads the program during the call
-		return fmt.Errorf("sandbox: seccomp: %w", errno)
+	prog := unix.SockFprog{Len: uint16(len(filter)), Filter: &filter[0]} // #nosec G115 -- a few dozen instructions
+	flags := uintptr(0)
+	if listen == listenNotified {
+		flags = unix.SECCOMP_FILTER_FLAG_NEW_LISTENER
 	}
-	return nil
+	fd, _, errno := syscall.Syscall(unix.SYS_SECCOMP, unix.SECCOMP_SET_MODE_FILTER, flags, uintptr(unsafe.Pointer(&prog))) // #nosec G103 -- the kernel reads the program during the call
+	if errno != 0 {
+		return -1, fmt.Errorf("sandbox: seccomp: %w", errno)
+	}
+	if listen != listenNotified {
+		return -1, nil
+	}
+	return int(fd), nil
 }
+
+// listenRule is what the seccomp filter does with `listen`.
+type listenRule int
+
+const (
+	listenAllowed listenRule = iota
+	listenDenied
+	listenNotified
+)
 
 // readable are the paths that make "everything except deny" out of allow rules, which is all
 // Landlock has: every entry beside each denied directory and beside each of its ancestors, up

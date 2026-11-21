@@ -368,9 +368,43 @@ Where the system cannot confine, or under `[sandbox] mode = "off"`, the agent ru
 
 A profile's `Net` is all of the network a confined process has: TCP on the ports it may bind and the ports it may connect to (REQ-SBX-008, delta `2026-11-model-relay`). Nothing sets one yet; without it the network stays open.
 
-On Linux [[internal/sandbox/adapters/landlock/landlock_linux.go#restrict]] adds Landlock's port rules, which exist from its fourth version and name no host, so a port is open on every host. They govern TCP alone, so [[internal/sandbox/adapters/landlock/landlock_linux.go#socketFilter]] then leaves the process only a TCP socket of either Internet family and a netlink one of the routing protocol: a datagram, a raw socket, a stream that is not TCP and every other family fail when made. Landlock has no right for `listen`, and a socket that listens without a bind gets a port of the kernel's choosing: the filter refuses `listen` to a profile with nothing to bind, and a profile that binds keeps that way in, for connections arriving. On macOS [[internal/sandbox/adapters/seatbelt/seatbelt.go#Render]] refuses the whole network, allows the loopback's ports to TCP alone, and leaves out the Mach services that reach the network for their caller ([[internal/sandbox/adapters/seatbelt/seatbelt.go#networked]]), so nothing is resolved under such a profile.
+On Linux [[internal/sandbox/adapters/landlock/landlock_linux.go#restrict]] adds Landlock's port rules, which exist from its fourth version and name no host, so a port is open on every host. They govern TCP alone, so [[internal/sandbox/adapters/landlock/landlock_linux.go#socketFilter]] then leaves the process only a TCP socket of either Internet family and a netlink one of the routing protocol: a datagram, a raw socket, a stream that is not TCP and every other family fail when made. On macOS [[internal/sandbox/adapters/seatbelt/seatbelt.go#Render]] refuses the whole network, allows the loopback's ports to TCP alone, and leaves out the Mach services that reach the network for their caller ([[internal/sandbox/adapters/seatbelt/seatbelt.go#networked]]), so nothing is resolved under such a profile.
 
 [[internal/sandbox/domain/profile.go#Status]] says whether a network can be enforced here, and [[internal/sandbox/adapters/landlock/landlock.go#Sandbox#Command]] refuses a profile that names one where it cannot — or where nothing is enforced at all — with [[internal/sandbox/domain/profile.go#ErrNoNetwork]], rather than run its process without one. [[internal/sandbox/domain/profile.go#Profile#Validate]] refuses port 0, the kernel's choice of port and so every port ([[internal/sandbox/adapters/landlock/landlock_linux_test.go#TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008]]).
+
+### A confined process listens through a supervisor
+
+A process whose profile lets it bind a port listens only on the loopback's ports of that profile, so nothing outside the machine connects to it (REQ-SBX-008, delta `2026-11-model-relay`, piece a2).
+
+Landlock has no right for `listen` and names no address, and a seccomp filter cannot read what a socket is bound to. A profile with a network and nothing to bind is refused `listen` by [[internal/sandbox/adapters/landlock/landlock_linux.go#socketFilter]]. One that may bind ([[internal/sandbox/adapters/landlock/supervise_linux.go#supervised]]) has the filter answer `listen` with a user notification instead.
+
+The helper is then two stages of one binary. [[internal/sandbox/adapters/landlock/supervise_linux.go#supervise]] starts the helper again with one end of a socket pair and stays as its parent. The second stage confines itself in [[internal/sandbox/adapters/landlock/landlock_linux.go#Exec]], sends the notification descriptor up with [[internal/sandbox/adapters/landlock/supervise_linux.go#handUp]], closes both and becomes the command.
+
+[[internal/sandbox/adapters/landlock/supervise_linux.go#listenFor]] answers each call:
+
+- it takes its own duplicate of the caller's socket with `pidfd_getfd`, and checks the notification is still its caller's;
+- [[internal/sandbox/adapters/landlock/supervise_linux.go#loopbackPort]] accepts a loopback address of either family on a port of the profile — not an address mapped from the other family, and not port 0, which is a socket with no bind;
+- it performs the `listen` itself on the duplicate, which is the same socket, and never lets the caller's call go on: the number could name another socket by then.
+
+To its caller the helper is still the command: same output, same exit code, the termination signals it is sent forwarded, and the command killed when the helper dies; what the command started is ended by the launcher's reaper of the session.
+
+Everything fails closed:
+
+- the helper ends with its command, and a process left behind gets `ENOSYS` from `listen`; it cannot answer its own either, because the filter refuses `seccomp` asked for a notification descriptor, which the kernel would consult before the profile's;
+- [[internal/sandbox/adapters/landlock/supervise_linux.go#descends]] has the supervisor refuse a caller that is no longer below it;
+- a descriptor the supervisor cannot take is `EACCES`, which is every `listen` where the kernel's ptrace policy forbids a parent its child's descriptors;
+- a second stage told its stage by anyone but the first has nothing to send its descriptor to, and runs nothing.
+
+The supervisor itself is not confined. It reads one descriptor number from the command, and a confined process can neither trace it nor, from Landlock's sixth version, signal it.
+
+What the tests hold, against the kernel:
+
+- [[internal/sandbox/adapters/landlock/landlock_linux_test.go#TestAConfinedProcessListensOnItsLoopbackPortsOnly_REQ_SBX_008]]: a listen with no bind, on every interface of either family and on the machine's outward address is refused; the loopback's port listens, accepts a connection, and answers from another thread.
+- [[internal/sandbox/adapters/landlock/landlock_linux_test.go#TestASupervisedCommandIsStillTheHelpersCommand_REQ_SBX_008]]: output, exit code, no descriptor or stage variable left to the command, and the command dead once the helper is killed.
+- [[internal/sandbox/adapters/landlock/landlock_linux_test.go#TestAProcessThatOutlivesItsSupervisorCannotListen_REQ_SBX_008]] and [[internal/sandbox/adapters/landlock/landlock_linux_test.go#TestAProcessOutsideTheSupervisorsTreeCannotListen_REQ_SBX_008]]: a process left behind, or reparented away, listens on nothing and gets no notification descriptor of its own.
+- [[internal/sandbox/adapters/landlock/supervise_internal_linux_test.go#TestOnlyALoopbackAddressOnAnAllowedPortIsListenedOn_REQ_SBX_008]]: the address rule case by case, including the port outside the profile that the kernel test cannot bind.
+
+macOS needs no supervisor: its rules name the loopback, and its kernel test tries the same two listens.
 
 ## libffi is loaded only after its bytes are checked
 

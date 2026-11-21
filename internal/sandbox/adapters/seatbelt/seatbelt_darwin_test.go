@@ -370,11 +370,29 @@ func TestMain(m *testing.M) {
 			}
 			return err
 		}
+		// The port it may bind, on every interface: reachable from outside the machine.
+		everywhere := func(port string) error {
+			ln, err := net.Listen("tcp4", "0.0.0.0:"+port)
+			if err == nil {
+				_ = ln.Close()
+			}
+			return err
+		}
+		// No bind at all: the kernel would choose the port, on every interface.
+		unbound := func() error {
+			fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = syscall.Close(fd) }()
+			return syscall.Listen(fd, 1)
+		}
 		// A datagram to the very port the profile may connect to: the port is TCP's alone.
-		fmt.Printf("connect-ok=%s connect-no=%s bind-ok=%s bind-no=%s bind-any=%s udp=%s udp-to-its-port=%s\n",
+		fmt.Printf("connect-ok=%s connect-no=%s bind-ok=%s bind-no=%s bind-any=%s udp=%s udp-to-its-port=%s listen-everywhere=%s listen-unbound=%s\n",
 			said(dial("tcp4", os.Args[2])), said(dial("tcp4", os.Args[3])),
 			said(listen(os.Args[4])), said(listen(os.Args[5])), said(listen("0")),
-			said(dial("udp4", os.Args[3])), said(dial("udp4", os.Args[2])))
+			said(dial("udp4", os.Args[3])), said(dial("udp4", os.Args[2])),
+			said(everywhere(os.Args[4])), said(unbound()))
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
@@ -438,10 +456,10 @@ func TestAConfinedProcessReachesOnlyItsPorts_REQ_SBX_008(t *testing.T) {
 	}
 	p := b.profile(t)
 	p.Net = &domain.Net{Connect: []uint16{port(allowed)}, Bind: []uint16{port(bindOK)}}
-	if got, want := run(p), "connect-ok=ok connect-no=refused bind-ok=ok bind-no=refused bind-any=refused udp=refused udp-to-its-port=refused"; got != want {
+	if got, want := run(p), "connect-ok=ok connect-no=refused bind-ok=ok bind-no=refused bind-any=refused udp=refused udp-to-its-port=refused listen-everywhere=refused listen-unbound=refused"; got != want {
 		t.Errorf("with a network profile the probe says %q, want %q", got, want)
 	}
-	if got, want := run(b.profile(t)), "connect-ok=ok connect-no=ok bind-ok=ok bind-no=ok bind-any=ok udp=ok udp-to-its-port=ok"; got != want {
+	if got, want := run(b.profile(t)), "connect-ok=ok connect-no=ok bind-ok=ok bind-no=ok bind-any=ok udp=ok udp-to-its-port=ok listen-everywhere=ok listen-unbound=ok"; got != want {
 		t.Errorf("without a network profile the probe says %q, want %q: the test proves nothing", got, want)
 	}
 }

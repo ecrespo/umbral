@@ -83,10 +83,11 @@ type Profile struct {
 var ErrNoNetwork = errors.New("sandbox: this system cannot confine the network")
 
 // Net is a confined process's network: TCP on the ports named, and nothing else — no
-// datagram, no raw socket, no stream that is not TCP. On Linux a port is allowed on every
-// host, since Landlock's rules name no address; on macOS it is the loopback's.
+// datagram, no raw socket, no stream that is not TCP. On Linux a port it may connect to is
+// allowed on every host, since Landlock's rules name no address; on macOS it is the
+// loopback's. A port it may bind is the loopback's on both: it listens nowhere else.
 type Net struct {
-	// Bind are the TCP ports the process may listen on.
+	// Bind are the TCP ports the process may listen on, on a loopback address.
 	Bind []uint16 `json:"bind,omitempty"`
 	// Connect are the TCP ports the process may connect to.
 	Connect []uint16 `json:"connect,omitempty"`
