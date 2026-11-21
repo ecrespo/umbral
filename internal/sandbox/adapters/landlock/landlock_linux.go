@@ -5,6 +5,7 @@ package landlock
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -124,6 +125,12 @@ func Exec(arg string, argv []string) error {
 	}
 	if err := os.Unsetenv(stageEnv); err != nil {
 		return fmt.Errorf("sandbox: %w", err)
+	}
+	// A descriptor whoever started the daemon left open without close-on-exec would reach the
+	// command, past every rule above: a socket, or a file opened before the sandbox. Only the
+	// three standard ones cross. close_range is in every kernel this sandbox enforces on (6.2).
+	if err := unix.CloseRange(3, math.MaxUint32, unix.CLOSE_RANGE_CLOEXEC); err != nil {
+		return fmt.Errorf("sandbox: close the descriptors past stderr: %w", err)
 	}
 	return fmt.Errorf("sandbox: exec %s: %w", path, syscall.Exec(path, argv, os.Environ())) // #nosec G204 -- the command the daemon was configured to run, now confined
 }

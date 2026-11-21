@@ -838,7 +838,13 @@ func TestASupervisedCommandIsStillTheHelpersCommand_REQ_SBX_008(t *testing.T) {
 		t.Errorf("the supervised command gave %q and %v, want its output and exit code 7", out, err)
 	}
 	// Nothing of the helper's own reaches the command: no descriptor beyond the three, and
-	// no variable of its stages.
+	// no variable of its stages. Nor one the helper's own parent left open without
+	// close-on-exec, as a CI runner does: this test opens one before starting it.
+	stray, err := unix.Open("/dev/null", unix.O_RDONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Close(stray) }()
 	out, err = confined("ls /proc/self/fd | tr '\\n' ' '; env | grep -c UMBRAL_SANDBOX").Output()
 	if got := strings.TrimSpace(string(out)); got != "0 1 2 3 0" {
 		// 3 is ls's own, open on the directory it lists.
