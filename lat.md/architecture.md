@@ -408,6 +408,25 @@ What the tests hold, against the kernel:
 
 macOS has no supervisor and cannot enforce the rule: `sandbox-exec` checks neither a bind's host nor a connection when it is accepted, so a listen on every interface on an allowed port passes and is reached from outside. The Tech Lead accepted that limit on 2026-11-21; [[internal/sandbox/adapters/seatbelt/seatbelt_darwin_test.go#TestMacOSLeavesAConfinedListenerOpenToTheOutside_REQ_SBX_008]] measures it, so it reddens the day macOS closes it.
 
+### A hosted agent's model relay
+
+A relay per hosted thread forwards the agent's model requests to its one endpoint, adds the provider's key and records what leaves the machine (REQ-SBX-009, delta `2026-11-model-relay`, piece b). No thread is given one until piece c.
+
+[[internal/acp/adapters/relay/relay.go#Start]] listens on `127.0.0.1` with a 32-byte token of its own; the agent is given [[internal/acp/adapters/relay/relay.go#Relay#BaseURL]] and [[internal/acp/adapters/relay/relay.go#Relay#Token]], never a key. [[internal/acp/adapters/relay/relay.go#Relay#ServeHTTP]] keeps an order that is the guarantee:
+
+- [[internal/acp/adapters/relay/relay.go#Relay#authorized]]: no token, no key read, no row, nothing forwarded, and the connection closed;
+- no upgrade — a websocket would be a tunnel neither counted nor ended on close — and `GET` or `POST` only;
+- [[internal/acp/adapters/relay/relay.go#Relay#below]]: the endpoint's path or under it, written plainly with no escape, empty or dot segment; then a body of at most [[internal/acp/adapters/relay/relay.go#DefaultMaxBody]], sent with its length and no trailer;
+- a slot among [[internal/acp/adapters/relay/relay.go#DefaultMaxInFlight]] requests in flight, else 429; [[internal/acp/adapters/relay/relay.go#limited]] bounds the connections themselves;
+- the key, through `acp/ports.Keys`, read at each request so a reload is followed;
+- [[internal/acp/adapters/relay/relay.go#forwarded]]: only the headers in [[internal/acp/adapters/relay/relay.go#crossing]] go on, and the request as it will be sent but for the key — method, path and query, those headers, the body — is what the row counts and digests;
+- for an endpoint that is not [[internal/acp/adapters/relay/relay.go#loopback]], the `egress_log` row through `acp/ports.EgressLog`, and a 502 if it cannot be written;
+- [[internal/acp/adapters/relay/relay.go#Relay#rewrite]] sends those headers and `Authorization: Bearer` with the key, nothing else of the agent's; the answer streams back.
+
+`cmd/umbrald` builds it with [[cmd/umbrald/relay.go#relayConfig]]: the endpoint is the provider's base URL in `models.toml`, [[cmd/umbrald/relay.go#relayKeys]] answers from the resolved credentials and refuses one that is down, and [[cmd/umbrald/relay.go#relayEgress]] writes to the log Umbral's own calls use.
+
+What the tests hold: [[internal/acp/adapters/relay/relay_test.go#TestTheRelayAnswersOnlyItsThreadsToken_REQ_SBX_009]], [[internal/acp/adapters/relay/relay_test.go#TestTheRelayForwardsWithTheProvidersKeyAndNotTheToken_REQ_SBX_009]], [[internal/acp/adapters/relay/relay_test.go#TestTheRelayRecordsARemoteRequestBeforeForwardingIt_REQ_SBX_009]], [[internal/acp/adapters/relay/relay_test.go#TestTheRelayRefusesARequestItCannotRecord_REQ_SBX_009]], [[internal/acp/adapters/relay/relay_test.go#TestTheRelayStreamsTheAnswer_REQ_SBX_009]], [[internal/acp/adapters/relay/relay_test.go#TestTheRelayForwardsOnlyBelowItsEndpoint_REQ_SBX_009]], [[internal/acp/adapters/relay/relay_test.go#TestTheRelayRefusesAnUpgrade_REQ_SBX_009]], [[internal/acp/adapters/relay/relay_test.go#TestTheRelayBoundsItsConnections_REQ_SBX_009]] and, through the daemon's own adapters, [[cmd/umbrald/relay_test.go#TestARelayRecordsInTheGatewaysEgressLog_REQ_SBX_009]].
+
 ## libffi is loaded only after its bytes are checked
 
 On macOS and Windows libffi is kept in the user's cache directory, which any process of the user can write; the daemon loads a file there only when it holds exactly the bytes embedded in the binary (delta `2026-11-libffi-load`).

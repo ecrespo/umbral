@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.106 |
+| **Version** | 1.107 |
 | **Date** | 2026-11-21 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1621,6 +1621,31 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
       also required a loopback peer refused the listen itself. Allowing the port, refusing
       every peer and letting the loopback's back in listened and still let the outside
       connection through: inbound is checked at `listen`, which has no peer.
+    - *The model relay* (piece b, REQ-SBX-009). `internal/acp/adapters/relay` serves one
+      thread's relay on `127.0.0.1`, on the port it is given, and forwards to the one
+      endpoint of `models.toml` its agent uses: a provider with no base URL, one loaded in
+      process, has none. Each relay has a token of its own, 32 random bytes, which the agent
+      sends as its bearer token and which is compared in constant time; a request without it
+      reaches neither the key, the log nor the endpoint, and its connection is closed. Only a
+      `GET` or `POST` is forwarded, and none that asks for an upgrade: a websocket would be a
+      tunnel the relay neither counts nor ends on `Close`. The path must be the endpoint's or
+      below it, written plainly — letters, digits and `-._~/`, no escape, no empty or dot
+      segment — since a server that reads `;`, `\\` or a second decoding as a separator could
+      leave the endpoint's path; the body is at most 32 MiB, sent with its length and no
+      trailer, so what crosses is what was recorded. A relay serves 32 connections and
+      forwards 8 requests at once (429 past that); a request is read within 2 minutes and an
+      idle connection closed after 30 s, while the answer has no limit. The relay then reads the provider's key through `acp/ports.Keys` —
+      `cmd/umbrald` answers from the credentials `models.toml` resolved, at each request, so
+      a reload is followed, and a credential that is down forwards nothing — records a
+      request to an endpoint that is not loopback through `acp/ports.EgressLog`, the
+      gateway's `egress_log`, with the thread, the provider, the host, and the size and
+      SHA-256 of the request as it is forwarded but for the key — `METHOD path?query`, the
+      headers that cross in a fixed order, a blank line, the body — so no byte the agent
+      sends out escapes the count; it forwards only once that row is written. Of the agent's
+      headers only `Content-Type`, `Accept`, `User-Agent`, `OpenAI-Beta`, `HTTP-Referer` and
+      `X-Title` cross; the key is sent as `Authorization: Bearer`, as every provider type the gateway
+      has takes it; nothing is added that names the agent. The answer is streamed back as
+      it arrives. No hosted thread is given a relay until piece c.
   - *macOS* (delta `2026-11-sandbox-macos`, T-HRD-16): the same profile rendered for
     `/usr/bin/sandbox-exec`, with no helper. Writes are refused and then allowed under the
     write entries and on the device files; reads, `stat` included, are refused under the
@@ -2522,3 +2547,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.104 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-write-root-anchor` (T-HRD-22, proposed): §5.3 and §5.3f, a file inside the write root is written and read from the write root, so a directory replaced by a link after the decision does not lead out of it |
 | 1.105 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a2): §5.3f, a process that may bind listens through a supervisor, on the loopback and its ports only |
 | 1.106 | 2026-11-21 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a2), measured on the macOS runner: §5.3f, macOS cannot enforce the rule on listening; the limit, accepted by the Tech Lead, is measured |
+| 1.107 | 2026-11-21 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece b): §5.3f, the model relay — a loopback listener per thread, its token, the provider's key added, the `egress_log` row written before a request leaves, the answer streamed |
