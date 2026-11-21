@@ -419,8 +419,9 @@ A relay per hosted thread forwards the agent's model requests to its one endpoin
 - [[internal/acp/adapters/relay/relay.go#Relay#below]]: the endpoint's path or under it, written plainly with no escape, empty or dot segment; then a body of at most [[internal/acp/adapters/relay/relay.go#DefaultMaxBody]], sent with its length and no trailer;
 - a slot among [[internal/acp/adapters/relay/relay.go#DefaultMaxInFlight]] requests in flight, else 429; [[internal/acp/adapters/relay/relay.go#limited]] bounds the connections themselves;
 - the key, through `acp/ports.Keys`, read at each request so a reload is followed;
+- [[internal/acp/adapters/relay/relay.go#forwarded]]: only the headers in [[internal/acp/adapters/relay/relay.go#crossing]] go on, and the request as it will be sent but for the key — method, path and query, those headers, the body — is what the row counts and digests;
 - for an endpoint that is not [[internal/acp/adapters/relay/relay.go#loopback]], the `egress_log` row through `acp/ports.EgressLog`, and a 502 if it cannot be written;
-- [[internal/acp/adapters/relay/relay.go#Relay#rewrite]] drops the agent's credentials and cookies and sets `Authorization: Bearer` with the key; the answer streams back.
+- [[internal/acp/adapters/relay/relay.go#Relay#rewrite]] sends those headers and `Authorization: Bearer` with the key, nothing else of the agent's; the answer streams back.
 
 `cmd/umbrald` builds it with [[cmd/umbrald/relay.go#relayConfig]]: the endpoint is the provider's base URL in `models.toml`, [[cmd/umbrald/relay.go#relayKeys]] answers from the resolved credentials and refuses one that is down, and [[cmd/umbrald/relay.go#relayEgress]] writes to the log Umbral's own calls use.
 

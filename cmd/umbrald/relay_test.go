@@ -113,7 +113,7 @@ func TestARelayRecordsInTheGatewaysEgressLog_REQ_SBX_009(t *testing.T) {
 		t.Fatalf("%d rows", len(log.rows))
 	}
 	row := log.rows[0]
-	if row.ThreadID != "th_1" || row.Provider != "router" || row.Host != "models.example.test" || row.Bytes != 7 || row.PayloadSHA256 == "" || row.CreatedAt == 0 {
+	if row.ThreadID != "th_1" || row.Provider != "router" || row.Host != "models.example.test" || row.Bytes <= 7 || row.PayloadSHA256 == "" || row.CreatedAt == 0 {
 		t.Fatalf("row %+v", row)
 	}
 }

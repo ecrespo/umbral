@@ -1638,10 +1638,12 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
       `cmd/umbrald` answers from the credentials `models.toml` resolved, at each request, so
       a reload is followed, and a credential that is down forwards nothing — records a
       request to an endpoint that is not loopback through `acp/ports.EgressLog`, the
-      gateway's `egress_log`, with the thread, the provider, the host, the body's size and
-      its SHA-256, and forwards it only once that row is written. The agent's own
-      `Authorization`, `X-Api-Key`, `Api-Key`, `Proxy-Authorization` and cookies do not
-      cross; the key is sent as `Authorization: Bearer`, as every provider type the gateway
+      gateway's `egress_log`, with the thread, the provider, the host, and the size and
+      SHA-256 of the request as it is forwarded but for the key — `METHOD path?query`, the
+      headers that cross in a fixed order, a blank line, the body — so no byte the agent
+      sends out escapes the count; it forwards only once that row is written. Of the agent's
+      headers only `Content-Type`, `Accept`, `User-Agent`, `OpenAI-Beta`, `HTTP-Referer` and
+      `X-Title` cross; the key is sent as `Authorization: Bearer`, as every provider type the gateway
       has takes it; nothing is added that names the agent. The answer is streamed back as
       it arrives. No hosted thread is given a relay until piece c.
   - *macOS* (delta `2026-11-sandbox-macos`, T-HRD-16): the same profile rendered for

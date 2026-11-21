@@ -334,15 +334,18 @@ func TestTheRelayRecordsARemoteRequestBeforeForwardingIt_REQ_SBX_009(t *testing.
 	cfg.Now = func() time.Time { return time.UnixMilli(1_700_000_000_000) }
 	r := start(t, cfg)
 	body := `{"model":"m","messages":[]}`
-	post(t, r.BaseURL()+"/chat/completions", r.Token(), body)
+	post(t, r.BaseURL()+"/chat/completions?x=1", r.Token(), body, "Content-Type", "application/json", "User-Agent", "agent/1")
 	rows := rec.all()
 	if len(rows) != 1 {
 		t.Fatalf("%d rows, want 1", len(rows))
 	}
-	sum := sha256.Sum256([]byte(body))
+	// What is recorded is the request as it is forwarded, but for the key: its method, its
+	// path and query, the headers that cross in their fixed order, and its body.
+	sent := "POST /api/v1/chat/completions?x=1\nContent-Type: application/json\nUser-Agent: agent/1\n\n" + body
+	sum := sha256.Sum256([]byte(sent))
 	want := domain.Egress{
 		ThreadID: "th_1", Provider: "router", Host: "models.example.test",
-		Bytes: int64(len(body)), PayloadSHA256: hex.EncodeToString(sum[:]), CreatedAt: 1_700_000_000_000,
+		Bytes: int64(len(sent)), PayloadSHA256: hex.EncodeToString(sum[:]), CreatedAt: 1_700_000_000_000,
 	}
 	if rows[0] != want {
 		t.Fatalf("row %+v, want %+v", rows[0], want)
@@ -569,7 +572,7 @@ func TestTheRelayForwardsNoTrailer_REQ_SBX_009(t *testing.T) {
 	if v := u.seen[0].Trailer.Get("X-Exfil"); v != "" {
 		t.Fatalf("a trailer crossed outside the recorded body: %d bytes", len(v))
 	}
-	if rows := rec.all(); len(rows) != 1 || rows[0].Bytes != 2 {
+	if rows := rec.all(); len(rows) != 1 || rows[0].Bytes != int64(len("POST /api/v1/x\n\n{}")) {
 		t.Fatalf("rows %+v", rows)
 	}
 }
@@ -685,5 +688,46 @@ func TestTheRelayBoundsTheRequestsInFlight_REQ_SBX_009(t *testing.T) {
 	close(release)
 	if code := <-done; code != http.StatusOK {
 		t.Fatalf("the first request: status %d", code)
+	}
+}
+
+func TestTheRelayForwardsOnlyTheHeadersAModelRequestNeeds_REQ_SBX_009(t *testing.T) {
+	rec := &recorder{}
+	u := newUpstream(t, rec)
+	r := start(t, remoteConfig(u, rec))
+	post(t, r.BaseURL()+"/x", r.Token(), `{}`,
+		"Content-Type", "application/json", "Accept", "text/event-stream", "OpenAI-Beta", "assistants=v2",
+		"X-Exfil", strings.Repeat("s", 4000), "Referer", "r", "Origin", "o")
+	seen := u.seen[0].Header
+	for _, h := range []string{"Content-Type", "Accept", "OpenAI-Beta"} {
+		if seen.Get(h) == "" {
+			t.Errorf("%s did not cross", h)
+		}
+	}
+	for _, h := range []string{"X-Exfil", "Referer", "Origin"} {
+		if v := seen.Get(h); v != "" {
+			t.Errorf("%s crossed: %d bytes outside what is allowed", h, len(v))
+		}
+	}
+}
+
+func TestWhatCrossesBesidesTheBodyIsRecorded_REQ_SBX_009(t *testing.T) {
+	rec := &recorder{}
+	u := newUpstream(t, rec)
+	r := start(t, remoteConfig(u, rec))
+	post(t, r.BaseURL()+"/x", r.Token(), `{}`)
+	post(t, r.BaseURL()+"/x?q="+strings.Repeat("a", 100), r.Token(), `{}`)
+	post(t, r.BaseURL()+"/"+strings.Repeat("b", 100), r.Token(), `{}`)
+	post(t, r.BaseURL()+"/x", r.Token(), `{}`, "User-Agent", strings.Repeat("c", 100))
+	rows := rec.all()
+	if len(rows) != 4 {
+		t.Fatalf("%d rows", len(rows))
+	}
+	for i, row := range rows[1:] {
+		// Each replaces a few bytes of the first request's, a path segment or the client's own
+		// User-Agent, so the difference is at least 80.
+		if row.Bytes < rows[0].Bytes+80 || row.PayloadSHA256 == rows[0].PayloadSHA256 {
+			t.Errorf("request %d carried 100 more bytes outside its body and its row says %d bytes against %d", i+2, row.Bytes, rows[0].Bytes)
+		}
 	}
 }

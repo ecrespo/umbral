@@ -82,11 +82,20 @@ type Relay struct {
 	inFlight chan struct{}
 }
 
-// headers the agent may send that do not cross: its credentials, which the relay replaces, and
-// its cookies, which the endpoint has no use for.
-var dropped = []string{"Authorization", "X-Api-Key", "Api-Key", "Proxy-Authorization", "Cookie"}
+// crossing are the only headers of the agent's that reach the endpoint, in the order a
+// recorded request lists them: what a model request needs, and OpenRouter's two attribution
+// headers. Anything else — a credential, a cookie, a header made up to carry data — stays
+// behind.
+var crossing = []string{"Content-Type", "Accept", "User-Agent", "OpenAI-Beta", "HTTP-Referer", "X-Title"}
 
-type keyCtx struct{}
+type outCtx struct{}
+
+// outgoing is what ServeHTTP decided the endpoint gets besides the body: the key, and the
+// agent's headers that cross.
+type outgoing struct {
+	key    string
+	header http.Header
+}
 
 // Start validates cfg and serves the relay on 127.0.0.1.
 func Start(cfg Config) (*Relay, error) {
@@ -231,17 +240,18 @@ func (r *Relay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "relay: the provider's key is unavailable", http.StatusBadGateway)
 		return
 	}
+	header, sent := forwarded(req, body)
 	if !loopback(r.target.Hostname()) {
-		sum := sha256.Sum256(body)
+		sum := sha256.Sum256(sent)
 		if err := r.cfg.Egress.Record(ctx, domain.Egress{
 			ThreadID: r.cfg.ThreadID, Provider: r.cfg.Upstream.Provider, Host: r.target.Hostname(),
-			Bytes: int64(len(body)), PayloadSHA256: hex.EncodeToString(sum[:]), CreatedAt: r.cfg.Now().UnixMilli(),
+			Bytes: int64(len(sent)), PayloadSHA256: hex.EncodeToString(sum[:]), CreatedAt: r.cfg.Now().UnixMilli(),
 		}); err != nil {
 			http.Error(w, "relay: the request could not be recorded", http.StatusBadGateway)
 			return
 		}
 	}
-	out := req.Clone(context.WithValue(ctx, keyCtx{}, key))
+	out := req.Clone(context.WithValue(ctx, outCtx{}, outgoing{key: key, header: header}))
 	out.Body = io.NopCloser(bytes.NewReader(body))
 	out.ContentLength = int64(len(body))
 	// What crosses is what was recorded: sent with its length, not chunked, a request
@@ -320,17 +330,37 @@ func (c *slotConn) Close() error {
 	return err
 }
 
-// rewrite points the request at the endpoint and replaces the agent's credentials with the
-// provider's key. ReverseProxy has already taken out the hop-by-hop and X-Forwarded headers.
+// forwarded is what of req crosses besides the key: the headers in crossing, and the request
+// as it is recorded — its method, its path and query, those headers in their order, and its
+// body — so a byte the agent sends out is a byte its row counts.
+func forwarded(req *http.Request, body []byte) (http.Header, []byte) {
+	header := http.Header{}
+	var b bytes.Buffer
+	b.WriteString(req.Method + " " + req.URL.RequestURI() + "\n")
+	for _, name := range crossing {
+		if v := req.Header.Get(name); v != "" {
+			header.Set(name, v)
+			b.WriteString(name + ": " + v + "\n")
+		}
+	}
+	b.WriteString("\n")
+	b.Write(body)
+	return header, b.Bytes()
+}
+
+// rewrite points the request at the endpoint, with the headers ServeHTTP let cross and the
+// provider's key, and nothing else of the agent's.
 func (r *Relay) rewrite(pr *httputil.ProxyRequest) {
 	pr.Out.URL.Scheme = r.target.Scheme
 	pr.Out.URL.Host = r.target.Host
 	pr.Out.Host = ""
-	for _, h := range dropped {
-		pr.Out.Header.Del(h)
+	out, _ := pr.In.Context().Value(outCtx{}).(outgoing)
+	pr.Out.Header = out.header.Clone()
+	if pr.Out.Header == nil {
+		pr.Out.Header = http.Header{}
 	}
-	if key, _ := pr.In.Context().Value(keyCtx{}).(string); key != "" {
-		pr.Out.Header.Set("Authorization", "Bearer "+key)
+	if out.key != "" {
+		pr.Out.Header.Set("Authorization", "Bearer "+out.key)
 	}
 }
 

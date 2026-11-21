@@ -241,11 +241,15 @@ Lead's instruction of 2026-11-20. Decisions 1, 2 and 3 as written, and these det
   plain — no escape, `;`, `\\`, empty or dot segment — a request's trailers do not cross,
   a connection without the token is closed after its 401, and a relay holds at most 32
   connections and 8 requests in flight, with read and idle timeouts. Three checks the
-  mutations showed redundant were taken out rather than kept.
+  mutations showed redundant were taken out rather than kept. The commit's automated
+  security review then found that headers, the query and the path left uncounted: only six
+  headers a model request needs now cross, and the row's size and digest are of the request
+  as forwarded but for the key — method, path and query, those headers and the body — not of
+  the body alone, as decision 3 said.
 - **The key at each request.** Read when a request is forwarded, so a reload is followed; a
   provider whose credential is down forwards nothing.
 - **The row first.** A request to an endpoint that is not loopback is recorded — thread,
-  provider, host, the body's size and SHA-256 — and forwarded only once the row is written;
+  provider, host, and the size and SHA-256 of the request as forwarded — and forwarded only once the row is written;
   one that cannot be recorded is answered 502 and does not leave. A loopback endpoint is not
   recorded, as Tech Design §4 has it for Umbral's own calls.
 - **Streaming.** The answer is flushed as it arrives. Of seventeen mutations, the one that
