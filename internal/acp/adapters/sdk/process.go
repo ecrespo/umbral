@@ -17,6 +17,7 @@ import (
 	"github.com/coder/acp-go-sdk"
 
 	"github.com/ecrespo/umbral/internal/acp/domain"
+	"github.com/ecrespo/umbral/internal/acp/ports"
 )
 
 // maxFrameBytes bounds one line the agent sends. A longer one is not taken for ACP: reading it
@@ -37,6 +38,9 @@ type process struct {
 	conn    *acp.ClientSideConnection
 	session acp.SessionId
 	client  *client
+	// relay is the thread's model relay, nil for none; it ends with the process (REQ-SBX-009).
+	relay      ports.Relay
+	relayClose sync.Once
 
 	// gone closes as soon as the process is seen to exit, exited once what it left is ended
 	// and it is reaped; invalid when it sent a line that is not ACP.
@@ -114,6 +118,7 @@ func (p *process) start(cmd *exec.Cmd) error {
 			p.h.trackTree(p.tree, pid, false)
 		}
 		close(p.gone)
+		p.closeRelay()
 		p.reapMu.Lock()
 		p.reaped = true
 		// A session not seen empty keeps the pid listed for good: what is left in it stays
@@ -222,7 +227,15 @@ func (p *process) kill() {
 		}
 		_ = os.RemoveAll(p.iso.Root)
 		p.releaseTerminals()
+		p.closeRelay()
 	})
+}
+
+// closeRelay closes the thread's relay once: a relay never outlives the process it served.
+func (p *process) closeRelay() {
+	if p.relay != nil {
+		p.relayClose.Do(func() { _ = p.relay.Close() })
+	}
 }
 
 // checkedReader passes the agent's stdout to the ACP connection a line at a time, and ends it

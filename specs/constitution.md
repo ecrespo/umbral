@@ -1,6 +1,6 @@
 # Constitution — Umbral
 
-> Version 1.6 · Ratified: 2026-10-31 (proposed 2026-09-11; 1.3 ratified with PR #32, 1.4 with delta `2026-10-shell-parser`, 1.5 with delta `2026-10-yzma-provider`, 1.6 with delta `2026-10-windows-port`) · Last amendment: 2026-10-31 (stack)
+> Version 1.7 · Ratified: 2026-10-31 (proposed 2026-09-11; 1.3 ratified with PR #32, 1.4 with delta `2026-10-shell-parser`, 1.5 with delta `2026-10-yzma-provider`, 1.6 with delta `2026-10-windows-port`; 1.7, Art. 4 with delta `2026-11-model-relay`, pending the Tech Lead's review) · Last amendment: 2026-11-21 (Art. 4)
 > Scope: the `umbral` repository (daemon `umbrald`, clients `umbral-tui`, `umbral-desktop`, CLI `umb`)
 > SDD rigor level: **spec-anchored** — `specs/` is the current truth; changes enter through `changes/`.
 
@@ -41,7 +41,10 @@ enables it explicitly. An external agent Umbral hosts (ACP) makes its own networ
 calls and anything else its process sends) and reads files in its own process, where Umbral cannot
 observe them; THE SYSTEM SHALL disclose that on the agent's thread when it is created instead of
 recording it, and SHALL keep this article's full guarantee for
-everything Umbral itself sends (amendment of 2026-10-22).
+everything Umbral itself sends (amendment of 2026-10-22). An agent Umbral launches behind its
+model relay sends its model calls through Umbral, which records each that leaves the machine in
+`egress_log` and forwards it as the agent wrote it, without redaction; where the kernel confines
+that agent's network, the thread discloses what else it can reach (amendment of 2026-11-21).
 *Rationale: this is the product's core promise against terminals that require a cloud account.*
 
 ### Art. 5 — Agent safety
@@ -134,6 +137,7 @@ THE TEAM SHALL follow these process rules:
 | 2026-10-24 | 3, Stack | `security/domain` may import `mvdan.cc/sh/v3/syntax`, the one vendor a domain package may use | The destructive-command floor must read a command line as the shell does (Q1 and Q8 of delta `2026-10-hrd02-open-questions`); the parser does no I/O and imports nothing outside its module, and moving the floor behind a port would take it out of the pure policy engine `policy.explain` shares. Delta `2026-10-shell-parser` | the Tech Lead, 2026-10-24, ratifying delta `2026-10-shell-parser` |
 | 2026-10-26 | Stack | `github.com/hybridgroup/yzma` (`pkg/llama` only) for the embedded `yzma` provider, from F2 | REQ-LLM-009 names it; its purego binding loads the user's llama.cpp libraries without cgo, so the daemon's build is unchanged, and `pkg/download` is never imported. Delta `2026-10-yzma-provider` | the implementing agent, 2026-10-26, under the Tech Lead's standing F2 instruction; pending the Tech Lead's review |
 | 2026-10-31 | Stack | `Microsoft/go-winio` for the Windows named pipe; ConPTY through `aymanbagabas/go-pty` now in use | Windows ships in F2 (REQ-WIN-001…003); go-winio sets the pipe's owner-only security descriptor, which the standard library cannot. Delta `2026-10-windows-port` | the implementing agent, 2026-10-31, under the Tech Lead's standing F2 instruction; pending the Tech Lead's review |
+| 2026-11-21 | 4 | An agent behind Umbral's model relay has its model calls recorded in `egress_log` as they leave the machine, forwarded without redaction; where its network is confined the thread says what else it reaches | Delta `2026-11-model-relay`, Q2: the relay records and does not redact, and the 2026-10-22 amendment's text changes with the code that makes it true (T-HRD-20c) | the implementing agent, 2026-11-21, under the Tech Lead's instruction of 2026-11-20 (Q2 answered by the Tech Lead on 2026-11-20); pending the Tech Lead's review |
 
 ## Constitution check (use in every artifact)
 

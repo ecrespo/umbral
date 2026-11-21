@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.107 |
+| **Version** | 1.108 |
 | **Date** | 2026-11-21 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1645,7 +1645,28 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
       headers only `Content-Type`, `Accept`, `User-Agent`, `OpenAI-Beta`, `HTTP-Referer` and
       `X-Title` cross; the key is sent as `Authorization: Bearer`, as every provider type the gateway
       has takes it; nothing is added that names the agent. The answer is streamed back as
-      it arrives. No hosted thread is given a relay until piece c.
+      it arrives.
+    - *The wiring* (piece c, REQ-ACP-007, REQ-ACP-009). An `[[acp.agents]]` entry with
+      `relay = "<provider>"` is checked at `thread.create`: its manifest must have a port flag
+      and a way to point the agent at a relay, the provider must have a base URL, and the
+      endpoint the entry's `config` gives the provider must be that URL or below it
+      (`data.reason = relay` otherwise). At each launch the host takes two free loopback
+      ports through `acp/ports.Relays`, which `cmd/umbrald` serves with the relay above: one
+      for the relay, one passed with the port flag (`--port`). The generated OpenCode
+      configuration has the provider's `options.baseURL` moved to the relay, its path kept,
+      and `options.apiKey` set to the relay's token; no `env_refs` are resolved, and an entry
+      that names both is refused at start. Where `Confiner.ConfinesNetwork` — the sandbox
+      enforces and has the network rules — the agent's `Confinement.Net` is a connection to
+      both ports and a bind on its own, rendered into `Profile.Net`; elsewhere the agent still
+      goes through the relay, with its network open. The host then records the thread's
+      `network_profile` (`confined` or `open`, migration 0011), which `egress_visibility`
+      reads as `confined` on the wire, and `thread.create` answers with it. The relay is
+      closed when the agent's process exits or is killed, a failed launch included. A
+      terminal such a thread opens unasked in `full-auto` is confined (REQ-SBX-007) with an
+      empty `Net`: no network at all. Recovery sets every `network_profile` back to `open`.
+      Both loopback ports are released before use; a process that takes the agent's port
+      first makes that launch fail, and one that takes the relay's makes the relay's start
+      fail, so the token never reaches another listener.
   - *macOS* (delta `2026-11-sandbox-macos`, T-HRD-16): the same profile rendered for
     `/usr/bin/sandbox-exec`, with no helper. Writes are refused and then allowed under the
     write entries and on the device files; reads, `stat` included, are refused under the
@@ -2548,3 +2569,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.105 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a2): §5.3f, a process that may bind listens through a supervisor, on the loopback and its ports only |
 | 1.106 | 2026-11-21 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a2), measured on the macOS runner: §5.3f, macOS cannot enforce the rule on listening; the limit, accepted by the Tech Lead, is measured |
 | 1.107 | 2026-11-21 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece b): §5.3f, the model relay — a loopback listener per thread, its token, the provider's key added, the `egress_log` row written before a request leaves, the answer streamed |
+| 1.108 | 2026-11-21 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece c): §5.3f, the relay's wiring — the entry's `relay`, two loopback ports, the agent pointed at its relay without its key, the network profile where it is enforced, `network_profile` and `confined` |

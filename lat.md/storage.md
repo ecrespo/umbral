@@ -36,6 +36,8 @@ Migration `0010_plugins` records an installed plugin: its `plg_` id ([[internal/
 
 `threads.workspace_id` is written at creation and must name a workspace; `threads.worktree_id` records the thread's latest worktree whatever its state, set by [[internal/agents/adapters/threadstore/threadstore.go#Store#SetWorktree]]. Whether a turn runs in it is the `worktrees` row's state, not this column.
 
+Migration `0011_network_profile` adds `threads.network_profile`, `open` or `confined`, written at each launch of a hosted agent by [[internal/agents/adapters/threadstore/threadstore.go#Store#SetNetworkProfile]]; [[internal/store/recovery.go#Store#Recover]] sets every one back to `open` at start, since no agent survives a restart; the wire's `confined` is computed from it, so `egress_visibility`'s stored values and `CHECK` are unchanged.
+
 `threads.agent` and `threads.egress_visibility` are written at creation by [[internal/agents/adapters/threadstore/threadstore.go#Store#CreateThread]]: a hosted thread names its entry and is `unobserved`, every other `observed`. [[internal/agents/adapters/threadstore/threadstore.go#Store#SaveToolCall]] writes `tool_calls.via` and `decision` on every row, so `NULL` in either still means a row from before 0007.
 
 `worktrees.thread_id` has no cascade. A thread holding a worktree cannot be deleted, not even by the retention job ([[internal/store/migration0007_test.go#TestRetentionKeepsAThreadWithAWorktree_REQ_WT_001]]).

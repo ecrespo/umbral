@@ -46,6 +46,17 @@ const (
 const (
 	EgressObserved   = "observed"
 	EgressUnobserved = "unobserved"
+	// EgressConfined is never stored: it is what a hosted thread whose network profile is
+	// NetworkConfined reads on the wire (delta `2026-11-model-relay`, Q3).
+	EgressConfined = "confined"
+)
+
+// Network profile (`threads.network_profile`, REQ-ACP-007): whether the thread's hosted agent
+// was launched last with a network the sandbox enforces — its relay's port and its own, nothing
+// else (REQ-SBX-008, REQ-SBX-009).
+const (
+	NetworkOpen     = "open"
+	NetworkConfined = "confined"
 )
 
 // Model classes (`threads.model_class`).
@@ -100,9 +111,24 @@ type Thread struct {
 	// (REQ-ACP-001); EgressVisibility is EgressUnobserved for such a thread (REQ-ACP-007).
 	Agent            string
 	EgressVisibility string
+	// NetworkProfile is NetworkOpen or NetworkConfined, written at each launch of the thread's
+	// hosted agent.
+	NetworkProfile string
 	// AgentUnavailable is why thread.create could not start the thread's agent once the
 	// thread was written; the next thread.send tries again. Set by Create only, never stored.
 	AgentUnavailable error
+}
+
+// WireEgress is the thread's `egress_visibility` as clients read it: `confined` for a hosted
+// thread whose agent was given a network the sandbox enforces, else the stored value.
+func (t Thread) WireEgress() string {
+	if t.EgressVisibility == EgressUnobserved && t.NetworkProfile == NetworkConfined {
+		return EgressConfined
+	}
+	if t.EgressVisibility == "" {
+		return EgressObserved
+	}
+	return t.EgressVisibility
 }
 
 // CreateParams is thread.create's input (API §5.19).

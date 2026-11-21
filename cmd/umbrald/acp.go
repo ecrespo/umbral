@@ -11,9 +11,11 @@ import (
 	acpsdk "github.com/ecrespo/umbral/internal/acp/adapters/sdk"
 	acpdomain "github.com/ecrespo/umbral/internal/acp/domain"
 	acpports "github.com/ecrespo/umbral/internal/acp/ports"
+	"github.com/ecrespo/umbral/internal/agents/adapters/threadstore"
 	agentsdomain "github.com/ecrespo/umbral/internal/agents/domain"
 	agentsports "github.com/ecrespo/umbral/internal/agents/ports"
 	"github.com/ecrespo/umbral/internal/config"
+	llmports "github.com/ecrespo/umbral/internal/llmgw/ports"
 	secdomain "github.com/ecrespo/umbral/internal/security/domain"
 	"github.com/ecrespo/umbral/internal/sessions"
 	sessdomain "github.com/ecrespo/umbral/internal/sessions/domain"
@@ -25,8 +27,20 @@ import (
 // outlives the machine's session. awaiting is the runtime's word on a pending approval, which
 // is built after the host and so is reached through a function. The files and terminals a turn
 // allows are performed by the file tools' own code and in sessions the thread owns (T-F2-08).
-func newACP(settings config.ACP, runtimeDir string, confiner acpports.Confiner, providers *providerConfig, sessions *sessions.Service, awaiting func(string) bool, logger *slog.Logger) (*acpsdk.Host, error) {
+func newACP(settings config.ACP, runtimeDir string, confiner acpports.Confiner, providers *providerConfig, egress llmports.EgressLog,
+	threads *threadstore.Store, sessions *sessions.Service, awaiting func(string) bool, logger *slog.Logger,
+) (*acpsdk.Host, error) {
 	return acpsdk.New(acpsdk.Config{
+		// An entry with `relay` reaches its model through the daemon (T-HRD-20c), and its
+		// thread records at each launch whether its network was confined.
+		Relays: acpRelays{providers: providers, egress: egress},
+		NetworkProfile: func(ctx context.Context, threadID string, confined bool) error {
+			profile := agentsdomain.NetworkOpen
+			if confined {
+				profile = agentsdomain.NetworkConfined
+			}
+			return threads.SetNetworkProfile(ctx, threadID, profile)
+		},
 		Entries:        settings.Agents,
 		Dir:            filepath.Join(runtimeDir, "acp"),
 		Secrets:        acpSecrets{providers: providers},

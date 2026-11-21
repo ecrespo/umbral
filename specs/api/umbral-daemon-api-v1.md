@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **API version** | v1.63 (`protocol_version = 1`; every version since 1.0 is additive) |
+| **API version** | v1.66 (`protocol_version = 1`; every version since 1.0 is additive) |
 | **Date** | 2026-09-11 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Transport** | JSON-RPC 2.0 over Unix socket `$XDG_RUNTIME_DIR/umbral/umbral.sock` (macOS: `~/Library/Application Support/Umbral/umbral.sock`; Linux without `XDG_RUNTIME_DIR`: `$TMPDIR/umbral-<uid>/umbral.sock`; Windows: the named pipe `\\.\pipe\umbral-<16 hex>`, see §2) |
@@ -436,7 +436,7 @@ method and the ordering that produced it, so one handed to a different method is
 - `workspace_id`: the workspace the thread was created in, `null` for none (REQ-ORC-003)
 - `worktree_id`: the thread's latest worktree, whatever its state, `null` for none. While that worktree is `active` the thread's turns run in it: the worktree is their write root and their cwd is the worktree's directory matching `cwd`, or the worktree's top when it has none; `cwd` itself does not change (REQ-WT-002)
 - `agent`: the `[[acp.agents]]` entry hosting the thread, `null` for Umbral's own agent (REQ-ACP-001). A hosted thread's turns are its agent's: it runs where Umbral's turns would — the active worktree's directory, or `cwd` without one, which is then its write root — and its `model` and `model_class` are not Umbral's to choose
-- `egress_visibility`: `observed` | `unobserved` (REQ-ACP-007). `unobserved` for a hosted thread: Umbral does not see the agent's own network traffic — its model calls and anything else its process sends — nor its file reads, so `egress_log` and `usage` hold none of them
+- `egress_visibility`: `observed` | `unobserved` | `confined` (REQ-ACP-007). `unobserved` for a hosted thread: Umbral does not see the agent's own network traffic — its model calls and anything else its process sends — nor its file reads, so `egress_log` and `usage` hold none of them. `confined` for a hosted thread whose agent was launched last behind its relay in a network the kernel enforces (REQ-SBX-008, REQ-SBX-009, delta `2026-11-model-relay`): its model calls cross the relay, and one that leaves the machine is an `egress_log` row; it reaches nothing else but its own port; its file reads are still not recorded. A client that does not know the value reads it as `unobserved`
 - `sandbox`: `confined` | `unconfined` for a hosted thread, and for a thread of Umbral's own agent while it is in `full-auto`, whose shell is then the one confined (REQ-SBX-006, delta `2026-11-full-auto-sandbox`); `null` for Umbral's own agent in any other mode (REQ-SBX-003). `confined`: the kernel refuses the agent's process a write outside its thread's directory and a read of Umbral's data or another thread's worktree. A thread whose directory cannot be confined is not launched: `thread.create` keeps it and answers `agent_unavailable`. It follows `system.status`'s `sandbox.state` now, not the state when the agent was launched.
 
 ### Worktree
@@ -786,15 +786,19 @@ is not already a valid expression. A malformed query returns `VALIDATION_ERROR`.
     `unknown_agent` (no such entry), `no_manifest` (no manifest makes it ask before every side
     effect), `config_key` (its `config` sets a key the manifest does not allow), `project_config`
     (`cwd`, or a directory above it up to the repository's top, holds the agent's own
-    configuration — for OpenCode `opencode.json`, `opencode.jsonc` or `.opencode/`) (REQ-ACP-009).
+    configuration — for OpenCode `opencode.json`, `opencode.jsonc` or `.opencode/`), `relay` (the
+    entry names a `relay` its agent cannot be pointed at: an unknown provider, one without an
+    endpoint, or an endpoint in its `config` that is not the provider's base URL or below it)
+    (REQ-ACP-009).
     `model` or `model_class` with `agent` is `VALIDATION_ERROR` as well.
   - Once written, the thread's worktree is made if one was asked for, and the agent is launched
     where its turns will run, with `initialize` and `session/new`. When it does not start the
     thread is kept and the answer carries `agent_unavailable`: `project_config` when the worktree
     holds the agent's configuration, `launch_failed` otherwise. The next `thread.send` launches it
     again, as after a crash (§5.20).
-  - The answer's `egress_visibility` is `unobserved`, which is what a client shows the user at
-    creation (REQ-ACP-007).
+  - The answer's `egress_visibility` is `unobserved`, or `confined` when the agent started behind
+    its relay in a network the kernel enforces, which is what a client shows the user at creation
+    (REQ-ACP-007).
 
 ### 5.20 `thread.send` — REQ-AGT-001, REQ-AGT-015, REQ-CTX-002, REQ-CLI-001
 **Params:** `{thread_id, text (1-100000 chars), attachments?:[{kind, ref | data_b64}], client_msg_id?}`.
@@ -1918,3 +1922,4 @@ printf '%s\n' \
 | 1.63 | 2026-11-19 | Additive within `protocol_version = 1`. Delta `2026-11-sandbox-linux` (T-HRD-15, ratified 2026-11-20): §5.2 `system.status` gains `sandbox`; §4 `Thread` gains `sandbox` (REQ-SBX-003) |
 | 1.64 | 2026-11-19 | Additive within `protocol_version = 1`. Delta `2026-11-sandbox-macos` (T-HRD-16, ratified 2026-11-20): §5.1 `sandbox.mechanism` may be `seatbelt` and `sandbox.reason` `seatbelt_unavailable` |
 | 1.65 | 2026-11-19 | Additive within `protocol_version = 1`. Delta `2026-11-full-auto-sandbox` (T-HRD-17, ratified 2026-11-20): §4 a `Thread`'s `sandbox` is set for Umbral's own thread in `full-auto` |
+| 1.66 | 2026-11-21 | Additive within `protocol_version = 1`. Delta `2026-11-model-relay` (T-HRD-20 piece c): §4 a `Thread`'s `egress_visibility` may be `confined`; §5.19 `thread.create` refuses an entry its relay cannot serve with `data.reason = relay`. The header's version, left at 1.63 by 1.64 and 1.65, is brought up to date |

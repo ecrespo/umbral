@@ -42,6 +42,7 @@ model = "ollama/gpt-oss:20b"
 name = "other"
 manifest = "opencode"
 command = "/opt/other/bin/agent"
+relay = "ollama"
 
 [notifications]
 enabled = false
@@ -62,8 +63,9 @@ enabled = false
 		first.ManifestName() != "opencode" {
 		t.Errorf("the first agent is %+v", first)
 	}
-	if acp.Agents[1].ManifestName() != "opencode" {
-		t.Errorf("the second agent's manifest is %q", acp.Agents[1].ManifestName())
+	if acp.Agents[1].ManifestName() != "opencode" || acp.Agents[1].Relay != "ollama" || first.Relay != "" {
+		t.Errorf("the second agent's manifest is %q and relay %q, the first's relay %q",
+			acp.Agents[1].ManifestName(), acp.Agents[1].Relay, first.Relay)
 	}
 }
 
@@ -83,6 +85,7 @@ func TestABadACPEntryStopsTheDaemon_REQ_ACP_009(t *testing.T) {
 		"an unknown key":          "[acp]\nsilence = 3\n",
 		"a short timeout":         "[acp]\nsilence_timeout = 1\n",
 		"too many terminals":      "[acp]\nmax_terminals = 100\n",
+		"a relay beside env_refs": "[[acp.agents]]\nname = \"a\"\ncommand = \"x\"\nrelay = \"p\"\nenv_refs = { K = \"env:K\" }\n",
 	} {
 		_, err := LoadSettings(nil, write(t, text))
 		if !errors.Is(err, ErrSettingsInvalid) {

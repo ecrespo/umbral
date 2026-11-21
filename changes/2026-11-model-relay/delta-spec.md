@@ -259,6 +259,73 @@ Lead's instruction of 2026-11-20. Decisions 1, 2 and 3 as written, and these det
   configuration in place of the provider key `env_refs` would give, and closes the relay with
   the agent.
 
+## Piece c's decisions (2026-11-21)
+
+Taken by the implementing agent under the Tech Lead's instruction of 2026-11-20 ("auto
+aprueba cualquier delta que aparezca e implementalo"), for the Tech Lead's review.
+
+1. **An entry names its provider.** `[[acp.agents]]` gains `relay = "<provider id>"`, a
+   provider of `models.toml`. Without it nothing changes: the agent reaches its model
+   itself, with its `env_refs`, and the thread reads `unobserved`.
+2. **The manifest says how its agent is pointed at the relay.** For OpenCode, the provider
+   of the entry's `config.model` (`<provider>/<model>`) must be in `config.provider`, and
+   its `options.baseURL` must lie at or below the `models.toml` provider's base URL — same
+   scheme, host and port, and a path below its path. The generated configuration then has
+   that base URL's scheme and host replaced by the relay's, its path kept, and
+   `options.apiKey` set to the relay's token. An entry that does not meet that is refused
+   at `thread.create`, with `data.reason = "relay"`, before anything is written.
+3. **No `env_refs` behind the relay.** An entry with `relay` has none resolved: the agent
+   holds no secret of the user's (Q4). The token in its configuration is valid for that
+   relay only, and the file is 0600 in the agent's own home.
+4. **Two ports per launch.** The daemon picks two free loopback ports when it launches the
+   agent: one for the relay, one passed with the manifest's port flag (`--port` for
+   OpenCode). A manifest without a port flag cannot be given a relay.
+5. **The network profile is given only where it is enforced.** Where the sandbox enforces
+   and confines the network, the agent's profile is connect on both ports and bind on its
+   own; the thread's `network_profile` is `confined`. Elsewhere — `[sandbox] mode = "off"`,
+   a kernel without Landlock's network rules — the agent still goes through the relay, and
+   its model calls to a remote endpoint are still recorded, but its network is open and the
+   thread reads `unobserved`, as Q5 has it. A network profile the sandbox refuses at launch
+   launches nothing.
+6. **`network_profile`** is a column of `threads` added by migration `0011_network_profile`:
+   `open` or `confined`, `open` by default, written at each launch of the thread's agent.
+   `egress_visibility` on the wire is `confined` for a hosted thread whose column says so,
+   and its stored values and `CHECK` are unchanged (Q3).
+7. **The relay ends with the agent**: closed when its process exits or is killed, so a
+   relay never outlives the process it served.
+8. **The disclosure.** `confined` says: the agent's model calls go through Umbral and are
+   recorded when they leave the machine; it reaches nothing else over the network but its
+   relay's port and its own — on Linux it connects to both on any host (Q1's accepted reach),
+   and on macOS its own can be reached from outside the machine (REQ-SBX-008's accepted
+   limit); a terminal it opens unasked in `full-auto` has no network (decision 11); Umbral still does not record its file reads,
+   and the files the sandbox keeps from it are said as REQ-SBX-003 has them — it reads the
+   repository's main copy, not Umbral's data nor another thread's worktree (REQ-ACP-007).
+9. **Art. 4's amendment** of 2026-10-22 changes with this code: a hosted agent behind the
+   relay has its model calls recorded in `egress_log` as they leave the machine, forwarded
+   without redaction (Q2); where its network is confined the thread says what else it
+   reaches. An agent not behind a relay, or whose network is open, keeps the 2026-10-22
+   text: its own traffic is disclosed on its thread, not recorded. Constitution 1.7.
+10. **`thread.create` answers with the launch's profile**: the runtime reads the thread back
+    after its agent starts, so the first `egress_visibility` the user sees is the one the
+    launch recorded.
+11. **A confined thread's `full-auto` terminals have no network.** REQ-SBX-007 confines the
+    shell of each terminal a hosted agent opens unasked in `full-auto`; when the thread's
+    `network_profile` is `confined` that shell's profile also has an empty `Net`, so it
+    cannot connect anywhere — not even to the relay, which serves the agent alone. Without it
+    such a terminal would be the network the agent was kept from, with no row of what it sent
+    (spec-guardian, 2026-11-21). A terminal the user approves is the user's decision and keeps
+    the user's network, as REQ-SBX-007 has it for files.
+12. **A restart opens every profile.** Recovery (Data Model §6 step 3) sets
+    `network_profile = 'open'` on every thread: no agent runs after a restart, and `confined`
+    is said of a running launch only. A relaunch inside `thread.send` writes the column
+    again; there is no thread-update notification in the API, so a client reads it at its
+    next `thread.get` or snapshot.
+13. **The agent's own port is chosen before it binds it.** Both ports are drawn from the
+    kernel and released before use. The relay's port is safe — a listener there first makes
+    the relay fail to start, and the token is never sent — but another process can take the
+    agent's port in the seconds before it binds it; the agent then fails to start, and the
+    next `thread.send` relaunches it on new ports. Accepted.
+
 ## Tasks proposed
 
 T-HRD-20 is three pieces, each mergeable on its own:

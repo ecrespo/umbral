@@ -44,6 +44,15 @@ type Confinement struct {
 	ThreadID string
 	Dir      string
 	Root     string
+	// Net is the network the agent is left, nil for all of it: behind a relay, a connection
+	// to the relay's port and its own, and a bind on its own (REQ-SBX-008).
+	Net *Net
+}
+
+// Net is a network profile by loopback port (REQ-SBX-008).
+type Net struct {
+	Connect []uint16
+	Bind    []uint16
 }
 
 // Inherited are the daemon's variables an agent gets: what finds its programs and its locale.

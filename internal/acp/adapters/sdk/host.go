@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +41,13 @@ type Config struct {
 	Terminals ports.Terminals
 	// Confiner puts each agent's process in the sandbox; nil launches it unconfined.
 	Confiner ports.Confiner
+	// Relays serves the model relay of an entry that names one (REQ-SBX-009); nil refuses
+	// such an entry.
+	Relays ports.Relays
+	// NetworkProfile records, at each launch, whether the thread's agent was given a network
+	// profile the sandbox enforces (REQ-ACP-007); an error launches nothing. nil records
+	// nothing.
+	NetworkProfile func(ctx context.Context, threadID string, confined bool) error
 	// MaxTerminals is `[acp] max_terminals`; zero is domain.DefaultMaxTerminals.
 	MaxTerminals int
 	// Pending reports whether an approval of the thread is pending, which pauses the silence
@@ -156,6 +165,11 @@ func (h *Host) Check(agent, dir string) error {
 	if _, err := m.Generate(e.Config); err != nil {
 		return err
 	}
+	if e.Relay != "" {
+		if _, err := h.relayUpstream(e, m); err != nil {
+			return err
+		}
+	}
 	found, err := findProjectConfig(m, dir)
 	if err != nil {
 		return err
@@ -167,6 +181,56 @@ func (h *Host) Check(agent, dir string) error {
 		}
 	}
 	return nil
+}
+
+// relayUpstream is the base URL of the provider an entry's relay forwards to, once the entry
+// is known to be one the relay can serve: a manifest that can be pointed at a relay, a provider
+// models.toml has, and an endpoint of the entry's that is that provider's (REQ-ACP-009).
+func (h *Host) relayUpstream(e domain.Entry, m domain.Manifest) (string, error) {
+	if m.Relay == nil || m.PortFlag == "" {
+		return "", &domain.Refusal{
+			Reason: domain.ReasonRelay,
+			Detail: fmt.Sprintf("agent %q: manifest %q cannot be pointed at a relay", e.Name, m.Name),
+		}
+	}
+	if h.cfg.Relays == nil {
+		return "", &domain.Refusal{
+			Reason: domain.ReasonRelay,
+			Detail: fmt.Sprintf("agent %q names a relay, and this daemon serves none", e.Name),
+		}
+	}
+	upstream, err := h.cfg.Relays.Upstream(e.Relay)
+	if err != nil {
+		return "", &domain.Refusal{Reason: domain.ReasonRelay, Detail: fmt.Sprintf("agent %q: relay %q: %v", e.Name, e.Relay, err)}
+	}
+	// The relay's address is not known yet; any origin shows whether the entry can be pointed.
+	if _, err := m.Relay(e.Config, upstream, "http://127.0.0.1:1", "x"); err != nil {
+		return "", err
+	}
+	return upstream, nil
+}
+
+// loopbackPorts are n distinct ports free on the loopback now. They are released before the
+// relay and the agent take them, so another process could take one first; either then fails
+// to listen, and the launch with it.
+func loopbackPorts(ctx context.Context, n int) ([]uint16, error) {
+	var lc net.ListenConfig
+	out := make([]uint16, 0, n)
+	held := make([]net.Listener, 0, n)
+	defer func() {
+		for _, ln := range held {
+			_ = ln.Close()
+		}
+	}()
+	for range n {
+		ln, err := lc.Listen(ctx, "tcp4", "127.0.0.1:0")
+		if err != nil {
+			return nil, fmt.Errorf("acp: find a free loopback port: %w", err)
+		}
+		held = append(held, ln)
+		out = append(out, uint16(ln.Addr().(*net.TCPAddr).Port))
+	}
+	return out, nil
 }
 
 // findProjectConfig returns the first of the manifest's project configuration entries found in
@@ -318,7 +382,44 @@ func (h *Host) launch(ctx context.Context, req Request) (*process, error) {
 		return nil, err
 	}
 	entry, m, _ := h.lookup(req.Agent)
-	generated, err := m.Generate(entry.Config)
+	config := entry.Config
+	argv := append([]string{entry.Command}, entry.Args...)
+	var (
+		relay   ports.Relay
+		network *domain.Net
+	)
+	// Whatever fails before the agent is running closes the relay with it.
+	launched := false
+	defer func() {
+		if !launched && relay != nil {
+			_ = relay.Close()
+		}
+	}()
+	if entry.Relay != "" {
+		upstream, err := h.relayUpstream(entry, m)
+		if err != nil {
+			return nil, err
+		}
+		pair, err := loopbackPorts(ctx, 2)
+		if err != nil {
+			return nil, err
+		}
+		relayPort, own := pair[0], pair[1]
+		relay, err = h.cfg.Relays.Start(ctx, req.ThreadID, entry.Relay, relayPort)
+		if err != nil {
+			return nil, fmt.Errorf("%w: start the relay of %s: %w", domain.ErrAgent, entry.Name, err)
+		}
+		if config, err = m.Relay(entry.Config, upstream, relay.Origin(), relay.Token()); err != nil {
+			return nil, err
+		}
+		argv = append(argv, m.PortFlag, strconv.Itoa(int(own)))
+		// Only a network the sandbox enforces is asked for: one it cannot would launch
+		// nothing, and the agent would still be better off behind the relay.
+		if h.cfg.Confiner != nil && h.cfg.Confiner.ConfinesNetwork() {
+			network = &domain.Net{Connect: []uint16{relayPort, own}, Bind: []uint16{own}}
+		}
+	}
+	generated, err := m.Generate(config)
 	if err != nil {
 		return nil, err
 	}
@@ -348,14 +449,19 @@ func (h *Host) launch(ctx context.Context, req Request) (*process, error) {
 		return nil, fmt.Errorf("acp: write the agent's config: %w", err)
 	}
 
-	argv := append([]string{entry.Command}, entry.Args...)
 	if h.cfg.Confiner != nil {
 		// A sandbox that cannot be set up launches nothing: the agent is never run unconfined
 		// because confining it failed (REQ-SBX-001).
-		argv, err = h.cfg.Confiner.Confine(domain.Confinement{ThreadID: req.ThreadID, Dir: req.Dir, Root: iso.Root}, argv)
+		argv, err = h.cfg.Confiner.Confine(domain.Confinement{ThreadID: req.ThreadID, Dir: req.Dir, Root: iso.Root, Net: network}, argv)
 		if err != nil || len(argv) == 0 {
 			_ = os.RemoveAll(iso.Root)
 			return nil, fmt.Errorf("%w: confine %s: %w", domain.ErrAgent, entry.Name, errors.Join(err, errNoCommand(argv)))
+		}
+	}
+	if h.cfg.NetworkProfile != nil {
+		if err := h.cfg.NetworkProfile(ctx, req.ThreadID, network != nil); err != nil {
+			_ = os.RemoveAll(iso.Root)
+			return nil, fmt.Errorf("%w: record the network profile of %s: %w", domain.ErrAgent, entry.Name, err)
 		}
 	}
 	// Not CommandContext: the process outlives the request that launched it, and ends by kill.
@@ -369,10 +475,13 @@ func (h *Host) launch(ctx context.Context, req Request) (*process, error) {
 		return nil, fmt.Errorf("%w: launch %s: %w", domain.ErrAgent, entry.Name, err)
 	}
 	p := newProcess(h, req, iso)
+	p.relay = relay
 	if err := p.start(cmd); err != nil {
 		_ = os.RemoveAll(iso.Root)
 		return nil, fmt.Errorf("%w: launch %s: %w", domain.ErrAgent, entry.Name, err)
 	}
+	// From here the process owns the relay: it is closed when the process ends.
+	launched = true
 
 	hctx, cancel := context.WithTimeout(ctx, h.cfg.SilenceTimeout)
 	defer cancel()

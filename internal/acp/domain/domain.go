@@ -20,6 +20,9 @@ const (
 	ReasonNoManifest    = "no_manifest"
 	ReasonProjectConfig = "project_config"
 	ReasonConfigKey     = "config_key"
+	// ReasonRelay is an entry the relay cannot serve: its manifest cannot be pointed at one,
+	// or its endpoint is not its provider's (REQ-ACP-009, delta `2026-11-model-relay`).
+	ReasonRelay = "relay"
 )
 
 // ErrRefused is a launch refused before anything ran; errors.As finds the *Refusal.
@@ -67,6 +70,9 @@ type Entry struct {
 	// Config is merged into the configuration the manifest generates, under the keys the
 	// manifest lets an entry set: a provider and a model, never a permission.
 	Config map[string]any
+	// Relay is the `models.toml` provider the agent reaches its model through, by a relay the
+	// daemon serves (REQ-SBX-009); "" is none, and the agent reaches its model itself.
+	Relay string
 }
 
 // ManifestName is the manifest the entry names.
@@ -80,6 +86,8 @@ func (e Entry) ManifestName() string {
 var (
 	entryName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 	envName   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	// providerID is what a `relay` may name: a models.toml provider's id, written plainly.
+	providerID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 )
 
 // Validate checks what config.toml can get wrong about an entry at start: its own fields, and
@@ -92,6 +100,16 @@ func (e Entry) Validate() error {
 	}
 	if strings.TrimSpace(e.Command) == "" {
 		return fmt.Errorf("agent %q has no command", e.Name)
+	}
+	if e.Relay != "" {
+		if !providerID.MatchString(e.Relay) {
+			return fmt.Errorf("agent %q: relay %q is not a models.toml provider id", e.Name, e.Relay)
+		}
+		// Behind the relay the agent holds no secret of the user's (delta
+		// `2026-11-model-relay`, Q4): one named anyway is refused, not dropped in silence.
+		if len(e.EnvRefs) > 0 {
+			return fmt.Errorf("agent %q: an entry with a relay takes no env_refs; the relay adds the provider's key", e.Name)
+		}
 	}
 	for name, ref := range e.EnvRefs {
 		if !envName.MatchString(name) {

@@ -258,6 +258,10 @@ func (r *Runtime) Create(ctx context.Context, p domain.CreateParams) (domain.Thr
 		// again, as after a crash (REQ-ACP-006), and the answer says why it is not running.
 		if err := r.openAgent(ctx, t); err != nil {
 			t.AgentUnavailable = err
+		} else if stored, err := r.cfg.Store.Thread(ctx, t.ID); err == nil {
+			// Its launch recorded whether its network was confined: the answer says so, so the
+			// first thing the user reads is the agent's real reach (REQ-ACP-007).
+			t.NetworkProfile = stored.NetworkProfile
 		}
 	}
 	return t, nil

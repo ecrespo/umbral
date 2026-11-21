@@ -362,3 +362,32 @@ func TestRecoveryLeavesStoppedThreadsIdleAttention_REQ_AGT_011(t *testing.T) {
 		}
 	}
 }
+
+// TestRecoveryOpensEveryNetworkProfile_REQ_ACP_007: no hosted agent runs after a restart, so a
+// thread whose last launch was confined reads `open` until its next launch says otherwise, and
+// never `confined` for a launch that has not happened under today's sandbox.
+func TestRecoveryOpensEveryNetworkProfile_REQ_ACP_007(t *testing.T) {
+	t.Parallel()
+
+	s := openTestStore(t)
+	db := s.DB()
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO threads(id, cwd, state, attention_state, agent, egress_visibility, network_profile, created_at, updated_at) VALUES
+		('thr_conf', '/r', 'idle', 'idle', 'oc', 'unobserved', 'confined', 1, 1),
+		('thr_open', '/r', 'idle', 'idle', 'oc', 'unobserved', 'open', 1, 1)`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	report, err := s.Recover(t.Context(), time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if report.NetworkProfilesOpened != 1 {
+		t.Errorf("NetworkProfilesOpened = %d, want 1", report.NetworkProfilesOpened)
+	}
+	var n int
+	if err := db.QueryRowContext(t.Context(), "SELECT count(*) FROM threads WHERE network_profile = 'confined'").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d threads still read confined after recovery", n)
+	}
+}

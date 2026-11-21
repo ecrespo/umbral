@@ -154,8 +154,14 @@ func cmdThread(ctx context.Context, args []string, stdout, stderr *printer) int 
 		case "unconfined":
 			reach += ", and runs unconfined: nothing but its own asking keeps it from other files"
 		}
-		stderr.printf("umb thread create: %[1]s is an external agent; Umbral does not record its own network traffic or file reads (egress_visibility %[2]s); "+reach+"\n",
-			printable(hosted), printable(fmt.Sprint(result["egress_visibility"])))
+		if result["egress_visibility"] == "confined" {
+			// Behind its relay, in a network the kernel enforces (REQ-ACP-007, REQ-SBX-008).
+			stderr.printf("umb thread create: %[1]s is an external agent behind Umbral's relay: its model calls go through Umbral and are recorded when they leave the machine, and it reaches nothing else over the network but its relay's port and its own port — on Linux both on any host, and on macOS its own port can be reached from outside the machine — and a terminal it opens unasked in full-auto has no network; Umbral does not record its file reads (egress_visibility confined); the kernel confines %[1]s: it can write this thread's directory only, so it cannot commit, and cannot read Umbral's data or any other thread's worktree; it can still read the repository's main copy\n",
+				printable(hosted))
+		} else {
+			stderr.printf("umb thread create: %[1]s is an external agent; Umbral does not record its own network traffic or file reads (egress_visibility %[2]s); "+reach+"\n",
+				printable(hosted), printable(fmt.Sprint(result["egress_visibility"])))
+		}
 		if gone, ok := result["agent_unavailable"].(map[string]any); ok {
 			stderr.printf("umb thread create: %s did not start: %s (%v)\n", printable(hosted),
 				printable(fmt.Sprint(gone["message"])), printable(fmt.Sprint(gone["reason"])))
