@@ -57,7 +57,7 @@ func (c *shellConfiner) FullAuto(ctx context.Context, threadID string) bool {
 	if b == nil {
 		return false
 	}
-	_, _, err := b.worktree(ctx, threadID)
+	_, _, _, err := b.worktree(ctx, threadID)
 	return !errors.Is(err, errNotFullAuto)
 }
 
@@ -69,23 +69,26 @@ var errNotFullAuto = errors.New("the thread is not in full-auto in an active wor
 // command of the thread's own, and a shell released on that account would be the escape.
 //
 // hosted says the thread is a hosted agent's: what is confined then is each terminal the
-// agent opens, several of which may live at once (REQ-SBX-007).
-func (b *shellSandbox) worktree(ctx context.Context, threadID string) (root string, hosted bool, err error) {
+// agent opens, several of which may live at once (REQ-SBX-007). noNet says that agent was
+// launched with its network confined behind its relay: its terminals then get no network,
+// or they would be the way out it was kept from, with no row of what they sent.
+func (b *shellSandbox) worktree(ctx context.Context, threadID string) (root string, hosted, noNet bool, err error) {
 	t, err := b.threads.Thread(ctx, threadID)
 	if errors.Is(err, agentsdomain.ErrNotFound) {
-		return "", false, errNotFullAuto
+		return "", false, false, errNotFullAuto
 	}
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	place, err := agents.TurnPlace(ctx, b.worktrees, isRepo, t)
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	if place.Mode != secdomain.ModeFullAuto || place.WriteRoot == "" {
-		return "", false, errNotFullAuto
+		return "", false, false, errNotFullAuto
 	}
-	return resolved(place.WriteRoot), t.Agent != "", nil
+	hosted = t.Agent != ""
+	return resolved(place.WriteRoot), hosted, hosted && t.NetworkProfile == agentsdomain.NetworkConfined, nil
 }
 
 // Confine satisfies sessions' port: argv launched under the thread's profile. The shell
@@ -115,7 +118,7 @@ func (c *shellConfiner) confine(ctx context.Context, threadID string, read, argv
 	}
 	// A turn that decided under `full-auto` on a record that has changed since has no
 	// worktree to be confined to: its command fails rather than run unconfined.
-	root, hosted, err := b.worktree(ctx, threadID)
+	root, hosted, noNet, err := b.worktree(ctx, threadID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", sandboxdomain.ErrProfile, err)
 	}
@@ -167,6 +170,10 @@ func (c *shellConfiner) confine(ctx context.Context, threadID string, read, argv
 	profile, err := sandboxdomain.AgentProfile(agent)
 	if err != nil {
 		return nil, nil, err
+	}
+	if noNet {
+		// No port at all; refused, not run open, where the network cannot be confined.
+		profile.Net = &sandboxdomain.Net{}
 	}
 	for _, w := range profile.Write {
 		if b.helper != "" && sandboxdomain.Within(b.helper, w) {

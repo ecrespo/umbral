@@ -142,6 +142,13 @@ type acpConfiner struct {
 
 var _ acpports.Confiner = acpConfiner{}
 
+// ConfinesNetwork reports whether a network profile would be enforced (REQ-SBX-008): the
+// sandbox enforces, and its kernel has the rules for a network.
+func (c acpConfiner) ConfinesNetwork() bool {
+	st := c.sandbox.Status()
+	return st.Enforcing() && st.Network
+}
+
 func (c acpConfiner) Confine(req acpdomain.Confinement, argv []string) ([]string, error) {
 	if !c.sandbox.Status().Enforcing() {
 		return argv, nil
@@ -159,6 +166,11 @@ func (c acpConfiner) Confine(req acpdomain.Confinement, argv []string) ([]string
 	profile, err := sandboxdomain.AgentProfile(agent)
 	if err != nil {
 		return nil, err
+	}
+	if req.Net != nil {
+		// Behind its relay: the relay's port and its own, nothing else (REQ-SBX-008). The
+		// sandbox refuses a network it cannot enforce, and the agent is then not launched.
+		profile.Net = &sandboxdomain.Net{Connect: req.Net.Connect, Bind: req.Net.Bind}
 	}
 	for _, w := range profile.Write {
 		if sandboxdomain.Within(c.helper, w) {

@@ -503,3 +503,26 @@ func TestFullAutoFollowsTheWorktreeRow_REQ_ORC_004(t *testing.T) {
 		t.Fatalf("full-auto with a merged worktree: %v, want a validation error", err)
 	}
 }
+
+// TestAThreadsNetworkProfileIsRecorded_REQ_ACP_007: a thread starts with an open network, its
+// agent's launch records whether it was confined, and nothing but the two values is stored.
+func TestAThreadsNetworkProfileIsRecorded_REQ_ACP_007(t *testing.T) {
+	s := open(t)
+	th := thread(t, s, 0)
+	got, err := s.Thread(t.Context(), th.ID)
+	if err != nil || got.NetworkProfile != domain.NetworkOpen {
+		t.Fatalf("a new thread's network profile is %q (%v), want %q", got.NetworkProfile, err, domain.NetworkOpen)
+	}
+	if err := s.SetNetworkProfile(t.Context(), th.ID, domain.NetworkConfined); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Thread(t.Context(), th.ID); err != nil || got.NetworkProfile != domain.NetworkConfined {
+		t.Errorf("after confining, %q (%v)", got.NetworkProfile, err)
+	}
+	if err := s.SetNetworkProfile(t.Context(), th.ID, "sometimes"); err == nil {
+		t.Error("a value the column does not know was stored")
+	}
+	if err := s.SetNetworkProfile(t.Context(), "thr_missing", domain.NetworkOpen); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("an unknown thread: %v, want ErrNotFound", err)
+	}
+}

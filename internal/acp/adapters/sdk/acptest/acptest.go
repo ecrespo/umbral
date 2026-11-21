@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,7 +37,9 @@ func Args() []string { return []string{Arg} }
 
 // Report is what the `report` prompt answers, as JSON: what the agent's process saw.
 type Report struct {
-	Cwd        string   `json:"cwd"`
+	Cwd string `json:"cwd"`
+	// Args are the agent's own arguments, after the one that makes the test binary serve.
+	Args       []string `json:"args"`
 	SessionCwd string   `json:"session_cwd"`
 	Env        []string `json:"env"`
 	// Config is the file the manifest's variable names, "" when it names none.
@@ -414,6 +417,13 @@ func (a *agent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResp
 			time.Sleep(200 * time.Millisecond)
 			os.Exit(0)
 		}()
+	case "model":
+		// GETs fields[1] below the base URL its configuration gives its model's provider, with
+		// the key it was given, and answers the status, or the error.
+		a.say(ctx, sid, acp.UpdateAgentMessageText(callModel(ctx, arg(fields, 1))))
+	case "connect":
+		// Opens a TCP connection to fields[1] itself and answers "connected" or the error.
+		a.say(ctx, sid, acp.UpdateAgentMessageText(connectTo(ctx, arg(fields, 1))))
 	case "dial":
 		// Calls fields[1] on the daemon's socket as a `cli` client, the way a hosted agent that
 		// went looking for it would, and answers the method's error code or "ok".
@@ -458,7 +468,7 @@ func (a *agent) report() string {
 	a.mu.Lock()
 	r := Report{
 		SessionCwd: a.sessionCwd, ReadFile: a.caps.Fs.ReadTextFile, WriteFile: a.caps.Fs.WriteTextFile,
-		Terminal: a.caps.Terminal, Env: os.Environ(), GlobalConfig: []string{},
+		Terminal: a.caps.Terminal, Env: os.Environ(), GlobalConfig: []string{}, Args: os.Args[2:],
 	}
 	a.mu.Unlock()
 	r.Cwd, _ = os.Getwd()
@@ -559,4 +569,52 @@ func dialDaemon(ctx context.Context, method string) string {
 		return "dial: hello: " + got
 	}
 	return call(2, method, map[string]any{})
+}
+
+// callModel reads the OpenCode configuration the manifest generated, takes the provider of its
+// model, and GETs path below that provider's base URL with its key as a bearer token.
+func callModel(ctx context.Context, path string) string {
+	raw, err := os.ReadFile(os.Getenv("OPENCODE_CONFIG")) // #nosec G304 G703 -- the test agent's own configuration
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	var cfg struct {
+		Model    string `json:"model"`
+		Provider map[string]struct {
+			Options struct {
+				BaseURL string `json:"baseURL"`
+				APIKey  string `json:"apiKey"`
+			} `json:"options"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return "error: " + err.Error()
+	}
+	name, _, _ := strings.Cut(cfg.Model, "/")
+	opts := cfg.Provider[name].Options
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(opts.BaseURL, "/")+path, nil)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	if opts.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+opts.APIKey)
+	}
+	resp, err := http.DefaultClient.Do(req) // #nosec G704 -- the test agent calling what its configuration names
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return "status " + strconv.Itoa(resp.StatusCode)
+}
+
+// connectTo opens a TCP connection to addr, as an agent reaching past its relay would.
+func connectTo(ctx context.Context, addr string) string {
+	d := net.Dialer{Timeout: 3 * time.Second}
+	c, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	_ = c.Close()
+	return "connected"
 }

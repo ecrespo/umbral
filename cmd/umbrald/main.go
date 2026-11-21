@@ -535,7 +535,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 		acpConfiner: confiner, shells: filepath.Join(filepath.Dir(socket), "shells"),
 		threads: shellThreads, worktrees: runtimeWorktrees{svc: worktreeEngine},
 	})
-	acpHost, err := newACP(settings.ACP, filepath.Dir(socket), confiner, providers, sessionService, func(threadID string) bool {
+	acpHost, err := newACP(settings.ACP, filepath.Dir(socket), confiner, providers, egress, shellThreads, sessionService, func(threadID string) bool {
 		rt := runtimeRef.Load()
 		return rt != nil && rt.AwaitingApproval(threadID)
 	}, logger)

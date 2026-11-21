@@ -310,6 +310,7 @@ async function renderThread(view, id) {
   call("thread.focus", { thread_id: id }).catch(() => {});
   const back = button("← threads", () => { leaveThread(); renderView(); });
   view.append(back, el("div", "title", t.title || t.id), el("div", "meta", [t.state, t.attention_state, t.mode, t.model].filter(Boolean).join(" · ")));
+  if (t.egress_visibility === "confined") view.append(el("p", "meta", "This agent runs behind Umbral's relay: its model calls go through Umbral and are recorded when they leave the machine, and it reaches nothing else over the network but its relay's port and its own port — on Linux both on any host, and on macOS its own port can be reached from outside the machine — and a terminal it opens unasked in full-auto has no network. Umbral does not record its file reads. The kernel confines the agent: it can write this thread's directory only, so it cannot commit, and cannot read Umbral's data or any other thread's worktree; it can still read the repository's main copy."));
   if (t.egress_visibility === "unobserved") view.append(el("p", "meta", "This agent's own traffic and file reads are not recorded by Umbral. " + (
     t.sandbox === "confined"
       ? "The kernel confines the agent: it can write this thread's directory only, so it cannot commit, and cannot read Umbral's data or any other thread's worktree; it can still read the repository's main copy and reach the network."

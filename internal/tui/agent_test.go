@@ -1255,6 +1255,30 @@ func TestAgentPanelSaysWhetherAHostedThreadIsConfined_REQ_SBX_003(t *testing.T) 
 	}
 }
 
+// TestAgentPanelSaysWhatAThreadBehindItsRelayReaches_REQ_ACP_007: the notice of a thread
+// confined behind its relay says its model calls are recorded and what else it reaches.
+func TestAgentPanelSaysWhatAThreadBehindItsRelayReaches_REQ_ACP_007(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.daemon.setThreads(ports.ThreadList{WorkspaceID: "w1", Threads: []ports.Thread{
+		{ID: "thr_h", WorkspaceID: "w1", Attention: "idle", State: "idle", Agent: "opencode", EgressVisibility: "confined", Sandbox: "confined"},
+	}})
+	h.openSession()
+	h.step(ctrlSpace())
+	h.step(keyPress(t, "down"))
+	words := strings.Join(strings.Fields(h.m.View().Content), " ")
+	for _, want := range []string{"model calls go through Umbral", "recorded", "its relay's port", "its own port", "any host", "outside the machine", "full-auto has no network", "file reads", "cannot commit", "main copy"} {
+		if !strings.Contains(words, want) {
+			t.Errorf("the notice does not say %q:\n%s", want, words)
+		}
+	}
+	for _, never := range []string{"does not record its own network traffic", "reach the network"} {
+		if strings.Contains(words, never) {
+			t.Errorf("the notice says %q:\n%s", never, words)
+		}
+	}
+}
+
 func (f *fakeDaemon) TakeOver(_ context.Context, threadID string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

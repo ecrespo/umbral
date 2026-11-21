@@ -61,6 +61,27 @@ type EgressLog interface {
 // the sandbox does not enforce it returns argv, and an error launches nothing.
 type Confiner interface {
 	Confine(c domain.Confinement, argv []string) ([]string, error)
+	// ConfinesNetwork reports whether a Confinement's Net would be enforced (REQ-SBX-008):
+	// only then is one given, since one that cannot be enforced launches nothing.
+	ConfinesNetwork() bool
+}
+
+// Relays serves a hosted thread's model relay (REQ-SBX-009): the daemon's listener between the
+// agent and the one models.toml provider its entry names.
+type Relays interface {
+	// Upstream is the provider's base URL, or why the provider cannot be relayed to.
+	Upstream(provider string) (string, error)
+	// Start serves the thread's relay to the provider on the loopback port given.
+	Start(ctx context.Context, threadID, provider string, port uint16) (Relay, error)
+}
+
+// Relay is one thread's running relay.
+type Relay interface {
+	// Origin is `http://<loopback address>:<port>`.
+	Origin() string
+	// Token is the bearer token the relay answers, and the only one.
+	Token() string
+	Close() error
 }
 
 // Sink is where one turn's reports go: the agent runtime, which persists each before it

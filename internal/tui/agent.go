@@ -644,7 +644,7 @@ func (m *Model) threadLines(width int) []string {
 	}
 	for _, t := range shown {
 		if t.ID == m.agent.threadID && t.Agent != "" {
-			for _, line := range wrap(hostedNotice(oneLine(t.Agent), t.Sandbox), width-2) {
+			for _, line := range wrap(hostedNotice(oneLine(t.Agent), t.Sandbox, t.EgressVisibility), width-2) {
 				rows = append(rows, "  "+line)
 			}
 		}
@@ -1117,10 +1117,18 @@ func truncate(s string, width int) string {
 // The values of a hosted thread's `sandbox` (API §4 Thread).
 const sandboxConfined, sandboxUnconfined = "confined", "unconfined"
 
+// egressConfined is the `egress_visibility` of a hosted thread behind its relay whose network
+// the kernel enforces (API §4 Thread).
+const egressConfined = "confined"
+
 // hostedNotice is what the panel says of a thread an external agent runs (REQ-ACP-007), and
 // whether the kernel confines that agent (REQ-SBX-003). A daemon that does not say is read as
 // before the sandbox existed.
-func hostedNotice(agent, sandbox string) string {
+func hostedNotice(agent, sandbox, egress string) string {
+	if egress == egressConfined {
+		// Behind its relay, in a network the kernel enforces (REQ-ACP-007, REQ-SBX-008).
+		return agent + " runs this thread behind Umbral's relay: its model calls go through Umbral and are recorded when they leave the machine, and it reaches nothing else over the network but its relay's port and its own port — on Linux both on any host, and on macOS its own port can be reached from outside the machine — and a terminal it opens unasked in full-auto has no network; Umbral does not record its file reads. The kernel confines " + agent + ": it can write this thread's directory only, so it cannot commit, and cannot read Umbral's data or any other thread's worktree; it can still read the repository's main copy"
+	}
 	head := agent + " runs this thread: Umbral does not record its own network traffic or file reads; "
 	switch sandbox {
 	case sandboxConfined:

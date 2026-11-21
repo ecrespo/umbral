@@ -267,3 +267,29 @@ func TestAHostedThreadSaysWhetherItIsConfined_REQ_SBX_003(t *testing.T) {
 		}
 	}
 }
+
+// TestAHostedThreadBehindItsRelaySaysWhatItReaches_REQ_ACP_007: a thread whose agent is
+// confined behind its relay says its model calls go through Umbral and are recorded, that it
+// reaches nothing else but its own port — and that port's limit on each system — and that its
+// file reads are still not recorded; it no longer says its traffic goes unrecorded.
+func TestAHostedThreadBehindItsRelaySaysWhatItReaches_REQ_ACP_007(t *testing.T) {
+	t.Parallel()
+	d := serveRecordingDaemon(t, map[string]fakeReply{
+		"thread.create": func(map[string]any) (any, string) {
+			return map[string]any{"id": "thr_1", "agent": "opencode", "egress_visibility": "confined", "sandbox": "confined"}, ""
+		},
+	})
+	var stdout, stderr bytes.Buffer
+	requireExit(t, run([]string{"thread", "create", "/work", "--agent", "opencode", "--socket", d.socket, "--no-autostart"}, &stdout, &stderr), exitOK, &stderr)
+	errOut := stderr.String()
+	for _, want := range []string{"opencode", "model calls go through Umbral", "recorded", "its relay's port", "its own port", "any host", "outside the machine", "full-auto has no network", "file reads", "cannot commit", "main copy"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr %q lacks %q", errOut, want)
+		}
+	}
+	for _, never := range []string{"does not record its own network traffic", "reach the network", "unconfined"} {
+		if strings.Contains(errOut, never) {
+			t.Errorf("stderr %q says %q", errOut, never)
+		}
+	}
+}

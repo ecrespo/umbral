@@ -142,7 +142,7 @@ type ThreadList struct {
 
 // Thread is a thread as the panel lists it (API §4's Thread): WorkspaceID and WorktreeID are
 // "" for none. Agent is the hosted ACP agent's name, "" for Umbral's own (REQ-ACP-001), and
-// EgressVisibility `observed` or `unobserved` (REQ-ACP-007).
+// EgressVisibility `observed`, `unobserved` or `confined` (REQ-ACP-007).
 type Thread struct {
 	ID          string
 	Title       string

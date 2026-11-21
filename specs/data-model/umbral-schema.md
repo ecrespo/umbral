@@ -6,8 +6,8 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.28 |
-| **Date** | 2026-10-31 |
+| **Version** | 1.29 |
+| **Date** | 2026-11-21 |
 | **Database** | SQLite 3 (`modernc.org/sqlite`), WAL, FTS5 |
 | **Location** | `$XDG_DATA_HOME/umbral/umbral.db` (native disk; never on FUSE/network mounts) |
 | **Related Tech Design** | `specs/technical/umbral-architecture.md` |
@@ -547,6 +547,18 @@ ALTER TABLE threads ADD COLUMN egress_visibility TEXT NOT NULL DEFAULT 'observed
   CHECK (egress_visibility IN ('observed','unobserved'));  -- REQ-ACP-007
 ```
 
+Migration **0011** (Hardening, T-HRD-20c, delta `2026-11-model-relay` Q3) records whether a
+hosted thread's agent was launched last with a network the kernel enforces: behind its relay, the
+relay's port and its own, nothing else. It is written at each launch. `egress_visibility` keeps
+its two stored values; the wire reads `confined` for a hosted thread whose `network_profile` is
+`confined`, so no table is rebuilt.
+
+```sql
+-- migration 0011 (T-HRD-20c)
+ALTER TABLE threads ADD COLUMN network_profile TEXT NOT NULL DEFAULT 'open'
+  CHECK (network_profile IN ('open','confined'));
+```
+
 Migration **0008** (F2, T-F2-05, delta `2026-10-full-auto`) makes `full_auto` follow the
 worktree. Whatever moves a worktree out of `active` — a merge, a discard, a `close_group`, the
 missing check at start or at a turn — clears the flag of its threads in the same write, and so
@@ -874,6 +886,7 @@ A daily maintenance job applies retention and runs `PRAGMA optimize` and
 | `0008_full_auto.sql` | F2 | The triggers `worktrees_leave_full_auto` and `threads_full_auto_needs_worktree` (§2.5): `full_auto` never outlives an active worktree (T-F2-05) |
 | `0009_remotes.sql` | F2 | `remotes` (§2.14): the remote hosts reached over ssh (T-F2-41) |
 | `0010_plugins.sql` | F2 | `plugins` (§2.15): the plugins installed by digest (T-F2-60) |
+| `0011_network_profile.sql` | Hardening | `threads.network_profile` (§2.5): whether a hosted agent's network was confined at its last launch (T-HRD-20c) |
 
 `threads` belongs to 0001 even though the agent arrives in F1: `sessions.owner_thread_id` and
 `blocks.thread_id` point at it, and with `foreign_keys=ON` SQLite rejects every insert into those
@@ -902,6 +915,8 @@ earlier drafts named.
 3. `threads.state IN ('running','awaiting_approval')`, or `queued = 1`, → `stopped`, with
    `attention_state = 'idle'` and `queued = 0`, as a cancelled turn leaves it (delta
    `2026-10-thread-cancel`). A held turn dies with the process like a running one (REQ-ORC-002).
+   Every `network_profile = 'confined'` → `open`: no hosted agent runs after a restart, and the
+   next launch records the profile it gets (delta `2026-11-model-relay` decision 12).
 4. `approvals.state = 'pending'` → `expired`.
 5. Structure: `workspaces`, `tabs` and `panes` that were not closed are reopened with their labels,
    cwd and `layout_json`; **every pane launches a fresh shell**, whatever it was running before
@@ -964,3 +979,4 @@ earlier drafts named.
 | 1.26 | 2026-10-24 | delta `2026-10-acp-mediation` (T-F2-08): §2.2 — an ACP terminal's block lives in a session of its own, owned by the thread; no schema change |
 | 1.27 | 2026-10-31 | delta `2026-10-remote-hosts` (T-F2-41): migration `0009_remotes` — §2.14 `remotes`, §5's 0009 row |
 | 1.28 | 2026-10-31 | delta `2026-10-plugins` (T-F2-60): migration `0010_plugins` — §2.15 `plugins`, §5's 0010 row, §6 step 10 |
+| 1.29 | 2026-11-21 | delta `2026-11-model-relay` (T-HRD-20c): migration `0011_network_profile` — §2.5 `threads.network_profile`, §5's 0011 row, §6 step 3 opens every profile |

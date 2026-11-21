@@ -194,9 +194,12 @@ func report(t *testing.T, h *Host, dir string) acptest.Report {
 // confiner records what the host asked to confine and runs the agent through `env`, which
 // leaves a mark in its environment: proof that the command the sandbox returned is the one run.
 type confiner struct {
-	got  []domain.Confinement
-	fail error
+	got     []domain.Confinement
+	fail    error
+	network bool
 }
+
+func (c *confiner) ConfinesNetwork() bool { return c.network }
 
 func (c *confiner) Confine(req domain.Confinement, argv []string) ([]string, error) {
 	c.got = append(c.got, req)

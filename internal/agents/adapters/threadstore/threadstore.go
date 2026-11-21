@@ -33,7 +33,7 @@ func New(st *store.Store) (*Store, error) {
 
 const threadColumns = `id, title, mode, COALESCE(model, ''), model_class, cwd, state, attention_state,
 	ephemeral, max_steps, budget_tokens, tokens_used, cost_micro_usd, created_at, updated_at,
-	COALESCE(workspace_id, ''), COALESCE(worktree_id, ''), queued, full_auto, COALESCE(agent, ''), egress_visibility`
+	COALESCE(workspace_id, ''), COALESCE(worktree_id, ''), queued, full_auto, COALESCE(agent, ''), egress_visibility, network_profile`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -42,7 +42,7 @@ func scanThread(row scanner) (domain.Thread, error) {
 	var mode, state string
 	err := row.Scan(&t.ID, &t.Title, &mode, &t.Model, &t.ModelClass, &t.Cwd, &state, &t.AttentionState,
 		&t.Ephemeral, &t.MaxSteps, &t.BudgetTokens, &t.TokensUsed, &t.CostMicroUSD, &t.CreatedAt, &t.UpdatedAt,
-		&t.WorkspaceID, &t.WorktreeID, &t.Queued, &t.FullAuto, &t.Agent, &t.EgressVisibility)
+		&t.WorkspaceID, &t.WorktreeID, &t.Queued, &t.FullAuto, &t.Agent, &t.EgressVisibility, &t.NetworkProfile)
 	t.Mode, t.State = secdomain.Mode(mode), domain.State(state)
 	return t, err
 }
@@ -76,6 +76,19 @@ func (s *Store) SetWorktree(ctx context.Context, threadID, worktreeID string, no
 	res, err := s.db.ExecContext(ctx, `UPDATE threads SET worktree_id = ?, updated_at = ? WHERE id = ?`, worktreeID, now, threadID)
 	if err != nil {
 		return fmt.Errorf("threadstore: set worktree: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: thread %s", domain.ErrNotFound, threadID)
+	}
+	return nil
+}
+
+// SetNetworkProfile records whether the thread's hosted agent was launched with a network the
+// sandbox enforces (REQ-ACP-007).
+func (s *Store) SetNetworkProfile(ctx context.Context, threadID, profile string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE threads SET network_profile = ? WHERE id = ?`, profile, threadID)
+	if err != nil {
+		return fmt.Errorf("threadstore: set network profile: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("%w: thread %s", domain.ErrNotFound, threadID)

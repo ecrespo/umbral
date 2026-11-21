@@ -71,6 +71,7 @@ type acpFile struct {
 			Args     []string          `toml:"args"`
 			EnvRefs  map[string]string `toml:"env_refs"`
 			Config   map[string]any    `toml:"config"`
+			Relay    string            `toml:"relay"`
 		} `toml:"agents"`
 	} `toml:"acp"`
 	Sandbox struct {
@@ -132,7 +133,7 @@ func parseACP(text string) (ACP, Sandbox, error) {
 	seen := map[string]bool{}
 	for _, a := range f.ACP.Agents {
 		e := acpdomain.Entry{
-			Name: a.Name, Manifest: a.Manifest, Command: a.Command, Args: a.Args, EnvRefs: a.EnvRefs, Config: a.Config,
+			Name: a.Name, Manifest: a.Manifest, Command: a.Command, Args: a.Args, EnvRefs: a.EnvRefs, Config: a.Config, Relay: a.Relay,
 		}
 		if err := e.Validate(); err != nil {
 			return ACP{}, Sandbox{}, fmt.Errorf("acp.agents: %w", err)

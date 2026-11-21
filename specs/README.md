@@ -2,8 +2,8 @@
 
 This folder holds the Spec-Driven Development artifacts the code is written from.
 
-**Status on 2026-11-21:** constitution 1.6, PRD 1.24, F2 PRD 0.24, API 1.65, Technical Design
-1.107, Data Model 1.28, Plan 1.15. `python3 tools/sdd_check.py` passes with no CRITICAL and no
+**Status on 2026-11-21:** constitution 1.7, PRD 1.24, F2 PRD 0.25, API 1.66, Technical Design
+1.108, Data Model 1.29, Plan 1.15. `python3 tools/sdd_check.py` passes with no CRITICAL and no
 HIGH finding: 187 of 187 MUST requirements have a task.
 
 - **Phases:** F0 closed on 2026-09-26, F1 on 2026-10-22 and slice F2a on 2026-10-24. The tasks

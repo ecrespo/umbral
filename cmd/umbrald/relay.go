@@ -48,6 +48,43 @@ func (e relayEgress) Record(ctx context.Context, r acpdomain.Egress) error {
 	})
 }
 
+// acpRelays serves hosted threads' model relays (T-HRD-20c) over models.toml's providers and
+// the gateway's egress log.
+type acpRelays struct {
+	providers *providerConfig
+	egress    llmports.EgressLog
+}
+
+var _ acpports.Relays = acpRelays{}
+
+func (r acpRelays) Upstream(provider string) (string, error) {
+	cfg, err := relayConfig(r.providers, r.egress, "", provider)
+	if err != nil {
+		return "", err
+	}
+	return cfg.Upstream.BaseURL, nil
+}
+
+func (r acpRelays) Start(_ context.Context, threadID, provider string, port uint16) (acpports.Relay, error) {
+	cfg, err := relayConfig(r.providers, r.egress, threadID, provider)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Port = port
+	// The relay serves the agent until its process ends, past the launch request that starts
+	// it, and is closed with that process, not with ctx.
+	rl, err := relay.Start(cfg) //nolint:contextcheck // outlives the launch; closed with the agent
+	if err != nil {
+		return nil, err
+	}
+	return startedRelay{rl}, nil
+}
+
+// startedRelay is a running relay as the acp host sees it.
+type startedRelay struct{ *relay.Relay }
+
+func (s startedRelay) Origin() string { return "http://" + s.Addr() }
+
 // relayConfig is the relay of a hosted thread whose agent uses providerID (T-HRD-20b): its
 // endpoint is the provider's base URL in models.toml, its key the provider's credential and
 // its log the gateway's. A provider without a base URL — one loaded in process — has nothing

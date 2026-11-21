@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -35,6 +36,15 @@ type Manifest struct {
 	// Fixed is the configuration Umbral imposes. It is written over the entry's, so no
 	// UserKeys may name one of its keys.
 	Fixed map[string]any
+	// PortFlag is the flag that gives the agent the loopback port it serves itself on; ""
+	// is a manifest that cannot be given a relay, since its port could not be named in a
+	// network profile.
+	PortFlag string
+	// Relay points the entry's configuration at a relay (REQ-ACP-009): upstream is the
+	// models.toml provider's base URL, origin the relay's `http://host:port`, token its
+	// bearer token. It returns a copy and leaves entry as it was; nil is a manifest that
+	// cannot be given a relay.
+	Relay func(entry map[string]any, upstream, origin, token string) (map[string]any, error)
 }
 
 // Generate is the configuration file the agent reads: the entry's own keys, then Umbral's.
@@ -121,7 +131,64 @@ func openCode() Manifest {
 			"autoupdate": false,
 			"share":      "disabled",
 		},
+		PortFlag: "--port",
+		Relay:    openCodeRelay,
 	}
+}
+
+// openCodeRelay points the provider of the entry's `model` at the relay: its
+// `options.baseURL`, which must be the upstream's endpoint or below it, gets the relay's origin
+// with its own path kept, and `options.apiKey` the relay's token.
+func openCodeRelay(entry map[string]any, upstream, origin, token string) (map[string]any, error) {
+	model, _ := entry["model"].(string)
+	name, _, ok := strings.Cut(model, "/")
+	if !ok || name == "" {
+		return nil, refuse(ReasonRelay, "config.model %q does not name a provider as <provider>/<model>", model)
+	}
+	providers, _ := entry["provider"].(map[string]any)
+	provider, ok := providers[name].(map[string]any)
+	if !ok {
+		return nil, refuse(ReasonRelay, "config.provider.%s is not set: the relay needs the endpoint the agent reaches its model at", name)
+	}
+	options, _ := provider["options"].(map[string]any)
+	base, _ := options["baseURL"].(string)
+	b, err := url.Parse(base)
+	if err != nil || base == "" {
+		return nil, refuse(ReasonRelay, "config.provider.%s.options.baseURL %q is not a URL", name, base)
+	}
+	u, err := url.Parse(upstream)
+	if err != nil {
+		return nil, refuse(ReasonRelay, "the relay's provider has no endpoint to compare with: %v", err)
+	}
+	up := strings.TrimSuffix(u.EscapedPath(), "/")
+	path := b.EscapedPath()
+	below := path == up || strings.HasPrefix(path, up+"/")
+	if b.Scheme != u.Scheme || !strings.EqualFold(b.Host, u.Host) || b.User != nil || b.RawQuery != "" || b.Fragment != "" || !below {
+		return nil, refuse(ReasonRelay, "config.provider.%s.options.baseURL %q is not the relay's provider's endpoint %q or below it",
+			name, base, upstream)
+	}
+	outOptions := map[string]any{}
+	for k, v := range options {
+		outOptions[k] = v
+	}
+	outOptions["baseURL"] = strings.TrimSuffix(origin, "/") + path
+	outOptions["apiKey"] = token
+	outProvider := map[string]any{}
+	for k, v := range provider {
+		outProvider[k] = v
+	}
+	outProvider["options"] = outOptions
+	outProviders := map[string]any{}
+	for k, v := range providers {
+		outProviders[k] = v
+	}
+	outProviders[name] = outProvider
+	out := map[string]any{}
+	for k, v := range entry {
+		out[k] = v
+	}
+	out["provider"] = outProviders
+	return out, nil
 }
 
 // orderedAsk is a JSON object of "*": "ask" followed by each name: "ask", in that order.

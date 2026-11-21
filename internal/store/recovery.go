@@ -9,6 +9,10 @@ import (
 // RecoveryReport counts what a restart had to clean up. The daemon logs it, and
 // `umb status` can surface it, so an operator can tell a clean restart from a crash.
 type RecoveryReport struct {
+	// NetworkProfilesOpened is how many hosted threads still said their agent's network was
+	// confined. No agent runs after a restart, and the next launch records the profile it gets
+	// under the sandbox of that day (REQ-ACP-007, migration 0011).
+	NetworkProfilesOpened int64
 	// SessionsExited is how many sessions were still marked alive. Their PTYs died with
 	// the previous process, so the rows were lying.
 	SessionsExited int64
@@ -51,6 +55,9 @@ type RecoveryReport struct {
 // a decision nothing will read. Decided approvals are history and are not touched. Only the
 // state changes: an expiry sets no decided_at, since nobody decided, and a stop leaves
 // updated_at alone, so a crash does not reorder `thread.list`.
+//
+// Step 3 also opens every thread's network profile: the agent that was confined is gone,
+// and `confined` is said of a running launch only (REQ-ACP-007).
 //
 // Step 8 drops every pane state report and metadata key. Whoever reported them did so to
 // the previous process; a restored pane still saying `working` on their word would hold a
@@ -126,6 +133,11 @@ func (s *Store) Recover(ctx context.Context, now time.Time) (RecoveryReport, err
 			"expire the approvals nothing is waiting for",
 			`UPDATE approvals SET state = 'expired' WHERE state = 'pending'`,
 			&report.ApprovalsExpired,
+		},
+		{
+			"open the network profiles no agent holds",
+			`UPDATE threads SET network_profile = 'open' WHERE network_profile = 'confined'`,
+			&report.NetworkProfilesOpened,
 		},
 		{"clear the pane state reports", `DELETE FROM pane_state_reports`, &report.PaneReportsCleared},
 		{"clear the pane metadata", `DELETE FROM pane_metadata`, &report.PaneReportsCleared},

@@ -82,16 +82,8 @@ func toWireThread(t agentsdomain.Thread) Thread {
 		MaxSteps: t.MaxSteps, BudgetTokens: t.BudgetTokens, TokensUsed: t.TokensUsed, CostMicroUSD: t.CostMicroUSD,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, Stalled: t.Stalled, Queued: t.Queued,
 		WorkspaceID: emptyAsNull(t.WorkspaceID), WorktreeID: emptyAsNull(t.WorktreeID),
-		Agent: emptyAsNull(t.Agent), EgressVisibility: egressVisibility(t.EgressVisibility),
+		Agent: emptyAsNull(t.Agent), EgressVisibility: t.WireEgress(),
 	}
-}
-
-// egressVisibility is a thread's `egress_visibility`; Umbral's own agent's is observed.
-func egressVisibility(v string) string {
-	if v == "" {
-		return agentsdomain.EgressObserved
-	}
-	return v
 }
 
 // MessageAttachment is `attachments[]` of a Message.
