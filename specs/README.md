@@ -8,11 +8,10 @@ HIGH finding: 183 of 183 MUST requirements have a task.
 
 - **Phases:** F0 closed on 2026-09-26, F1 on 2026-10-22 and slice F2a on 2026-10-24. The tasks
   of F2b … F2f are done; closing those slices is the Tech Lead's. The Hardening phase is open.
-- **Deltas:** 96 are archived under `../changes/_archive/`. 18 are open in `../changes/`: 16
+- **Deltas:** 97 are archived under `../changes/_archive/`. 17 are open in `../changes/`: 16
   from F2, approved by the implementing agent and waiting for the Tech Lead's review
   (`../docs/checkpoints/2026-11-17-delta-review-guide.md` is a reading order), and
-  `2026-11-hosted-terminal-sandbox` (T-HRD-21), proposed, and `2026-11-model-relay`
-  (T-HRD-20), approved, its first piece of three implemented.
+  `2026-11-model-relay` (T-HRD-20), approved, its first piece implemented.
 - **Open tasks:** T-PKG-05 in the F2 file; T-REL-01, T-REL-02, T-REL-03 and T-HRD-01 (both
   in progress), T-HRD-20 and T-HRD-22 in the hardening file.
 

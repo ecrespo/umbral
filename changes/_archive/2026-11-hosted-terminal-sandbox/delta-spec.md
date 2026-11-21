@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `PROPOSED`. The Tech Lead chose the way to close it on 2026-11-20 ("de acuerdo con la opción A": confine the terminal's shell); this text, written with the code, has not been reviewed |
+| **Status** | `RATIFIED 2026-11-20 by the Tech Lead ("Ratifico el delta 2026-11-hosted-terminal-sandbox")`, as written, after choosing its direction the same day; folded into PRD F2 0.20 and Tech 1.102, and archived |
 | **Date** | 2026-11-20 |
 | **Task** | T-HRD-21 |
 | **REQ** | adds REQ-SBX-007; REQ-ORC-004 and REQ-ACP-003 are not reworded |
