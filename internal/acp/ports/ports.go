@@ -43,6 +43,19 @@ type Terminal interface {
 	Release(ctx context.Context) error
 }
 
+// Keys gives a relay its provider's key when it forwards a request, so a key reloaded since
+// the relay started is the one sent (REQ-SBX-009). "" is a provider that takes none; an error
+// forwards nothing. The key never reaches the agent.
+type Keys interface {
+	Key(ctx context.Context, provider string) (string, error)
+}
+
+// EgressLog records a request a relay forwards to an endpoint off the machine, before it is
+// forwarded (REQ-SBX-009, Art. 4). An error stops the request: it fails closed.
+type EgressLog interface {
+	Record(ctx context.Context, e domain.Egress) error
+}
+
 // Confiner puts an agent's process in the sandbox (REQ-SBX-001): it returns the command to
 // run instead of argv, so the process is confined before any of the agent's code runs. Where
 // the sandbox does not enforce it returns argv, and an error launches nothing.

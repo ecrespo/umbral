@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-11-20 by the Tech Lead`, twice: the five questions as recommended ("Como recomiendas"), and then the section "What piece a built, and what it found" ("ratifico el delta 2026-11-model-relay") — **except its `listen` limit, which is not accepted and is to be closed** (see "The Tech Lead on the `listen` limit"). Pieces a and a2 are implemented — **a2 cannot be enforced on macOS, a limit the Tech Lead accepted on 2026-11-21** —; a2's section is the implementing agent's under the Tech Lead's instruction of 2026-11-20 ("auto aprueba cualquier delta que aparezca e implementalo"); b and c are not |
+| **Status** | `APPROVED 2026-11-20 by the Tech Lead`, twice: the five questions as recommended ("Como recomiendas"), and then the section "What piece a built, and what it found" ("ratifico el delta 2026-11-model-relay") — **except its `listen` limit, which is not accepted and is to be closed** (see "The Tech Lead on the `listen` limit"). Pieces a, a2 and b are implemented — **a2 cannot be enforced on macOS, a limit the Tech Lead accepted on 2026-11-21** —; the sections of a2 and b are the implementing agent's under the Tech Lead's instruction of 2026-11-20 ("auto aprueba cualquier delta que aparezca e implementalo"); c is not |
 | **Date** | 2026-11-19 |
 | **Task** | T-HRD-20 |
 | **REQ** | will add REQ-SBX-008 and REQ-SBX-009 (REQ-SBX-007 was taken by T-HRD-21 on 2026-11-20) and amend REQ-ACP-007 and REQ-ACP-009; none is in the PRD yet |
@@ -217,6 +217,43 @@ The supervisor, on Linux, as the section above describes it, and the tests first
   to it. `TestMacOSLeavesAConfinedListenerOpenToTheOutside_REQ_SBX_008` measures the limit
   and reddens the day macOS closes it; it is a measurement, not coverage of the rule.
   Piece c's disclosure says it on macOS.
+
+## What piece b built (2026-11-20)
+
+The relay, with no caller (REQ-SBX-009), approved by the implementing agent under the Tech
+Lead's instruction of 2026-11-20. Decisions 1, 2 and 3 as written, and these details:
+
+- **Where it lives.** `internal/acp/adapters/relay`, on the standard library alone (Art. 9).
+  `acp/ports` gains `Keys` and `EgressLog`; `cmd/umbrald` answers them from the credentials
+  `models.toml` resolved and from the gateway's `egress_log`. A provider with no base URL —
+  one loaded in process — has nothing to relay to and is refused.
+- **The token.** 32 random bytes per relay, sent by the agent as its bearer token and compared
+  in constant time. A request without it reaches neither the key, the log nor the endpoint.
+- **What is forwarded.** The endpoint's path and below it only, with no dot segment once
+  decoded, so the agent cannot reach another path of the provider's host through the relay;
+  a body of at most 32 MiB. The agent's `Authorization`, `X-Api-Key`, `Api-Key`,
+  `Proxy-Authorization` and cookies do not cross, and nothing naming the agent is added. The
+  key is sent as `Authorization: Bearer`, which every provider type the gateway has takes.
+- **What spec-guardian's review closed.** It escaped the first version two ways, both
+  reproduced: an `Upgrade` turned the connection into a tunnel that carried a megabyte with
+  the key and no row, and the tunnel outlived `Close`. Now no upgrade and only `GET` and
+  `POST` are forwarded (a `TRACE` to an echoing endpoint returned the key), the path must be
+  plain — no escape, `;`, `\\`, empty or dot segment — a request's trailers do not cross,
+  a connection without the token is closed after its 401, and a relay holds at most 32
+  connections and 8 requests in flight, with read and idle timeouts. Three checks the
+  mutations showed redundant were taken out rather than kept.
+- **The key at each request.** Read when a request is forwarded, so a reload is followed; a
+  provider whose credential is down forwards nothing.
+- **The row first.** A request to an endpoint that is not loopback is recorded — thread,
+  provider, host, the body's size and SHA-256 — and forwarded only once the row is written;
+  one that cannot be recorded is answered 502 and does not leave. A loopback endpoint is not
+  recorded, as Tech Design §4 has it for Umbral's own calls.
+- **Streaming.** The answer is flushed as it arrives. Of seventeen mutations, the one that
+  survives sets the proxy's flush interval to an hour: the standard library flushes a
+  response of unknown length at once, so it is equivalent.
+- **For piece c.** It picks the port, passes `BaseURL()` and `Token()` to the agent's
+  configuration in place of the provider key `env_refs` would give, and closes the relay with
+  the agent.
 
 ## Tasks proposed
 
