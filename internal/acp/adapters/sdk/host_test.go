@@ -40,7 +40,7 @@ type sink struct {
 	fail     error
 	// permit decides permissions, refusing when nil; serve decides requests, refusing when nil.
 	permit func(ctx context.Context, call domain.ToolCall) (bool, error)
-	serve  func(ctx context.Context, req domain.Request, perform func(context.Context, string) (string, error)) error
+	serve  func(ctx context.Context, req domain.Request, perform func(context.Context, string, string) (string, error)) error
 	asked  []domain.Request
 }
 
@@ -51,7 +51,7 @@ func (s *sink) Permission(ctx context.Context, call domain.ToolCall) (bool, erro
 	return s.permit(ctx, call)
 }
 
-func (s *sink) Request(ctx context.Context, req domain.Request, perform func(context.Context, string) (string, error)) error {
+func (s *sink) Request(ctx context.Context, req domain.Request, perform func(context.Context, string, string) (string, error)) error {
 	s.mu.Lock()
 	s.asked = append(s.asked, req)
 	s.mu.Unlock()
@@ -62,12 +62,12 @@ func (s *sink) Request(ctx context.Context, req domain.Request, perform func(con
 }
 
 // allowAll performs every request on the target it names: a file's path, a terminal's line.
-func allowAll(ctx context.Context, req domain.Request, perform func(context.Context, string) (string, error)) error {
+func allowAll(ctx context.Context, req domain.Request, perform func(context.Context, string, string) (string, error)) error {
 	target := req.Path
 	if req.Method == domain.MethodTerminal {
 		target = req.Command
 	}
-	_, err := perform(ctx, target)
+	_, err := perform(ctx, "", target)
 	return err
 }
 
@@ -784,23 +784,25 @@ func (t *fakeTerm) Kill() {
 
 func (t *fakeTerm) Release(context.Context) error { t.f.released.Add(1); return nil }
 
-// fakeFiles records the targets it is asked to read and write.
+// fakeFiles records the targets it is asked to read and write, and the write roots they came
+// with.
 type fakeFiles struct {
 	mu      sync.Mutex
 	targets []string
+	roots   []string
 }
 
-func (f *fakeFiles) Read(target string, _, _ int) (string, error) {
+func (f *fakeFiles) Read(root, target string, _, _ int) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.targets = append(f.targets, target)
+	f.targets, f.roots = append(f.targets, target), append(f.roots, root)
 	return "content of " + target, nil
 }
 
-func (f *fakeFiles) Write(target, _ string) error {
+func (f *fakeFiles) Write(root, target, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.targets = append(f.targets, target)
+	f.targets, f.roots = append(f.targets, target), append(f.roots, root)
 	return nil
 }
 
@@ -911,14 +913,15 @@ func TestAnACPTerminalServesItsOutputAndExit_REQ_ACP_005(t *testing.T) {
 
 // TestACPFileRequestsArePerformedOnTheDecidedTarget_REQ_ACP_004: a file read or write runs on
 // the target the turn decided on — a path with its links resolved — not on the agent's own
-// string, and a refused one does not run.
+// string, with the write root the turn decided against, from which the file is reached
+// (T-HRD-22); and a refused one does not run.
 func TestACPFileRequestsArePerformedOnTheDecidedTarget_REQ_ACP_004(t *testing.T) {
 	t.Parallel()
 	files := &fakeFiles{}
 	h := newHost(t, func(c *Config) { c.Files = files })
 	dir := workDir(t)
-	resolved := func(ctx context.Context, req domain.Request, perform func(context.Context, string) (string, error)) error {
-		_, err := perform(ctx, "/resolved"+req.Path)
+	resolved := func(ctx context.Context, req domain.Request, perform func(context.Context, string, string) (string, error)) error {
+		_, err := perform(ctx, "/root", "/resolved"+req.Path)
 		return err
 	}
 	s := &sink{serve: resolved}
@@ -935,6 +938,9 @@ func TestACPFileRequestsArePerformedOnTheDecidedTarget_REQ_ACP_004(t *testing.T)
 	}
 	if got := files.targets; len(got) != 2 || got[0] != "/resolved/a/b.txt" || got[1] != "/resolved/a/c.txt" {
 		t.Errorf("performed on %v", got)
+	}
+	if got := files.roots; len(got) != 2 || got[0] != "/root" || got[1] != "/root" {
+		t.Errorf("performed from the write roots %v, want the turn's for the read and the write", got)
 	}
 }
 
@@ -1136,8 +1142,8 @@ func TestATerminalIsStartedOnTheContextItsTurnGave_REQ_SBX_007(t *testing.T) {
 	t.Parallel()
 	terms := &fakeTerms{}
 	h := newHost(t, func(c *Config) { c.Terminals = terms })
-	s := &sink{serve: func(ctx context.Context, req domain.Request, perform func(context.Context, string) (string, error)) error {
-		_, err := perform(context.WithValue(ctx, turnMark{}, "full-auto"), req.Command)
+	s := &sink{serve: func(ctx context.Context, req domain.Request, perform func(context.Context, string, string) (string, error)) error {
+		_, err := perform(context.WithValue(ctx, turnMark{}, "full-auto"), "", req.Command)
 		return err
 	}}
 	if _, err := promptWith(t, h, workDir(t), "term printf hello", s); err != nil {

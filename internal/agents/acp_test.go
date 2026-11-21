@@ -27,17 +27,24 @@ func (f *fakeHosted) Prompt(ctx context.Context, req ports.ExternalRequest, _ st
 	return domain.StopEndTurn, nil
 }
 
-// performed records the targets a request's perform ran with.
+// performed records the targets a request's perform ran with, and the write roots.
 type performed struct {
 	mu      sync.Mutex
 	targets []string
+	roots   []string
 }
 
-func (p *performed) fn(result string) func(context.Context, string) (string, error) {
-	return func(_ context.Context, target string) (string, error) {
+func (p *performed) from() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.roots...)
+}
+
+func (p *performed) fn(result string) func(context.Context, string, string) (string, error) {
+	return func(_ context.Context, root, target string) (string, error) {
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		p.targets = append(p.targets, target)
+		p.targets, p.roots = append(p.targets, target), append(p.roots, root)
 		return result, nil
 	}
 }
@@ -147,13 +154,16 @@ func TestACPPermissionEntersTheApprovalQueue_REQ_ACP_003(t *testing.T) {
 
 // TestACPWriteOutsideTheWorktreeAsks_REQ_ACP_004: a hosted thread's file write is WriteFS: in
 // auto-edit, one inside its worktree is performed unasked, one outside asks, and a denied
-// write is not performed.
+// write is not performed. The write is handed the worktree as its write root, the directory
+// it is then reached from (T-HRD-22).
 func TestACPWriteOutsideTheWorktreeAsks_REQ_ACP_004(t *testing.T) {
 	repo, outside := realDir(t), realDir(t)
 	wts := &fakeWorktrees{root: realDir(t), repo: repo}
 	did := &performed{}
 	errs := make(chan error, 2)
+	worktree := make(chan string, 1)
 	r := acpRig(t, wts, func(ctx context.Context, req ports.ExternalRequest, sink ports.ExternalSink) {
+		worktree <- req.Dir
 		errs <- sink.Request(ctx, ports.ExternalOp{Method: ports.OpWriteFile, Path: filepath.Join(req.Dir, "in.txt"), Content: "x"}, did.fn("wrote"))
 		errs <- sink.Request(ctx, ports.ExternalOp{Method: ports.OpWriteFile, Path: filepath.Join(outside, "out.txt"), Content: "x"}, did.fn("wrote"))
 	})
@@ -175,6 +185,9 @@ func TestACPWriteOutsideTheWorktreeAsks_REQ_ACP_004(t *testing.T) {
 	got := did.list()
 	if len(got) != 1 || filepath.Base(got[0]) != "in.txt" {
 		t.Errorf("performed %v, want only the write inside the worktree", got)
+	}
+	if from, dir := did.from(), <-worktree; len(from) != 1 || from[0] != dir || dir == "" {
+		t.Errorf("performed from the write root %v, want the worktree %q", from, dir)
 	}
 }
 
@@ -371,8 +384,8 @@ func TestFullAutoDecidesACPPermissions_REQ_ORC_004(t *testing.T) {
 			allowed <- ok
 		}
 		// A terminal in the worktree runs unasked; one whose cwd is outside it asks.
-		terminal <- sink.Request(ctx, ports.ExternalOp{Method: ports.OpTerminal, Command: "make", Cwd: req.Dir}, func(context.Context, string) (string, error) { return "started", nil })
-		terminal <- sink.Request(ctx, ports.ExternalOp{Method: ports.OpTerminal, Command: "make", Cwd: outside}, func(context.Context, string) (string, error) { return "started", nil })
+		terminal <- sink.Request(ctx, ports.ExternalOp{Method: ports.OpTerminal, Command: "make", Cwd: req.Dir}, func(context.Context, string, string) (string, error) { return "started", nil })
+		terminal <- sink.Request(ctx, ports.ExternalOp{Method: ports.OpTerminal, Command: "make", Cwd: outside}, func(context.Context, string, string) (string, error) { return "started", nil })
 	})
 	th := r.thread(t, domain.CreateParams{Cwd: repo, Agent: "fake", Worktree: true, Mode: secdomain.ModeNormal})
 	if _, err := r.rt.Update(t.Context(), th.ID, domain.UpdateParams{Mode: modePtr(secdomain.ModeFullAuto)}); err != nil {
@@ -436,8 +449,8 @@ func TestAnACPTerminalOutsideTheWriteRootAsks_REQ_ACP_005(t *testing.T) {
 	dir, outside := realDir(t), realDir(t)
 	errs := make(chan error, 2)
 	r := acpRig(t, nil, func(ctx context.Context, req ports.ExternalRequest, sink ports.ExternalSink) {
-		errs <- sink.Request(ctx, ports.ExternalOp{Method: ports.OpTerminal, Command: "make", Cwd: req.Dir}, func(context.Context, string) (string, error) { return "started", nil })
-		errs <- sink.Request(ctx, ports.ExternalOp{Method: ports.OpTerminal, Command: "make", Cwd: outside}, func(context.Context, string) (string, error) { return "started", nil })
+		errs <- sink.Request(ctx, ports.ExternalOp{Method: ports.OpTerminal, Command: "make", Cwd: req.Dir}, func(context.Context, string, string) (string, error) { return "started", nil })
+		errs <- sink.Request(ctx, ports.ExternalOp{Method: ports.OpTerminal, Command: "make", Cwd: outside}, func(context.Context, string, string) (string, error) { return "started", nil })
 	})
 	r.store.mu.Lock()
 	r.store.rules = append(r.store.rules, secdomain.Rule{Tool: "acp:terminal/create", Pattern: "make", Decision: secdomain.VerdictAllow, Source: "user"})
@@ -495,7 +508,7 @@ func TestATerminalIsDecidedOnTheWordsTheShellSees_REQ_ACP_005(t *testing.T) {
 			{Method: ports.OpTerminal, Command: `env 'A=x y' rm -rf /`, Policy: "env A=x_y rm -rf /", Cwd: req.Dir},
 			{Method: ports.OpTerminal, Command: `rm 'x;y' -rf /`, Policy: "rm x_y -rf /", Cwd: req.Dir},
 		} {
-			errs <- sink.Request(ctx, op, func(context.Context, string) (string, error) { return "started", nil })
+			errs <- sink.Request(ctx, op, func(context.Context, string, string) (string, error) { return "started", nil })
 		}
 	})
 	th := r.thread(t, domain.CreateParams{Cwd: repo, Agent: "fake", Worktree: true, Mode: secdomain.ModeNormal})
@@ -562,7 +575,7 @@ func TestATerminalThatRunsAScriptAsks_REQ_ACP_005(t *testing.T) {
 		errs <- sink.Request(ctx, ports.ExternalOp{
 			Method: ports.OpTerminal, Command: `sh -c 'make build'`,
 			Policy: "sh -c make_build", Script: true, Cwd: req.Dir,
-		}, func(context.Context, string) (string, error) { return "started", nil })
+		}, func(context.Context, string, string) (string, error) { return "started", nil })
 	})
 	th := r.thread(t, domain.CreateParams{Cwd: repo, Agent: "fake", Worktree: true, Mode: secdomain.ModeNormal})
 	if _, err := r.rt.Update(t.Context(), th.ID, domain.UpdateParams{Mode: modePtr(secdomain.ModeFullAuto)}); err != nil {
@@ -596,11 +609,11 @@ func TestAnACPTurnHasATrace_REQ_ACP_007(t *testing.T) {
 		exec.Status = "failed"
 		_ = sink.ToolCall(exec)
 		_ = sink.ToolCall(ports.ExternalToolCall{ID: "p1", Kind: "search", Risk: string(secdomain.RiskReadOnly), Status: "pending"})
-		if err := sink.Request(ctx, ports.ExternalOp{Method: ports.OpReadFile, Path: filepath.Join(dir, "x")}, func(context.Context, string) (string, error) { return "read", nil }); err != nil {
+		if err := sink.Request(ctx, ports.ExternalOp{Method: ports.OpReadFile, Path: filepath.Join(dir, "x")}, func(context.Context, string, string) (string, error) { return "read", nil }); err != nil {
 			t.Error(err)
 		}
 		// A request refused before it has a row still has its span, ended as an error.
-		if err := sink.Request(ctx, ports.ExternalOp{Method: ports.OpWriteFile, Path: "relative"}, func(context.Context, string) (string, error) { return "", nil }); err == nil {
+		if err := sink.Request(ctx, ports.ExternalOp{Method: ports.OpWriteFile, Path: "relative"}, func(context.Context, string, string) (string, error) { return "", nil }); err == nil {
 			t.Error("a relative write was performed")
 		}
 	})
@@ -650,7 +663,7 @@ func TestAHostedTerminalCarriesItsTurnsFullAuto_REQ_SBX_007(t *testing.T) {
 		wts := &fakeWorktrees{root: realDir(t), repo: repo}
 		marked := make(chan bool, 1)
 		r := acpRig(t, wts, func(ctx context.Context, req ports.ExternalRequest, sink ports.ExternalSink) {
-			if err := sink.Request(ctx, ports.ExternalOp{Method: ports.OpTerminal, Command: "make", Cwd: req.Dir}, func(ctx context.Context, _ string) (string, error) {
+			if err := sink.Request(ctx, ports.ExternalOp{Method: ports.OpTerminal, Command: "make", Cwd: req.Dir}, func(ctx context.Context, _, _ string) (string, error) {
 				marked <- ports.FullAuto(ctx)
 				return "started", nil
 			}); err != nil {

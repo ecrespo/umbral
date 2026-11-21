@@ -361,7 +361,7 @@ func (s *externalSink) Permission(ctx context.Context, ec ports.ExternalToolCall
 
 // Request decides one of the agent's requests of Umbral, records it as a row of its own and,
 // allowed, performs it (REQ-ACP-004, REQ-ACP-005).
-func (s *externalSink) Request(ctx context.Context, op ports.ExternalOp, perform func(context.Context, string) (string, error)) error {
+func (s *externalSink) Request(ctx context.Context, op ports.ExternalOp, perform func(context.Context, string, string) (string, error)) error {
 	ctx, cancel := s.within(ctx)
 	defer cancel()
 	tool := "acp:" + op.Method
@@ -434,7 +434,7 @@ func (s *externalSink) Request(ctx context.Context, op ports.ExternalOp, perform
 		// The terminal is started on the reading it was let run unasked on (REQ-SBX-007).
 		ctx = ports.WithFullAuto(ctx)
 	}
-	summary, perr := perform(ctx, a.Target)
+	summary, perr := perform(ctx, s.t.writeRoot, a.Target)
 	if perr != nil {
 		if err := finish(domain.ToolError, "error: "+perr.Error()); err != nil {
 			return err

@@ -36,6 +36,11 @@ func openRegular(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	return regular(f, path)
+}
+
+// regular is f, or an error and f closed when it is not a regular file.
+func regular(f *os.File, path string) (*os.File, error) {
 	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
@@ -48,10 +53,64 @@ func openRegular(path string) (*os.File, error) {
 	return f, nil
 }
 
-// readBounded reads a regular file of at most maxFileBytes.
-func readBounded(path string) ([]byte, error) {
-	f, err := openRegular(path)
+// under opens the directory a decided target is reached from, and gives the target's path
+// below it. The target's links were resolved when the policy decided on it; what is opened
+// afterwards goes through an os.Root, which refuses a link that leads out of its directory
+// whenever the link appeared. A target inside root — the thread's write root, where a write
+// runs unasked under `auto-edit` and `full-auto` and a hosted agent's read is not asked about
+// — is reached from root itself: a process confined to the write root can replace any
+// directory below it by a link between the decision and the open, and none of them then
+// leads anywhere else (T-HRD-22). Inside is the policy's test (security/domain's
+// withinWriteRoot), so what ran unasked is what is bounded. Any other target is one a person approved or a read that
+// needs no approval, and is reached from its nearest existing directory.
+func under(root, target string) (*os.Root, string, error) {
+	anchor := ""
+	if root != "" {
+		// The policy tests the target against the write root with its links resolved
+		// (writeAction), and the target's are: a root held through a link — a temporary
+		// directory on macOS is — would otherwise never contain its own files here.
+		real := realPath(root)
+		if rel, err := filepath.Rel(real, target); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			anchor = real
+		}
+	}
+	if anchor == "" {
+		anchor = filepath.Dir(target)
+		for {
+			if info, err := os.Lstat(anchor); err == nil && info.IsDir() {
+				break
+			}
+			parent := filepath.Dir(anchor)
+			if parent == anchor {
+				return nil, "", fmt.Errorf("no directory of %s exists", target)
+			}
+			anchor = parent
+		}
+	}
+	rel, err := filepath.Rel(anchor, target)
 	if err != nil {
+		return nil, "", err
+	}
+	dir, err := os.OpenRoot(anchor)
+	if err != nil {
+		return nil, "", err
+	}
+	return dir, rel, nil
+}
+
+// readBounded reads a regular file of at most maxFileBytes: path, reached as under reaches it
+// for the write root.
+func readBounded(root, path string) ([]byte, error) {
+	dir, rel, err := under(root, path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = dir.Close() }()
+	f, err := dir.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	if f, err = regular(f, path); err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
@@ -106,7 +165,7 @@ func (readFile) Run(_ context.Context, env domain.Env, input json.RawMessage) (d
 	if err := decode(input, &in); err != nil {
 		return domain.Result{}, err
 	}
-	data, err := readBounded(target(env, in.Path))
+	data, err := readBounded(env.WriteRoot, decided(env, in.Path))
 	if err != nil {
 		return domain.Result{}, err
 	}
@@ -194,7 +253,7 @@ func (writeFile) Preview(_ context.Context, env domain.Env, input json.RawMessag
 	if err := decode(input, &in); err != nil {
 		return "", err
 	}
-	old, err := current(target(env, in.Path))
+	old, err := current(env.WriteRoot, decided(env, in.Path))
 	if err != nil {
 		return "", err
 	}
@@ -208,7 +267,7 @@ func (w writeFile) Run(ctx context.Context, env domain.Env, input json.RawMessag
 	}
 	var in writeInput
 	_ = json.Unmarshal(input, &in)
-	if err := replace(writeTarget(env, in.Path), []byte(in.Content)); err != nil {
+	if err := replace(env.WriteRoot, decided(env, in.Path), []byte(in.Content)); err != nil {
 		return domain.Result{}, err
 	}
 	return domain.Result{Summary: fmt.Sprintf("wrote %s (%d bytes)", in.Path, len(in.Content)), Text: d}, nil
@@ -220,7 +279,7 @@ func (writeFile) RunHunks(_ context.Context, env domain.Env, input json.RawMessa
 	if err := decode(input, &in); err != nil {
 		return domain.Result{}, err
 	}
-	old, err := current(target(env, in.Path))
+	old, err := current(env.WriteRoot, decided(env, in.Path))
 	if err != nil {
 		return domain.Result{}, err
 	}
@@ -250,7 +309,7 @@ func writeHunks(env domain.Env, path, old, updated string, keep map[string]bool)
 	if err != nil {
 		return domain.Result{}, err
 	}
-	if err := replace(writeTarget(env, path), []byte(content)); err != nil {
+	if err := replace(env.WriteRoot, decided(env, path), []byte(content)); err != nil {
 		return domain.Result{}, err
 	}
 	var rejected strings.Builder
@@ -307,7 +366,7 @@ func (editFile) Summary(input json.RawMessage) string {
 
 // edited is the file's content after the edit, or why the edit cannot be made.
 func (editFile) edited(env domain.Env, in editInput) (old, updated string, err error) {
-	data, err := readBounded(target(env, in.Path))
+	data, err := readBounded(env.WriteRoot, decided(env, in.Path))
 	if err != nil {
 		return "", "", err
 	}
@@ -358,15 +417,15 @@ func (e editFile) Run(_ context.Context, env domain.Env, input json.RawMessage) 
 	if err != nil {
 		return domain.Result{}, err
 	}
-	if err := replace(writeTarget(env, in.Path), []byte(updated)); err != nil {
+	if err := replace(env.WriteRoot, decided(env, in.Path), []byte(updated)); err != nil {
 		return domain.Result{}, err
 	}
 	return domain.Result{Summary: "edited " + in.Path, Text: diff(in.Path, old, updated)}, nil
 }
 
-// writeTarget is where a write goes: the target the registry checked the grant against, or,
-// for a direct call with none, the path resolved now.
-func writeTarget(env domain.Env, path string) string {
+// decided is the file a call reads or writes: the target the registry checked the grant
+// against, or, for a direct call with none, the path resolved now.
+func decided(env domain.Env, path string) string {
 	if env.Target != "" {
 		return env.Target
 	}
@@ -374,8 +433,8 @@ func writeTarget(env domain.Env, path string) string {
 }
 
 // current is a file's content, or "" when it does not exist yet.
-func current(path string) (string, error) {
-	data, err := readBounded(path)
+func current(root, path string) (string, error) {
+	data, err := readBounded(root, path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}
@@ -388,32 +447,17 @@ func diff(path, old, updated string) string {
 }
 
 // replace writes data to target, a path whose symlinks were resolved when the policy decided
-// on it. Everything below its nearest existing directory happens inside an os.Root opened
-// there, so a component swapped for a link since the decision cannot lead the write out of
-// it: missing directories are created, the data goes to a temporary file that is renamed over
-// the target, and an existing file keeps its mode. A target that has become a link, or is not
-// a regular file, is refused.
-func replace(target string, data []byte) error {
-	anchor := filepath.Dir(target)
-	for {
-		if info, err := os.Lstat(anchor); err == nil && info.IsDir() {
-			break
-		}
-		parent := filepath.Dir(anchor)
-		if parent == anchor {
-			return fmt.Errorf("no directory of %s exists", target)
-		}
-		anchor = parent
-	}
-	root, err := os.OpenRoot(anchor)
+// on it. Everything happens inside the os.Root that under opens for writeRoot — the write root
+// itself for a target inside it — so a component swapped for a link since the decision cannot
+// lead the write out of it: missing directories are created, the data goes to a temporary
+// file that is renamed over the target, and an existing file keeps its mode. A target that
+// has become a link, or is not a regular file, is refused.
+func replace(writeRoot, target string, data []byte) error {
+	root, rel, err := under(writeRoot, target)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	rel, err := filepath.Rel(anchor, target)
-	if err != nil {
-		return err
-	}
 	if dir := filepath.Dir(rel); dir != "." {
 		if err := root.MkdirAll(dir, 0o750); err != nil {
 			return err
@@ -451,11 +495,12 @@ func replace(target string, data []byte) error {
 const maxACPRead = 4 << 20
 
 // ReadText is `fs/read_text_file` for a hosted ACP agent: the raw content of target — a path
-// the policy decided on, links already resolved — or, from line (1-based), limit of its lines
+// the policy decided on, links already resolved, reached from root, the thread's write root,
+// when it is inside it — or, from line (1-based), limit of its lines
 // (0 is the rest). It has read_file's guards: a regular file of at most 16 MiB, opened without
 // blocking, and text.
-func ReadText(target string, line, limit int) (string, error) {
-	data, err := readBounded(target)
+func ReadText(root, target string, line, limit int) (string, error) {
+	data, err := readBounded(root, target)
 	if err != nil {
 		return "", err
 	}
@@ -479,5 +524,6 @@ func ReadText(target string, line, limit int) (string, error) {
 }
 
 // WriteText is `fs/write_text_file` for a hosted ACP agent: target's content replaced as
-// write_file replaces it, through the target the policy decided on.
-func WriteText(target, content string) error { return replace(target, []byte(content)) }
+// write_file replaces it, through the target the policy decided on and from root, the thread's
+// write root.
+func WriteText(root, target, content string) error { return replace(root, target, []byte(content)) }
