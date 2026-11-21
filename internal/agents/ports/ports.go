@@ -367,7 +367,8 @@ type ExternalSink interface {
 	Permission(ctx context.Context, call ExternalToolCall) (bool, error)
 	// Request decides op and records it as a tool call of its own; allowed, it runs perform
 	// with the target the decision was made on — a file's path with its links resolved, or
-	// the command line — and records how that went (REQ-ACP-004, REQ-ACP-005). A request not
+	// the command line — and the write root it was decided against, from which a file inside
+	// it is reached, and records how that went (REQ-ACP-004, REQ-ACP-005). A request not
 	// allowed is ErrDenied and perform is not run.
-	Request(ctx context.Context, op ExternalOp, perform func(ctx context.Context, target string) (string, error)) error
+	Request(ctx context.Context, op ExternalOp, perform func(ctx context.Context, root, target string) (string, error)) error
 }

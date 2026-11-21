@@ -318,6 +318,29 @@ A hosted agent's permissions, file requests and terminals are decided by the tur
 
 [[internal/agents/external.go#externalSink#Request]] gives each `fs/*` and `terminal/create` a row of its own and decides it in [[internal/agents/external.go#externalSink#requestDecision]]: a read is `ReadOnly` and asks outside the write root, a write is `WriteFS` unless covered, a terminal is `run_command`'s decision on the line [[internal/acp/domain/request.go#CommandLine]] quotes and asks for a cwd outside the write root even when a rule allows the line. Only what was allowed is performed, on the decided target: files by [[internal/tools/adapters/builtin/files.go#ReadText]] and [[internal/tools/adapters/builtin/files.go#WriteText]], terminals by [[internal/sessions/terminal.go#Service#StartTerminal]], a thread-owned session in bash or zsh — never fish, whose quoting differs — that returns once the line is written, its command a `via = acp` block never taken for the thread's PTY. [[internal/acp/domain/request.go#CheckTerminal]] refuses a control character in a terminal's command, arguments or environment before anything is decided, since the shell's line editor acts on one even inside quotes; an agent's own commands are held to the same rule. The policy also decides [[internal/acp/domain/request.go#PolicyLine]], one token per word the shell sees, because the destructive normaliser reads no quotes and `env 'A=x y' rm -rf /` would otherwise hide `rm`; the strictest verdict stands. A terminal whose words may hold a script of their own asks whatever else allows it: [[internal/acp/domain/request.go#InterpretsScript]] reads no flag grammar and fails closed: any word naming a shell, busybox, PowerShell, `ssh`, `eval` or a runner of shell lines (`watch`, `su`, `script`, `flock`), whatever its flags or case, and `env` with any option outside a safe few. [[internal/acp/adapters/sdk/terminal.go#process#reserveTerminal]] enforces `[acp] max_terminals` before anything is asked, and an agent that ends releases its terminals.
 
+### A file inside the write root is reached from the write root
+
+The daemon writes and reads files itself, unconfined, on a target decided a moment earlier; it opens them below the thread's write root so a directory swapped for a link since leads nowhere else (delta `2026-11-write-root-anchor`, T-HRD-22).
+
+[[internal/tools/adapters/builtin/files.go#under]] opens an `os.Root` on the write root when the decided target is inside it — the policy's own lexical test, on the target with its links resolved — and on the target's nearest existing directory otherwise, which is a target a person approved. [[internal/tools/adapters/builtin/files.go#replace]] and [[internal/tools/adapters/builtin/files.go#readBounded]] work inside that root, so a link out of it is refused whenever it appeared and one that stays inside is followed.
+
+`read_file`, `write_file` and `edit_file` use the target their grant was checked against, through [[internal/tools/adapters/builtin/files.go#decided]], and resolve nothing again. A hosted agent's `fs/*` requests are performed by code that did not decide them, so [[internal/agents/external.go#externalSink#Request]] hands `perform` the write root beside the target, and [[internal/acp/adapters/sdk/client.go#client#ReadTextFile]] and [[internal/acp/adapters/sdk/client.go#client#WriteTextFile]] pass it to the daemon's performer.
+
+Which root each operation is reached from:
+
+- `write_file`, `edit_file` and a hosted `fs/write_text_file` on a target inside the write root: the write root.
+- `read_file`, the read `edit_file` and a diff preview make, and a hosted `fs/read_text_file` inside it: the write root.
+- Any of them on a target outside it, which a person approved or which is a read by Umbral's own agent: the target's nearest existing directory, as every write was before.
+- `grep`, `glob` and `list_dir`: none. They walk by path and are read-only for Umbral's own agent, which may read anywhere unasked; no hosted request maps to them.
+
+The inside test is lexical, on the target and the write root both with their links resolved, and must stay the policy's: [[internal/security/domain/policy.go#withinWriteRoot]] decides what runs unasked, and a target it calls inside that [[internal/tools/adapters/builtin/files.go#under]] called outside would be written from its own directory again.
+
+The tests swap a directory for a link after the decision and expect a refusal and an untouched file outside:
+
+- `TestAWriteStaysUnderItsWriteRoot_REQ_AGT_013` for `write_file`, `edit_file` and a new file.
+- `TestAHostedWriteAndReadStayUnderTheWriteRoot_REQ_ACP_004` for the hosted pair, with a link that stays inside still followed.
+- `TestAHostedFileRequestIsReachedFromItsWriteRoot_REQ_ACP_004` for the daemon's performer.
+
 ### A hosted turn is traced and disclosed as unobserved
 
 A hosted turn has the turn span of Umbral's own, with a child span per reported tool call and per mediated request, and every client says what Umbral cannot see of it (delta `2026-10-acp-cancel-traces`).

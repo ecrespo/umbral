@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -261,9 +262,10 @@ func TestTheTargetFollowsSymlinks_REQ_AGT_013(t *testing.T) {
 	}
 }
 
-// TestAWriteStaysUnderItsDirectory_REQ_AGT_013: the write itself runs inside an os.Root opened
-// on the target's nearest existing directory, so a component swapped for a link out of it
-// after the decision — the registry's check aside — fails the write instead of following it.
+// TestAWriteStaysUnderItsDirectory_REQ_AGT_013: a write with no write root to be reached from
+// — a target outside it, which a person approved — runs inside an os.Root opened on the
+// target's nearest existing directory, so its last directory or the target itself, swapped
+// for a link out of it after the decision, fails the write instead of being followed.
 func TestAWriteStaysUnderItsDirectory_REQ_AGT_013(t *testing.T) {
 	t.Parallel()
 
@@ -281,7 +283,7 @@ func TestAWriteStaysUnderItsDirectory_REQ_AGT_013(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "sub")); err != nil {
 		t.Fatal(err)
 	}
-	if err := replace(decided, []byte("x")); err == nil {
+	if err := replace("", decided, []byte("x")); err == nil {
 		t.Error("the write followed a link out of its directory")
 	}
 	if _, err := os.Stat(filepath.Join(outside, "f")); err == nil {
@@ -298,7 +300,7 @@ func TestAWriteStaysUnderItsDirectory_REQ_AGT_013(t *testing.T) {
 	if err := os.Symlink(filepath.Join(outside, "g"), target); err != nil {
 		t.Fatal(err)
 	}
-	if err := replace(target, []byte("x")); err == nil {
+	if err := replace("", target, []byte("x")); err == nil {
 		t.Error("a target swapped for a link was written")
 	}
 	if read(t, filepath.Join(outside, "g")) != "theirs" {
@@ -462,5 +464,146 @@ func TestAWriteRunsWithTheAcceptedHunks_REQ_DSK_002(t *testing.T) {
 
 	if _, err := invoke(domain.Call{Tool: "read_file", Input: in(map[string]any{"path": "a.txt"})}, []string{first.ID}); !errors.Is(err, domain.ErrNotAuthorized) {
 		t.Errorf("a tool without hunks run with ids: %v", err)
+	}
+}
+
+// swapped builds a write root holding a/b/f and a directory outside it holding b/f, decides
+// on root/a/b/f, and then replaces root/a by a link to the outside directory: what a process
+// confined to the write root can do between a decision and the daemon's own write or read.
+func swapped(t *testing.T) (root, outside, decided string) {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, outside = filepath.Join(base, "repo"), filepath.Join(base, "outside")
+	write(t, filepath.Join(root, "a", "b", "f"), "inside\n")
+	write(t, filepath.Join(outside, "b", "f"), "secret\n")
+	a, err := writeFile{}.Action(domain.Env{Cwd: root, WriteRoot: root}, in(map[string]any{"path": "a/b/f", "content": "x"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decided = a.Target
+	if decided != filepath.Join(root, "a", "b", "f") {
+		t.Fatalf("decided on %q", decided)
+	}
+	if err := os.Rename(filepath.Join(root, "a"), filepath.Join(root, "was-a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "a")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	return root, outside, decided
+}
+
+// TestAWriteStaysUnderItsWriteRoot_REQ_AGT_013: a target inside the write root is written
+// from the write root, so a directory between the two that was swapped for a link after the
+// decision does not carry the write — which may have run unasked — out of it (T-HRD-22).
+func TestAWriteStaysUnderItsWriteRoot_REQ_AGT_013(t *testing.T) {
+	t.Parallel()
+
+	for name, run := range map[string]func(env domain.Env) error{
+		"write_file": func(env domain.Env) error {
+			_, err := writeFile{}.Run(context.Background(), env, in(map[string]any{"path": "a/b/f", "content": "x"}))
+			return err
+		},
+		"edit_file": func(env domain.Env) error {
+			_, err := editFile{}.Run(context.Background(), env, in(map[string]any{"path": "a/b/f", "old_string": "secret", "new_string": "x"}))
+			return err
+		},
+		"a new file": func(env domain.Env) error {
+			env.Target = filepath.Join(filepath.Dir(env.Target), "new")
+			_, err := writeFile{}.Run(context.Background(), env, in(map[string]any{"path": "a/b/new", "content": "x"}))
+			return err
+		},
+		"read_file": func(env domain.Env) error {
+			res, err := readFile{}.Run(context.Background(), env, in(map[string]any{"path": "a/b/f"}))
+			if err == nil {
+				return nil
+			}
+			_ = res
+			return err
+		},
+	} {
+		for _, spelled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/root through a link=%v", name, spelled), func(t *testing.T) {
+				t.Parallel()
+				root, outside, decided := swapped(t)
+				if spelled {
+					// The write root as a thread may hold it: through a link, while the decided
+					// target has every link resolved. The policy resolves the root before its
+					// test, and so must the write.
+					alias := filepath.Join(filepath.Dir(root), "alias")
+					if err := os.Symlink(root, alias); err != nil {
+						t.Fatal(err)
+					}
+					root = alias
+				}
+				if err := run(domain.Env{Cwd: root, WriteRoot: root, Target: decided}); err == nil {
+					t.Error("the write followed a link out of the write root")
+				}
+				if got := read(t, filepath.Join(outside, "b", "f")); got != "secret\n" {
+					t.Errorf("the file outside the write root now holds %q", got)
+				}
+				if _, err := os.Lstat(filepath.Join(outside, "b", "new")); err == nil {
+					t.Error("a file was created outside the write root")
+				}
+			})
+		}
+	}
+}
+
+// TestAHostedWriteAndReadStayUnderTheWriteRoot_REQ_ACP_004: the same for a hosted agent's
+// `fs/write_text_file` and `fs/read_text_file`, which the daemon performs for it: a read
+// inside the write root is not asked about, so a link swapped in after the decision would
+// hand the agent a file from outside it (T-HRD-22).
+func TestAHostedWriteAndReadStayUnderTheWriteRoot_REQ_ACP_004(t *testing.T) {
+	t.Parallel()
+
+	root, outside, decided := swapped(t)
+	if err := WriteText(root, decided, "x"); err == nil {
+		t.Error("the write followed a link out of the write root")
+	}
+	if got := read(t, filepath.Join(outside, "b", "f")); got != "secret\n" {
+		t.Errorf("the file outside the write root now holds %q", got)
+	}
+	if text, err := ReadText(root, decided, 0, 0); err == nil {
+		t.Errorf("the read followed a link out of the write root and returned %q", text)
+	}
+	// The same with the write root held through a link, as the policy resolves it.
+	alias := filepath.Join(filepath.Dir(root), "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteText(alias, decided, "x"); err == nil {
+		t.Error("the write followed a link out of a write root held through a link")
+	}
+	if text, err := ReadText(alias, decided, 0, 0); err == nil {
+		t.Errorf("the read followed a link out of a write root held through a link and returned %q", text)
+	}
+	if got := read(t, filepath.Join(outside, "b", "f")); got != "secret\n" {
+		t.Errorf("the file outside the write root now holds %q", got)
+	}
+
+	// A link that stays inside the write root is followed, as before the swap mattered.
+	if err := os.Remove(filepath.Join(root, "a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("was-a", filepath.Join(root, "a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteText(root, decided, "kept\n"); err != nil {
+		t.Errorf("a write through a link that stays inside: %v", err)
+	}
+	if text, err := ReadText(root, decided, 0, 0); err != nil || text != "kept\n" {
+		t.Errorf("a read through a link that stays inside = %q, %v", text, err)
+	}
+
+	// A target outside the write root was approved by a person: it is still written and read.
+	if err := WriteText(root, filepath.Join(outside, "b", "f"), "approved\n"); err != nil {
+		t.Errorf("an approved write outside the write root: %v", err)
+	}
+	if text, err := ReadText(root, filepath.Join(outside, "b", "f"), 0, 0); err != nil || text != "approved\n" {
+		t.Errorf("an approved read outside the write root = %q, %v", text, err)
 	}
 }

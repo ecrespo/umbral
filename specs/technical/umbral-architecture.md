@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.103 |
+| **Version** | 1.104 |
 | **Date** | 2026-11-20 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1114,9 +1114,12 @@ with `run_command` from T-F1-10. Delta `2026-09-builtin-tools`:
   on is the one the tool registered with.
 - **Targets follow symlinks**: the path the policy sees, and the cwd and write root, are
   resolved through the nearest existing ancestor, so a link out of the write root asks. A write
-  goes to the target the grant was checked against, resolving nothing again, inside an
-  `os.Root` opened on its nearest existing directory, and fails if a component or the target
-  became a link since the check.
+  or a read of a file goes to the target the grant was checked against, resolving nothing
+  again, inside an `os.Root`: opened on the write root for a target inside it — the policy's
+  own lexical test — so no directory between the two, replaced by a link since the check,
+  leads out of it; and on the target's nearest existing directory for any other, which a
+  person approved. It fails if a component below that root or the target became a link out
+  of it since the check (delta `2026-11-write-root-anchor`, T-HRD-22).
 - **File tools read only regular files of at most 16 MiB**, opened without blocking.
 - **`write_file` and `edit_file` preview a unified diff** for `approval.requested`
   (REQ-AGT-012); `edit_file` needs `old_string` to match exactly once unless `replace_all`;
@@ -1466,7 +1469,8 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
   - *Files* need an absolute path. A read is `ReadOnly` and asks outside the write root in every
     mode; a write is `WriteFS`, its approval showing `write_file`'s diff, and is not asked again
     when an allowed permission of the same turn listed its path. Both are performed by Umbral on
-    the decided target with `read_file`'s and `write_file`'s guards (16 MiB, non-blocking open,
+    the decided target, reached from the write root the turn decided against when it is inside
+    it, with `read_file`'s and `write_file`'s guards (16 MiB, non-blocking open,
     atomic rename), a read returning at most 4 MiB; each is a row of its own,
     `acp:fs/read_text_file` or `acp:fs/write_text_file`.
   - *Terminals.* `terminal/create` is `Exec` on its line — command and args quoted for a POSIX
@@ -2487,3 +2491,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.101 | 2026-11-19 | E. Crespo (assisted draft) | Delta `2026-11-full-auto-sandbox` (T-HRD-17, ratified 2026-11-20): §5.3 `full-auto`'s boundary is the kernel's where the sandbox enforces; §5.3f a `full-auto` thread's shell is confined, on the turn's own mode or the thread's record, the profile's read entries, the `ShellConfiner` port |
 | 1.102 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-hosted-terminal-sandbox` (T-HRD-21, ratified 2026-11-20): §5.3 and §5.3f a hosted thread's terminals are confined under `full-auto`, each with a directory of its own |
 | 1.103 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a, approved): §5.3f a profile's network, on Linux and macOS, and its limits |
+| 1.104 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-write-root-anchor` (T-HRD-22, proposed): §5.3 and §5.3f, a file inside the write root is written and read from the write root, so a directory replaced by a link after the decision does not lead out of it |

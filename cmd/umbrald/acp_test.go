@@ -536,3 +536,39 @@ func TestAHostedAgentIsRefusedTheUsersMethods_REQ_ORC_004(t *testing.T) {
 		t.Errorf("the user's skill.install answered %v, want an error other than PERMISSION_DENIED", err)
 	}
 }
+
+// TestAHostedFileRequestIsReachedFromItsWriteRoot_REQ_ACP_004: the daemon performs a hosted
+// agent's file requests from the write root the turn decided against. A directory of the
+// worktree replaced by a link after the decision — which a confined agent can do — carries
+// neither its write nor its read out of the worktree (T-HRD-22).
+func TestAHostedFileRequestIsReachedFromItsWriteRoot_REQ_ACP_004(t *testing.T) {
+	t.Parallel()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, outside := filepath.Join(base, "worktree"), filepath.Join(base, "outside")
+	for _, d := range []string{filepath.Join(root, "was-a", "b"), filepath.Join(outside, "b")} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secret := filepath.Join(outside, "b", "f")
+	if err := os.WriteFile(secret, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Decided on worktree/a/b/f while a was a directory; a is now a link out of the worktree.
+	if err := os.Symlink(outside, filepath.Join(root, "a")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	decided := filepath.Join(root, "a", "b", "f")
+	if err := (acpFiles{}).Write(root, decided, "x"); err == nil {
+		t.Error("the write followed a link out of the worktree")
+	}
+	if text, err := (acpFiles{}).Read(root, decided, 0, 0); err == nil {
+		t.Errorf("the read followed a link out of the worktree: %q", text)
+	}
+	if data, err := os.ReadFile(secret); err != nil || string(data) != "secret\n" {
+		t.Errorf("the file outside the worktree holds %q, %v", data, err)
+	}
+}

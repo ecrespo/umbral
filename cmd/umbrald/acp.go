@@ -44,11 +44,13 @@ func newACP(settings config.ACP, runtimeDir string, confiner acpports.Confiner, 
 // (delta `2026-10-acp-mediation`, decision 6).
 type acpFiles struct{}
 
-func (acpFiles) Read(target string, line, limit int) (string, error) {
-	return builtin.ReadText(target, line, limit)
+func (acpFiles) Read(root, target string, line, limit int) (string, error) {
+	return builtin.ReadText(root, target, line, limit)
 }
 
-func (acpFiles) Write(target, content string) error { return builtin.WriteText(target, content) }
+func (acpFiles) Write(root, target, content string) error {
+	return builtin.WriteText(root, target, content)
+}
 
 // acpTerminals runs a hosted agent's terminals in sessions its thread owns (REQ-ACP-005).
 type acpTerminals struct{ sessions *sessions.Service }
@@ -165,7 +167,7 @@ func (s acpSink) Permission(ctx context.Context, c acpdomain.ToolCall) (bool, er
 	return s.sink.Permission(ctx, externalCall(c))
 }
 
-func (s acpSink) Request(ctx context.Context, req acpdomain.Request, perform func(context.Context, string) (string, error)) error {
+func (s acpSink) Request(ctx context.Context, req acpdomain.Request, perform func(context.Context, string, string) (string, error)) error {
 	return s.sink.Request(ctx, agentsports.ExternalOp(req), perform)
 }
 

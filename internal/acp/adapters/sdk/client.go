@@ -209,7 +209,7 @@ func (c *client) RequestPermission(ctx context.Context, req acp.RequestPermissio
 }
 
 // serve hands req to the running turn, which decides it and, allowed, runs perform.
-func (c *client) serve(ctx context.Context, req domain.Request, perform func(context.Context, string) (string, error)) error {
+func (c *client) serve(ctx context.Context, req domain.Request, perform func(context.Context, string, string) (string, error)) error {
 	sink := c.current()
 	if sink == nil {
 		return errNoTurn
@@ -224,9 +224,9 @@ func (c *client) ReadTextFile(ctx context.Context, req acp.ReadTextFileRequest) 
 		return acp.ReadTextFileResponse{}, errors.New("umbral does not serve file reads to this agent")
 	}
 	var content string
-	err := c.serve(ctx, domain.Request{Method: domain.MethodReadFile, Path: req.Path}, func(_ context.Context, target string) (string, error) {
+	err := c.serve(ctx, domain.Request{Method: domain.MethodReadFile, Path: req.Path}, func(_ context.Context, root, target string) (string, error) {
 		var err error
-		content, err = files.Read(target, deref(req.Line), deref(req.Limit))
+		content, err = files.Read(root, target, deref(req.Line), deref(req.Limit))
 		return fmt.Sprintf("read %d bytes", len(content)), err
 	})
 	if err != nil {
@@ -243,8 +243,8 @@ func (c *client) WriteTextFile(ctx context.Context, req acp.WriteTextFileRequest
 	}
 	return acp.WriteTextFileResponse{}, c.serve(ctx,
 		domain.Request{Method: domain.MethodWriteFile, Path: req.Path, Content: req.Content},
-		func(_ context.Context, target string) (string, error) {
-			return fmt.Sprintf("wrote %d bytes", len(req.Content)), files.Write(target, req.Content)
+		func(_ context.Context, root, target string) (string, error) {
+			return fmt.Sprintf("wrote %d bytes", len(req.Content)), files.Write(root, target, req.Content)
 		})
 }
 
@@ -269,7 +269,7 @@ func (c *client) CreateTerminal(ctx context.Context, req acp.CreateTerminalReque
 		Method: domain.MethodTerminal, Command: command, Policy: policy, Cwd: cwd,
 		Script: domain.InterpretsScript(req.Command, req.Args),
 	},
-		func(ctx context.Context, target string) (string, error) {
+		func(ctx context.Context, root, target string) (string, error) {
 			var err error
 			started, err = terms.Start(ctx, p.thread, cwd, target)
 			return "started", err

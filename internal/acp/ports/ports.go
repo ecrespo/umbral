@@ -15,11 +15,13 @@ type Secrets interface {
 }
 
 // Files performs the file requests a turn allowed, on the target it decided on (REQ-ACP-004).
+// root is the thread's write root: a target inside it is reached from it, so a directory of
+// the worktree replaced by a link since the decision leads nowhere else.
 type Files interface {
 	// Read returns target's text, or limit of its lines from line (1-based; 0 is unset).
-	Read(target string, line, limit int) (string, error)
+	Read(root, target string, line, limit int) (string, error)
 	// Write replaces target's content.
-	Write(target, content string) error
+	Write(root, target, content string) error
 }
 
 // Terminals runs a terminal a turn allowed in a new session the thread owns (REQ-ACP-005).
@@ -59,7 +61,7 @@ type Sink interface {
 	// not at all (REQ-ACP-003).
 	Permission(ctx context.Context, call domain.ToolCall) (bool, error)
 	// Request decides one of the agent's requests and records it; allowed, it runs perform
-	// with the target the decision was made on (REQ-ACP-004, REQ-ACP-005). A request not
-	// allowed is an error, and perform is not run.
-	Request(ctx context.Context, req domain.Request, perform func(ctx context.Context, target string) (string, error)) error
+	// with the target the decision was made on and the thread's write root (REQ-ACP-004,
+	// REQ-ACP-005). A request not allowed is an error, and perform is not run.
+	Request(ctx context.Context, req domain.Request, perform func(ctx context.Context, root, target string) (string, error)) error
 }
