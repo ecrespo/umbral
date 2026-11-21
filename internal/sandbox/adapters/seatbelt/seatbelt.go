@@ -172,6 +172,11 @@ func Render(p domain.Profile) (string, error) {
 			// A `local` filter's host is not checked — a bind on every interface passes it, and
 			// so does a connection to the machine's outward address (measured on the runner) —
 			// so a connection is let in only from a loopback peer, which a `remote` filter checks.
+			// `listen` is an inbound check with no peer, where a `remote` filter never matches:
+			// the port is allowed, every peer refused, and the loopback's let back in; the last
+			// matching rule wins.
+			fmt.Fprintf(&b, "(allow network-inbound (local tcp \"localhost:%d\"))\n", port)
+			fmt.Fprintf(&b, "(deny network-inbound (require-all (local tcp \"localhost:%d\") (remote tcp \"*:*\")))\n", port)
 			fmt.Fprintf(&b, "(allow network-inbound (require-all (local tcp \"localhost:%d\") (remote tcp \"localhost:*\")))\n", port)
 		}
 	}
