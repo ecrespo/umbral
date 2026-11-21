@@ -1612,8 +1612,10 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
       to an allowed port is refused too; and the Mach services that reach the network for
       their caller — name resolution, the network's configuration, certificate checks — are
       left out, so nothing is resolved and no certificate is checked under such a profile.
-      It cannot enforce the rule on listening, so a profile that binds is refused with
-      `ErrNoNetwork` (REQ-SBX-008's IF clause). Measured on the runner on 2026-11-21: a
+      It cannot enforce the rule on listening, and a profile that binds is still rendered:
+      a limit the Tech Lead accepted on 2026-11-21 (REQ-SBX-008's macOS exception), which
+      `TestMacOSLeavesAConfinedListenerOpenToTheOutside_REQ_SBX_008` measures so that it
+      reddens the day macOS closes it. Measured on the runner on 2026-11-21: a
       `local` filter's host is not checked, so a listen on `0.0.0.0` on an allowed port
       passed, and a connection to the machine's outward address reached it. A rule that
       also required a loopback peer refused the listen itself. Allowing the port, refusing
@@ -2519,4 +2521,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.103 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a, approved): §5.3f a profile's network, on Linux and macOS, and its limits |
 | 1.104 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-write-root-anchor` (T-HRD-22, proposed): §5.3 and §5.3f, a file inside the write root is written and read from the write root, so a directory replaced by a link after the decision does not lead out of it |
 | 1.105 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a2): §5.3f, a process that may bind listens through a supervisor, on the loopback and its ports only |
-| 1.106 | 2026-11-21 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a2), measured on the macOS runner: §5.3f, macOS cannot enforce the rule on listening, so a profile that binds is refused there |
+| 1.106 | 2026-11-21 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a2), measured on the macOS runner: §5.3f, macOS cannot enforce the rule on listening; the limit, accepted by the Tech Lead, is measured |

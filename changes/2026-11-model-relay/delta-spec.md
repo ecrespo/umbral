@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | `APPROVED 2026-11-20 by the Tech Lead`, twice: the five questions as recommended ("Como recomiendas"), and then the section "What piece a built, and what it found" ("ratifico el delta 2026-11-model-relay") — **except its `listen` limit, which is not accepted and is to be closed** (see "The Tech Lead on the `listen` limit"). Pieces a and a2 are implemented — **a2 cannot be enforced on macOS, where a profile that binds is refused; whether to accept that limit instead is an open question for the Tech Lead** —; a2's section is the implementing agent's under the Tech Lead's instruction of 2026-11-20 ("auto aprueba cualquier delta que aparezca e implementalo"); b and c are not |
+| **Status** | `APPROVED 2026-11-20 by the Tech Lead`, twice: the five questions as recommended ("Como recomiendas"), and then the section "What piece a built, and what it found" ("ratifico el delta 2026-11-model-relay") — **except its `listen` limit, which is not accepted and is to be closed** (see "The Tech Lead on the `listen` limit"). Pieces a and a2 are implemented — **a2 cannot be enforced on macOS, a limit the Tech Lead accepted on 2026-11-21** —; a2's section is the implementing agent's under the Tech Lead's instruction of 2026-11-20 ("auto aprueba cualquier delta que aparezca e implementalo"); b and c are not |
 | **Date** | 2026-11-19 |
 | **Task** | T-HRD-20 |
 | **REQ** | will add REQ-SBX-008 and REQ-SBX-009 (REQ-SBX-007 was taken by T-HRD-21 on 2026-11-20) and amend REQ-ACP-007 and REQ-ACP-009; none is in the PRD yet |
@@ -208,20 +208,15 @@ The supervisor, on Linux, as the section above describes it, and the tests first
   and letting the loopback's back in listened and still let the outside connection
   through. Seatbelt has no rule that holds it, and there is no seccomp-like hook for an
   unprivileged supervisor.
-- **What the code does: it fails closed.** A network the kernel cannot enforce is refused,
-  as REQ-SBX-008's IF clause says, so on macOS a profile that binds is refused
-  (`ErrNoNetwork`) and only a profile that connects is rendered. The Tech Lead's decision
-  above — "a confined agent is to accept no connection from outside the machine" — is
-  kept, not reopened. Today nothing gives a thread a network profile; piece c will meet
-  this as a hosted OpenCode on macOS that cannot be given one, since it does not start
-  without its own port.
-- **Open question for the Tech Lead (Q-a2-mac).** Keep the refusal, or accept the macOS
-  limit and render the binding profile — then a listener on every interface would be
-  reached from outside, but every other use of the network would stay refused, where an
-  unconfined agent has all of it. Other ways out, none tried: hand the agent a socket
-  the daemon bound on the loopback, if OpenCode takes one; pre-bind the wildcard so the
-  agent's fails, which a bind to the outward address still escapes; a `pf` anchor or a
-  network extension, which need root or an entitlement.
+- **The Tech Lead accepted the macOS limit on 2026-11-21** ("Aceptemos el límite de
+  macOS"), after a commit of this piece had refused a binding profile there instead, as
+  REQ-SBX-008's IF clause would: a hosted OpenCode does not start without its own port,
+  and refused a profile it would run with the whole network. The profile is rendered as
+  it is — the whole network refused but TCP on the loopback's ports — and REQ-SBX-008
+  names macOS as its rule on listening's one exception, so the IF clause does not apply
+  to it. `TestMacOSLeavesAConfinedListenerOpenToTheOutside_REQ_SBX_008` measures the limit
+  and reddens the day macOS closes it; it is a measurement, not coverage of the rule.
+  Piece c's disclosure says it on macOS.
 
 ## Tasks proposed
 
