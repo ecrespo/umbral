@@ -15,10 +15,11 @@ import (
 // clients are doing. go-winio v0.6.2's Close waits for ever when it meets an accept whose
 // client connected and hung up at once (T-HRD-23): the daemon would never stop, and a test's
 // fake daemon held its test for the suite's ten minutes. Each round races a close against
-// clients that connect and hang up as fast as they can.
+// clients that connect and hang up as fast as they can. With go-winio's own listener the
+// runner hung once in 287 rounds, so the rounds are five times that.
 func TestAPipeListenersCloseReturns_REQ_WIN_001(t *testing.T) {
 	const (
-		rounds  = 300
+		rounds  = 1500
 		dialers = 4
 		within  = 10 * time.Second
 	)
