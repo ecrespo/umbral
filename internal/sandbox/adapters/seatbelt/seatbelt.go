@@ -169,15 +169,11 @@ func Render(p domain.Profile) (string, error) {
 		}
 		for _, port := range p.Net.Bind {
 			fmt.Fprintf(&b, "(allow network-bind (local tcp \"localhost:%d\"))\n", port)
-			// A `local` filter's host is not checked — a bind on every interface passes it, and
-			// so does a connection to the machine's outward address (measured on the runner) —
-			// so a connection is let in only from a loopback peer, which a `remote` filter checks.
-			// `listen` is an inbound check with no peer, where a `remote` filter never matches:
-			// the port is allowed, every peer refused, and the loopback's let back in; the last
-			// matching rule wins.
+			// A `local` filter's host is not checked, and inbound is checked at `listen`, which
+			// has no peer, not at each connection accepted (measured on the runner): a listen on
+			// every interface passes, and a connection from outside the machine reaches it. No
+			// rule here closes that; it is REQ-SBX-008's macOS limit.
 			fmt.Fprintf(&b, "(allow network-inbound (local tcp \"localhost:%d\"))\n", port)
-			fmt.Fprintf(&b, "(deny network-inbound (require-all (local tcp \"localhost:%d\") (remote tcp \"*:*\")))\n", port)
-			fmt.Fprintf(&b, "(allow network-inbound (require-all (local tcp \"localhost:%d\") (remote tcp \"localhost:*\")))\n", port)
 		}
 	}
 	b.WriteString("(deny lsopen)\n(deny appleevent-send)\n(deny job-creation)\n")

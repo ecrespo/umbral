@@ -513,12 +513,13 @@ func outward(t *testing.T) string {
 	return ""
 }
 
-// TestNothingOutsideTheLoopbackReachesAConfinedListener_REQ_SBX_008: the rules name the
-// loopback, but a bind on every interface on a port the profile may bind is not refused by
-// them; what is refused is a connection that arrives from outside the loopback. The probe
-// listens on every interface; a connection to the machine's outward address does not reach
-// it, and one to the loopback does, which proves the probe.
-func TestNothingOutsideTheLoopbackReachesAConfinedListener_REQ_SBX_008(t *testing.T) {
+// TestMacOSLeavesAConfinedListenerOpenToTheOutside_REQ_SBX_008 measures REQ-SBX-008's macOS
+// limit: the rules name the loopback, but a `local` filter's host is not checked and inbound
+// is checked at `listen`, not at each connection, so a listener on every interface on a port
+// the profile may bind is reached from the machine's outward address. The loopback's
+// connection proves the probe. Should this fail, macOS refuses that connection now: the limit
+// is gone, and REQ-SBX-008 and this test say so.
+func TestMacOSLeavesAConfinedListenerOpenToTheOutside_REQ_SBX_008(t *testing.T) {
 	b := newBench(t)
 	addr := outward(t)
 	if addr == "" {
@@ -568,7 +569,7 @@ func TestNothingOutsideTheLoopbackReachesAConfinedListener_REQ_SBX_008(t *testin
 	if got := reached("127.0.0.1"); got != "accepted" {
 		t.Fatalf("a connection over the loopback: the probe says %q, want accepted: the test proves nothing", got)
 	}
-	if got := reached(addr); got == "accepted" {
-		t.Errorf("a connection to %s, the machine's outward address, reached a confined listener", addr)
+	if got := reached(addr); got != "accepted" {
+		t.Errorf("a connection to %s, the machine's outward address: the probe says %q; the limit REQ-SBX-008 records is gone", addr, got)
 	}
 }

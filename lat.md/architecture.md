@@ -406,7 +406,7 @@ What the tests hold, against the kernel:
 - [[internal/sandbox/adapters/landlock/landlock_linux_test.go#TestAProcessThatOutlivesItsSupervisorCannotListen_REQ_SBX_008]] and [[internal/sandbox/adapters/landlock/landlock_linux_test.go#TestAProcessOutsideTheSupervisorsTreeCannotListen_REQ_SBX_008]]: a process left behind, or reparented away, listens on nothing and gets no notification descriptor of its own.
 - [[internal/sandbox/adapters/landlock/supervise_internal_linux_test.go#TestOnlyALoopbackAddressOnAnAllowedPortIsListenedOn_REQ_SBX_008]]: the address rule case by case, including the port outside the profile that the kernel test cannot bind.
 
-macOS needs no supervisor: its rules name the loopback, and its kernel test tries the same two listens.
+macOS has no supervisor and cannot hold the rule: `sandbox-exec` checks neither a bind's host nor a connection when it is accepted, so a listen on every interface on an allowed port passes and is reached from outside. [[internal/sandbox/adapters/seatbelt/seatbelt_darwin_test.go#TestMacOSLeavesAConfinedListenerOpenToTheOutside_REQ_SBX_008]] measures that limit, so it reddens the day macOS closes it.
 
 ## libffi is loaded only after its bytes are checked
 

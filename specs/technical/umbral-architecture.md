@@ -6,7 +6,7 @@
 |---|---|
 | **Author** | Ernesto Crespo · assisted draft |
 | **Status** | `DRAFT` |
-| **Version** | 1.105 |
+| **Version** | 1.106 |
 | **Date** | 2026-11-20 |
 | **Related PRD** | `specs/prd/umbral-mvp.md` |
 | **Related API Spec** | `specs/api/umbral-daemon-api-v1.md` |
@@ -1612,6 +1612,12 @@ the model loop for one `session/prompt` (delta `2026-10-acp-client`).
       to an allowed port is refused too; and the Mach services that reach the network for
       their caller — name resolution, the network's configuration, certificate checks — are
       left out, so nothing is resolved and no certificate is checked under such a profile.
+      What it cannot hold is the rule on listening: a `local` filter's host is not checked,
+      and inbound is checked at `listen`, which has no peer, not at each connection
+      accepted, so a listen on every interface on a port of the profile passes and a
+      connection from outside the machine reaches it. A rule requiring a loopback peer
+      refuses the listen itself and still lets that connection in (measured on the runner,
+      2026-11-21); the limit is REQ-SBX-008's, recorded for the Tech Lead.
   - *macOS* (delta `2026-11-sandbox-macos`, T-HRD-16): the same profile rendered for
     `/usr/bin/sandbox-exec`, with no helper. Writes are refused and then allowed under the
     write entries and on the device files; reads, `stat` included, are refused under the
@@ -2512,3 +2518,4 @@ Folded from `changes/_archive/2026-09-visual-identity/`.
 | 1.103 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a, approved): §5.3f a profile's network, on Linux and macOS, and its limits |
 | 1.104 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-write-root-anchor` (T-HRD-22, proposed): §5.3 and §5.3f, a file inside the write root is written and read from the write root, so a directory replaced by a link after the decision does not lead out of it |
 | 1.105 | 2026-11-20 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a2): §5.3f, a process that may bind listens through a supervisor, on the loopback and its ports only |
+| 1.106 | 2026-11-21 | E. Crespo (assisted draft) | Delta `2026-11-model-relay` (T-HRD-20 piece a2), measured on the macOS runner: §5.3f, macOS does not hold the rule on listening; the limit recorded |

@@ -199,8 +199,23 @@ The supervisor, on Linux, as the section above describes it, and the tests first
   The check that the notification is still its caller's (`NOTIF_ID_VALID`) has no test: the
   one mutation of seventeen that survives on its own; the descendants check survives in
   the kernel test wherever Yama already refuses, and is held by a test of its own.
-- **macOS:** the darwin kernel test now tries a listen on every interface and one with no
-  bind, and expects both refused; written blind, verified by its runner.
+- **macOS, measured on its runner (2026-11-21): the rule does not hold there.** A listen
+  with no bind is refused, but a listen on `0.0.0.0:<its port>` is not, and a connection to
+  the machine's outward address reaches it. `sandbox-exec` checks no host in a `local`
+  filter, and checks inbound at `listen`, which has no peer, not at each connection
+  accepted: a rule that requires a loopback peer (`require-all … (remote tcp
+  "localhost:*")`) refused the listen itself, and allowing the port, refusing every peer
+  and letting the loopback's back in still let the outside connection through. No helper
+  can stand between a process and its `listen` there.
+- **Decided under the standing instruction, for the Tech Lead to accept or refuse:** the
+  macOS profile is kept as it is — the whole network refused but TCP on the loopback's
+  ports — since refusing a profile that binds would leave a hosted OpenCode, which cannot
+  start without its port, with no network profile at all, and today that is the whole
+  network. REQ-SBX-008 and Tech §5.3f record the limit, piece c's disclosure says it on
+  macOS, and `TestMacOSLeavesAConfinedListenerOpenToTheOutside_REQ_SBX_008` measures it so
+  it reddens the day macOS closes it. The alternatives left: refuse a network profile that
+  binds on macOS (no hosted agent with a relay there), or detect a listen off the loopback
+  after the fact and end the agent, which a connection can beat.
 
 ## Tasks proposed
 
