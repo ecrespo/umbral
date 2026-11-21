@@ -246,7 +246,7 @@ func TestANetworkProfileOpensOnlyItsLoopbackPorts_REQ_SBX_008(t *testing.T) {
 		`(allow network-outbound (remote tcp "localhost:4096"))`,
 		`(allow network-outbound (remote tcp "localhost:51234"))`,
 		`(allow network-bind (local tcp "localhost:4096"))`,
-		`(allow network-inbound (local tcp "localhost:4096"))`)
+		`(allow network-inbound (require-all (local tcp "localhost:4096") (remote tcp "localhost:*")))`)
 	if strings.Count(text, "(allow network-") != 4 {
 		t.Errorf("the profile opens more of the network than its ports:\n%s", text)
 	}

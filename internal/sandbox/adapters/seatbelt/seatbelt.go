@@ -169,7 +169,10 @@ func Render(p domain.Profile) (string, error) {
 		}
 		for _, port := range p.Net.Bind {
 			fmt.Fprintf(&b, "(allow network-bind (local tcp \"localhost:%d\"))\n", port)
-			fmt.Fprintf(&b, "(allow network-inbound (local tcp \"localhost:%d\"))\n", port)
+			// A `local` filter's host is not checked — a bind on every interface passes it, and
+			// so does a connection to the machine's outward address (measured on the runner) —
+			// so a connection is let in only from a loopback peer, which a `remote` filter checks.
+			fmt.Fprintf(&b, "(allow network-inbound (require-all (local tcp \"localhost:%d\") (remote tcp \"localhost:*\")))\n", port)
 		}
 	}
 	b.WriteString("(deny lsopen)\n(deny appleevent-send)\n(deny job-creation)\n")

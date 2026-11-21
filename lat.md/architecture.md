@@ -388,6 +388,8 @@ The helper is then two stages of one binary. [[internal/sandbox/adapters/landloc
 
 To its caller the helper is still the command: same output, same exit code, the termination signals it is sent forwarded, and the command killed when the helper dies; what the command started is ended by the launcher's reaper of the session.
 
+Only the three standard descriptors reach a confined command: just before its exec, [[internal/sandbox/adapters/landlock/landlock_linux.go#Exec]] marks every descriptor past stderr close-on-exec, so one that whoever started the daemon left open — a CI runner does — does not cross the sandbox.
+
 Everything fails closed:
 
 - the helper ends with its command, and a process left behind gets `ENOSYS` from `listen`; it cannot answer its own either, because the filter refuses `seccomp` asked for a notification descriptor, which the kernel would consult before the profile's;
